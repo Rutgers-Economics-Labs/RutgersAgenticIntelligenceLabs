@@ -96,11 +96,10 @@ with tab1:
                         net.add_node(val.name, label=getattr(val, "hasName", None) or val.name, color="#00acee")
                         net.add_edge(selected.name, val.name, label=prop.python_name)
 
-            for rel in selected.get_inverse_properties():
-                for source, prop in rel:
-                    if hasattr(source, "name"):
+            for prop, source in selected.get_inverse_properties():
+                if hasattr(source, "name"):
                         net.add_node(source.name, label=getattr(source, "hasName", None) or source.name, color="#00acee")
-                        net.add_edge(source.name, selected.name, label=rel.python_name)
+                        net.add_edge(source.name, selected.name, label=prop.python_name)
 
             net.save_graph("graph.html")
             components.html(open("graph.html", encoding="utf-8").read(), height=600)
