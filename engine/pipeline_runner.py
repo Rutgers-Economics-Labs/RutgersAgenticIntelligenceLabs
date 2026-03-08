@@ -57,12 +57,17 @@ def _set_object_property(individual, prop_name, prop, target):
             setattr(individual, prop_name, current + [target])
 
 
-def _get_or_create(onto, onto_class, uri):
-    """Find an existing individual by URI local name, or create it."""
+def _get_or_create(onto, onto_class, uri, cache):
+    """Find an existing individual by URI local name, or create it. Uses cache to avoid repeat DB queries."""
+    if uri in cache:
+        return cache[uri], False
     existing = onto.search_one(iri=f"*#{uri}")
     if existing is not None:
+        cache[uri] = existing
         return existing, False
-    return onto_class(uri), True
+    ind = onto_class(uri)
+    cache[uri] = ind
+    return ind, True
 
 
 def run_pipeline(pipeline_path):
@@ -86,6 +91,7 @@ def run_pipeline(pipeline_path):
     onto, class_map = load_ontology(pipeline["ontology"], world=world)
 
     resolved = {}  # {api_name: DataFrame} — for foreach resolution
+    _cache = {}    # {uri: individual} — avoids repeat SQLite searches
 
     for step in pipeline["steps"]:
         step_name = step["name"]
@@ -118,7 +124,7 @@ def run_pipeline(pipeline_path):
                 row_dict = {k: v for k, v in row.to_dict().items() if not str(k).startswith("_")}
 
                 uri = _resolve(uri_template, row_dict, sanitize=True)
-                individual, created = _get_or_create(onto, onto_class, uri)
+                individual, created = _get_or_create(onto, onto_class, uri, _cache)
 
                 # Data properties
                 for prop_name, template in properties.items():
@@ -137,11 +143,15 @@ def run_pipeline(pipeline_path):
                     create_if_missing = rel.get("create_if_missing", False)
                     create_with = rel.get("create_with_properties", {})
 
-                    target, target_created = _get_or_create(
-                        onto,
-                        class_map.get(target_class_name),
-                        target_uri,
-                    ) if create_if_missing else (onto.search_one(iri=f"*#{target_uri}"), False)
+                    if create_if_missing:
+                        target, target_created = _get_or_create(
+                            onto, class_map.get(target_class_name), target_uri, _cache
+                        )
+                    else:
+                        target = _cache.get(target_uri) or onto.search_one(iri=f"*#{target_uri}")
+                        if target and target_uri not in _cache:
+                            _cache[target_uri] = target
+                        target_created = False
 
                     if target is None:
                         continue

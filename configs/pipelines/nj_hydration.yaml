@@ -28,6 +28,20 @@ steps:
         target_class: State
         target_uri: "State_{state_fips}"
 
+  - name: load_municipalities
+    api: census_municipalities
+    transform: "census_clean::strip_municipality_name"
+    class: Municipality
+    uri: "Municipality_{full_fips}"
+    properties:
+      hasName: "{name}"
+      hasFIPS: "{full_fips}"
+      hasPopulation: "{population}"
+    relationships:
+      - property: isPartOf
+        target_class: County
+        target_uri: "County_{full_county_fips}"
+
   - name: load_individuals
     api: sample_individuals
     class: Individual

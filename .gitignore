@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Generated ontology outputs and API cache
+cache/
+ontology/onto.db
+ontology/onto.db-journal
+ontology/populated_ontology.owl
+graph.html
+graph_full.html

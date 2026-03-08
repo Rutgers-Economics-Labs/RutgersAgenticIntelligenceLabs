@@ -1,0 +1,34 @@
+name: census_municipalities
+type: api
+url: https://api.census.gov/data/2020/dec/pl
+response_format: census_array
+cache: true
+
+# One request per state — returns all county subdivisions across all counties
+foreach:
+  source: census_states
+  field: fips
+  filter: "fips in ['34', '36']"
+  inject_param: "in"
+  inject_template: "state:{fips}"
+
+params:
+  get: "NAME,P1_001N"
+  for: "county subdivision:*"
+
+fields:
+  - source: NAME
+    alias: raw_name
+  - source: P1_001N
+    alias: population
+    cast: int
+  - source: state
+    alias: state_fips
+  - source: county
+    alias: county_fips
+  - source: county subdivision
+    alias: subdivision_fips
+  - computed: "{state_fips}{county_fips}"
+    alias: full_county_fips
+  - computed: "{state_fips}{county_fips}{subdivision_fips}"
+    alias: full_fips
