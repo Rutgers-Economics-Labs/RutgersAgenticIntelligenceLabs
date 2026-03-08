@@ -126,7 +126,7 @@ with tab1:
             st.subheader("Relationships")
             for prop in selected.get_properties():
                 for value in prop[selected]:
-                    st.write(f"**{prop.python_name}:** {value.name if hasattr(value, 'name') else value}")
+                    st.write(f"**{getattr(prop, "python_name", prop.name)}:** {value.name if hasattr(value, 'name') else value}")
 
     with col2:
         st.header("Relationship Graph")
@@ -142,12 +142,12 @@ with tab1:
                 for val in values:
                     if hasattr(val, "name"):
                         net.add_node(val.name, label=getattr(val, "hasName", None) or val.name, color="#00acee")
-                        net.add_edge(selected.name, val.name, label=prop.python_name)
+                        net.add_edge(selected.name, val.name, label=getattr(prop, "python_name", prop.name))
 
             for prop, source in selected.get_inverse_properties():
                 if hasattr(source, "name"):
                         net.add_node(source.name, label=getattr(source, "hasName", None) or source.name, color="#00acee")
-                        net.add_edge(source.name, selected.name, label=prop.python_name)
+                        net.add_edge(source.name, selected.name, label=getattr(prop, "python_name", prop.name))
 
             net.save_graph("graph.html")
             components.html(open("graph.html", encoding="utf-8").read(), height=600)
@@ -161,14 +161,21 @@ with tab1:
 with tab2:
     st.header("Economic Indicators")
 
-    SERIES_META = {
-        "NJURN":            {"label": "NJ Unemployment Rate",       "unit": "%",      "freq": "Monthly"},
-        "NJSTHPI":          {"label": "NJ House Price Index",        "unit": "Index",  "freq": "Quarterly"},
-        "MEHOINUSNJA646N":  {"label": "NJ Median Household Income",  "unit": "$",      "freq": "Annual"},
-    }
+    def _series_meta(sid):
+        """Infer display metadata from a FRED series ID by pattern."""
+        if sid.endswith("URN"):
+            abbr = sid[:-3]
+            return {"label": f"{abbr} Unemployment Rate",      "unit": "%",     "freq": "Monthly"}
+        if sid.endswith("STHPI"):
+            abbr = sid[:-5]
+            return {"label": f"{abbr} House Price Index",       "unit": "Index", "freq": "Quarterly"}
+        if sid.startswith("MEHOINUS") and sid.endswith("A646N"):
+            abbr = sid[8:-5]
+            return {"label": f"{abbr} Median Household Income", "unit": "$",     "freq": "Annual"}
+        return {"label": sid, "unit": "", "freq": ""}
 
     def _series_label(sid):
-        return SERIES_META.get(sid, {}).get("label", sid)
+        return _series_meta(sid)["label"]
 
     # Find the Measure class
     measure_class = next((c for c in onto.classes() if c.name == "Measure"), None)
@@ -180,10 +187,15 @@ with tab2:
         # Build state_name -> [Measure] map using the measuredFor relationship
         state_measures = defaultdict(list)
         for m in all_measures:
-            state_ind = getattr(m, "measuredFor", None)
+            raw = getattr(m, "measuredFor", None)
+            # measuredFor is non-functional → owlready2 returns a list
+            if isinstance(raw, list):
+                state_ind = raw[0] if raw else None
+            else:
+                state_ind = raw
             if state_ind is not None:
                 state_label = getattr(state_ind, "hasName", None) or state_ind.name
-                state_measures[state_label].append(m)
+                state_measures[str(state_label)].append(m)
 
         available_states = sorted(state_measures.keys())
         if available_states:
@@ -213,7 +225,7 @@ with tab2:
             for col, sid in zip(cols, sorted(series_data)):
                 ms = sorted(series_data[sid], key=lambda m: getattr(m, "hasDate", "") or "")
                 vals = [m.hasValue for m in ms if m.hasValue is not None]
-                meta = SERIES_META.get(sid, {"label": sid, "unit": "", "freq": ""})
+                meta = _series_meta(sid)
                 if vals:
                     latest = vals[-1]
                     prev   = vals[-2] if len(vals) > 1 else latest
@@ -243,7 +255,7 @@ with tab2:
             if df.empty:
                 st.warning("No data points found for this series.")
             else:
-                meta = SERIES_META.get(selected_sid, {"label": selected_sid, "unit": "", "freq": ""})
+                meta = _series_meta(selected_sid)
                 values = df["Value"]
                 total_chg = ((values.iloc[-1] - values.iloc[0]) / values.iloc[0]) * 100
                 c1, c2, c3, c4, c5 = st.columns(5)
@@ -304,6 +316,12 @@ with tab3:
     # --- Sidebar controls (scoped to this tab via unique keys) ---
     c_left, c_right = st.columns([1, 4])
 
+    def _first(val):
+        """Return scalar from owlready2 value (handles list or scalar)."""
+        if isinstance(val, list):
+            return val[0] if val else None
+        return val
+
     with c_left:
         st.subheader("Filters")
         show_types = st.multiselect(
@@ -312,6 +330,31 @@ with tab3:
             default=["State", "County", "Municipality", "Individual"],
             key="graph_types",
         )
+
+        # State filter — required when Municipality is selected to stay under browser limits
+        focus_state_ind = None
+        if any(t in show_types for t in ("County", "Municipality")):
+            state_cls = next((c for c in onto.classes() if c.name == "State"), None)
+            if state_cls:
+                state_opts = sorted(
+                    [(ind, getattr(ind, "hasName", None) or ind.name)
+                     for ind in state_cls.instances()],
+                    key=lambda x: str(x[1]),
+                )
+                state_labels = ["— All states (no municipalities) —"] + [str(lbl) for _, lbl in state_opts]
+                state_inds   = [None] + [ind for ind, _ in state_opts]
+                nj_default = next(
+                    (i for i, lbl in enumerate(state_labels) if "New Jersey" in lbl), 0
+                )
+                focus_idx = st.selectbox(
+                    "Focus on state",
+                    range(len(state_labels)),
+                    format_func=lambda i: state_labels[i],
+                    index=nj_default,
+                    key="graph_state_filter",
+                )
+                focus_state_ind = state_inds[focus_idx]
+
         show_edge_labels = st.toggle("Show edge labels", value=True, key="graph_edge_labels")
         size_by_pop = st.toggle("Size nodes by population", value=True, key="graph_size_pop")
 
@@ -325,14 +368,39 @@ with tab3:
                 )
 
     with c_right:
-        # Collect instances for each selected type
+        # Pre-build county set for the focus state (used to filter municipalities)
+        focus_county_set = None
+        if focus_state_ind is not None:
+            county_cls = next((c for c in onto.classes() if c.name == "County"), None)
+            if county_cls:
+                focus_county_set = {
+                    ind for ind in county_cls.instances()
+                    if _first(getattr(ind, "isPartOf", None)) == focus_state_ind
+                }
+
+        # Collect instances for each selected type, applying state filter
         all_nodes = {}   # uri_name -> {"ind": ind, "cls": cls_name}
         for cls_name in show_types:
             cls = next((c for c in onto.classes() if c.name == cls_name), None)
             if cls is None:
                 continue
             for ind in cls.instances():
+                if focus_state_ind is not None:
+                    if cls_name == "County":
+                        if _first(getattr(ind, "isPartOf", None)) != focus_state_ind:
+                            continue
+                    elif cls_name == "Municipality":
+                        if focus_county_set is None:
+                            continue
+                        if _first(getattr(ind, "isPartOf", None)) not in focus_county_set:
+                            continue
+                elif cls_name == "Municipality":
+                    # No state selected — skip municipalities (too many to render)
+                    continue
                 all_nodes[ind.name] = {"ind": ind, "cls": cls_name}
+
+        if "Municipality" in show_types and focus_state_ind is None:
+            st.info("Select a state above to see municipalities in the graph.")
 
         if not all_nodes:
             st.info("No entities found for selected types.")
@@ -414,12 +482,12 @@ with tab3:
                         values = [values] if values is not None else []
                     for val in values:
                         if hasattr(val, "name") and val.name in node_set:
-                            edge_key = (name, val.name, prop.python_name)
+                            edge_key = (name, val.name, getattr(prop, "python_name", prop.name))
                             if edge_key not in seen_edges:
                                 seen_edges.add(edge_key)
                                 net.add_edge(
                                     name, val.name,
-                                    label=prop.python_name if show_edge_labels else "",
+                                    label=getattr(prop, "python_name", prop.name) if show_edge_labels else "",
                                     color={"color": "#484f58", "highlight": "#adbac7", "hover": "#adbac7"},
                                     arrows={"to": {"enabled": True, "scaleFactor": 0.5}},
                                     font={"color": "#8b949e", "size": 9, "align": "middle"},

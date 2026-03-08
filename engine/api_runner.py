@@ -169,13 +169,24 @@ def fetch_api(api_name, resolved_data=None):
         if filter_expr:
             parent_df = parent_df.query(filter_expr)
 
+        inject_fields = foreach.get("inject_fields", [])
+
         frames = []
         for _, row in parent_df.iterrows():
+            row_dict = row.to_dict()
             extra = {}
             if inject_param:
-                extra[inject_param] = inject_template.format(**row.to_dict())
-            raw = _http_fetch(spec, extra_params=extra)
+                extra[inject_param] = inject_template.format(**row_dict)
+            try:
+                raw = _http_fetch(spec, extra_params=extra)
+            except Exception as e:
+                label = inject_template.format(**row_dict) if inject_param else str(row_dict.get(field, "?"))
+                print(f"  [skip] {label}: {e}")
+                continue
             chunk = _to_dataframe(raw, response_format, response_path)
+            for f in inject_fields:
+                if f in row_dict:
+                    chunk[f] = str(row_dict[f])
             frames.append(chunk)
 
         if not frames:
