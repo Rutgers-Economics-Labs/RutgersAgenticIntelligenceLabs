@@ -161,118 +161,139 @@ with tab1:
 with tab2:
     st.header("Economic Indicators")
 
-    # Find the Measure class (dynamically — works whether built from YAML or OWL)
-    measure_class = next((c for c in onto.classes() if c.name == "Measure"), None)
-    measures = list(measure_class.instances()) if measure_class else []
-
-    if not measures:
-        st.info("No indicator data found. Make sure the FRED steps ran in hydrate.py.")
-        st.stop()
-
-    # Group observations by series ID
-    series_data = defaultdict(list)
-    for m in measures:
-        sid = getattr(m, "hasSeries", None)
-        if sid:
-            series_data[sid].append(m)
-
     SERIES_META = {
         "NJURN":            {"label": "NJ Unemployment Rate",       "unit": "%",      "freq": "Monthly"},
         "NJSTHPI":          {"label": "NJ House Price Index",        "unit": "Index",  "freq": "Quarterly"},
         "MEHOINUSNJA646N":  {"label": "NJ Median Household Income",  "unit": "$",      "freq": "Annual"},
     }
 
-    # --- Summary cards (one per series) ---
-    st.subheader("Overview")
-    cols = st.columns(len(series_data))
-    for col, sid in zip(cols, sorted(series_data)):
-        ms = sorted(series_data[sid], key=lambda m: getattr(m, "hasDate", "") or "")
-        vals = [m.hasValue for m in ms if m.hasValue is not None]
-        meta = SERIES_META.get(sid, {"label": sid, "unit": "", "freq": ""})
-        if vals:
-            latest = vals[-1]
-            prev   = vals[-2] if len(vals) > 1 else latest
-            delta  = latest - prev
-            col.metric(
-                label=f"{meta['label']} ({meta['freq']})",
-                value=f"{meta['unit']}{latest:,.2f}" if meta["unit"] == "$" else f"{latest:.2f}{meta['unit']}",
-                delta=f"{delta:+.2f}",
-            )
+    def _series_label(sid):
+        return SERIES_META.get(sid, {}).get("label", sid)
 
-    st.divider()
+    # Find the Measure class
+    measure_class = next((c for c in onto.classes() if c.name == "Measure"), None)
+    all_measures = list(measure_class.instances()) if measure_class else []
 
-    # --- Detailed view ---
-    st.subheader("Series Detail")
-    selected_sid = st.selectbox(
-        "Select series",
-        sorted(series_data.keys()),
-        format_func=lambda x: SERIES_META.get(x, {}).get("label", x),
-    )
-
-    ms = sorted(series_data[selected_sid], key=lambda m: getattr(m, "hasDate", "") or "")
-    df = pd.DataFrame(
-        [{"Date": m.hasDate, "Value": m.hasValue} for m in ms if m.hasDate and m.hasValue is not None]
-    )
-
-    if df.empty:
-        st.warning("No data points found for this series.")
+    if not all_measures:
+        st.info("No indicator data found. Make sure the FRED steps ran in hydrate.py.")
     else:
-        meta = SERIES_META.get(selected_sid, {"label": selected_sid, "unit": "", "freq": ""})
-        values = df["Value"]
+        # Build state_name -> [Measure] map using the measuredFor relationship
+        state_measures = defaultdict(list)
+        for m in all_measures:
+            state_ind = getattr(m, "measuredFor", None)
+            if state_ind is not None:
+                state_label = getattr(state_ind, "hasName", None) or state_ind.name
+                state_measures[state_label].append(m)
 
-        # Stats row
-        total_chg = ((values.iloc[-1] - values.iloc[0]) / values.iloc[0]) * 100
-        c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("Latest",        f"{values.iloc[-1]:.2f}")
-        c2.metric("Mean",          f"{values.mean():.2f}")
-        c3.metric("Min",           f"{values.min():.2f}")
-        c4.metric("Max",           f"{values.max():.2f}")
-        c5.metric("Total Change",  f"{total_chg:+.1f}%")
+        available_states = sorted(state_measures.keys())
+        if available_states:
+            selected_state_label = st.selectbox(
+                "Select state",
+                available_states,
+                key="data_state_selector",
+            )
+            measures = state_measures[selected_state_label]
+        else:
+            selected_state_label = "All"
+            measures = all_measures
 
-        # Chart
-        st.line_chart(df.set_index("Date")["Value"], use_container_width=True)
+        # Group by series ID for the selected state
+        series_data = defaultdict(list)
+        for m in measures:
+            sid = getattr(m, "hasSeries", None)
+            if sid:
+                series_data[sid].append(m)
 
-        # Descriptive stats
-        with st.expander("Descriptive Statistics"):
-            desc = df["Value"].describe().rename("Value").to_frame()
-            desc.index.name = "Stat"
-            st.dataframe(desc.style.format("{:.4f}"), use_container_width=True)
+        if not series_data:
+            st.info(f"No indicator series found for {selected_state_label}.")
+        else:
+            # --- Summary cards ---
+            st.subheader("Overview")
+            cols = st.columns(len(series_data))
+            for col, sid in zip(cols, sorted(series_data)):
+                ms = sorted(series_data[sid], key=lambda m: getattr(m, "hasDate", "") or "")
+                vals = [m.hasValue for m in ms if m.hasValue is not None]
+                meta = SERIES_META.get(sid, {"label": sid, "unit": "", "freq": ""})
+                if vals:
+                    latest = vals[-1]
+                    prev   = vals[-2] if len(vals) > 1 else latest
+                    delta  = latest - prev
+                    col.metric(
+                        label=f"{meta['label']} ({meta['freq']})",
+                        value=f"{meta['unit']}{latest:,.2f}" if meta["unit"] == "$" else f"{latest:.2f}{meta['unit']}",
+                        delta=f"{delta:+.2f}",
+                    )
 
-        # Raw data table
-        with st.expander("Raw Data"):
-            st.dataframe(
-                df.rename(columns={"Value": f"{meta['label']} ({meta['unit']})"}),
-                use_container_width=True,
-                height=300,
+            st.divider()
+
+            # --- Detailed view ---
+            st.subheader("Series Detail")
+            selected_sid = st.selectbox(
+                "Select series",
+                sorted(series_data.keys()),
+                format_func=_series_label,
+                key="data_series_selector",
             )
 
-    st.divider()
+            ms = sorted(series_data[selected_sid], key=lambda m: getattr(m, "hasDate", "") or "")
+            df = pd.DataFrame(
+                [{"Date": m.hasDate, "Value": m.hasValue} for m in ms if m.hasDate and m.hasValue is not None]
+            )
 
-    # --- Cross-series comparison ---
-    st.subheader("Compare Series")
-    compare_sids = st.multiselect(
-        "Select series to overlay",
-        sorted(series_data.keys()),
-        default=sorted(series_data.keys()),
-        format_func=lambda x: SERIES_META.get(x, {}).get("label", x),
-    )
+            if df.empty:
+                st.warning("No data points found for this series.")
+            else:
+                meta = SERIES_META.get(selected_sid, {"label": selected_sid, "unit": "", "freq": ""})
+                values = df["Value"]
+                total_chg = ((values.iloc[-1] - values.iloc[0]) / values.iloc[0]) * 100
+                c1, c2, c3, c4, c5 = st.columns(5)
+                c1.metric("Latest",       f"{values.iloc[-1]:.2f}")
+                c2.metric("Mean",         f"{values.mean():.2f}")
+                c3.metric("Min",          f"{values.min():.2f}")
+                c4.metric("Max",          f"{values.max():.2f}")
+                c5.metric("Total Change", f"{total_chg:+.1f}%")
 
-    if compare_sids:
-        frames = []
-        for sid in compare_sids:
-            ms2 = sorted(series_data[sid], key=lambda m: getattr(m, "hasDate", "") or "")
-            tmp = pd.DataFrame(
-                [{"Date": m.hasDate, SERIES_META.get(sid, {}).get("label", sid): m.hasValue}
-                 for m in ms2 if m.hasDate and m.hasValue is not None]
-            ).set_index("Date")
-            frames.append(tmp)
+                st.line_chart(df.set_index("Date")["Value"], use_container_width=True)
 
-        if frames:
-            merged = pd.concat(frames, axis=1).sort_index()
-            # Normalize to 100 at start for fair comparison
-            normalized = (merged / merged.iloc[0]) * 100
-            st.caption("Normalized to 100 at start date for comparability")
-            st.line_chart(normalized, use_container_width=True)
+                with st.expander("Descriptive Statistics"):
+                    desc = df["Value"].describe().rename("Value").to_frame()
+                    desc.index.name = "Stat"
+                    st.dataframe(desc.style.format("{:.4f}"), use_container_width=True)
+
+                with st.expander("Raw Data"):
+                    st.dataframe(
+                        df.rename(columns={"Value": f"{meta['label']} ({meta['unit']})"}),
+                        use_container_width=True,
+                        height=300,
+                    )
+
+            st.divider()
+
+            # --- Cross-series comparison ---
+            st.subheader("Compare Series")
+            compare_sids = st.multiselect(
+                "Select series to overlay",
+                sorted(series_data.keys()),
+                default=sorted(series_data.keys()),
+                format_func=_series_label,
+                key="data_compare_selector",
+            )
+
+            if compare_sids:
+                frames = []
+                for sid in compare_sids:
+                    ms2 = sorted(series_data[sid], key=lambda m: getattr(m, "hasDate", "") or "")
+                    tmp = pd.DataFrame(
+                        [{"Date": m.hasDate, _series_label(sid): m.hasValue}
+                         for m in ms2 if m.hasDate and m.hasValue is not None]
+                    ).set_index("Date")
+                    frames.append(tmp)
+
+                if frames:
+                    merged = pd.concat(frames, axis=1).sort_index()
+                    normalized = (merged / merged.iloc[0]) * 100
+                    st.caption("Normalized to 100 at start date for comparability")
+                    st.line_chart(normalized, use_container_width=True)
 
 # =============================================================================
 # TAB 3: Graph Explorer — full Neo4j-style graph

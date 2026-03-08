@@ -4,11 +4,10 @@ url: https://api.census.gov/data/2020/dec/pl
 response_format: census_array
 cache: true
 
-# Loop over rows from census_states, filtered to NJ and NY only
+# Loop over all states
 foreach:
   source: census_states
   field: fips
-  filter: "fips in ['34', '36']"
   inject_param: "in"
   inject_template: "state:{fips}"
 

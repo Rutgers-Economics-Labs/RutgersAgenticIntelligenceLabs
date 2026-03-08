@@ -8,7 +8,6 @@ cache: true
 foreach:
   source: census_states
   field: fips
-  filter: "fips in ['34', '36']"
   inject_param: "in"
   inject_template: "state:{fips}"
 
