@@ -16,11 +16,16 @@ if not os.path.exists(db_path):
     st.error("Ontology database not found. Run: python hydrate.py")
     st.stop()
 
-# Use World() — default_world is pre-populated by owlready2 imports and
-# raises "Cannot save existent quadstore" when opening an existing DB file.
-_world = World()
-_world.set_backend(filename=db_path)
-onto = _world.get_ontology("http://example.org/rutgers_ontology.owl").load()
+
+@st.cache_resource
+def _load_ontology(path):
+    """Open the quadstore once per server session; reused across all Streamlit reruns."""
+    world = World()
+    world.set_backend(filename=path)
+    return world, world.get_ontology("http://example.org/rutgers_ontology.owl").load()
+
+
+_world, onto = _load_ontology(db_path)
 
 # --- Tabs ---
 tab1, tab2 = st.tabs(["Ontology Explorer", "Data Analysis"])
