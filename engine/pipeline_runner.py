@@ -9,6 +9,7 @@ from owlready2 import World, FunctionalProperty
 
 from engine.ontology_builder import load_ontology
 from engine.api_runner import fetch_api
+from engine.transform_runner import run_dataframe_transform, run_ontology_transform
 
 
 def _sanitize(value):
@@ -97,6 +98,14 @@ def run_pipeline(pipeline_path):
         print(f"\n[step] {step_name}: {class_name} <- {api_name}")
 
         df = fetch_api(api_name, resolved_data=resolved)
+
+        # Optional DataFrame transform (pre-ontology mapping)
+        transform_spec = step.get("transform")
+        if transform_spec:
+            transform_cfg = step.get("transform_config", {})
+            print(f"  [transform] {transform_spec}")
+            df = run_dataframe_transform(transform_spec, df, config=transform_cfg)
+
         resolved[api_name] = df
 
         onto_class = class_map.get(class_name)
@@ -151,6 +160,16 @@ def run_pipeline(pipeline_path):
                 count += 1
 
         print(f"  -> {count} {class_name} individuals processed")
+
+    # Post-hydration ontology transforms
+    for entry in pipeline.get("post_hydration_transforms", []):
+        if isinstance(entry, str):
+            spec, cfg = entry, {}
+        else:
+            spec, cfg = entry["spec"], entry.get("config", {})
+        print(f"\n[post-transform] {spec}")
+        with onto:
+            run_ontology_transform(spec, onto, config=cfg)
 
     onto.save(file=output_owl, format="rdfxml")
     world.save()

@@ -15,6 +15,8 @@ steps:
 
   - name: load_counties
     api: census_counties
+    # Strip ", New Jersey" / ", New York" suffix from Census county names
+    transform: "census_clean::strip_state_suffix"
     class: County
     uri: "County_{full_fips}"
     properties:

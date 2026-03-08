@@ -28,6 +28,44 @@ def _load_ontology(path):
 
 _world, onto = _load_ontology(db_path)
 
+# --- Analysis section renderer ---
+def _render_section(sec):
+    sec_type = sec.get("type")
+    title = sec.get("title")
+    if title:
+        st.subheader(title)
+
+    if sec_type == "table":
+        data = sec.get("data")
+        if data is not None and not data.empty:
+            st.dataframe(data, use_container_width=True, hide_index=True)
+        else:
+            st.caption("No data.")
+
+    elif sec_type == "metrics":
+        items = sec.get("items", [])
+        cols = st.columns(max(len(items), 1))
+        for col, item in zip(cols, items):
+            col.metric(item.get("label", ""), item.get("value", ""))
+
+    elif sec_type == "chart":
+        data = sec.get("data")
+        if data is not None and not data.empty:
+            x = sec.get("x", data.columns[0])
+            y = sec.get("y", data.columns[1])
+            st.line_chart(data.set_index(x)[y], use_container_width=True)
+
+    elif sec_type == "text":
+        st.markdown(sec.get("content", ""))
+
+    elif sec_type == "divider":
+        st.divider()
+
+    elif sec_type == "group":
+        for item in sec.get("items", []):
+            _render_section(item)
+
+
 # --- Shared constants ---
 NODE_COLORS = {
     "State":        "#F5A623",  # amber
@@ -38,7 +76,7 @@ NODE_COLORS = {
 }
 
 # --- Tabs ---
-tab1, tab2, tab3 = st.tabs(["Ontology Explorer", "Data Analysis", "Graph Explorer"])
+tab1, tab2, tab3, tab4 = st.tabs(["Ontology Explorer", "Data Analysis", "Graph Explorer", "Analysis"])
 
 
 # =============================================================================
@@ -409,6 +447,77 @@ with tab3:
                 f"— drag to pan, scroll to zoom, click to select"
             )
             components.html(graph_html, height=720, scrolling=False)
+
+
+# =============================================================================
+# TAB 4: Analysis — built-in + custom plugin analyses
+# =============================================================================
+with tab4:
+    from engine.analysis_runner import discover as _discover_analyses
+
+    st.header("Analysis")
+    st.caption(
+        "Drop a `.py` file with `analyze(onto)` into the `analysis/` directory "
+        "and it appears here automatically."
+    )
+
+    modules = _discover_analyses()
+
+    if not modules:
+        st.info("No analysis modules found in `analysis/`.")
+    else:
+        MODULE_LABELS = {name: getattr(mod, "NAME", name) for name, mod in modules.items()}
+
+        a_left, a_right = st.columns([1, 4])
+
+        with a_left:
+            st.subheader("Available")
+            selected_mod = st.radio(
+                "Module",
+                list(modules.keys()),
+                format_func=lambda x: MODULE_LABELS.get(x, x),
+                label_visibility="collapsed",
+            )
+            run_btn = st.button("Run", type="primary", use_container_width=True)
+
+            st.divider()
+            st.caption(
+                "**Adding your own analysis:**\n\n"
+                "```python\n"
+                "# analysis/my_analysis.py\n"
+                "NAME = 'My Analysis'\n\n"
+                "def analyze(onto, **kwargs):\n"
+                "    return {\n"
+                "        'title': NAME,\n"
+                "        'sections': [\n"
+                "            {'type': 'metrics',\n"
+                "             'items': [{'label': 'X',\n"
+                "                        'value': 42}]},\n"
+                "            {'type': 'table',\n"
+                "             'data': df},\n"
+                "            {'type': 'chart',\n"
+                "             'data': df,\n"
+                "             'x': 'date', 'y': 'val'},\n"
+                "            {'type': 'text',\n"
+                "             'content': '**Markdown**'},\n"
+                "        ]\n"
+                "    }\n"
+                "```"
+            )
+
+        with a_right:
+            if run_btn and selected_mod:
+                with st.spinner(f"Running {MODULE_LABELS.get(selected_mod, selected_mod)}…"):
+                    try:
+                        result = modules[selected_mod].analyze(onto)
+                        st.success(f"**{result.get('title', selected_mod)}** — complete")
+                        for sec in result.get("sections", []):
+                            _render_section(sec)
+                    except Exception as exc:
+                        st.error(f"Analysis failed: {exc}")
+                        st.exception(exc)
+            else:
+                st.info("Select a module on the left and click **Run**.")
 
 
 st.markdown("---")
