@@ -4,23 +4,20 @@ or loads an existing .owl file.
 """
 import yaml
 from pathlib import Path
-from owlready2 import (
-    Thing, ObjectProperty, DataProperty, FunctionalProperty,
-    get_ontology, default_world,
-)
+from owlready2 import Thing, ObjectProperty, DataProperty, FunctionalProperty
 
 _TYPE_MAP = {"str": str, "int": int, "float": float, "bool": bool}
 
 
-def build_from_yaml(yaml_path):
+def build_from_yaml(yaml_path, world):
     """
-    Parse a YAML ontology schema and create owlready2 classes in default_world.
+    Parse a YAML ontology schema and create owlready2 classes in the given world.
     Returns (onto, class_map) where class_map is {name: owlready2_class}.
     """
     with open(yaml_path) as f:
         spec = yaml.safe_load(f)
 
-    onto = get_ontology(spec["uri"])
+    onto = world.get_ontology(spec["uri"])
     class_map = {"Thing": Thing}
 
     with onto:
@@ -65,11 +62,11 @@ def build_from_yaml(yaml_path):
     return onto, class_map
 
 
-def load_from_owl(owl_path):
+def load_from_owl(owl_path, world):
     """
-    Load an existing .owl file and return (onto, class_map).
+    Load an existing .owl file into the given world and return (onto, class_map).
     """
-    onto = get_ontology(f"file://{Path(owl_path).resolve()}").load()
+    onto = world.get_ontology(f"file://{Path(owl_path).resolve()}").load()
     class_map = {"Thing": Thing}
     for cls in onto.classes():
         class_map[cls.name] = cls
@@ -78,15 +75,15 @@ def load_from_owl(owl_path):
     return onto, class_map
 
 
-def load_ontology(ontology_config):
+def load_ontology(ontology_config, world):
     """
-    Load ontology from a YAML spec or .owl file.
+    Load ontology from a YAML spec or .owl file into the given world.
     Returns (onto, class_map).
     """
     path = Path(ontology_config)
     if path.suffix in (".yaml", ".yml"):
-        return build_from_yaml(ontology_config)
+        return build_from_yaml(ontology_config, world)
     elif path.suffix == ".owl":
-        return load_from_owl(ontology_config)
+        return load_from_owl(ontology_config, world)
     else:
         raise ValueError(f"Unknown ontology format: {path.suffix}")

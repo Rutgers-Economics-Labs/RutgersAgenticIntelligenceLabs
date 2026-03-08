@@ -2,9 +2,10 @@
 Pipeline runner: reads a pipeline YAML and drives ontology hydration.
 No domain knowledge — all mapping is declared in the YAML.
 """
+import os
 import re
 import yaml
-from owlready2 import default_world, FunctionalProperty
+from owlready2 import World, FunctionalProperty
 
 from engine.ontology_builder import load_ontology
 from engine.api_runner import fetch_api
@@ -70,11 +71,18 @@ def run_pipeline(pipeline_path):
     db_path = pipeline.get("db", "ontology/onto.db")
     output_owl = pipeline.get("output_owl", "ontology/populated_ontology.owl")
 
-    # Set up persistent quadstore
-    default_world.set_backend(filename=db_path)
+    # Remove stale DB so we always start clean (hydration rebuilds from scratch)
+    for stale in [db_path, db_path + "-journal"]:
+        if os.path.exists(stale):
+            os.remove(stale)
+
+    # Use a fresh World() — default_world is pre-populated by owlready2 imports
+    # and would cause "Cannot save existent quadstore" if the DB file exists.
+    world = World()
+    world.set_backend(filename=db_path)
 
     # Load / build ontology schema
-    onto, class_map = load_ontology(pipeline["ontology"])
+    onto, class_map = load_ontology(pipeline["ontology"], world=world)
 
     resolved = {}  # {api_name: DataFrame} — for foreach resolution
 
@@ -145,5 +153,5 @@ def run_pipeline(pipeline_path):
         print(f"  -> {count} {class_name} individuals processed")
 
     onto.save(file=output_owl, format="rdfxml")
-    default_world.save()
+    world.save()
     print(f"\nDone. Saved to {output_owl} and quadstore {db_path}")

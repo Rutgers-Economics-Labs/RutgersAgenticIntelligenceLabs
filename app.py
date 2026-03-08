@@ -4,7 +4,7 @@ from collections import defaultdict
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from owlready2 import *
+from owlready2 import World
 from pyvis.network import Network
 
 st.set_page_config(page_title="RAIL Explorer", layout="wide")
@@ -16,8 +16,11 @@ if not os.path.exists(db_path):
     st.error("Ontology database not found. Run: python hydrate.py")
     st.stop()
 
-default_world.set_backend(filename=db_path)
-onto = get_ontology("http://example.org/rutgers_ontology.owl").load()
+# Use World() — default_world is pre-populated by owlready2 imports and
+# raises "Cannot save existent quadstore" when opening an existing DB file.
+_world = World()
+_world.set_backend(filename=db_path)
+onto = _world.get_ontology("http://example.org/rutgers_ontology.owl").load()
 
 # --- Tabs ---
 tab1, tab2 = st.tabs(["Ontology Explorer", "Data Analysis"])
