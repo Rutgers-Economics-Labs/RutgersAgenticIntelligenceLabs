@@ -5,6 +5,7 @@ classes:
   - name: County
   - name: Municipality
   - name: Individual
+  - name: Measure
 
 object_properties:
   - name: isPartOf
@@ -14,6 +15,9 @@ object_properties:
   - name: locatedIn
     domain: [Individual, Municipality, County]
     range: [Municipality, County, State]
+  - name: measuredFor
+    domain: [Measure]
+    range: [State, County, Municipality]
 
 data_properties:
   - name: hasName
@@ -31,4 +35,20 @@ data_properties:
   - name: hasIncome
     domain: [Individual]
     range: float
+    functional: true
+  - name: hasValue
+    domain: [Measure]
+    range: float
+    functional: true
+  - name: hasDate
+    domain: [Measure]
+    range: str
+    functional: true
+  - name: hasSeries
+    domain: [Measure]
+    range: str
+    functional: true
+  - name: hasUnit
+    domain: [Measure]
+    range: str
     functional: true

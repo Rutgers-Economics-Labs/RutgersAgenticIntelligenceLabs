@@ -49,3 +49,45 @@ steps:
       - property: isPartOf
         target_class: County
         target_uri: "County_{county_fips}"
+
+  - name: load_nj_unemployment
+    api: fred_nj_unemployment
+    class: Measure
+    uri: "Measure_NJURN_{date}"
+    properties:
+      hasValue: "{value}"
+      hasDate: "{date}"
+      hasSeries: "NJURN"
+      hasUnit: "Percent"
+    relationships:
+      - property: measuredFor
+        target_class: State
+        target_uri: "State_34"
+
+  - name: load_nj_housing
+    api: fred_nj_housing
+    class: Measure
+    uri: "Measure_NJSTHPI_{date}"
+    properties:
+      hasValue: "{value}"
+      hasDate: "{date}"
+      hasSeries: "NJSTHPI"
+      hasUnit: "Index 1980Q1=100"
+    relationships:
+      - property: measuredFor
+        target_class: State
+        target_uri: "State_34"
+
+  - name: load_nj_income
+    api: fred_nj_income
+    class: Measure
+    uri: "Measure_MEHOINUSNJA646N_{date}"
+    properties:
+      hasValue: "{value}"
+      hasDate: "{date}"
+      hasSeries: "MEHOINUSNJA646N"
+      hasUnit: "Dollars"
+    relationships:
+      - property: measuredFor
+        target_class: State
+        target_uri: "State_34"

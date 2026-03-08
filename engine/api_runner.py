@@ -3,6 +3,8 @@ Generic API/CSV runner that reads configs/apis/*.yaml and returns DataFrames.
 No domain knowledge — all field names, endpoints, and transforms come from YAML.
 """
 import json
+import os
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -16,7 +18,19 @@ API_CONFIG_DIR = Path("configs/apis")
 def _load_spec(api_name):
     path = API_CONFIG_DIR / f"{api_name}.yaml"
     with open(path) as f:
-        return yaml.safe_load(f)
+        raw = yaml.safe_load(f)
+    return _resolve_env_vars(raw)
+
+
+def _resolve_env_vars(obj):
+    """Recursively replace ${VAR_NAME} in string values with environment variables."""
+    if isinstance(obj, dict):
+        return {k: _resolve_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_resolve_env_vars(v) for v in obj]
+    if isinstance(obj, str):
+        return re.sub(r"\$\{([^}]+)\}", lambda m: os.environ.get(m.group(1), m.group(0)), obj)
+    return obj
 
 
 def _cache_path(key):
@@ -54,12 +68,13 @@ def _http_fetch(spec, extra_params=None):
     return data
 
 
-def _to_dataframe(raw, response_format):
+def _to_dataframe(raw, response_format, response_path=None):
     """Normalize raw API response to a DataFrame."""
+    if response_path:
+        raw = raw[response_path]
     if response_format == "census_array":
-        # Census API returns [[header...], [row...], ...]
         return pd.DataFrame(raw[1:], columns=raw[0])
-    elif response_format == "json":
+    if response_format == "json":
         if isinstance(raw, list):
             return pd.DataFrame(raw)
         return pd.DataFrame([raw])
@@ -71,7 +86,6 @@ def _apply_fields(df, fields_spec):
     Rename + cast + compute columns according to the fields spec.
     Two passes: (1) source→alias renames/casts, (2) computed fields using aliases.
     """
-    cast_map = {"int": int, "float": float, "str": str}
     result = {}
 
     # Pass 1: source fields
@@ -85,8 +99,13 @@ def _apply_fields(df, fields_spec):
             print(f"  Warning: column '{source}' not found, skipping")
             continue
         col = df[source]
-        if cast and cast in cast_map:
-            col = col.apply(lambda x, t=cast_map[cast]: t(x) if pd.notna(x) else x)
+        if cast in ("int", "float"):
+            # pd.to_numeric coerces "." and other non-numeric FRED values to NaN
+            col = pd.to_numeric(col, errors="coerce")
+            if cast == "int":
+                col = col.round().astype("Int64")
+        elif cast == "str":
+            col = col.astype(str)
         result[alias] = col
 
     partial = pd.DataFrame(result)
@@ -131,6 +150,7 @@ def fetch_api(api_name, resolved_data=None):
     # --- API sources ---
     foreach = spec.get("foreach")
     response_format = spec.get("response_format", "json")
+    response_path = spec.get("response_path")
 
     if foreach:
         source_name = foreach["source"]
@@ -155,7 +175,7 @@ def fetch_api(api_name, resolved_data=None):
             if inject_param:
                 extra[inject_param] = inject_template.format(**row.to_dict())
             raw = _http_fetch(spec, extra_params=extra)
-            chunk = _to_dataframe(raw, response_format)
+            chunk = _to_dataframe(raw, response_format, response_path)
             frames.append(chunk)
 
         if not frames:
@@ -164,9 +184,12 @@ def fetch_api(api_name, resolved_data=None):
         df = pd.concat(frames, ignore_index=True)
     else:
         raw = _http_fetch(spec)
-        df = _to_dataframe(raw, response_format)
+        df = _to_dataframe(raw, response_format, response_path)
 
     if "fields" in spec:
         df = _apply_fields(df, spec["fields"])
+
+    if spec.get("drop_na"):
+        df = df.dropna()
 
     return df
