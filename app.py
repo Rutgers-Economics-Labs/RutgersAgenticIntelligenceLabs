@@ -1,12 +1,20 @@
 import json
 import os
+import re
+import sys
 from collections import defaultdict
+from io import StringIO
+import traceback
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from owlready2 import World
+from owlready2 import World, Thing, ObjectProperty, DataProperty
 from pyvis.network import Network
+from rdflib import Graph
+
+from engine.ai_generator import generate_hydration_yaml
+from engine.ai_analyst import generate_analysis_script
 
 st.set_page_config(page_title="RAIL Explorer", layout="wide")
 st.title("Rutgers Agentic Intelligence Labs")
@@ -23,7 +31,22 @@ def _load_ontology(path):
     """Open the quadstore once per server session; reused across all Streamlit reruns."""
     world = World()
     world.set_backend(filename=path)
-    return world, world.get_ontology("http://example.org/rutgers_ontology.owl").load()
+    # Find the first ontology in the world
+    try:
+        # Try a few common URIs or just the first one
+        uri = "http://example.org/rutgers_ontology.owl"
+        onto = world.get_ontology(uri).load()
+    except:
+        ontos = list(world.ontologies.values())
+        if ontos:
+            onto = ontos[0]
+        else:
+            owl_path = "ontology/populated_ontology.owl"
+            if os.path.exists(owl_path):
+                onto = world.get_ontology(f"file://{os.path.abspath(owl_path)}").load()
+            else:
+                raise Exception("Could not load any ontology.")
+    return world, onto
 
 
 _world, onto = _load_ontology(db_path)
@@ -76,64 +99,94 @@ NODE_COLORS = {
 }
 
 # --- Tabs ---
-tab1, tab2, tab3, tab4 = st.tabs(["Ontology Explorer", "Data Analysis", "Graph Explorer", "Analysis"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "Ontology Explorer",
+    "Data Analysis",
+    "Graph Explorer",
+    "Analysis",
+    "Data Studio",
+    "Query Console",
+    "AI Analyst"
+])
 
 
 # =============================================================================
-# TAB 1: Ontology Explorer (existing behaviour, unchanged)
+# TAB 1: Ontology Explorer (Palantir style)
 # =============================================================================
 with tab1:
-    st.sidebar.header("Search")
-    search_term = st.sidebar.text_input("Search entities", placeholder="e.g. 'Alice', 'New Jersey'")
+    st.sidebar.header("Search & Filter")
+    search_term = st.sidebar.text_input("Global Search", placeholder="e.g. 'Alice', 'New Jersey'")
 
-    col1, col2 = st.columns([1, 3])
+    # Advanced Filtering
+    with st.sidebar.expander("Advanced Filters"):
+        all_classes = [c.name for c in onto.classes()]
+        filter_class = st.multiselect("Filter by Class", all_classes, default=all_classes)
+
+        # Numeric range filters (e.g., Population)
+        min_pop = st.number_input("Min Population", value=0)
+        max_pop = st.number_input("Max Population", value=20000000)
+
+    col1, col2 = st.columns([1, 2])
 
     with col1:
-        st.header("Entities")
-        TYPE_MAP = {
-            "All": lambda: list(onto.individuals()),
-            "State": lambda: list(onto.State.instances()),
-            "County": lambda: list(onto.County.instances()),
-            "Municipality": lambda: list(onto.Municipality.instances()),
-            "Individual": lambda: list(onto.Individual.instances()),
-        }
-        entity_type = st.selectbox("Select Type", list(TYPE_MAP.keys()))
-        entities = TYPE_MAP[entity_type]()
+        st.header("Object Explorer")
+
+        # Get all individuals filtered
+        entities = list(onto.individuals())
+        if filter_class:
+            entities = [e for e in entities if any(isinstance(e, getattr(onto, c, type(None))) for c in filter_class)]
 
         if search_term:
             entities = [
                 e for e in entities
                 if search_term.lower() in str(e.name).lower()
-                or (getattr(e, "hasName", None) and search_term.lower() in e.hasName.lower())
+                or (getattr(e, "hasName", None) and search_term.lower() in str(e.hasName).lower())
             ]
 
-        selected_name = st.selectbox("Select Entity", [e.name for e in entities])
+        # Pop filter
+        entities = [e for e in entities if (getattr(e, "hasPopulation", None) is None or (min_pop <= (getattr(e, "hasPopulation", 0) or 0) <= max_pop))]
+
+        st.write(f"Showing **{len(entities)}** objects")
+
+        sorted_entities = sorted(entities, key=lambda x: str(getattr(x, "hasName", x.name)) or "")
+        selected_name = st.selectbox("Select Object", [e.name for e in sorted_entities])
         selected = onto[selected_name] if selected_name else None
 
         if selected:
-            st.subheader("Properties")
+            st.divider()
+            st.subheader(f"Object View: {getattr(selected, 'hasName', selected.name)}")
+            st.caption(f"Type: {selected.__class__.name}")
             st.write(f"**URI:** `{selected.iri}`")
-            for attr, label, fmt in [
-                ("hasName", "Name", "{}"),
-                ("hasPopulation", "Population", "{:,}"),
-                ("hasIncome", "Income", "${:,.2f}"),
-                ("hasFIPS", "FIPS", "{}"),
-            ]:
-                val = getattr(selected, attr, None)
-                if val:
-                    st.write(f"**{label}:** {fmt.format(val)}")
 
-            st.subheader("Relationships")
+            # Group properties into Data and Object
+            data_props = []
+            obj_props = []
             for prop in selected.get_properties():
-                for value in prop[selected]:
-                    st.write(f"**{getattr(prop, "python_name", prop.name)}:** {value.name if hasattr(value, 'name') else value}")
+                if issubclass(prop, DataProperty):
+                    data_props.append(prop)
+                elif issubclass(prop, ObjectProperty):
+                    obj_props.append(prop)
+
+            with st.expander("Data Properties", expanded=True):
+                for prop in data_props:
+                    val = getattr(selected, prop.python_name)
+                    st.write(f"**{prop.python_name}:** {val}")
+
+            with st.expander("Relationships", expanded=True):
+                for prop in obj_props:
+                    vals = getattr(selected, prop.python_name)
+                    if not isinstance(vals, list): vals = [vals]
+                    for val in vals:
+                        if hasattr(val, "name"):
+                            st.write(f"**{prop.python_name}:** {val.name} ({val.__class__.name})")
 
     with col2:
-        st.header("Relationship Graph")
+        st.header("Interactions & Context")
         if selected:
-            net = Network(height="600px", width="100%", bgcolor="#1a1a2e", font_color="white", directed=True)
+            # mini graph for selected object
+            net = Network(height="500px", width="100%", bgcolor="#0d1117", font_color="white", directed=True)
             net.add_node(selected.name, label=getattr(selected, "hasName", None) or selected.name,
-                         color="#ff4b4b", size=30)
+                         color="#ff4b4b", size=25, title=f"Selected: {selected.name}")
 
             for prop in selected.get_properties():
                 values = prop[selected]
@@ -141,183 +194,90 @@ with tab1:
                     values = [values]
                 for val in values:
                     if hasattr(val, "name"):
-                        net.add_node(val.name, label=getattr(val, "hasName", None) or val.name, color="#00acee")
+                        net.add_node(val.name, label=getattr(val, "hasName", None) or val.name,
+                                     color=NODE_COLORS.get(val.__class__.name, "#00acee"), size=20)
                         net.add_edge(selected.name, val.name, label=getattr(prop, "python_name", prop.name))
 
             for prop, source in selected.get_inverse_properties():
                 if hasattr(source, "name"):
-                        net.add_node(source.name, label=getattr(source, "hasName", None) or source.name, color="#00acee")
-                        net.add_edge(source.name, selected.name, label=getattr(prop, "python_name", prop.name))
+                    net.add_node(source.name, label=getattr(source, "hasName", None) or source.name,
+                                 color=NODE_COLORS.get(source.__class__.name, "#00acee"), size=20)
+                    net.add_edge(source.name, selected.name, label=getattr(prop, "python_name", prop.name))
 
             net.save_graph("graph.html")
-            components.html(open("graph.html", encoding="utf-8").read(), height=600)
-        else:
-            st.info("Select an entity on the left to visualize its relationships.")
+            components.html(open("graph.html", encoding="utf-8").read(), height=550)
+
+            # Class-specific views (e.g. State overview)
+            if selected.__class__.name == "State":
+                st.subheader("State Statistics")
+                if hasattr(onto, "County"):
+                    counties = [c for c in onto.County.instances() if getattr(c, "isPartOf", None) == selected]
+                    st.metric("Total Counties", len(counties))
+                    if counties:
+                        pop_df = pd.DataFrame([{
+                            "County": getattr(c, "hasName", c.name),
+                            "Population": getattr(c, "hasPopulation", 0)
+                        } for c in counties]).sort_values("Population", ascending=False)
+                        st.bar_chart(pop_df.set_index("County")["Population"])
 
 
 # =============================================================================
-# TAB 2: Data Analysis
+# TAB 2: Generalized Data Analysis
 # =============================================================================
 with tab2:
-    st.header("Economic Indicators")
+    st.header("Dynamic Indicator Analysis")
 
-    def _series_meta(sid):
-        """Infer display metadata from a FRED series ID by pattern."""
-        if sid.endswith("URN"):
-            abbr = sid[:-3]
-            return {"label": f"{abbr} Unemployment Rate",      "unit": "%",     "freq": "Monthly"}
-        if sid.endswith("STHPI"):
-            abbr = sid[:-5]
-            return {"label": f"{abbr} House Price Index",       "unit": "Index", "freq": "Quarterly"}
-        if sid.startswith("MEHOINUS") and sid.endswith("A646N"):
-            abbr = sid[8:-5]
-            return {"label": f"{abbr} Median Household Income", "unit": "$",     "freq": "Annual"}
-        return {"label": sid, "unit": "", "freq": ""}
-
-    def _series_label(sid):
-        return _series_meta(sid)["label"]
-
-    # Find the Measure class
-    measure_class = next((c for c in onto.classes() if c.name == "Measure"), None)
-    all_measures = list(measure_class.instances()) if measure_class else []
+    # Auto-detect all instances with numeric values or time-series data
+    measure_cls = getattr(onto, "Measure", None)
+    all_measures = list(measure_cls.instances()) if measure_cls else []
 
     if not all_measures:
-        st.info("No indicator data found. Make sure the FRED steps ran in hydrate.py.")
+        st.info("No numeric measure data found.")
     else:
-        # Build state_name -> [Measure] map using the measuredFor relationship
-        state_measures = defaultdict(list)
+        # Group measures by 'hasSeries' or similar categorization
+        series_map = defaultdict(list)
         for m in all_measures:
-            raw = getattr(m, "measuredFor", None)
-            # measuredFor is non-functional → owlready2 returns a list
-            if isinstance(raw, list):
-                state_ind = raw[0] if raw else None
-            else:
-                state_ind = raw
-            if state_ind is not None:
-                state_label = getattr(state_ind, "hasName", None) or state_ind.name
-                state_measures[str(state_label)].append(m)
+            sid = getattr(m, "hasSeries", "General")
+            series_map[sid].append(m)
 
-        available_states = sorted(state_measures.keys())
-        if available_states:
-            selected_state_label = st.selectbox(
-                "Select state",
-                available_states,
-                key="data_state_selector",
-            )
-            measures = state_measures[selected_state_label]
-        else:
-            selected_state_label = "All"
-            measures = all_measures
+        selected_series = st.selectbox("Select Indicator Series", sorted(series_map.keys()))
 
-        # Group by series ID for the selected state
-        series_data = defaultdict(list)
+        measures = sorted(series_map[selected_series], key=lambda x: getattr(x, "hasDate", "") or "")
+
+        # Prepare Dataframe
+        data_list = []
         for m in measures:
-            sid = getattr(m, "hasSeries", None)
-            if sid:
-                series_data[sid].append(m)
+            target = getattr(m, "measuredFor", None)
+            if isinstance(target, list): target = target[0] if target else None
+            data_list.append({
+                "Date": getattr(m, "hasDate", "N/A"),
+                "Value": getattr(m, "hasValue", 0),
+                "Entity": getattr(target, "hasName", target.name) if target else "Unknown"
+            })
 
-        if not series_data:
-            st.info(f"No indicator series found for {selected_state_label}.")
+        df = pd.DataFrame(data_list)
+
+        entities = df["Entity"].unique()
+        selected_entity = st.multiselect("Filter by Entity", entities, default=entities[:5])
+
+        filtered_df = df[df["Entity"].isin(selected_entity)]
+
+        if not filtered_df.empty:
+            st.line_chart(filtered_df.pivot_table(index="Date", columns="Entity", values="Value"))
+            st.dataframe(filtered_df)
         else:
-            # --- Summary cards ---
-            st.subheader("Overview")
-            cols = st.columns(len(series_data))
-            for col, sid in zip(cols, sorted(series_data)):
-                ms = sorted(series_data[sid], key=lambda m: getattr(m, "hasDate", "") or "")
-                vals = [m.hasValue for m in ms if m.hasValue is not None]
-                meta = _series_meta(sid)
-                if vals:
-                    latest = vals[-1]
-                    prev   = vals[-2] if len(vals) > 1 else latest
-                    delta  = latest - prev
-                    col.metric(
-                        label=f"{meta['label']} ({meta['freq']})",
-                        value=f"{meta['unit']}{latest:,.2f}" if meta["unit"] == "$" else f"{latest:.2f}{meta['unit']}",
-                        delta=f"{delta:+.2f}",
-                    )
+            st.write("No data for selected filters.")
 
-            st.divider()
-
-            # --- Detailed view ---
-            st.subheader("Series Detail")
-            selected_sid = st.selectbox(
-                "Select series",
-                sorted(series_data.keys()),
-                format_func=_series_label,
-                key="data_series_selector",
-            )
-
-            ms = sorted(series_data[selected_sid], key=lambda m: getattr(m, "hasDate", "") or "")
-            df = pd.DataFrame(
-                [{"Date": m.hasDate, "Value": m.hasValue} for m in ms if m.hasDate and m.hasValue is not None]
-            )
-
-            if df.empty:
-                st.warning("No data points found for this series.")
-            else:
-                meta = _series_meta(selected_sid)
-                values = df["Value"]
-                total_chg = ((values.iloc[-1] - values.iloc[0]) / values.iloc[0]) * 100
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("Latest",       f"{values.iloc[-1]:.2f}")
-                c2.metric("Mean",         f"{values.mean():.2f}")
-                c3.metric("Min",          f"{values.min():.2f}")
-                c4.metric("Max",          f"{values.max():.2f}")
-                c5.metric("Total Change", f"{total_chg:+.1f}%")
-
-                st.line_chart(df.set_index("Date")["Value"], use_container_width=True)
-
-                with st.expander("Descriptive Statistics"):
-                    desc = df["Value"].describe().rename("Value").to_frame()
-                    desc.index.name = "Stat"
-                    st.dataframe(desc.style.format("{:.4f}"), use_container_width=True)
-
-                with st.expander("Raw Data"):
-                    st.dataframe(
-                        df.rename(columns={"Value": f"{meta['label']} ({meta['unit']})"}),
-                        use_container_width=True,
-                        height=300,
-                    )
-
-            st.divider()
-
-            # --- Cross-series comparison ---
-            st.subheader("Compare Series")
-            compare_sids = st.multiselect(
-                "Select series to overlay",
-                sorted(series_data.keys()),
-                default=sorted(series_data.keys()),
-                format_func=_series_label,
-                key="data_compare_selector",
-            )
-
-            if compare_sids:
-                frames = []
-                for sid in compare_sids:
-                    ms2 = sorted(series_data[sid], key=lambda m: getattr(m, "hasDate", "") or "")
-                    tmp = pd.DataFrame(
-                        [{"Date": m.hasDate, _series_label(sid): m.hasValue}
-                         for m in ms2 if m.hasDate and m.hasValue is not None]
-                    ).set_index("Date")
-                    frames.append(tmp)
-
-                if frames:
-                    merged = pd.concat(frames, axis=1).sort_index()
-                    normalized = (merged / merged.iloc[0]) * 100
-                    st.caption("Normalized to 100 at start date for comparability")
-                    st.line_chart(normalized, use_container_width=True)
 
 # =============================================================================
-# TAB 3: Graph Explorer — full Neo4j-style graph
+# TAB 3: Graph Explorer
 # =============================================================================
 with tab3:
     st.header("Graph Explorer")
 
-    # --- Sidebar controls (scoped to this tab via unique keys) ---
     c_left, c_right = st.columns([1, 4])
 
     def _first(val):
-        """Return scalar from owlready2 value (handles list or scalar)."""
         if isinstance(val, list):
             return val[0] if val else None
         return val
@@ -331,7 +291,6 @@ with tab3:
             key="graph_types",
         )
 
-        # State filter — required when Municipality is selected to stay under browser limits
         focus_state_ind = None
         if any(t in show_types for t in ("County", "Municipality")):
             state_cls = next((c for c in onto.classes() if c.name == "State"), None)
@@ -358,17 +317,7 @@ with tab3:
         show_edge_labels = st.toggle("Show edge labels", value=True, key="graph_edge_labels")
         size_by_pop = st.toggle("Size nodes by population", value=True, key="graph_size_pop")
 
-        st.markdown("**Legend**")
-        for t, color in NODE_COLORS.items():
-            if t in show_types:
-                st.markdown(
-                    f"<span style='background:{color};border-radius:50%;display:inline-block;"
-                    f"width:12px;height:12px;margin-right:6px'></span>{t}",
-                    unsafe_allow_html=True,
-                )
-
     with c_right:
-        # Pre-build county set for the focus state (used to filter municipalities)
         focus_county_set = None
         if focus_state_ind is not None:
             county_cls = next((c for c in onto.classes() if c.name == "County"), None)
@@ -378,236 +327,186 @@ with tab3:
                     if _first(getattr(ind, "isPartOf", None)) == focus_state_ind
                 }
 
-        # Collect instances for each selected type, applying state filter
-        all_nodes = {}   # uri_name -> {"ind": ind, "cls": cls_name}
+        all_nodes = {}
         for cls_name in show_types:
-            cls = next((c for c in onto.classes() if c.name == cls_name), None)
-            if cls is None:
-                continue
+            cls = getattr(onto, cls_name, None)
+            if cls is None: continue
             for ind in cls.instances():
                 if focus_state_ind is not None:
                     if cls_name == "County":
-                        if _first(getattr(ind, "isPartOf", None)) != focus_state_ind:
-                            continue
+                        if _first(getattr(ind, "isPartOf", None)) != focus_state_ind: continue
                     elif cls_name == "Municipality":
-                        if focus_county_set is None:
-                            continue
-                        if _first(getattr(ind, "isPartOf", None)) not in focus_county_set:
-                            continue
-                elif cls_name == "Municipality":
-                    # No state selected — skip municipalities (too many to render)
-                    continue
+                        if focus_county_set is None or _first(getattr(ind, "isPartOf", None)) not in focus_county_set: continue
+                elif cls_name == "Municipality": continue
                 all_nodes[ind.name] = {"ind": ind, "cls": cls_name}
 
-        if "Municipality" in show_types and focus_state_ind is None:
-            st.info("Select a state above to see municipalities in the graph.")
-
-        if not all_nodes:
-            st.info("No entities found for selected types.")
-        else:
-            # Pre-compute population ranges per type for size normalization
-            pop_ranges = {}
-            for cls_name in show_types:
-                pops = [
-                    getattr(v["ind"], "hasPopulation", None)
-                    for v in all_nodes.values()
-                    if v["cls"] == cls_name and getattr(v["ind"], "hasPopulation", None) is not None
-                ]
-                if pops:
-                    pop_ranges[cls_name] = (min(pops), max(pops))
-
-            def node_size(cls_name, ind):
-                SIZE_RANGE = {"State": (22, 55), "County": (10, 28), "Municipality": 14, "Individual": 12, "Measure": 8}
-                base = SIZE_RANGE.get(cls_name, 12)
-                if not size_by_pop or isinstance(base, int):
-                    return base if isinstance(base, int) else base[0]
-                pop = getattr(ind, "hasPopulation", None)
-                if pop is None or cls_name not in pop_ranges:
-                    return base[0]
-                lo, hi = pop_ranges[cls_name]
-                if hi == lo:
-                    return (base[0] + base[1]) // 2
-                return int(base[0] + (pop - lo) / (hi - lo) * (base[1] - base[0]))
-
-            def node_tooltip(cls_name, ind):
-                color = NODE_COLORS.get(cls_name, "#aaa")
-                lines = [f"<b style='color:{color}'>{cls_name}</b>"]
-                for attr, label, fmt in [
-                    ("hasName",       "Name",       "{}"),
-                    ("hasFIPS",       "FIPS",       "{}"),
-                    ("hasPopulation", "Population", "{:,}"),
-                    ("hasIncome",     "Income",     "${:,.0f}"),
-                    ("hasValue",      "Value",      "{:.2f}"),
-                    ("hasDate",       "Date",       "{}"),
-                    ("hasSeries",     "Series",     "{}"),
-                ]:
-                    val = getattr(ind, attr, None)
-                    if val is not None:
-                        lines.append(f"<span style='color:#bbb'>{label}:</span> {fmt.format(val)}")
-                return "<br>".join(lines)
-
-            # Build pyvis graph
-            net = Network(
-                height="700px", width="100%",
-                bgcolor="#0d1117", font_color="#e6edf3",
-                directed=True, notebook=False,
-            )
-
+        if all_nodes:
+            net = Network(height="700px", width="100%", bgcolor="#0d1117", font_color="#e6edf3", directed=True)
             for name, info in all_nodes.items():
-                ind, cls_name = info["ind"], info["cls"]
-                label = getattr(ind, "hasName", None) or ind.name
-                net.add_node(
-                    name,
-                    label=label,
-                    color={"background": NODE_COLORS.get(cls_name, "#aaa"),
-                           "border": "#ffffff33",
-                           "highlight": {"background": "#ffffff", "border": "#ffffff"},
-                           "hover": {"background": "#ffffffcc", "border": "#ffffff"}},
-                    size=node_size(cls_name, ind),
-                    title=node_tooltip(cls_name, ind),
-                    group=cls_name,
-                    borderWidth=1,
-                    borderWidthSelected=3,
-                    font={"color": "#e6edf3", "size": 11},
-                )
+                label = getattr(info["ind"], "hasName", None) or name
+                net.add_node(name, label=label, color=NODE_COLORS.get(info["cls"], "#aaa"))
 
-            # Add edges only between nodes that are both in the graph
             node_set = set(all_nodes.keys())
-            seen_edges = set()
             for name, info in all_nodes.items():
                 ind = info["ind"]
                 for prop in ind.get_properties():
                     values = prop[ind]
-                    if not isinstance(values, list):
-                        values = [values] if values is not None else []
+                    if not isinstance(values, list): values = [values]
                     for val in values:
                         if hasattr(val, "name") and val.name in node_set:
-                            edge_key = (name, val.name, getattr(prop, "python_name", prop.name))
-                            if edge_key not in seen_edges:
-                                seen_edges.add(edge_key)
-                                net.add_edge(
-                                    name, val.name,
-                                    label=getattr(prop, "python_name", prop.name) if show_edge_labels else "",
-                                    color={"color": "#484f58", "highlight": "#adbac7", "hover": "#adbac7"},
-                                    arrows={"to": {"enabled": True, "scaleFactor": 0.5}},
-                                    font={"color": "#8b949e", "size": 9, "align": "middle"},
-                                    smooth={"type": "dynamic"},
-                                )
-
-            net.set_options(json.dumps({
-                "physics": {
-                    "solver": "barnesHut",
-                    "barnesHut": {
-                        "gravitationalConstant": -6000,
-                        "centralGravity": 0.3,
-                        "springLength": 160,
-                        "springConstant": 0.04,
-                        "damping": 0.09,
-                        "avoidOverlap": 0.4,
-                    },
-                    "stabilization": {"iterations": 200, "updateInterval": 25},
-                    "maxVelocity": 50,
-                    "minVelocity": 0.5,
-                },
-                "interaction": {
-                    "hover": True,
-                    "tooltipDelay": 80,
-                    "navigationButtons": True,
-                    "keyboard": True,
-                    "multiselect": True,
-                    "zoomView": True,
-                },
-                "nodes": {
-                    "shadow": {"enabled": True, "size": 6, "x": 2, "y": 2},
-                    "shape": "dot",
-                },
-                "edges": {
-                    "shadow": False,
-                    "width": 1.2,
-                    "selectionWidth": 2.5,
-                },
-            }))
+                            net.add_edge(name, val.name, label=prop.python_name if show_edge_labels else "")
 
             net.save_graph("graph_full.html")
-            graph_html = open("graph_full.html", encoding="utf-8").read()
-
-            st.caption(
-                f"Showing **{len(all_nodes):,}** nodes · **{len(seen_edges):,}** edges "
-                f"— drag to pan, scroll to zoom, click to select"
-            )
-            components.html(graph_html, height=720, scrolling=False)
+            components.html(open("graph_full.html", encoding="utf-8").read(), height=720)
 
 
 # =============================================================================
-# TAB 4: Analysis — built-in + custom plugin analyses
+# TAB 4: Analysis Plugins
 # =============================================================================
 with tab4:
     from engine.analysis_runner import discover as _discover_analyses
-
-    st.header("Analysis")
-    st.caption(
-        "Drop a `.py` file with `analyze(onto)` into the `analysis/` directory "
-        "and it appears here automatically."
-    )
-
+    st.header("Analysis Plugins")
     modules = _discover_analyses()
+    if modules:
+        selected_mod = st.selectbox("Module", list(modules.keys()))
+        if st.button("Run Plugin"):
+            result = modules[selected_mod].analyze(onto)
+            for sec in result.get("sections", []):
+                _render_section(sec)
 
-    if not modules:
-        st.info("No analysis modules found in `analysis/`.")
-    else:
-        MODULE_LABELS = {name: getattr(mod, "NAME", name) for name, mod in modules.items()}
 
-        a_left, a_right = st.columns([1, 4])
+# =============================================================================
+# TAB 5: Data Studio (AI-Assisted Hydration)
+# =============================================================================
+with tab5:
+    st.header("Data Studio")
+    st.write("Onboard new data sources using AI. Upload a file or provide documentation.")
 
-        with a_left:
-            st.subheader("Available")
-            selected_mod = st.radio(
-                "Module",
-                list(modules.keys()),
-                format_func=lambda x: MODULE_LABELS.get(x, x),
-                label_visibility="collapsed",
-            )
-            run_btn = st.button("Run", type="primary", use_container_width=True)
+    source_type = st.radio("Source Type", ["CSV/Excel", "API Documentation"])
+    content = ""
+    content_type = ""
 
-            st.divider()
-            st.caption(
-                "**Adding your own analysis:**\n\n"
-                "```python\n"
-                "# analysis/my_analysis.py\n"
-                "NAME = 'My Analysis'\n\n"
-                "def analyze(onto, **kwargs):\n"
-                "    return {\n"
-                "        'title': NAME,\n"
-                "        'sections': [\n"
-                "            {'type': 'metrics',\n"
-                "             'items': [{'label': 'X',\n"
-                "                        'value': 42}]},\n"
-                "            {'type': 'table',\n"
-                "             'data': df},\n"
-                "            {'type': 'chart',\n"
-                "             'data': df,\n"
-                "             'x': 'date', 'y': 'val'},\n"
-                "            {'type': 'text',\n"
-                "             'content': '**Markdown**'},\n"
-                "        ]\n"
-                "    }\n"
-                "```"
-            )
-
-        with a_right:
-            if run_btn and selected_mod:
-                with st.spinner(f"Running {MODULE_LABELS.get(selected_mod, selected_mod)}…"):
-                    try:
-                        result = modules[selected_mod].analyze(onto)
-                        st.success(f"**{result.get('title', selected_mod)}** — complete")
-                        for sec in result.get("sections", []):
-                            _render_section(sec)
-                    except Exception as exc:
-                        st.error(f"Analysis failed: {exc}")
-                        st.exception(exc)
+    if source_type == "CSV/Excel":
+        uploaded_file = st.file_uploader("Upload sample data", type=["csv", "xlsx"])
+        if uploaded_file:
+            if uploaded_file.name.endswith('.csv'):
+                sample_df = pd.read_csv(uploaded_file, nrows=10)
             else:
-                st.info("Select a module on the left and click **Run**.")
+                sample_df = pd.read_excel(uploaded_file, nrows=10)
+            st.write("Data Sample:")
+            st.dataframe(sample_df)
+            content = sample_df.to_csv(index=False)
+            content_type = "csv"
+    else:
+        api_docs = st.text_area("Paste API Documentation or JSON Response Sample")
+        content = api_docs
+        content_type = "api_docs"
 
+    if st.button("Generate RAIL Configuration"):
+        if not content:
+            st.error("Please provide data content.")
+        else:
+            with st.spinner("AI is analyzing and generating YAML..."):
+                with open("configs/ontology/core.yaml") as f:
+                    onto_spec = f.read()
+
+                try:
+                    result_raw = generate_hydration_yaml(content, content_type, onto_spec)
+                    json_str = result_raw.strip()
+                    if json_str.startswith("```json"): json_str = json_str[7:]
+                    if json_str.endswith("```"): json_str = json_str[:-3]
+
+                    res_obj = json.loads(json_str)
+
+                    st.success("Configuration Generated!")
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.subheader("API Config")
+                        st.code(res_obj['api_config'], language='yaml')
+                    with col_b:
+                        st.subheader("Pipeline Step")
+                        st.code(res_obj['pipeline_step'], language='yaml')
+                except Exception as e:
+                    st.error(f"Generation failed: {e}")
+                    st.write(result_raw)
+
+
+# =============================================================================
+# TAB 6: Query Console
+# =============================================================================
+with tab6:
+    st.header("Query Console")
+
+    mode = st.radio("Engine Mode", ["Analysis Mode (Read-Only)", "Cleaning Mode (Read-Write)"])
+    lang = st.radio("Language", ["Python", "SPARQL"])
+
+    query = st.text_area("Enter your query", height=200, placeholder="Python: [i.name for i in onto.individuals()]\nSPARQL: SELECT ?s ?p ?o WHERE { ?s ?p ?o } LIMIT 10")
+
+    if st.button("Execute Query"):
+        if lang == "Python":
+            try:
+                context = {"onto": onto, "_world": _world, "pd": pd, "st": st}
+                old_stdout = sys.stdout
+                sys.stdout = StringIO()
+
+                try:
+                    res = eval(query, context)
+                    st.write("Result:")
+                    st.write(res)
+                except SyntaxError:
+                    exec(query, context)
+                    st.write("Execution complete.")
+
+                out = sys.stdout.getvalue()
+                sys.stdout = old_stdout
+                if out:
+                    st.subheader("Standard Output:")
+                    st.text(out)
+
+                if mode == "Cleaning Mode (Read-Write)":
+                    _world.save()
+                    st.success("Changes saved.")
+            except Exception:
+                st.error("Execution Error")
+                st.code(traceback.format_exc())
+        else:
+            try:
+                graph = _world.as_rdflib_graph()
+                qres = graph.query(query)
+                df_res = pd.DataFrame([list(r) for r in qres], columns=[str(var) for var in qres.vars])
+                st.write("SPARQL Results:")
+                st.dataframe(df_res)
+            except Exception:
+                st.error("SPARQL Error")
+                st.code(traceback.format_exc())
+
+
+# =============================================================================
+# TAB 7: AI Analyst
+# =============================================================================
+with tab7:
+    st.header("AI Analyst")
+    st.write("Ask questions about the data in natural language.")
+
+    user_q = st.text_input("Question", placeholder="How many municipalities have a population over 100,000?")
+
+    if st.button("Analyze"):
+        if user_q:
+            with st.spinner("AI Analyst is thinking..."):
+                with open("configs/ontology/core.yaml") as f:
+                    onto_spec = f.read()
+
+                try:
+                    script = generate_analysis_script(user_q, onto_spec)
+                    st.subheader("Generated Analysis Script")
+                    st.code(script, language='python')
+
+                    st.subheader("Analysis Results")
+                    context = {"onto": onto, "_world": _world, "pd": pd, "st": st}
+                    exec(script, context)
+                except Exception as e:
+                    st.error(f"Analysis failed: {e}")
+                    st.code(traceback.format_exc())
 
 st.markdown("---")
 st.caption("Rutgers Agentic Intelligence Labs — 2026")

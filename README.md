@@ -11,7 +11,7 @@ Inspired by Palantir Foundry's Ontology layer, built on [owlready2](https://owlr
 ### 1. Install dependencies
 
 ```bash
-pip install owlready2 pandas streamlit pyvis requests openpyxl rdflib pyyaml
+pip install owlready2 pandas streamlit pyvis requests openpyxl rdflib pyyaml google-generativeai
 ```
 
 ### 2. Set your API keys
