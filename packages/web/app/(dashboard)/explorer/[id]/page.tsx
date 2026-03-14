@@ -17,12 +17,12 @@ export default function EntityDetailPage() {
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [FG, setFG] = useState<React.ComponentType<unknown> | null>(null);
+  const [FG, setFG] = useState<React.ElementType<any> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     import("react-force-graph-2d").then((m) =>
-      setFG(() => (m as { default: React.ComponentType<unknown> }).default)
+      setFG(() => (m as any).default)
     );
   }, []);
 

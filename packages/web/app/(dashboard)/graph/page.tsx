@@ -46,9 +46,11 @@ export default function GraphPage() {
   useEffect(() => { loadGraph(); }, [loadGraph]);
 
   // Dynamic import of react-force-graph (client only)
-  const [FG, setFG] = useState<React.ComponentType<unknown> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [FG, setFG] = useState<React.ElementType<any> | null>(null);
   useEffect(() => {
-    import("react-force-graph-2d").then((m) => setFG(() => (m as { default: React.ComponentType<unknown> }).default));
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    import("react-force-graph-2d").then((m) => setFG(() => (m as any).default));
   }, []);
 
   const toggleType = (t: string) =>
