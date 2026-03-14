@@ -5,6 +5,7 @@
         convex-deploy convex-dev \
         seed \
         test \
+        deploy-web deploy-api \
         clean cache-clear \
         push
 
@@ -63,6 +64,10 @@ help:
 	@echo ""
 	@echo "  Testing"
 	@echo "    make test             Run all Python tests (API + engine)"
+	@echo ""
+	@echo "  Deploy"
+	@echo "    make deploy-web       Deploy Next.js to Vercel (production)"
+	@echo "    make deploy-api       Build and push Docker image to Railway"
 	@echo ""
 	@echo "  Git"
 	@echo "    make push             Push current branch to both origin and personal"
@@ -154,6 +159,19 @@ cache-clear:
 test:
 	@echo "→ Running Python tests (API + engine)…"
 	$(PYTHON) -m pytest -v
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deploy
+# ─────────────────────────────────────────────────────────────────────────────
+
+deploy-web:
+	@echo "→ Deploying Next.js to Vercel…"
+	cd $(WEB_DIR) && npx vercel --prod
+
+deploy-api:
+	@echo "→ Deploying API to Railway (push triggers auto-deploy)…"
+	@echo "  Ensure railway.json is committed and Railway is linked to this repo."
+	@echo "  Run: railway up   (or just push — Railway deploys on every push)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Convex

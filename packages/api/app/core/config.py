@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
 
     # Server
+    # In production set API_CORS_ORIGINS="https://your-app.vercel.app,https://custom-domain.com"
     api_cors_origins: list[str] = ["http://localhost:3000"]
 
 
