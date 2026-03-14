@@ -184,3 +184,7 @@ def run_pipeline(pipeline_path):
     onto.save(file=output_owl, format="rdfxml")
     world.save()
     print(f"\nDone. Saved to {output_owl} and quadstore {db_path}")
+
+    # Release the exclusive SQLite lock so the DB can be reopened by other processes/tests
+    if hasattr(world, "graph") and hasattr(world.graph, "db"):
+        world.graph.db.close()

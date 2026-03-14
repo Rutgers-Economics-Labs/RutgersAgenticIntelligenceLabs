@@ -1,0 +1,20 @@
+name: fred_us_cpi
+type: api
+# Federal Reserve Economic Data — US Consumer Price Index (All Urban Consumers)
+url: https://api.stlouisfed.org/fred/series/observations
+params:
+  series_id: CPIAUCSL
+  api_key: ${FRED_API_KEY}
+  file_type: json
+  observation_start: "2000-01-01"
+response_format: json
+response_path: observations
+cache: true
+drop_na: true
+
+fields:
+  - source: date
+    alias: date
+  - source: value
+    alias: cpi
+    cast: float

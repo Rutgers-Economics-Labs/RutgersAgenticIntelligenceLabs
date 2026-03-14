@@ -1,0 +1,41 @@
+ontology: configs/ontology/us_macroeconomic.yaml
+
+output_owl: ontology/us_national_indicators.owl
+db: ontology/us_national_indicators.db
+
+steps:
+  - name: load_us_nation
+    api: census_states
+    transform: "census_clean::add_state_abbreviations"
+    class: Nation
+    uri: "Nation_US"
+    properties:
+      hasName: "United States"
+
+  - name: load_us_gdp
+    api: fred_us_gdp
+    class: MacroIndicator
+    uri: "Indicator_GDPC1_{date}"
+    properties:
+      hasValue: "{gdp_billions}"
+      hasDate: "{date}"
+      hasSeries: "GDPC1"
+      hasUnit: "Billions of Chained 2017 USD"
+    relationships:
+      - property: measuredFor
+        target_class: Nation
+        target_uri: "Nation_US"
+
+  - name: load_us_cpi
+    api: fred_us_cpi
+    class: MacroIndicator
+    uri: "Indicator_CPIAUCSL_{date}"
+    properties:
+      hasValue: "{cpi}"
+      hasDate: "{date}"
+      hasSeries: "CPIAUCSL"
+      hasUnit: "Index 1982-84=100"
+    relationships:
+      - property: measuredFor
+        target_class: Nation
+        target_uri: "Nation_US"

@@ -4,6 +4,7 @@
         kill kill-api kill-web \
         convex-deploy convex-dev \
         seed \
+        test \
         clean cache-clear \
         push
 
@@ -59,6 +60,9 @@ help:
 	@echo "  Convex"
 	@echo "    make convex-deploy    Push schema + functions to production"
 	@echo "    make convex-dev       Run Convex dev watcher"
+	@echo ""
+	@echo "  Testing"
+	@echo "    make test             Run all Python tests (API + engine)"
 	@echo ""
 	@echo "  Git"
 	@echo "    make push             Push current branch to both origin and personal"
@@ -142,6 +146,14 @@ seed:
 cache-clear:
 	rm -f $(ENG_DIR)/cache/*.json
 	@echo "  Cache cleared."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tests
+# ─────────────────────────────────────────────────────────────────────────────
+
+test:
+	@echo "→ Running Python tests (API + engine)…"
+	$(PYTHON) -m pytest -v
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Convex

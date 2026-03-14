@@ -1,0 +1,53 @@
+uri: http://example.org/rail/world_economic.owl
+
+classes:
+  - name: Country
+  - name: Region
+  - name: EconomicIndicator
+
+object_properties:
+  - name: locatedIn
+    domain: [Country]
+    range: [Region]
+    inverse: contains
+  - name: measuredFor
+    domain: [EconomicIndicator]
+    range: [Country, Region]
+
+data_properties:
+  - name: hasName
+    domain: [Thing]
+    range: str
+    functional: true
+  - name: hasISO3
+    domain: [Country]
+    range: str
+    functional: true
+  - name: hasISO2
+    domain: [Country]
+    range: str
+    functional: true
+  - name: hasRegionCode
+    domain: [Region]
+    range: str
+    functional: true
+  - name: hasValue
+    domain: [EconomicIndicator]
+    range: float
+    functional: true
+  - name: hasDate
+    domain: [EconomicIndicator]
+    range: str
+    functional: true
+  - name: hasSeries
+    domain: [EconomicIndicator]
+    range: str
+    functional: true
+  - name: hasUnit
+    domain: [EconomicIndicator]
+    range: str
+    functional: true
+  - name: hasPopulation
+    domain: [Country, Region]
+    range: float
+    functional: true

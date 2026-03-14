@@ -1,0 +1,32 @@
+ontology: configs/ontology/world_economic.yaml
+
+output_owl: ontology/world_gdp.owl
+db: ontology/world_gdp.db
+
+steps:
+  - name: load_countries_by_population
+    api: world_bank_population
+    class: Country
+    uri: "Country_{iso3}"
+    properties:
+      hasName: "{country_name}"
+      hasISO3: "{iso3}"
+      hasPopulation: "{population}"
+
+  - name: load_gdp_per_capita
+    api: world_bank_gdp
+    class: EconomicIndicator
+    uri: "Indicator_{iso3}_GDPPC_{year}"
+    properties:
+      hasValue: "{gdp_per_capita}"
+      hasDate: "{year}"
+      hasSeries: "NY.GDP.PCAP.CD"
+      hasUnit: "Current USD"
+    relationships:
+      - property: measuredFor
+        target_class: Country
+        target_uri: "Country_{iso3}"
+        create_if_missing: true
+        create_with_properties:
+          hasName: "{country_name}"
+          hasISO3: "{iso3}"

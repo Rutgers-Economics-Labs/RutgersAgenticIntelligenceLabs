@@ -1,0 +1,24 @@
+name: world_bank_gdp
+type: api
+# World Bank Indicators API — GDP per capita (current USD), all countries
+url: https://api.worldbank.org/v2/country/all/indicator/NY.GDP.PCAP.CD
+params:
+  format: json
+  per_page: 5000
+  mrv: 10          # most recent 10 values per country
+response_format: json
+# World Bank wraps data in [metadata, [records]] — use response_path to get records
+response_path: "1"
+cache: true
+drop_na: true
+
+fields:
+  - source: countryiso3code
+    alias: iso3
+  - source: country.value
+    alias: country_name
+  - source: date
+    alias: year
+  - source: value
+    alias: gdp_per_capita
+    cast: float

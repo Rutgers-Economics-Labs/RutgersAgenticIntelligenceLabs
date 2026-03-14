@@ -1,0 +1,20 @@
+name: fred_us_gdp
+type: api
+# Federal Reserve Economic Data — US Real GDP (Billions of Chained 2017 Dollars, Quarterly)
+url: https://api.stlouisfed.org/fred/series/observations
+params:
+  series_id: GDPC1
+  api_key: ${FRED_API_KEY}
+  file_type: json
+  observation_start: "1990-01-01"
+response_format: json
+response_path: observations
+cache: true
+drop_na: true
+
+fields:
+  - source: date
+    alias: date
+  - source: value
+    alias: gdp_billions
+    cast: float

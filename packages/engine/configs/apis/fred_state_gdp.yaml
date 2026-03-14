@@ -1,0 +1,32 @@
+name: fred_state_gdp
+type: api
+# Federal Reserve Economic Data — Real GDP by state (Annual, Millions of Chained 2017 Dollars)
+# Series pattern: {abbr}RGSP (e.g., NJRGSP, NYRGSP)
+url: https://api.stlouisfed.org/fred/series/observations
+
+foreach:
+  source: census_states
+  field: abbr
+  inject_param: series_id
+  inject_template: "{abbr}RGSP"
+  inject_fields: [abbr, fips]
+
+params:
+  api_key: ${FRED_API_KEY}
+  file_type: json
+  observation_start: "2000-01-01"
+response_format: json
+response_path: observations
+cache: true
+drop_na: true
+
+fields:
+  - source: date
+    alias: date
+  - source: value
+    alias: gdp_millions
+    cast: float
+  - source: abbr
+    alias: abbr
+  - source: fips
+    alias: fips

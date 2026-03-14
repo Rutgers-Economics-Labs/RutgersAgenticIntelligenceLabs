@@ -1,0 +1,71 @@
+ontology: configs/ontology/us_macroeconomic.yaml
+
+output_owl: ontology/us_state_economics.owl
+db: ontology/us_state_economics.db
+
+steps:
+  - name: load_states
+    api: census_states
+    transform: "census_clean::add_state_abbreviations"
+    class: State
+    uri: "State_{fips}"
+    properties:
+      hasName: "{name}"
+      hasFIPS: "{fips}"
+      hasPopulation: "{population}"
+
+  - name: load_unemployment
+    api: fred_unemployment
+    class: MacroIndicator
+    uri: "Indicator_{abbr}URN_{date}"
+    properties:
+      hasValue: "{value}"
+      hasDate: "{date}"
+      hasSeries: "{abbr}URN"
+      hasUnit: "Percent"
+    relationships:
+      - property: measuredFor
+        target_class: State
+        target_uri: "State_{fips}"
+
+  - name: load_housing
+    api: fred_housing
+    class: MacroIndicator
+    uri: "Indicator_{abbr}STHPI_{date}"
+    properties:
+      hasValue: "{value}"
+      hasDate: "{date}"
+      hasSeries: "{abbr}STHPI"
+      hasUnit: "Index 1980Q1=100"
+    relationships:
+      - property: measuredFor
+        target_class: State
+        target_uri: "State_{fips}"
+
+  - name: load_income
+    api: fred_income
+    class: MacroIndicator
+    uri: "Indicator_MEHOINUS{abbr}A646N_{date}"
+    properties:
+      hasValue: "{value}"
+      hasDate: "{date}"
+      hasSeries: "MEHOINUS{abbr}A646N"
+      hasUnit: "Dollars"
+    relationships:
+      - property: measuredFor
+        target_class: State
+        target_uri: "State_{fips}"
+
+  - name: load_state_gdp
+    api: fred_state_gdp
+    class: MacroIndicator
+    uri: "Indicator_{abbr}RGSP_{date}"
+    properties:
+      hasValue: "{value}"
+      hasDate: "{date}"
+      hasSeries: "{abbr}RGSP"
+      hasUnit: "Millions of Chained 2017 USD"
+    relationships:
+      - property: measuredFor
+        target_class: State
+        target_uri: "State_{fips}"

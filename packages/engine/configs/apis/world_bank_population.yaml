@@ -1,0 +1,23 @@
+name: world_bank_population
+type: api
+# World Bank Indicators API — total population, all countries
+url: https://api.worldbank.org/v2/country/all/indicator/SP.POP.TOTL
+params:
+  format: json
+  per_page: 5000
+  mrv: 1           # most recent value per country
+response_format: json
+response_path: "1"
+cache: true
+drop_na: true
+
+fields:
+  - source: countryiso3code
+    alias: iso3
+  - source: country.value
+    alias: country_name
+  - source: date
+    alias: year
+  - source: value
+    alias: population
+    cast: float

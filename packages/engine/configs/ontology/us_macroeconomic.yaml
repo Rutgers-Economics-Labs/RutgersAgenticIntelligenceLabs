@@ -1,0 +1,49 @@
+uri: http://example.org/rail/us_macroeconomic.owl
+
+classes:
+  - name: State
+  - name: Nation
+  - name: MacroIndicator
+
+object_properties:
+  - name: isPartOf
+    domain: [State]
+    range: [Nation]
+    inverse: hasPart
+  - name: measuredFor
+    domain: [MacroIndicator]
+    range: [State, Nation]
+
+data_properties:
+  - name: hasName
+    domain: [Thing]
+    range: str
+    functional: true
+  - name: hasFIPS
+    domain: [State]
+    range: str
+    functional: true
+  - name: hasAbbreviation
+    domain: [State]
+    range: str
+    functional: true
+  - name: hasPopulation
+    domain: [State, Nation]
+    range: int
+    functional: true
+  - name: hasValue
+    domain: [MacroIndicator]
+    range: float
+    functional: true
+  - name: hasDate
+    domain: [MacroIndicator]
+    range: str
+    functional: true
+  - name: hasSeries
+    domain: [MacroIndicator]
+    range: str
+    functional: true
+  - name: hasUnit
+    domain: [MacroIndicator]
+    range: str
+    functional: true
