@@ -17,10 +17,19 @@ API_PORT := 8000
 WEB_PORT := 3000
 PIPELINE := configs/pipelines/nj_hydration.yaml
 
-# ── Env vars forwarded to the API server ─────────────────────────────────────
-# Copy .env.example → .env and fill in values, or export them before running.
+# ── Env vars — copy .env.example → .env and fill in values ───────────────────
 -include .env
 export
+
+# Env block forwarded to the API server (picks up .env values above)
+define api_env
+	CONVEX_URL=$(CONVEX_URL) \
+	CONVEX_DEPLOY_KEY=$(CONVEX_DEPLOY_KEY) \
+	ENGINE_ROOT=$(ENG_DIR) \
+	RAIL_ANALYSIS_DIR=$(ENG_DIR)/analysis \
+	RAIL_TRANSFORM_DIR=$(ENG_DIR)/transforms \
+	FRED_API_KEY=$(FRED_API_KEY)
+endef
 
 # ─────────────────────────────────────────────────────────────────────────────
 help:
@@ -34,9 +43,9 @@ help:
 	@echo "    make install-engine   Install Streamlit/engine deps"
 	@echo ""
 	@echo "  Development"
-	@echo "    make dev              Start API (port $(API_PORT)) + Web (port $(WEB_PORT)) in background"
-	@echo "    make api              Start FastAPI server only (foreground)"
-	@echo "    make web              Start Next.js dev server only (foreground)"
+	@echo "    make dev              Start API (:$(API_PORT)) + Web (:$(WEB_PORT)) in background"
+	@echo "    make api              Start FastAPI only (foreground)"
+	@echo "    make web              Start Next.js only (foreground)"
 	@echo "    make kill             Kill both servers"
 	@echo "    make kill-api         Kill FastAPI on port $(API_PORT)"
 	@echo "    make kill-web         Kill Next.js on port $(WEB_PORT)"
@@ -83,22 +92,22 @@ install-engine:
 
 dev: kill
 	@echo "→ Starting API on :$(API_PORT) and Web on :$(WEB_PORT)…"
-	@cd $(API_DIR) && CONVEX_URL=$(CONVEX_URL) ENGINE_ROOT=../engine \
+	@cd $(API_DIR) && $(api_env) \
 	  $(PYTHON) -m uvicorn app.main:app --port $(API_PORT) --reload \
 	  > /tmp/rail-api.log 2>&1 & echo "  API pid $$!"
 	@cd $(WEB_DIR) && npm run dev -- --port $(WEB_PORT) \
 	  > /tmp/rail-web.log 2>&1 & echo "  Web pid $$!"
 	@sleep 3
 	@echo ""
-	@echo "  API   → http://localhost:$(API_PORT)"
+	@echo "  API     → http://localhost:$(API_PORT)"
 	@echo "  API docs → http://localhost:$(API_PORT)/docs"
-	@echo "  Web   → http://localhost:$(WEB_PORT)"
+	@echo "  Web     → http://localhost:$(WEB_PORT)"
 	@echo ""
 	@echo "  Logs: tail -f /tmp/rail-api.log  |  tail -f /tmp/rail-web.log"
 
 api:
 	@echo "→ Starting FastAPI on :$(API_PORT)…"
-	cd $(API_DIR) && CONVEX_URL=$(CONVEX_URL) ENGINE_ROOT=../engine \
+	cd $(API_DIR) && $(api_env) \
 	  $(PYTHON) -m uvicorn app.main:app --port $(API_PORT) --reload
 
 web:
@@ -120,15 +129,15 @@ kill-web:
 # ─────────────────────────────────────────────────────────────────────────────
 
 hydrate:
-	@echo "→ Running pipeline: $(ENG_DIR)/$(PIPELINE)"
-	cd $(ENG_DIR) && $(PYTHON) hydrate.py --pipeline $(PIPELINE)
+	@echo "→ Running pipeline: $(PIPELINE)"
+	cd $(ENG_DIR) && FRED_API_KEY=$(FRED_API_KEY) $(PYTHON) hydrate.py --pipeline $(PIPELINE)
 
 hydrate-pipeline:
-	cd $(ENG_DIR) && $(PYTHON) hydrate.py --pipeline $(PIPELINE)
+	cd $(ENG_DIR) && FRED_API_KEY=$(FRED_API_KEY) $(PYTHON) hydrate.py --pipeline $(PIPELINE)
 
 seed:
 	@echo "→ Seeding Convex with default YAML configs…"
-	$(PYTHON) scripts/seed_convex.py
+	$(PYTHON) $(ROOT_DIR)scripts/seed_convex.py
 
 cache-clear:
 	rm -f $(ENG_DIR)/cache/*.json
@@ -140,7 +149,7 @@ cache-clear:
 
 convex-deploy:
 	@echo "→ Deploying Convex schema + functions…"
-	cd $(WEB_DIR) && npx convex deploy --yes
+	cd $(WEB_DIR) && CONVEX_DEPLOY_KEY=$(CONVEX_DEPLOY_KEY) npx convex deploy --yes
 
 convex-dev:
 	cd $(WEB_DIR) && npx convex dev
@@ -150,8 +159,8 @@ convex-dev:
 # ─────────────────────────────────────────────────────────────────────────────
 
 push:
-	git push origin HEAD
-	git push personal HEAD
+	git -C $(ROOT_DIR) push origin HEAD
+	git -C $(ROOT_DIR) push personal HEAD
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cleanup

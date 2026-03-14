@@ -15,7 +15,7 @@ class ConvexClient:
     def _headers(self):
         return {"Authorization": f"Convex {self.deploy_key}"}
 
-    async def mutation(self, fn_path: str, args: dict) -> dict:
+    async def mutation(self, fn_path: str, args: dict):
         """Call a Convex mutation, e.g. mutation('jobs:create', {...})"""
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -25,9 +25,9 @@ class ConvexClient:
                 timeout=30,
             )
             resp.raise_for_status()
-            return resp.json()
+            return resp.json().get("value", resp.json())
 
-    async def query(self, fn_path: str, args: dict) -> dict:
+    async def query(self, fn_path: str, args: dict):
         """Call a Convex query, e.g. query('jobs:get', {'jobId': '...'})"""
         async with httpx.AsyncClient() as client:
             resp = await client.post(
@@ -37,7 +37,7 @@ class ConvexClient:
                 timeout=30,
             )
             resp.raise_for_status()
-            return resp.json()
+            return resp.json().get("value", resp.json())
 
 
 # Module-level singleton — created once at import time
