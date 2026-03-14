@@ -1,0 +1,35 @@
+@import "tailwindcss";
+
+:root {
+  --background: #0d1117;
+  --foreground: #e6edf3;
+  --card: #161b22;
+  --card-foreground: #e6edf3;
+  --border: #30363d;
+  --muted: #21262d;
+  --muted-foreground: #8b949e;
+  --primary: #58a6ff;
+  --primary-foreground: #0d1117;
+  --accent: #1f6feb;
+  --ring: #58a6ff;
+
+  /* node colors — keep in sync with engine/app.py */
+  --color-state: #F5A623;
+  --color-county: #4A9EDD;
+  --color-municipality: #50C878;
+  --color-individual: #B07FD4;
+  --color-measure: #E05C5C;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }

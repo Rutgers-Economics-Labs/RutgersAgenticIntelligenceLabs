@@ -11,8 +11,8 @@ import pandas as pd
 import requests
 import yaml
 
-CACHE_DIR = Path("cache")
-API_CONFIG_DIR = Path("configs/apis")
+CACHE_DIR = Path(os.environ.get("RAIL_CACHE_DIR", "cache"))
+API_CONFIG_DIR = Path(os.environ.get("RAIL_API_CONFIG_DIR", "configs/apis"))
 
 
 def _load_spec(api_name):

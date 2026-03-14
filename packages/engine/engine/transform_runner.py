@@ -9,9 +9,10 @@ Two types:
   Ontology transform   — receives the onto object, modifies in-place, returns None
 """
 import importlib.util
+import os
 from pathlib import Path
 
-TRANSFORM_DIR = Path("transforms")
+TRANSFORM_DIR = Path(os.environ.get("RAIL_TRANSFORM_DIR", "transforms"))
 
 
 def _load_fn(spec_str):

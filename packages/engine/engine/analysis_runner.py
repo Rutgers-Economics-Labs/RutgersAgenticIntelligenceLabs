@@ -17,9 +17,10 @@ Result dict schema:
     }
 """
 import importlib.util
+import os
 from pathlib import Path
 
-ANALYSIS_DIR = Path("analysis")
+ANALYSIS_DIR = Path(os.environ.get("RAIL_ANALYSIS_DIR", "analysis"))
 
 
 def discover():
