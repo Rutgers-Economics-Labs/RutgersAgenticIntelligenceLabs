@@ -48,7 +48,7 @@ export default function GraphPage() {
   // Dynamic import of react-force-graph (client only)
   const [FG, setFG] = useState<React.ComponentType<unknown> | null>(null);
   useEffect(() => {
-    import("react-force-graph").then((m) => setFG(() => (m as { ForceGraph2D: React.ComponentType<unknown> }).ForceGraph2D));
+    import("react-force-graph-2d").then((m) => setFG(() => (m as { default: React.ComponentType<unknown> }).default));
   }, []);
 
   const toggleType = (t: string) =>
