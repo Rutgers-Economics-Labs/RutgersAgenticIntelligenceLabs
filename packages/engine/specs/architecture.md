@@ -2,15 +2,19 @@
 
 RAIL is a YAML-driven ontology hydration engine. No domain knowledge exists in the Python engine — all field names, API endpoints, class mappings, and relationship wiring come from YAML configuration files.
 
+> **Monorepo context.** This engine lives at `packages/engine/` in a larger monorepo. It is wrapped by a FastAPI service (`packages/api/`) and a Next.js frontend (`packages/web/`). See `specs/architecture.md` at the repo root for the full platform data flow.
+
 ## Directory Layout
 
 ```
-hydrate.py                        CLI entry point
-app.py                            Streamlit explorer
+packages/engine/
+hydrate.py                        CLI entry point (standalone, bypasses FastAPI)
+app.py                            Streamlit explorer (standalone, for local use)
 engine/
   api_runner.py                   Fetch and normalize data from any source
   ontology_builder.py             Build or load OWL ontologies
   pipeline_runner.py              Orchestrate hydration steps
+  pipeline_runner_cli.py          Thin CLI wrapper called by the FastAPI worker
   transform_runner.py             Load and run transform plugins
   analysis_runner.py              Discover and run analysis plugins
 configs/
@@ -69,8 +73,8 @@ pipeline_runner.run_pipeline(pipeline_path)
 | `ontology/onto.db` | SQLite quadstore; owlready2 backend; deleted and rebuilt on every `hydrate.py` run |
 | `ontology/populated_ontology.owl` | RDF/XML export of the populated ontology |
 | `cache/*.json` | Per-request HTTP response cache; keyed by API name + injected params |
-| `graph.html` | 1-hop relationship graph for the selected entity (Ontology Explorer tab) |
-| `graph_full.html` | Full filtered graph (Graph Explorer tab) |
+| `graph.html` | 1-hop relationship graph for the selected entity (Streamlit Explorer tab only) |
+| `graph_full.html` | Full filtered graph (Streamlit Graph Explorer tab only) |
 
 ## Key Design Decisions
 
