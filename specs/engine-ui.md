@@ -4,6 +4,8 @@ Served with `streamlit run app.py`. Page title: "RAIL Explorer". App heading: "R
 
 ## Startup
 
+> **Note:** All paths in this document are relative to the `packages/engine/` directory.
+
 On startup, if `ontology/onto.db` does not exist, the app shows `st.error("Ontology database not found. Run: python hydrate.py")` and calls `st.stop()`.
 
 The ontology is loaded once per server session via `@st.cache_resource`:

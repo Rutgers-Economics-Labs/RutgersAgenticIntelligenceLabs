@@ -2,6 +2,8 @@
 
 There are three kinds of YAML configuration files: API source configs, the ontology schema, and pipeline configs.
 
+> **Note:** All paths in this document are relative to the `packages/engine/` directory.
+
 ---
 
 ## API Source Config (`configs/apis/*.yaml`)

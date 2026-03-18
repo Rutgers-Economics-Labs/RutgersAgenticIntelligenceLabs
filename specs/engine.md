@@ -1,6 +1,8 @@
 # Engine
 
-The engine is five Python modules in `engine/`. None contain domain knowledge — all mappings come from YAML.
+The engine is five Python modules in `packages/engine/engine/`. None contain domain knowledge — all mappings come from YAML.
+
+> **Note:** All paths in this document are relative to the `packages/engine/` directory.
 
 ---
 

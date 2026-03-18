@@ -23,6 +23,15 @@ Makefile                Root orchestration (install, dev, hydrate, seed, …)
 | `packages/api/` | Python + uvicorn | HTTP bridge: wraps engine modules, owns Convex mutations for jobs, exposes REST to the web |
 | `packages/web/` | Node.js + Next.js 15 | React frontend; Convex for real-time config/job state; calls FastAPI for ontology data |
 
+## Detailed Specifications
+
+- [API Service](api.md) — FastAPI endpoints and Convex client.
+- [Frontend](frontend.md) — Next.js App Router and local state.
+- [Hydration Engine](engine.md) — Python pipeline orchestrator and owlready2 interactions.
+- [Engine Plugins](plugins.md) — Transform and analysis plugin architecture.
+- [YAML Config Schemas](yaml-config.md) — Definitions for API sources, Ontology, and Pipelines.
+- [Engine Standalone UI](engine-ui.md) — Streamlit explorer app (`app.py`).
+
 ## Data Flow — Config-driven Hydration
 
 ```

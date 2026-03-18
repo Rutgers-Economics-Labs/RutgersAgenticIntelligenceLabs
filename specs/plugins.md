@@ -2,6 +2,8 @@
 
 RAIL has two plugin types: **transform plugins** (operate on DataFrames or the ontology during hydration) and **analysis plugins** (query the populated ontology and return renderable results).
 
+> **Note:** All paths in this document are relative to the `packages/engine/` directory.
+
 ---
 
 ## Transform Plugins
