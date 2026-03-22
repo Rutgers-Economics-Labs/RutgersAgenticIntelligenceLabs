@@ -64,6 +64,16 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                     
                     # Update the spec to point to the local file for the engine
                     api_spec["path"] = str(local_data_path)
+
+                if api_spec.get("type") in {"pdf", "docx"} and "storage_key" in api_spec and "path" not in api_spec:
+                    storage_key = api_spec["storage_key"]
+                    filename = Path(storage_key).name
+                    local_doc_path = tmpdir / "sources" / filename
+                    local_doc_path.parent.mkdir(parents=True, exist_ok=True)
+
+                    await _log(job_id, "info", f"  [setup] Downloading document: {filename}", seq=0)
+                    await storage.download(storage_key, local_doc_path)
+                    api_spec["path"] = str(local_doc_path)
                 
                 (api_dir / f"{slug}.yaml").write_text(yaml.dump(api_spec))
 

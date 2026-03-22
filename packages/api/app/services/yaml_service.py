@@ -44,8 +44,8 @@ def _validate_api(spec: dict) -> list[str]:
         errors.append("Missing required field: name")
     if "type" not in spec:
         errors.append("Missing required field: type")
-    elif spec["type"] not in ("api", "csv", "excel", "uploaded", "scrape"):
-        errors.append(f"Invalid type '{spec['type']}': must be api, csv, excel, uploaded, or scrape")
+    elif spec["type"] not in ("api", "csv", "excel", "uploaded", "scrape", "pdf", "docx"):
+        errors.append(f"Invalid type '{spec['type']}': must be api, csv, excel, uploaded, scrape, pdf, or docx")
 
     if spec.get("type") == "api":
         if "url" not in spec:
@@ -70,6 +70,23 @@ def _validate_api(spec: dict) -> list[str]:
             errors.append("Missing required field: url (required for type: scrape)")
         if "javascript" in spec and not isinstance(spec["javascript"], bool):
             errors.append("javascript must be a boolean for type: scrape")
+
+    if spec.get("type") in ("pdf", "docx"):
+        has_path = "path" in spec
+        has_url = "url" in spec
+        has_storage_key = "storage_key" in spec
+        if sum(bool(option) for option in (has_path, has_url, has_storage_key)) != 1:
+            errors.append(f"type: {spec['type']} requires exactly one of path, url, or storage_key")
+        mode = spec.get("extraction_mode")
+        if mode not in ("tables", "prose", "both"):
+            errors.append("extraction_mode must be one of tables, prose, or both")
+        page_spec = spec.get("pages")
+        if page_spec is not None and not isinstance(page_spec, str):
+            errors.append("pages must be a string like '1' or '1-3'")
+        elif isinstance(page_spec, str):
+            import re
+            if not re.fullmatch(r"\d+(-\d+)?", page_spec):
+                errors.append("pages must match pattern \\d+(-\\d+)?")
 
     for i, field in enumerate(spec.get("fields", [])):
         if "computed" not in field and "source" not in field:

@@ -5,6 +5,7 @@ No domain knowledge — all field names, endpoints, and transforms come from YAM
 import json
 import os
 import re
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -174,6 +175,23 @@ def _handle_scrape(api_name, spec, resolved_data):
     return df
 
 
+def _handle_document(api_name, spec, resolved_data):
+    src_path = spec.get("path")
+    if not src_path and spec.get("url"):
+        src_path = _download_document(spec["url"])
+    if not src_path:
+        raise ValueError(f"Document source '{api_name}' requires path or url")
+
+    mode = spec.get("extraction_mode", "tables")
+    if mode != "tables":
+        raise ValueError(f"Document extraction_mode '{mode}' is not supported yet")
+
+    df = _extract_document_tables(Path(src_path), pages=spec.get("pages"))
+    if "fields" in spec:
+        df = _apply_fields(df, spec["fields"])
+    return df
+
+
 def _handle_api(api_name, spec, resolved_data):
     foreach = spec.get("foreach")
     response_format = spec.get("response_format", "json")
@@ -233,6 +251,8 @@ SOURCE_HANDLERS = {
     "excel": _handle_excel,
     "uploaded": _handle_uploaded,
     "scrape": _handle_scrape,
+    "pdf": _handle_document,
+    "docx": _handle_document,
 }
 
 
@@ -312,3 +332,72 @@ def _table_to_dataframe(table):
 
 def _cell_text(cell):
     return " ".join(cell.get_text(" ", strip=True).split())
+
+
+def _download_document(url):
+    suffix = Path(url).suffix or ".bin"
+    key = hashlib.sha1(url.encode()).hexdigest()
+    dest = CACHE_DIR / f"{key}{suffix}"
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    if dest.exists():
+        return str(dest)
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    with open(dest, "wb") as f:
+        f.write(response.content)
+    return str(dest)
+
+
+def _extract_document_tables(path, pages=None):
+    suffix = Path(path).suffix.lower()
+    if suffix == ".pdf":
+        return _extract_pdf_tables(path, pages=pages)
+    if suffix == ".docx":
+        return _extract_docx_tables(path)
+    raise ValueError(f"Unsupported document format: {suffix}")
+
+
+def _extract_pdf_tables(path, pages=None):
+    import pdfplumber
+
+    selected_pages = _parse_pages(pages)
+    frames = []
+    with pdfplumber.open(path) as pdf:
+        indices = selected_pages or list(range(len(pdf.pages)))
+        for index in indices:
+            if index < 0 or index >= len(pdf.pages):
+                continue
+            page = pdf.pages[index]
+            for table in page.extract_tables() or []:
+                if not table or len(table) < 2:
+                    continue
+                frames.append(pd.DataFrame(table[1:], columns=table[0]))
+    if not frames:
+        raise ValueError("No tables found in document")
+    return pd.concat(frames, ignore_index=True)
+
+
+def _extract_docx_tables(path):
+    from docx import Document
+
+    document = Document(path)
+    frames = []
+    for table in document.tables:
+        rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+        if len(rows) < 2:
+            continue
+        frames.append(pd.DataFrame(rows[1:], columns=rows[0]))
+    if not frames:
+        raise ValueError("No tables found in document")
+    return pd.concat(frames, ignore_index=True)
+
+
+def _parse_pages(pages):
+    if not pages:
+        return []
+    if "-" in pages:
+        start_str, end_str = pages.split("-", 1)
+        start = int(start_str)
+        end = int(end_str)
+        return list(range(start - 1, end))
+    return [int(pages) - 1]

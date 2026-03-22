@@ -1,0 +1,232 @@
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...init?.headers },
+    ...init,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => res.statusText);
+    throw new Error(`API ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+// ── Ontology ──────────────────────────────────────────────────────────────────
+
+export type OntologyClass = { name: string; instanceCount: number };
+export type EntitySummary = {
+  id: string; iri: string; class: string;
+  properties: Record<string, unknown>;
+};
+export type EntityDetail = EntitySummary & {
+  relationships: { property: string; targetId: string; targetName: string }[];
+};
+export type GraphData = {
+  nodes: { id: string; label: string; group: string; properties: Record<string, unknown> }[];
+  links: { source: string; target: string; label: string }[];
+};
+export type SeriesPoint = { date: string; value: number };
+
+export const ontology = {
+  classes: () => req<OntologyClass[]>("/ontology/classes"),
+  instances: (cls: string, page = 1, limit = 50, search = "") =>
+    req<{ total: number; page: number; limit: number; items: EntitySummary[] }>(
+      `/ontology/classes/${cls}/instances?page=${page}&limit=${limit}&search=${encodeURIComponent(search)}`
+    ),
+  entity: (uri: string) => req<EntityDetail>(`/ontology/entities/${encodeURIComponent(uri)}`),
+  entityGraph: (uri: string) => req<GraphData>(`/ontology/entities/${encodeURIComponent(uri)}/graph`),
+  graph: (types: string[], stateFips?: string, limit = 500) => {
+    const params = new URLSearchParams({ types: types.join(","), limit: String(limit) });
+    if (stateFips) params.set("state_fips", stateFips);
+    return req<GraphData>(`/ontology/graph?${params}`);
+  },
+  search: (q: string, types?: string[]) => {
+    const params = new URLSearchParams({ q });
+    if (types) params.set("types", types.join(","));
+    return req<EntitySummary[]>(`/ontology/search?${params}`);
+  },
+  semanticSearch: (q: string, types?: string[], limit = 20) => {
+    const params = new URLSearchParams({ q, limit: String(limit) });
+    if (types) params.set("types", types.join(","));
+    return req<EntitySummary[]>(`/ontology/semantic-search?${params}`);
+  },
+  series: () => req<string[]>("/ontology/series"),
+  seriesData: (id: string) => req<SeriesPoint[]>(`/ontology/series/${encodeURIComponent(id)}/data`),
+};
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+
+export type AnalysisPlugin = { slug: string; name: string; description: string };
+export type AnalysisResult = { title: string; sections: AnalysisSection[] };
+export type AnalysisSection =
+  | { type: "metrics"; title?: string; items: { label: string; value: unknown }[] }
+  | { type: "table"; title?: string; columns: string[]; data: Record<string, unknown>[] }
+  | { type: "chart"; title?: string; data: Record<string, unknown>[]; x: string; y: string }
+  | { type: "text"; title?: string; content: string }
+  | { type: "divider" }
+  | { type: "group"; title?: string; items: AnalysisSection[] };
+
+export const analysis = {
+  plugins: () => req<AnalysisPlugin[]>("/analysis/plugins"),
+  run: (slug: string, config = {}) =>
+    req<AnalysisResult>(`/analysis/plugins/${slug}/run`, {
+      method: "POST",
+      body: JSON.stringify({ config }),
+    }),
+};
+
+// ── Configs ───────────────────────────────────────────────────────────────────
+
+type ConfigType = "apis" | "ontologies" | "pipelines";
+
+export type ConfigDoc = {
+  _id: string; name: string; slug: string; content: string;
+  isPublic: boolean; tags?: string[]; updatedAt: number;
+};
+
+export type ScrapePreview = {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+};
+
+export type DocumentPreview = {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+  source_text?: string;
+};
+
+export const configs = {
+  validate: (config_type: string, content: string) =>
+    req<{ valid: boolean; errors: string[] }>("/configs/validate", {
+      method: "POST",
+      body: JSON.stringify({ config_type, content }),
+    }),
+  create: (type: ConfigType, body: { name: string; slug: string; content: string; isPublic: boolean; tags: string[] }) =>
+    req(`/configs/${type}`, { method: "POST", body: JSON.stringify(body) }),
+  update: (type: ConfigType, slug: string, body: { name: string; slug: string; content: string; isPublic: boolean; tags: string[] }) =>
+    req(`/configs/${type}/${slug}`, { method: "PUT", body: JSON.stringify(body) }),
+  delete: (type: ConfigType, slug: string) =>
+    req(`/configs/${type}/${slug}`, { method: "DELETE" }),
+  scrapePreview: (body: { url: string; table_selector?: string }) =>
+    req<ScrapePreview>("/configs/scrape-preview", { method: "POST", body: JSON.stringify(body) }),
+  docPreview: (body: { storage_key: string; extraction_mode: "tables" | "prose" | "both"; pages?: string }) =>
+    req<DocumentPreview>("/configs/doc-preview", { method: "POST", body: JSON.stringify(body) }),
+};
+
+// ── Jobs ──────────────────────────────────────────────────────────────────────
+
+export const jobs = {
+  trigger: (pipeline_slug: string) =>
+    req<{ jobId: string; status: string }>("/jobs", {
+      method: "POST",
+      body: JSON.stringify({ pipeline_slug }),
+    }),
+};
+
+// ── SQL ───────────────────────────────────────────────────────────────────────
+
+export type SqlResult = {
+  columns: string[];
+  rows: Record<string, unknown>[];
+  rowCount: number;
+  sql?: string;
+  explanation?: string;
+};
+
+export const sql = {
+  query: (query: string) =>
+    req<SqlResult>("/sql", { method: "POST", body: JSON.stringify({ query }) }),
+  translate: (question: string, model?: string) =>
+    req<SqlResult>("/sql/translate", { method: "POST", body: JSON.stringify({ question, model }) }),
+  schema: () => req<Record<string, { name: string; type: string }[]>>("/sql/schema"),
+  tables: () => req<string[]>("/sql/tables"),
+};
+
+// ── Execute ───────────────────────────────────────────────────────────────────
+
+export type ExecuteResult = {
+  stdout: string;
+  stderr: string;
+  dataframes: Record<string, { columns: string[]; rows: Record<string, unknown>[]; rowCount: number }>;
+  figures: string[];   // base64 PNG strings
+  error: string | null;
+};
+
+export const execute = {
+  run: (code: string, timeout = 60) =>
+    req<ExecuteResult>("/execute", { method: "POST", body: JSON.stringify({ code, timeout }) }),
+};
+
+export const storage = {
+  upload: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${API_BASE}/storage/upload`, {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`API ${res.status}: ${text}`);
+    }
+    return res.json() as Promise<{ filename: string; storageKey: string; size: number }>;
+  },
+};
+
+// ── Agent ─────────────────────────────────────────────────────────────────────
+
+export type AgentEvent =
+  | { type: "text_delta";   content: string }
+  | { type: "tool_call";    id: string; name: string; args: Record<string, unknown> }
+  | { type: "tool_result";  id: string; name: string; result: unknown }
+  | { type: "done";         new_messages: { role: string; content: string }[] }
+  | { type: "error";        message: string };
+
+export type ModelInfo = { id: string; label: string };
+
+export const agent = {
+  models: () => req<{ models: ModelInfo[]; default: string }>("/agent/models"),
+
+  /** Returns an async generator that yields AgentEvent objects. */
+  chat: async function* (
+    message: string,
+    history: { role: string; content: string }[] = [],
+    model?: string,
+  ): AsyncGenerator<AgentEvent> {
+    const response = await fetch(`${API_BASE}/agent/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, history, model }),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`Agent API ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        const line = part.trim();
+        if (line.startsWith("data: ")) {
+          try {
+            yield JSON.parse(line.slice(6)) as AgentEvent;
+          } catch { /* skip malformed */ }
+        }
+      }
+    }
+  },
+
+  inferSchema: (sample?: string, description?: string, model?: string) =>
+    req<{ api_yaml: string; ontology_yaml: string; explanation: string; raw: string }>(
+      "/agent/infer-schema",
+      { method: "POST", body: JSON.stringify({ sample, description, model }) }
+    ),
+};

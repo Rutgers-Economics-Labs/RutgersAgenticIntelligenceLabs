@@ -2,7 +2,7 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useState, useEffect, useRef } from "react";
-import { agent, configs, type ConfigDoc, type ModelInfo, type ScrapePreview } from "@/lib/api";
+import { agent, configs, storage, type ConfigDoc, type DocumentPreview, type ModelInfo, type ScrapePreview } from "@/lib/api";
 
 type Tab = "apis" | "ontologies" | "pipelines";
 
@@ -572,6 +572,35 @@ function buildScrapeApiYaml(url: string, selector: string, fields: string[]) {
   return lines.join("\n");
 }
 
+function previewDocumentRowsToSample(preview: DocumentPreview) {
+  return previewRowsToSample(preview);
+}
+
+function buildDocumentApiYaml(
+  type: "pdf" | "docx",
+  storageKey: string,
+  fields: string[],
+  pages: string,
+) {
+  const lines = [
+    "name: uploaded_document",
+    `type: ${type}`,
+    `storage_key: ${storageKey}`,
+    "extraction_mode: tables",
+  ];
+  if (pages.trim()) {
+    lines.push(`pages: ${pages.trim()}`);
+  }
+  if (fields.length > 0) {
+    lines.push("fields:");
+    for (const field of fields) {
+      lines.push(`  - source: ${field}`);
+      lines.push(`    alias: ${field}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function ScrapeModal({
   onClose,
   onSaved,
@@ -869,6 +898,264 @@ function ScrapeModal({
   );
 }
 
+function UploadDocumentModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [pages, setPages] = useState("");
+  const [preview, setPreview] = useState<DocumentPreview | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [apiYaml, setApiYaml] = useState("");
+  const [ontologyYaml, setOntologyYaml] = useState("");
+  const [explanation, setExplanation] = useState("");
+  const [storageKey, setStorageKey] = useState("");
+  const [apiName, setApiName] = useState("Uploaded Document API Config");
+  const [apiSlug, setApiSlug] = useState("uploaded-document-api-config");
+  const [ontologyName, setOntologyName] = useState("Uploaded Document Ontology Config");
+  const [ontologySlug, setOntologySlug] = useState("uploaded-document-ontology-config");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [generateLoading, setGenerateLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    agent.models()
+      .then((data) => {
+        setModels(data.models);
+        setSelectedModel(data.default);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => setApiSlug(slugify(apiName)), [apiName]);
+  useEffect(() => setOntologySlug(slugify(ontologyName)), [ontologyName]);
+
+  const documentType = file?.name.toLowerCase().endsWith(".docx") ? "docx" : "pdf";
+
+  async function handlePreview() {
+    if (!file) return;
+    setPreviewLoading(true);
+    setError("");
+    try {
+      const uploaded = await storage.upload(file);
+      setStorageKey(uploaded.storageKey);
+      const result = await configs.docPreview({
+        storage_key: uploaded.storageKey,
+        extraction_mode: "tables",
+        pages: pages.trim() || undefined,
+      });
+      setPreview(result);
+      setApiYaml(buildDocumentApiYaml(documentType, uploaded.storageKey, result.columns, pages));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to preview document");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function handleGenerate() {
+    if (!preview) return;
+    setGenerateLoading(true);
+    setError("");
+    try {
+      const result = await agent.inferSchema(
+        previewDocumentRowsToSample(preview),
+        `Document upload: ${file?.name ?? "document"}${pages.trim() ? `; pages: ${pages.trim()}` : ""}`,
+        selectedModel || undefined
+      );
+      setOntologyYaml(result.ontology_yaml);
+      setExplanation(result.explanation);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to generate configs");
+    } finally {
+      setGenerateLoading(false);
+    }
+  }
+
+  async function handleSaveBoth() {
+    setSaving(true);
+    setError("");
+    try {
+      await Promise.all([
+        configs.create("apis", {
+          name: apiName,
+          slug: apiSlug,
+          content: apiYaml,
+          isPublic: false,
+          tags: [],
+        }),
+        configs.create("ontologies", {
+          name: ontologyName,
+          slug: ontologySlug,
+          content: ontologyYaml,
+          isPublic: false,
+          tags: [],
+        }),
+      ]);
+      onSaved();
+      onClose();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save document configs");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-2xl border border-[--border] bg-[--background] shadow-2xl flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[--border]">
+            <div>
+              <h2 className="font-semibold text-sm">Upload Document</h2>
+              <p className="mt-0.5 text-xs text-[--muted-foreground]">
+                Upload a PDF or DOCX, preview extracted tables, and generate configs.
+              </p>
+            </div>
+            <button onClick={onClose} className="text-[--muted-foreground] hover:text-[--foreground] text-xl leading-none px-1">×</button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="document-upload" className="text-xs text-[--muted-foreground] block mb-1">Document file</label>
+                  <input
+                    id="document-upload"
+                    type="file"
+                    accept=".pdf,.docx"
+                    onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground]"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-[--muted-foreground] block mb-1">Pages (optional)</label>
+                  <input
+                    value={pages}
+                    onChange={(e) => setPages(e.target.value)}
+                    placeholder="1-3"
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                  />
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-[--muted-foreground] block mb-1">Model</label>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                  >
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>{model.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={handlePreview}
+                  disabled={previewLoading || !file}
+                  className="w-full rounded-lg border border-[--border] px-4 py-2 text-sm font-semibold text-[--foreground] hover:border-[--primary]/60 disabled:opacity-40"
+                >
+                  {previewLoading ? "Previewing…" : "Preview"}
+                </button>
+                <button
+                  onClick={handleGenerate}
+                  disabled={generateLoading || !preview}
+                  className="w-full rounded-lg bg-[--primary] px-4 py-2 text-sm font-semibold text-[#0d1117] hover:opacity-90 disabled:opacity-40"
+                >
+                  {generateLoading ? "Generating configs…" : "Generate Config"}
+                </button>
+              </div>
+            </div>
+
+            {preview && (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-[--border] bg-[--card] p-4">
+                  <p className="text-sm font-medium text-[--foreground]">Preview</p>
+                  <p className="mt-1 text-xs text-[--muted-foreground]">
+                    Showing {Math.min(preview.rowCount, 5)} of {preview.rowCount} rows
+                  </p>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[--border] bg-[--muted]">
+                          {preview.columns.map((column) => (
+                            <th key={column} className="px-3 py-2 text-left text-[--muted-foreground] font-medium">{column}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preview.rows.map((row, index) => (
+                          <tr key={index} className="border-b border-[--border]">
+                            {preview.columns.map((column) => (
+                              <td key={column} className="px-3 py-2 text-[--foreground]">{String(row[column] ?? "")}</td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <textarea
+                    value={apiYaml}
+                    onChange={(e) => setApiYaml(e.target.value)}
+                    rows={14}
+                    spellCheck={false}
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] p-4 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary] resize-none"
+                  />
+                  <textarea
+                    value={ontologyYaml}
+                    onChange={(e) => setOntologyYaml(e.target.value)}
+                    rows={14}
+                    spellCheck={false}
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] p-4 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary] resize-none"
+                  />
+                </div>
+              </div>
+            )}
+
+            {explanation && (
+              <div className="rounded-lg border border-[--border] bg-[--card] p-4 text-sm text-[--muted-foreground]">
+                {explanation}
+              </div>
+            )}
+
+            {error && (
+              <div className="rounded-lg border border-red-700/60 bg-red-900/20 p-3 text-sm text-red-300">
+                {error}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-[--border]">
+            <button
+              onClick={onClose}
+              className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveBoth}
+              disabled={saving || !preview || !apiYaml.trim() || !ontologyYaml.trim() || !storageKey}
+              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90 disabled:opacity-40"
+            >
+              {saving ? "Saving…" : "Save Both"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ConfigsPage() {
@@ -876,6 +1163,7 @@ export default function ConfigsPage() {
   const [editDoc, setEditDoc] = useState<ConfigDoc | null | undefined>(undefined); // undefined=closed, null=new
   const [showInference, setShowInference] = useState(false);
   const [showScrape, setShowScrape] = useState(false);
+  const [showUploadDocument, setShowUploadDocument] = useState(false);
 
   const apiConfigs = useQuery(api.configs.listApis, {});
   const ontologyConfigs = useQuery(api.configs.listOntologies, {});
@@ -914,6 +1202,12 @@ export default function ConfigsPage() {
             className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--foreground] hover:border-[--primary]/50 hover:text-[--primary]"
           >
             Scrape URL
+          </button>
+          <button
+            onClick={() => setShowUploadDocument(true)}
+            className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--foreground] hover:border-[--primary]/50 hover:text-[--primary]"
+          >
+            Upload Document
           </button>
         </div>
       </div>
@@ -1010,6 +1304,13 @@ export default function ConfigsPage() {
       {showScrape && (
         <ScrapeModal
           onClose={() => setShowScrape(false)}
+          onSaved={() => {}}
+        />
+      )}
+
+      {showUploadDocument && (
+        <UploadDocumentModal
+          onClose={() => setShowUploadDocument(false)}
           onSaved={() => {}}
         />
       )}

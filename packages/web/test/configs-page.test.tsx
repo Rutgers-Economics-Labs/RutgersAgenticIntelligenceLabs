@@ -6,6 +6,8 @@ const modelsMock = vi.fn();
 const inferSchemaMock = vi.fn();
 const createConfigMock = vi.fn();
 const scrapePreviewMock = vi.fn();
+const docPreviewMock = vi.fn();
+const storageUploadMock = vi.fn();
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
@@ -29,9 +31,13 @@ vi.mock("@/lib/api", () => ({
   configs: {
     create: (...args: unknown[]) => createConfigMock(...args),
     scrapePreview: (...args: unknown[]) => scrapePreviewMock(...args),
+    docPreview: (...args: unknown[]) => docPreviewMock(...args),
     validate: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
+  },
+  storage: {
+    upload: (...args: unknown[]) => storageUploadMock(...args),
   },
 }));
 
@@ -62,6 +68,16 @@ describe("ConfigsPage", () => {
         { county: "Hudson", population: "724854" },
       ],
       rowCount: 2,
+    });
+    storageUploadMock.mockResolvedValue({
+      filename: "report.pdf",
+      storageKey: "inputs/report.pdf",
+      size: 1234,
+    });
+    docPreviewMock.mockResolvedValue({
+      columns: ["metric", "value"],
+      rows: [{ metric: "Population", value: "100" }],
+      rowCount: 1,
     });
   });
 
@@ -163,5 +179,55 @@ describe("ConfigsPage", () => {
 
     expect(await screen.findByText("API 502: fetch failed")).toBeInTheDocument();
     expect(inferSchemaMock).not.toHaveBeenCalled();
+  });
+
+  it("uploads a document, previews tables, and saves generated document configs", async () => {
+    inferSchemaMock.mockResolvedValueOnce({
+      api_yaml: "name: ignored-by-doc-flow",
+      ontology_yaml: "uri: http://example.org/document",
+      explanation: "Generated from uploaded document preview.",
+      raw: "",
+    });
+
+    render(<ConfigsPage />);
+
+    fireEvent.click(screen.getByText("Upload Document"));
+
+    const file = new File(["fake pdf"], "report.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("Document file"), {
+      target: { files: [file] },
+    });
+    fireEvent.change(screen.getByPlaceholderText("1-3"), {
+      target: { value: "1-2" },
+    });
+
+    fireEvent.click(screen.getByText("Preview"));
+
+    await waitFor(() => {
+      expect(storageUploadMock).toHaveBeenCalled();
+    });
+    expect(docPreviewMock).toHaveBeenCalledWith({
+      storage_key: "inputs/report.pdf",
+      extraction_mode: "tables",
+      pages: "1-2",
+    });
+    expect(await screen.findByText("Showing 1 of 1 rows")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Generate Config"));
+
+    await screen.findByDisplayValue("uri: http://example.org/document");
+    expect(await screen.findByDisplayValue(/type: pdf/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Save Both"));
+
+    await waitFor(() => {
+      expect(createConfigMock).toHaveBeenCalledTimes(2);
+    });
+    expect(createConfigMock).toHaveBeenCalledWith(
+      "apis",
+      expect.objectContaining({
+        content: expect.stringContaining("type: pdf"),
+      })
+    );
   });
 });

@@ -3,6 +3,7 @@ from pydantic import BaseModel
 import requests
 
 from app.services.convex_client import convex
+from app.services.document_service import preview_document
 from app.services.scrape_service import preview_table
 from app.services.yaml_service import validate, parse
 
@@ -27,6 +28,12 @@ class ScrapePreviewRequest(BaseModel):
     table_selector: str | None = None
 
 
+class DocumentPreviewRequest(BaseModel):
+    storage_key: str
+    extraction_mode: str
+    pages: str | None = None
+
+
 # ── Validation endpoint ─────────────────────────────────────────────────────
 
 @router.post("/validate")
@@ -41,6 +48,16 @@ async def scrape_preview(req: ScrapePreviewRequest):
         return preview_table(req.url, req.table_selector)
     except requests.RequestException as e:
         raise HTTPException(502, detail=f"Failed to fetch URL: {e}")
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e))
+
+
+@router.post("/doc-preview")
+async def doc_preview(req: DocumentPreviewRequest):
+    try:
+        return await preview_document(req.storage_key, req.extraction_mode, req.pages)
+    except requests.RequestException as e:
+        raise HTTPException(502, detail=f"Failed to fetch document: {e}")
     except ValueError as e:
         raise HTTPException(422, detail=str(e))
 

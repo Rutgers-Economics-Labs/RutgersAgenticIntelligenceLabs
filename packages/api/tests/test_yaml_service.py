@@ -97,6 +97,18 @@ def test_validate_api_scrape_javascript_must_be_bool():
     assert any("javascript" in e for e in errors)
 
 
+def test_validate_api_pdf_requires_exactly_one_of_path_or_url():
+    yaml = "name: report\ntype: pdf\nextraction_mode: tables\n"
+    errors = validate("api", yaml)
+    assert any("exactly one of path, url, or storage_key" in e for e in errors)
+
+
+def test_validate_api_docx_rejects_bad_pages_pattern():
+    yaml = "name: report\ntype: docx\npath: /tmp/report.docx\nextraction_mode: tables\npages: first-three\n"
+    errors = validate("api", yaml)
+    assert any("pages must match pattern" in e for e in errors)
+
+
 def test_validate_api_foreach_requires_source_and_field():
     yaml = VALID_API_YAML + "foreach:\n  inject_param: x\n"
     errors = validate("api", yaml)

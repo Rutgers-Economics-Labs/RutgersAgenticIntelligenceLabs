@@ -216,6 +216,18 @@ SCRAPE_HTML = """
 </html>
 """
 
+PDF_API_YAML = """
+name: items
+type: pdf
+path: /tmp/report.pdf
+extraction_mode: tables
+fields:
+  - source: name
+    alias: name
+  - source: code
+    alias: code
+"""
+
 
 def test_run_pipeline_with_scrape_source(tmp_path, monkeypatch):
     onto_path = tmp_path / "ontology.yaml"
@@ -255,3 +267,44 @@ def test_run_pipeline_with_scrape_source(tmp_path, monkeypatch):
     assert len(items) == 2
     names = {getattr(i, "hasName", None) for i in items}
     assert names == {"Delta", "Epsilon"}
+
+
+def test_run_pipeline_with_pdf_source(tmp_path, monkeypatch):
+    onto_path = tmp_path / "ontology.yaml"
+    onto_path.write_text(MINIMAL_ONTOLOGY)
+
+    api_dir = tmp_path / "apis"
+    api_dir.mkdir()
+    (api_dir / "items.yaml").write_text(PDF_API_YAML)
+
+    output_owl = str(tmp_path / "out.owl")
+    db_path = str(tmp_path / "onto.db")
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(MINIMAL_PIPELINE.format(
+        onto_path=str(onto_path),
+        output_owl=output_owl,
+        db_path=db_path,
+    ))
+
+    monkeypatch.setenv("RAIL_API_CONFIG_DIR", str(api_dir))
+    monkeypatch.setenv("RAIL_CACHE_DIR", str(tmp_path / "cache"))
+
+    import importlib
+    import engine.api_runner
+    importlib.reload(engine.api_runner)
+
+    table_df = pd.DataFrame([
+        {"name": "Report A", "code": "R1"},
+        {"name": "Report B", "code": "R2"},
+    ])
+
+    with patch("engine.api_runner._extract_document_tables", return_value=table_df):
+        run_pipeline(str(pipeline_yaml))
+
+    w = _open_db(db_path)
+    onto = w.get_ontology("http://example.org/test_minimal.owl").load()
+    item_cls = next((c for c in onto.classes() if c.name == "Item"), None)
+    items = list(item_cls.instances())
+    assert len(items) == 2
+    names = {getattr(i, "hasName", None) for i in items}
+    assert names == {"Report A", "Report B"}
