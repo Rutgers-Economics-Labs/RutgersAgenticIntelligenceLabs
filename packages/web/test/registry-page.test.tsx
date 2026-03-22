@@ -74,4 +74,12 @@ describe("RegistryPage", () => {
       expect(registrySearchMock).toHaveBeenLastCalledWith("unemployment", "census", "state", 24);
     });
   });
+
+  it("shows an error when registry search fails", async () => {
+    registrySearchMock.mockRejectedValueOnce(new Error("API 503: registry unavailable"));
+
+    render(<RegistryPage />);
+
+    expect(await screen.findByText("API 503: registry unavailable")).toBeInTheDocument();
+  });
 });
