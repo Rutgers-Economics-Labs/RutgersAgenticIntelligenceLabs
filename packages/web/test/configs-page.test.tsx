@@ -230,4 +230,27 @@ describe("ConfigsPage", () => {
       })
     );
   });
+
+  it("shows a document preview error without generating configs", async () => {
+    storageUploadMock.mockResolvedValueOnce({
+      filename: "report.pdf",
+      storageKey: "inputs/report.pdf",
+      size: 1234,
+    });
+    docPreviewMock.mockRejectedValueOnce(new Error("API 422: No tables found in document"));
+
+    render(<ConfigsPage />);
+
+    fireEvent.click(screen.getByText("Upload Document"));
+
+    const file = new File(["fake pdf"], "report.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("Document file"), {
+      target: { files: [file] },
+    });
+
+    fireEvent.click(screen.getByText("Preview"));
+
+    expect(await screen.findByText("API 422: No tables found in document")).toBeInTheDocument();
+    expect(inferSchemaMock).not.toHaveBeenCalled();
+  });
 });

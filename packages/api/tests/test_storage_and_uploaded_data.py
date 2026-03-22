@@ -137,6 +137,58 @@ async def test_hydration_embedding_index_failure_is_non_fatal(tmp_path):
             and "Embedding index failed (non-fatal): boom" in payload.get("message", "")
             for fn_path, payload in mutation_calls
         )
+
+
+@pytest.mark.asyncio
+async def test_hydration_resolves_document_storage_key(client):
+    from app.services import hydration_worker
+    from app.services.hydration_worker import convex, storage
+
+    pipeline_content = yaml.dump({
+        "name": "doc_pipeline",
+        "ontology": "core",
+        "steps": [{"name": "step1", "api": "report_data", "class": "County", "uri": "C_{name}"}],
+    })
+    api_configs = {
+        "report_data": yaml.dump({
+            "name": "report_data",
+            "type": "pdf",
+            "storage_key": "inputs/report.pdf",
+            "extraction_mode": "tables",
+            "fields": [{"source": "name", "alias": "name"}],
+        })
+    }
+
+    mock_exec = AsyncMock()
+
+    with patch.object(convex, "mutation", new_callable=AsyncMock), \
+         patch.object(storage, "download", new_callable=AsyncMock) as mock_download, \
+         patch.object(storage, "upload", new_callable=AsyncMock) as mock_upload, \
+         patch("asyncio.create_subprocess_exec", mock_exec), \
+         patch("app.services.ontology_service.load"), \
+         patch("app.services.ontology_service.export_to_duckdb", new_callable=AsyncMock), \
+         patch("app.services.sql_service.set_path"), \
+         patch("app.services.embedding_service.build_index", new_callable=AsyncMock):
+
+        mock_upload.side_effect = ["/tmp/onto.db", "/tmp/populated_ontology.owl"]
+
+        mock_proc = MagicMock()
+
+        async def mock_stdout_iter():
+          yield b"[step] step1:"
+          yield b"-> 1 County individuals processed"
+
+        mock_proc.stdout = mock_stdout_iter()
+        mock_proc.wait = AsyncMock(return_value=0)
+        mock_proc.returncode = 0
+        mock_exec.return_value = mock_proc
+
+        await hydration_worker.run("job-doc", pipeline_content, api_configs)
+
+        assert mock_download.called
+        download_args, _ = mock_download.call_args
+        assert download_args[0] == "inputs/report.pdf"
+        assert str(download_args[1]).endswith("report.pdf")
         
 def asyncio_future(result):
     from asyncio import Future
