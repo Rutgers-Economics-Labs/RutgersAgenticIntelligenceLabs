@@ -3,6 +3,8 @@ import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import Link from "next/link";
+import { GitFork, Trash2 } from "lucide-react";
+import { Id } from "@/convex/_generated/dataModel";
 
 const APPROACH_LABEL = {
   "data-first": "Data → Ontology",
@@ -121,9 +123,80 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function ForkProjectModal({
+  projectId,
+  initialName,
+  onClose,
+}: {
+  projectId: Id<"projects">;
+  initialName: string;
+  onClose: () => void;
+}) {
+  const forkProject = useMutation(api.projects.forkProject);
+  const [name, setName] = useState(`${initialName} (fork)`);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleFork() {
+    if (!name.trim()) return;
+    setSaving(true);
+    setError("");
+    try {
+      await forkProject({ projectId, newName: name.trim() });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to fork project");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-[--background] border border-[--border] rounded-xl shadow-2xl p-6">
+          <h2 className="text-lg font-semibold mb-5">Fork Project</h2>
+          <div>
+            <label className="text-xs text-[--muted-foreground] block mb-1">New project name</label>
+            <input
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              className="w-full px-3 py-2 rounded border border-[--border] bg-[--muted] text-sm text-[--foreground] outline-none focus:border-[--primary]"
+            />
+          </div>
+          {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2 mt-6">
+            <button
+              onClick={onClose}
+              className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleFork}
+              disabled={saving || !name.trim()}
+              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {saving ? "Forking…" : "Fork Project"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function ProjectsPage() {
   const projects = useQuery(api.projects.list, {});
+  const removeProject = useMutation(api.projects.remove);
   const [showNew, setShowNew] = useState(false);
+  const [forkingProject, setForkingProject] = useState<{ id: Id<"projects">; name: string } | null>(null);
+
+  async function handleDelete(slug: string) {
+    await removeProject({ slug });
+  }
 
   return (
     <div>
@@ -161,40 +234,66 @@ export default function ProjectsPage() {
       {projects && projects.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {projects.map((p) => (
-            <Link
+            <div
               key={p._id}
-              href={`/projects/${p.slug}`}
-              className="p-5 rounded-xl border border-[--border] bg-[--card] hover:border-[--primary]/60 hover:bg-[--muted] transition-colors group block"
+              className="p-5 rounded-xl border border-[--border] bg-[--card] hover:border-[--primary]/60 hover:bg-[--muted] transition-colors group"
             >
-              <div className="flex items-start justify-between mb-3">
-                <h3 className="font-semibold text-sm group-hover:text-[--primary] transition-colors">{p.name}</h3>
-                <span className={`text-[10px] px-2 py-0.5 rounded border font-medium ${STATUS_STYLES[p.status]}`}>
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <Link href={`/projects/${p.slug}`} className="min-w-0 flex-1">
+                  <h3 className="font-semibold text-sm group-hover:text-[--primary] transition-colors truncate">{p.name}</h3>
+                </Link>
+                <span className={`text-[10px] px-2 py-0.5 rounded border font-medium shrink-0 ${STATUS_STYLES[p.status]}`}>
                   {p.status}
                 </span>
               </div>
-              {p.description && (
-                <p className="text-xs text-[--muted-foreground] mb-3 line-clamp-2">{p.description}</p>
-              )}
-              <div className="flex items-center gap-3 text-[10px] text-[--muted-foreground]">
-                <span className="px-1.5 py-0.5 rounded bg-[--muted] font-mono">
-                  {APPROACH_LABEL[p.approach]}
-                </span>
-                {p.ontologyConfigSlug && (
-                  <span>ontology: {p.ontologyConfigSlug}</span>
+              <Link href={`/projects/${p.slug}`} className="block">
+                {p.description && (
+                  <p className="text-xs text-[--muted-foreground] mb-3 line-clamp-2">{p.description}</p>
                 )}
-                {p.apiConfigSlugs.length > 0 && (
-                  <span>{p.apiConfigSlugs.length} data source{p.apiConfigSlugs.length > 1 ? "s" : ""}</span>
-                )}
+                <div className="flex items-center gap-3 text-[10px] text-[--muted-foreground]">
+                  <span className="px-1.5 py-0.5 rounded bg-[--muted] font-mono">
+                    {APPROACH_LABEL[p.approach]}
+                  </span>
+                  {p.ontologyConfigSlug && (
+                    <span>ontology: {p.ontologyConfigSlug}</span>
+                  )}
+                  {p.apiConfigSlugs.length > 0 && (
+                    <span>{p.apiConfigSlugs.length} data source{p.apiConfigSlugs.length > 1 ? "s" : ""}</span>
+                  )}
+                </div>
+                <p className="text-[10px] text-[--muted-foreground] mt-3">
+                  Updated {new Date(p.updatedAt).toLocaleDateString()}
+                </p>
+              </Link>
+              <div className="mt-4 flex items-center gap-2">
+                <button
+                  onClick={() => setForkingProject({ id: p._id, name: p.name })}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[--border] px-2.5 py-1.5 text-xs text-[--muted-foreground] hover:border-[--primary]/50 hover:text-[--primary]"
+                >
+                  <GitFork size={12} />
+                  Fork
+                </button>
+                <button
+                  onClick={() => void handleDelete(p.slug)}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-[--border] px-2.5 py-1.5 text-xs text-[--muted-foreground] hover:border-red-600/50 hover:text-red-400"
+                >
+                  <Trash2 size={12} />
+                  Delete
+                </button>
               </div>
-              <p className="text-[10px] text-[--muted-foreground] mt-3">
-                Updated {new Date(p.updatedAt).toLocaleDateString()}
-              </p>
-            </Link>
+            </div>
           ))}
         </div>
       )}
 
       {showNew && <NewProjectModal onClose={() => setShowNew(false)} />}
+      {forkingProject && (
+        <ForkProjectModal
+          projectId={forkingProject.id}
+          initialName={forkingProject.name}
+          onClose={() => setForkingProject(null)}
+        />
+      )}
     </div>
   );
 }

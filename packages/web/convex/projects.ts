@@ -12,6 +12,10 @@ export const get = query({
     ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", slug)).first(),
 });
 
+function makeForkSlug(slug: string, suffix: number) {
+  return `${slug}-copy-${suffix}`;
+}
+
 export const create = mutation({
   args: {
     name: v.string(),
@@ -57,5 +61,91 @@ export const remove = mutation({
   handler: async (ctx, { slug }) => {
     const doc = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", slug)).first();
     if (doc) await ctx.db.delete(doc._id);
+  },
+});
+
+export const forkProject = mutation({
+  args: {
+    projectId: v.id("projects"),
+    newName: v.string(),
+  },
+  handler: async (ctx, { projectId, newName }) => {
+    const project = await ctx.db.get(projectId);
+    if (!project) throw new Error("Project not found");
+
+    const suffix = Date.now();
+
+    let ontologyConfigSlug = project.ontologyConfigSlug;
+    if (project.ontologyConfigSlug) {
+      const ontology = await ctx.db
+        .query("ontologyConfigs")
+        .withIndex("by_slug", (q) => q.eq("slug", project.ontologyConfigSlug!))
+        .first();
+      if (ontology) {
+        const newSlug = makeForkSlug(ontology.slug, suffix);
+        await ctx.db.insert("ontologyConfigs", {
+          ...ontology,
+          slug: newSlug,
+          name: `${ontology.name} (copy)`,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        ontologyConfigSlug = newSlug;
+      }
+    }
+
+    const apiConfigSlugs: string[] = [];
+    for (const apiSlug of project.apiConfigSlugs) {
+      const apiConfig = await ctx.db
+        .query("apiConfigs")
+        .withIndex("by_slug", (q) => q.eq("slug", apiSlug))
+        .first();
+      if (!apiConfig) continue;
+      const newSlug = makeForkSlug(apiConfig.slug, suffix);
+      await ctx.db.insert("apiConfigs", {
+        ...apiConfig,
+        slug: newSlug,
+        name: `${apiConfig.name} (copy)`,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      apiConfigSlugs.push(newSlug);
+    }
+
+    let pipelineConfigSlug = project.pipelineConfigSlug;
+    if (project.pipelineConfigSlug) {
+      const pipeline = await ctx.db
+        .query("pipelineConfigs")
+        .withIndex("by_slug", (q) => q.eq("slug", project.pipelineConfigSlug!))
+        .first();
+      if (pipeline) {
+        const newSlug = makeForkSlug(pipeline.slug, suffix);
+        await ctx.db.insert("pipelineConfigs", {
+          ...pipeline,
+          slug: newSlug,
+          name: `${pipeline.name} (copy)`,
+          referencedApiSlugs: apiConfigSlugs,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+        pipelineConfigSlug = newSlug;
+      }
+    }
+
+    const newProjectSlug = makeForkSlug(project.slug, suffix);
+    const newProjectId = await ctx.db.insert("projects", {
+      ...project,
+      name: newName,
+      slug: newProjectSlug,
+      ontologyConfigSlug,
+      apiConfigSlugs,
+      pipelineConfigSlug,
+      status: "draft",
+      lastJobId: undefined,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    return { newProjectId, slug: newProjectSlug };
   },
 });
