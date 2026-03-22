@@ -1,7 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import requests
 
 from app.services.convex_client import convex
+from app.services.scrape_service import preview_table
 from app.services.yaml_service import validate, parse
 
 router = APIRouter(prefix="/configs", tags=["configs"])
@@ -20,12 +22,27 @@ class ValidateRequest(BaseModel):
     content: str
 
 
+class ScrapePreviewRequest(BaseModel):
+    url: str
+    table_selector: str | None = None
+
+
 # ── Validation endpoint ─────────────────────────────────────────────────────
 
 @router.post("/validate")
 async def validate_config(req: ValidateRequest):
     errors = validate(req.config_type, req.content)
     return {"valid": len(errors) == 0, "errors": errors}
+
+
+@router.post("/scrape-preview")
+async def scrape_preview(req: ScrapePreviewRequest):
+    try:
+        return preview_table(req.url, req.table_selector)
+    except requests.RequestException as e:
+        raise HTTPException(502, detail=f"Failed to fetch URL: {e}")
+    except ValueError as e:
+        raise HTTPException(422, detail=str(e))
 
 
 # ── API configs ─────────────────────────────────────────────────────────────

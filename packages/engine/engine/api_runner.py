@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 import yaml
+from bs4 import BeautifulSoup
 
 CACHE_DIR = Path(os.environ.get("RAIL_CACHE_DIR", "cache"))
 API_CONFIG_DIR = Path(os.environ.get("RAIL_API_CONFIG_DIR", "configs/apis"))
@@ -160,6 +161,19 @@ def _handle_uploaded(api_name, spec, resolved_data):
     return df
 
 
+def _handle_scrape(api_name, spec, resolved_data):
+    response = requests.get(spec["url"], timeout=30)
+    response.raise_for_status()
+    if spec.get("encoding"):
+        response.encoding = spec["encoding"]
+
+    df = _extract_table_from_html(response.text, spec.get("table_selector"))
+
+    if "fields" in spec:
+        df = _apply_fields(df, spec["fields"])
+    return df
+
+
 def _handle_api(api_name, spec, resolved_data):
     foreach = spec.get("foreach")
     response_format = spec.get("response_format", "json")
@@ -218,6 +232,7 @@ SOURCE_HANDLERS = {
     "csv": _handle_csv,
     "excel": _handle_excel,
     "uploaded": _handle_uploaded,
+    "scrape": _handle_scrape,
 }
 
 
@@ -246,3 +261,54 @@ def fetch_api(api_name, resolved_data=None):
         df = df.dropna()
 
     return df
+
+
+def _extract_table_from_html(html, table_selector=None):
+    soup = BeautifulSoup(html, "html.parser")
+
+    if table_selector:
+        table = soup.select_one(table_selector)
+        if table is None:
+            raise ValueError(f"No table found for selector '{table_selector}'")
+        return _table_to_dataframe(table)
+
+    tables = soup.find_all("table")
+    if not tables:
+        raise ValueError("No HTML tables found on page")
+
+    table = max(tables, key=lambda current: len(current.find_all("tr")))
+    return _table_to_dataframe(table)
+
+
+def _table_to_dataframe(table):
+    rows = []
+    headers = []
+
+    for tr in table.find_all("tr"):
+        if not headers:
+            header_cells = tr.find_all("th")
+            if header_cells:
+                headers = [_cell_text(cell) for cell in header_cells]
+                continue
+
+        cells = tr.find_all(["td", "th"])
+        if cells:
+            rows.append([_cell_text(cell) for cell in cells])
+
+    if not rows and headers:
+        return pd.DataFrame(columns=headers)
+    if not rows:
+        raise ValueError("Selected table is empty")
+
+    width = max(len(row) for row in rows)
+    if not headers:
+        headers = [f"column_{i + 1}" for i in range(width)]
+    elif len(headers) < width:
+        headers.extend(f"column_{i + 1}" for i in range(len(headers), width))
+
+    normalized = [row + [""] * (len(headers) - len(row)) for row in rows]
+    return pd.DataFrame(normalized, columns=headers)
+
+
+def _cell_text(cell):
+    return " ".join(cell.get_text(" ", strip=True).split())

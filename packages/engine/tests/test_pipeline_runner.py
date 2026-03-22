@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 import pandas as pd
+from unittest.mock import patch, MagicMock
 
 ENGINE_ROOT = Path(__file__).parents[1]
 if str(ENGINE_ROOT) not in sys.path:
@@ -189,3 +190,68 @@ def test_run_pipeline_idempotent_uris(minimal_pipeline_dir):
 
     item_cls = next((c for c in onto.classes() if c.name == "Item"), None)
     assert len(list(item_cls.instances())) == 3
+
+
+SCRAPE_API_YAML = """
+name: items
+type: scrape
+url: https://example.com/table
+table_selector: table.data-table
+fields:
+  - source: name
+    alias: name
+  - source: code
+    alias: code
+"""
+
+SCRAPE_HTML = """
+<html>
+  <body>
+    <table class="data-table">
+      <tr><th>name</th><th>code</th></tr>
+      <tr><td>Delta</td><td>D4</td></tr>
+      <tr><td>Epsilon</td><td>E5</td></tr>
+    </table>
+  </body>
+</html>
+"""
+
+
+def test_run_pipeline_with_scrape_source(tmp_path, monkeypatch):
+    onto_path = tmp_path / "ontology.yaml"
+    onto_path.write_text(MINIMAL_ONTOLOGY)
+
+    api_dir = tmp_path / "apis"
+    api_dir.mkdir()
+    (api_dir / "items.yaml").write_text(SCRAPE_API_YAML)
+
+    output_owl = str(tmp_path / "out.owl")
+    db_path = str(tmp_path / "onto.db")
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(MINIMAL_PIPELINE.format(
+        onto_path=str(onto_path),
+        output_owl=output_owl,
+        db_path=db_path,
+    ))
+
+    monkeypatch.setenv("RAIL_API_CONFIG_DIR", str(api_dir))
+    monkeypatch.setenv("RAIL_CACHE_DIR", str(tmp_path / "cache"))
+
+    import importlib
+    import engine.api_runner
+    importlib.reload(engine.api_runner)
+
+    response = MagicMock()
+    response.text = SCRAPE_HTML
+    response.raise_for_status.return_value = None
+
+    with patch("engine.api_runner.requests.get", return_value=response):
+        run_pipeline(str(pipeline_yaml))
+
+    w = _open_db(db_path)
+    onto = w.get_ontology("http://example.org/test_minimal.owl").load()
+    item_cls = next((c for c in onto.classes() if c.name == "Item"), None)
+    items = list(item_cls.instances())
+    assert len(items) == 2
+    names = {getattr(i, "hasName", None) for i in items}
+    assert names == {"Delta", "Epsilon"}

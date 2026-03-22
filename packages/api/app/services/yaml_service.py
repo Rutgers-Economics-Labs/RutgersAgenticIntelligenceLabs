@@ -44,8 +44,8 @@ def _validate_api(spec: dict) -> list[str]:
         errors.append("Missing required field: name")
     if "type" not in spec:
         errors.append("Missing required field: type")
-    elif spec["type"] not in ("api", "csv", "excel"):
-        errors.append(f"Invalid type '{spec['type']}': must be api, csv, or excel")
+    elif spec["type"] not in ("api", "csv", "excel", "uploaded", "scrape"):
+        errors.append(f"Invalid type '{spec['type']}': must be api, csv, excel, uploaded, or scrape")
 
     if spec.get("type") == "api":
         if "url" not in spec:
@@ -61,9 +61,15 @@ def _validate_api(spec: dict) -> list[str]:
             if "field" not in foreach:
                 errors.append("foreach.field is required")
 
-    if spec.get("type") in ("csv", "excel"):
+    if spec.get("type") in ("csv", "excel", "uploaded"):
         if "path" not in spec:
             errors.append(f"Missing required field: path (required for type: {spec['type']})")
+
+    if spec.get("type") == "scrape":
+        if "url" not in spec:
+            errors.append("Missing required field: url (required for type: scrape)")
+        if "javascript" in spec and not isinstance(spec["javascript"], bool):
+            errors.append("javascript must be a boolean for type: scrape")
 
     for i, field in enumerate(spec.get("fields", [])):
         if "computed" not in field and "source" not in field:

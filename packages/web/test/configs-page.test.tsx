@@ -5,6 +5,7 @@ const useQueryMock = vi.fn();
 const modelsMock = vi.fn();
 const inferSchemaMock = vi.fn();
 const createConfigMock = vi.fn();
+const scrapePreviewMock = vi.fn();
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
@@ -27,6 +28,7 @@ vi.mock("@/lib/api", () => ({
   },
   configs: {
     create: (...args: unknown[]) => createConfigMock(...args),
+    scrapePreview: (...args: unknown[]) => scrapePreviewMock(...args),
     validate: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
@@ -53,6 +55,14 @@ describe("ConfigsPage", () => {
       raw: "",
     });
     createConfigMock.mockResolvedValue({});
+    scrapePreviewMock.mockResolvedValue({
+      columns: ["county", "population"],
+      rows: [
+        { county: "Essex", population: "863728" },
+        { county: "Hudson", population: "724854" },
+      ],
+      rowCount: 2,
+    });
   });
 
   it("generates and saves inferred configs", async () => {
@@ -85,6 +95,57 @@ describe("ConfigsPage", () => {
     expect(createConfigMock).toHaveBeenCalledWith(
       "ontologies",
       expect.objectContaining({ name: "Generated Ontology Config", slug: "generated-ontology-config" })
+    );
+  });
+
+  it("previews a scraped table and saves generated scrape configs", async () => {
+    inferSchemaMock.mockResolvedValueOnce({
+      api_yaml: "name: ignored-by-scrape-flow",
+      ontology_yaml: "uri: http://example.org/scraped",
+      explanation: "Generated from scraped preview.",
+      raw: "",
+    });
+
+    render(<ConfigsPage />);
+
+    fireEvent.click(screen.getByText("Scrape URL"));
+
+    fireEvent.change(screen.getByPlaceholderText("https://example.gov/data-table"), {
+      target: { value: "https://example.gov/table" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("table.data-table"), {
+      target: { value: "table.data-table" },
+    });
+
+    fireEvent.click(screen.getByText("Preview"));
+
+    expect(await screen.findByText("Showing 2 of 2 rows")).toBeInTheDocument();
+    expect(scrapePreviewMock).toHaveBeenCalledWith({
+      url: "https://example.gov/table",
+      table_selector: "table.data-table",
+    });
+
+    fireEvent.click(screen.getByText("Generate Config"));
+
+    await screen.findByDisplayValue("uri: http://example.org/scraped");
+    expect(await screen.findByDisplayValue(/type: scrape/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Save Both"));
+
+    await waitFor(() => {
+      expect(createConfigMock).toHaveBeenCalledTimes(2);
+    });
+    expect(createConfigMock).toHaveBeenCalledWith(
+      "apis",
+      expect.objectContaining({
+        content: expect.stringContaining("type: scrape"),
+      })
+    );
+    expect(createConfigMock).toHaveBeenCalledWith(
+      "ontologies",
+      expect.objectContaining({
+        content: "uri: http://example.org/scraped",
+      })
     );
   });
 });

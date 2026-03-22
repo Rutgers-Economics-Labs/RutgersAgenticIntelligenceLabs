@@ -2,7 +2,7 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useState, useEffect, useRef } from "react";
-import { agent, configs, type ConfigDoc, type ModelInfo } from "@/lib/api";
+import { agent, configs, type ConfigDoc, type ModelInfo, type ScrapePreview } from "@/lib/api";
 
 type Tab = "apis" | "ontologies" | "pipelines";
 
@@ -542,12 +542,340 @@ function InferenceModal({
   );
 }
 
+function previewRowsToSample(preview: ScrapePreview) {
+  if (preview.rows.length === 0) {
+    return preview.columns.join(",");
+  }
+  const header = preview.columns.join(",");
+  const rows = preview.rows.map((row) =>
+    preview.columns.map((column) => String(row[column] ?? "")).join(",")
+  );
+  return [header, ...rows].join("\n");
+}
+
+function buildScrapeApiYaml(url: string, selector: string, fields: string[]) {
+  const lines = [
+    "name: scraped_source",
+    "type: scrape",
+    `url: ${url}`,
+  ];
+  if (selector.trim()) {
+    lines.push(`table_selector: ${selector.trim()}`);
+  }
+  if (fields.length > 0) {
+    lines.push("fields:");
+    for (const field of fields) {
+      lines.push(`  - source: ${field}`);
+      lines.push(`    alias: ${field}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function ScrapeModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [url, setUrl] = useState("");
+  const [tableSelector, setTableSelector] = useState("");
+  const [preview, setPreview] = useState<ScrapePreview | null>(null);
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [apiYaml, setApiYaml] = useState("");
+  const [ontologyYaml, setOntologyYaml] = useState("");
+  const [explanation, setExplanation] = useState("");
+  const [apiName, setApiName] = useState("Scraped API Config");
+  const [apiSlug, setApiSlug] = useState("scraped-api-config");
+  const [ontologyName, setOntologyName] = useState("Scraped Ontology Config");
+  const [ontologySlug, setOntologySlug] = useState("scraped-ontology-config");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [generateLoading, setGenerateLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    agent.models()
+      .then((data) => {
+        setModels(data.models);
+        setSelectedModel(data.default);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setApiSlug(slugify(apiName));
+  }, [apiName]);
+
+  useEffect(() => {
+    setOntologySlug(slugify(ontologyName));
+  }, [ontologyName]);
+
+  async function handlePreview() {
+    setPreviewLoading(true);
+    setError("");
+    try {
+      const result = await configs.scrapePreview({
+        url,
+        table_selector: tableSelector.trim() || undefined,
+      });
+      setPreview(result);
+      setApiYaml(buildScrapeApiYaml(url, tableSelector, result.columns));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to preview URL");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function handleGenerate() {
+    if (!preview) return;
+    setGenerateLoading(true);
+    setError("");
+    try {
+      const result = await agent.inferSchema(
+        previewRowsToSample(preview),
+        `Source URL: ${url}${tableSelector.trim() ? `; CSS selector: ${tableSelector.trim()}` : ""}`,
+        selectedModel || undefined
+      );
+      setOntologyYaml(result.ontology_yaml);
+      setExplanation(result.explanation);
+      if (!apiYaml.trim()) {
+        setApiYaml(buildScrapeApiYaml(url, tableSelector, preview.columns));
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to generate configs");
+    } finally {
+      setGenerateLoading(false);
+    }
+  }
+
+  async function handleSaveBoth() {
+    setSaving(true);
+    setError("");
+    try {
+      await Promise.all([
+        configs.create("apis", {
+          name: apiName,
+          slug: apiSlug,
+          content: apiYaml,
+          isPublic: false,
+          tags: [],
+        }),
+        configs.create("ontologies", {
+          name: ontologyName,
+          slug: ontologySlug,
+          content: ontologyYaml,
+          isPublic: false,
+          tags: [],
+        }),
+      ]);
+      onSaved();
+      onClose();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save scraped configs");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-5xl max-h-[92vh] overflow-hidden rounded-2xl border border-[--border] bg-[--background] shadow-2xl flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[--border]">
+            <div>
+              <h2 className="font-semibold text-sm">Scrape URL</h2>
+              <p className="mt-0.5 text-xs text-[--muted-foreground]">
+                Preview a table from a webpage and generate matching configs.
+              </p>
+            </div>
+            <button onClick={onClose} className="text-[--muted-foreground] hover:text-[--foreground] text-xl leading-none px-1">×</button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5 space-y-5">
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-[--muted-foreground] block mb-1">URL</label>
+                  <input
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://example.gov/data-table"
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-[--muted-foreground] block mb-1">Table CSS selector (optional)</label>
+                  <input
+                    value={tableSelector}
+                    onChange={(e) => setTableSelector(e.target.value)}
+                    placeholder="table.data-table"
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                  />
+                </div>
+              </div>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs text-[--muted-foreground] block mb-1">Model</label>
+                  <select
+                    value={selectedModel}
+                    onChange={(e) => setSelectedModel(e.target.value)}
+                    className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                  >
+                    {models.map((model) => (
+                      <option key={model.id} value={model.id}>{model.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={handlePreview}
+                  disabled={previewLoading || !url.trim()}
+                  className="w-full rounded-lg border border-[--border] px-4 py-2 text-sm font-semibold text-[--foreground] hover:border-[--primary]/60 disabled:opacity-40"
+                >
+                  {previewLoading ? "Previewing…" : "Preview"}
+                </button>
+                <button
+                  onClick={handleGenerate}
+                  disabled={generateLoading || !preview}
+                  className="w-full rounded-lg bg-[--primary] px-4 py-2 text-sm font-semibold text-[#0d1117] hover:opacity-90 disabled:opacity-40"
+                >
+                  {generateLoading ? "Generating configs…" : "Generate Config"}
+                </button>
+              </div>
+            </div>
+
+            {preview && (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-[--border] bg-[--card] p-4">
+                  <p className="text-sm font-medium text-[--foreground]">Preview</p>
+                  <p className="mt-1 text-xs text-[--muted-foreground]">
+                    Showing {Math.min(preview.rowCount, 5)} of {preview.rowCount} rows
+                  </p>
+                  <div className="mt-3 overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-[--border] bg-[--muted]">
+                          {preview.columns.map((column) => (
+                            <th key={column} className="px-3 py-2 text-left text-[--muted-foreground] font-medium">
+                              {column}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {preview.rows.map((row, index) => (
+                          <tr key={index} className="border-b border-[--border]">
+                            {preview.columns.map((column) => (
+                              <td key={column} className="px-3 py-2 text-[--foreground]">
+                                {String(row[column] ?? "")}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">API Config YAML</label>
+                    <textarea
+                      value={apiYaml}
+                      onChange={(e) => setApiYaml(e.target.value)}
+                      rows={14}
+                      spellCheck={false}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] p-4 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary] resize-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">Ontology Config YAML</label>
+                    <textarea
+                      value={ontologyYaml}
+                      onChange={(e) => setOntologyYaml(e.target.value)}
+                      rows={14}
+                      spellCheck={false}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] p-4 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary] resize-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="rounded-xl border border-[--border] bg-[--card] p-4 space-y-3">
+                    <h3 className="font-medium text-sm">API config</h3>
+                    <input
+                      value={apiName}
+                      onChange={(e) => setApiName(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                    <input
+                      value={apiSlug}
+                      onChange={(e) => setApiSlug(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                  </div>
+                  <div className="rounded-xl border border-[--border] bg-[--card] p-4 space-y-3">
+                    <h3 className="font-medium text-sm">Ontology config</h3>
+                    <input
+                      value={ontologyName}
+                      onChange={(e) => setOntologyName(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                    <input
+                      value={ontologySlug}
+                      onChange={(e) => setOntologySlug(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {explanation && (
+              <div className="rounded-lg border border-[--border] bg-[--card] p-4 text-sm text-[--muted-foreground]">
+                {explanation}
+              </div>
+            )}
+
+            {error && (
+              <div className="rounded-lg border border-red-700/60 bg-red-900/20 p-3 text-sm text-red-300">
+                {error}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-[--border]">
+            <button
+              onClick={onClose}
+              className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSaveBoth}
+              disabled={saving || !apiYaml.trim() || !ontologyYaml.trim() || !apiName.trim() || !apiSlug.trim() || !ontologyName.trim() || !ontologySlug.trim()}
+              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90 disabled:opacity-40"
+            >
+              {saving ? "Saving…" : "Save Both"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ConfigsPage() {
   const [tab, setTab] = useState<Tab>("apis");
   const [editDoc, setEditDoc] = useState<ConfigDoc | null | undefined>(undefined); // undefined=closed, null=new
   const [showInference, setShowInference] = useState(false);
+  const [showScrape, setShowScrape] = useState(false);
 
   const apiConfigs = useQuery(api.configs.listApis, {});
   const ontologyConfigs = useQuery(api.configs.listOntologies, {});
@@ -580,6 +908,12 @@ export default function ConfigsPage() {
             className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--foreground] hover:border-[--primary]/50 hover:text-[--primary]"
           >
             ✦ Generate from sample
+          </button>
+          <button
+            onClick={() => setShowScrape(true)}
+            className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--foreground] hover:border-[--primary]/50 hover:text-[--primary]"
+          >
+            Scrape URL
           </button>
         </div>
       </div>
@@ -669,6 +1003,13 @@ export default function ConfigsPage() {
       {showInference && (
         <InferenceModal
           onClose={() => setShowInference(false)}
+          onSaved={() => {}}
+        />
+      )}
+
+      {showScrape && (
+        <ScrapeModal
+          onClose={() => setShowScrape(false)}
           onSaved={() => {}}
         />
       )}

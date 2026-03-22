@@ -85,6 +85,18 @@ def test_validate_api_csv_requires_path():
     assert any("path" in e for e in errors)
 
 
+def test_validate_api_scrape_requires_url():
+    yaml = "name: scraped\ntype: scrape\n"
+    errors = validate("api", yaml)
+    assert any("url" in e for e in errors)
+
+
+def test_validate_api_scrape_javascript_must_be_bool():
+    yaml = "name: scraped\ntype: scrape\nurl: https://example.com\njavascript: \"yes\"\n"
+    errors = validate("api", yaml)
+    assert any("javascript" in e for e in errors)
+
+
 def test_validate_api_foreach_requires_source_and_field():
     yaml = VALID_API_YAML + "foreach:\n  inject_param: x\n"
     errors = validate("api", yaml)

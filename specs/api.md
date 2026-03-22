@@ -78,6 +78,7 @@ All reads proxy to Convex queries; all writes validate YAML first, then call Con
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
 | POST | `/validate` | `{config_type: "api"\|"ontology"\|"pipeline", content: str}` | `{valid: bool, errors: [str]}` |
+| POST | `/scrape-preview` | `{url: str, table_selector?: str}` | `{columns, rows, rowCount}` |
 
 **API configs** (`/apis`, `/apis/{slug}`): GET list, POST create, GET one, PUT update, DELETE delete.
 
