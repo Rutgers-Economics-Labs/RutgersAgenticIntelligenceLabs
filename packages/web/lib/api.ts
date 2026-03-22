@@ -123,7 +123,7 @@ export const configs = {
     req(`/configs/${type}/${slug}`, { method: "PUT", body: JSON.stringify(body) }),
   delete: (type: ConfigType, slug: string) =>
     req(`/configs/${type}/${slug}`, { method: "DELETE" }),
-  scrapePreview: (body: { url: string; table_selector?: string }) =>
+  scrapePreview: (body: { url: string; table_selector?: string; javascript?: boolean; encoding?: string }) =>
     req<ScrapePreview>("/configs/scrape-preview", { method: "POST", body: JSON.stringify(body) }),
   docPreview: (body: { storage_key: string; extraction_mode: "tables" | "prose" | "both"; pages?: string }) =>
     req<DocumentPreview>("/configs/doc-preview", { method: "POST", body: JSON.stringify(body) }),

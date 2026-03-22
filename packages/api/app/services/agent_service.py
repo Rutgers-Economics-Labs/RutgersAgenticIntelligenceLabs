@@ -93,7 +93,7 @@ TOOLS: list[dict] = [
             "name": "create_config",
             "description": (
                 "Create a new YAML config in the platform (API source, ontology schema, or pipeline). "
-                "Use this to set up new data sources or pipelines."
+                "Use this to set up new data sources or pipelines, including scrape sources for HTML pages."
             ),
             "parameters": {
                 "type": "object",

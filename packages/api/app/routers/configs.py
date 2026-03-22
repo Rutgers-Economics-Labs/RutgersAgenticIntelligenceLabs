@@ -26,6 +26,8 @@ class ValidateRequest(BaseModel):
 class ScrapePreviewRequest(BaseModel):
     url: str
     table_selector: str | None = None
+    javascript: bool = False
+    encoding: str | None = None
 
 
 class DocumentPreviewRequest(BaseModel):
@@ -45,7 +47,7 @@ async def validate_config(req: ValidateRequest):
 @router.post("/scrape-preview")
 async def scrape_preview(req: ScrapePreviewRequest):
     try:
-        return preview_table(req.url, req.table_selector)
+        return preview_table(req.url, req.table_selector, req.javascript, req.encoding)
     except requests.RequestException as e:
         raise HTTPException(502, detail=f"Failed to fetch URL: {e}")
     except ValueError as e:

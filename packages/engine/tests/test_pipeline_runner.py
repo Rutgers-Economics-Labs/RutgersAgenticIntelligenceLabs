@@ -269,6 +269,41 @@ def test_run_pipeline_with_scrape_source(tmp_path, monkeypatch):
     assert names == {"Delta", "Epsilon"}
 
 
+def test_run_pipeline_with_javascript_scrape_source(tmp_path, monkeypatch):
+    onto_path = tmp_path / "ontology.yaml"
+    onto_path.write_text(MINIMAL_ONTOLOGY)
+
+    api_dir = tmp_path / "apis"
+    api_dir.mkdir()
+    (api_dir / "items.yaml").write_text(
+        SCRAPE_API_YAML.replace("table_selector: table.data-table\n", "table_selector: table.data-table\njavascript: true\n")
+    )
+
+    output_owl = str(tmp_path / "out.owl")
+    db_path = str(tmp_path / "onto.db")
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(MINIMAL_PIPELINE.format(
+        onto_path=str(onto_path),
+        output_owl=output_owl,
+        db_path=db_path,
+    ))
+
+    monkeypatch.setenv("RAIL_API_CONFIG_DIR", str(api_dir))
+    monkeypatch.setenv("RAIL_CACHE_DIR", str(tmp_path / "cache"))
+
+    import importlib
+    import engine.api_runner
+    importlib.reload(engine.api_runner)
+
+    with patch("engine.scrape_runner.render_html", return_value=SCRAPE_HTML):
+        run_pipeline(str(pipeline_yaml))
+
+    w = _open_db(db_path)
+    onto = w.get_ontology("http://example.org/test_minimal.owl").load()
+    item_cls = next((c for c in onto.classes() if c.name == "Item"), None)
+    assert len(list(item_cls.instances())) == 2
+
+
 def test_run_pipeline_with_pdf_source(tmp_path, monkeypatch):
     onto_path = tmp_path / "ontology.yaml"
     onto_path.write_text(MINIMAL_ONTOLOGY)

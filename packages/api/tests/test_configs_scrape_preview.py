@@ -1,6 +1,6 @@
 import pytest
 import requests
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 pytestmark = pytest.mark.asyncio
 
@@ -18,11 +18,7 @@ HTML = """
 
 
 async def test_scrape_preview_success(client):
-    response = MagicMock()
-    response.text = HTML
-    response.raise_for_status.return_value = None
-
-    with patch("app.services.scrape_service.requests.get", return_value=response):
+    with patch("app.services.scrape_service.fetch_html", return_value=HTML):
         resp = await client.post(
             "/api/v1/configs/scrape-preview",
             json={"url": "https://example.com/table", "table_selector": "table.data-table"},
@@ -36,11 +32,7 @@ async def test_scrape_preview_success(client):
 
 
 async def test_scrape_preview_selector_not_found(client):
-    response = MagicMock()
-    response.text = HTML
-    response.raise_for_status.return_value = None
-
-    with patch("app.services.scrape_service.requests.get", return_value=response):
+    with patch("app.services.scrape_service.fetch_html", return_value=HTML):
         resp = await client.post(
             "/api/v1/configs/scrape-preview",
             json={"url": "https://example.com/table", "table_selector": "table.missing"},
@@ -52,7 +44,7 @@ async def test_scrape_preview_selector_not_found(client):
 
 async def test_scrape_preview_fetch_failure(client):
     with patch(
-        "app.services.scrape_service.requests.get",
+        "app.services.scrape_service.fetch_html",
         side_effect=requests.RequestException("timeout"),
     ):
         resp = await client.post(
@@ -62,3 +54,34 @@ async def test_scrape_preview_fetch_failure(client):
 
     assert resp.status_code == 502
     assert "Failed to fetch URL" in resp.json()["detail"]
+
+
+async def test_scrape_preview_javascript_success(client):
+    with patch("engine.scrape_runner.render_html", return_value=HTML):
+        resp = await client.post(
+            "/api/v1/configs/scrape-preview",
+            json={
+                "url": "https://example.com/table",
+                "table_selector": "table.data-table",
+                "javascript": True,
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["columns"] == ["name", "value"]
+    assert body["rowCount"] == 2
+
+
+async def test_scrape_preview_javascript_requires_playwright(client):
+    with patch(
+        "engine.scrape_runner.render_html",
+        side_effect=ValueError("JavaScript-rendered scraping requires Playwright. Install it before using javascript: true."),
+    ):
+        resp = await client.post(
+            "/api/v1/configs/scrape-preview",
+            json={"url": "https://example.com/table", "javascript": True},
+        )
+
+    assert resp.status_code == 422
+    assert "Playwright" in resp.json()["detail"]

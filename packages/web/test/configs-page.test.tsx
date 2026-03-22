@@ -140,6 +140,7 @@ describe("ConfigsPage", () => {
     fireEvent.change(screen.getByPlaceholderText("table.data-table"), {
       target: { value: "table.data-table" },
     });
+    fireEvent.click(screen.getByLabelText("Use JavaScript rendering for client-side pages"));
 
     fireEvent.click(screen.getByText("Preview"));
 
@@ -147,6 +148,7 @@ describe("ConfigsPage", () => {
     expect(scrapePreviewMock).toHaveBeenCalledWith({
       url: "https://example.gov/table",
       table_selector: "table.data-table",
+      javascript: true,
     });
 
     fireEvent.click(screen.getByText("Generate Config"));
@@ -159,10 +161,10 @@ describe("ConfigsPage", () => {
     await waitFor(() => {
       expect(createConfigMock).toHaveBeenCalledTimes(2);
     });
-    expect(createConfigMock).toHaveBeenCalledWith(
+      expect(createConfigMock).toHaveBeenCalledWith(
       "apis",
       expect.objectContaining({
-        content: expect.stringContaining("type: scrape"),
+        content: expect.stringContaining("javascript: true"),
       })
     );
     expect(createConfigMock).toHaveBeenCalledWith(

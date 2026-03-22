@@ -562,7 +562,7 @@ function previewRowsToSample(preview: ScrapePreview) {
   return [header, ...rows].join("\n");
 }
 
-function buildScrapeApiYaml(url: string, selector: string, fields: string[]) {
+function buildScrapeApiYaml(url: string, selector: string, fields: string[], javascript = false) {
   const lines = [
     "name: scraped_source",
     "type: scrape",
@@ -570,6 +570,9 @@ function buildScrapeApiYaml(url: string, selector: string, fields: string[]) {
   ];
   if (selector.trim()) {
     lines.push(`table_selector: ${selector.trim()}`);
+  }
+  if (javascript) {
+    lines.push("javascript: true");
   }
   if (fields.length > 0) {
     lines.push("fields:");
@@ -619,6 +622,7 @@ function ScrapeModal({
 }) {
   const [url, setUrl] = useState("");
   const [tableSelector, setTableSelector] = useState("");
+  const [useJavascript, setUseJavascript] = useState(false);
   const [preview, setPreview] = useState<ScrapePreview | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
@@ -658,9 +662,10 @@ function ScrapeModal({
       const result = await configs.scrapePreview({
         url,
         table_selector: tableSelector.trim() || undefined,
+        javascript: useJavascript,
       });
       setPreview(result);
-      setApiYaml(buildScrapeApiYaml(url, tableSelector, result.columns));
+      setApiYaml(buildScrapeApiYaml(url, tableSelector, result.columns, useJavascript));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to preview URL");
     } finally {
@@ -675,13 +680,13 @@ function ScrapeModal({
     try {
       const result = await agent.inferSchema(
         previewRowsToSample(preview),
-        `Source URL: ${url}${tableSelector.trim() ? `; CSS selector: ${tableSelector.trim()}` : ""}`,
+        `Source URL: ${url}${tableSelector.trim() ? `; CSS selector: ${tableSelector.trim()}` : ""}${useJavascript ? "; javascript rendered page" : ""}`,
         selectedModel || undefined
       );
       setOntologyYaml(result.ontology_yaml);
       setExplanation(result.explanation);
       if (!apiYaml.trim()) {
-        setApiYaml(buildScrapeApiYaml(url, tableSelector, preview.columns));
+        setApiYaml(buildScrapeApiYaml(url, tableSelector, preview.columns, useJavascript));
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to generate configs");
@@ -755,6 +760,15 @@ function ScrapeModal({
                     className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
                   />
                 </div>
+                <label className="flex items-center gap-2 text-sm text-[--muted-foreground] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={useJavascript}
+                    onChange={(e) => setUseJavascript(e.target.checked)}
+                    className="accent-[--primary]"
+                  />
+                  Use JavaScript rendering for client-side pages
+                </label>
               </div>
               <div className="space-y-4">
                 <div>
