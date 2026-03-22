@@ -8,7 +8,9 @@ The FastAPI service (`packages/api/`) is the HTTP bridge between the Next.js fro
 
 On startup (`lifespan`):
 1. Inserts `settings.engine_root` into `sys.path` so `from engine.*` imports work.
-2. If `{engine_root}/ontology/onto.db` exists, loads it via `ontology_service.load()`.
+2. Pushes LLM API keys from settings into `os.environ` so LiteLLM can read them.
+3. If `{engine_root}/ontology/onto.db` exists, loads it via `ontology_service.load()`.
+4. If `{engine_root}/ontology/onto.duckdb` exists, loads it via `sql_service.set_path()`.
 
 ## Configuration — `app/core/config.py`
 
@@ -26,6 +28,13 @@ On startup (`lifespan`):
 | `aws_access_key_id` | `str` | `""` | `AWS_ACCESS_KEY_ID` |
 | `aws_secret_access_key` | `str` | `""` | `AWS_SECRET_ACCESS_KEY` |
 | `fred_api_key` | `str` | `""` | `FRED_API_KEY` |
+| `ai_model` | `str` | `"claude-sonnet-4-6"` | `AI_MODEL` |
+| `ai_temperature` | `float` | `0.3` | `AI_TEMPERATURE` |
+| `ai_max_tokens` | `int` | `8192` | `AI_MAX_TOKENS` |
+| `anthropic_api_key` | `str` | `""` | `ANTHROPIC_API_KEY` |
+| `openai_api_key` | `str` | `""` | `OPENAI_API_KEY` |
+| `google_api_key` | `str` | `""` | `GOOGLE_API_KEY` |
+| `openrouter_api_key` | `str` | `""` | `OPENROUTER_API_KEY` |
 | `api_cors_origins` | `list[str]` | `["http://localhost:3000"]` | `API_CORS_ORIGINS` |
 
 ## Routers
@@ -84,7 +93,43 @@ All reads proxy to Convex queries; all writes validate YAML first, then call Con
 | GET | `/{job_id}/logs` | `after_seq` (default 0), `limit` (default 200) | list of log entries |
 | DELETE | `/{job_id}` | — | sets status to `"cancelled"` in Convex |
 
-POST triggers `hydration_worker.run()` as a FastAPI `BackgroundTask`.
+POST triggers `hydration_worker.run()` via `asyncio.create_task()`. An internal helper `_trigger_job(pipeline_slug)` exposes the same logic without FastAPI's `BackgroundTasks` dependency (used by the agent service).
+
+### `/api/v1/sql` — `app/routers/sql.py`
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| POST | `` | `{query: str}` | `{columns, rows, rowCount}` |
+| POST | `/translate` | `{question: str, model?: str}` | `{sql, explanation, columns, rows, rowCount}` |
+| GET | `/schema` | — | `{table_name: [{name, type}]}` |
+| GET | `/tables` | — | `[table_name, ...]` |
+
+Queries run against the DuckDB export of the ontology. `/translate` calls the LLM to convert natural language to SQL, then executes the result.
+
+### `/api/v1/execute` — `app/routers/execute.py`
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| POST | `` | `{code: str, timeout?: int}` | `{stdout, stderr, dataframes, figures, error}` |
+
+`timeout` max is 300s. Executes Python in a sandboxed namespace via `code_runner.run_code()`.
+
+### `/api/v1/agent` — `app/routers/agent.py`
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| POST | `/chat` | `{message, history?, model?, session_id?}` | SSE stream of event objects |
+| POST | `/infer-schema` | `{sample?, description?, domain?, model?}` | `{api_yaml, ontology_yaml, explanation, raw}` |
+| GET | `/models` | — | `{models: [{id, label}], default: str}` |
+
+`/chat` returns `text/event-stream`. Each `data:` line is a JSON object with a `type` field:
+- `{"type": "text_delta", "content": str}` — streaming text chunk
+- `{"type": "tool_call", "id": str, "name": str, "args": dict}` — agent calling a tool
+- `{"type": "tool_result", "id": str, "name": str, "result": any}` — tool execution result
+- `{"type": "done", "new_messages": list}` — turn complete
+- `{"type": "error", "message": str}` — fatal error
+
+`/infer-schema` returns three YAML blocks extracted from the LLM response: an API source config, an ontology config, and a plain-text explanation.
 
 ## Services
 
@@ -109,6 +154,7 @@ Module-level state: `_onto`, `_world`, `_db_path`, `_lock`, `_executor`.
 ```python
 def load(db_path: str | Path)                        # opens/swaps quadstore; thread-safe via _lock
 async def _run(fn, *args, **kwargs)                  # runs sync fn in ThreadPoolExecutor(max_workers=1)
+async def export_to_duckdb(duckdb_path: str) -> None # exports all OWL individuals to DuckDB tables
 
 def list_classes() -> list[dict]
 def list_instances(class_name, page, limit, search) -> dict
@@ -118,6 +164,7 @@ def get_full_graph(types, state_fips, limit) -> dict
 def search_entities(q, types) -> list[dict]
 def list_series() -> list[str]
 def get_series_data(series_id) -> list[dict]
+def _export_to_duckdb_sync(duckdb_path: str) -> None # sync; must be called within the executor thread
 ```
 
 Entity serialization (`_serialize_entity`) extracts: `hasName`, `hasPopulation`, `hasFIPS`, `hasIncome`, `hasValue`, `hasDate`, `hasSeries`, `hasUnit`.
@@ -126,10 +173,12 @@ Graph node serialization (`_graph_node`) extracts: `hasName`, `hasPopulation`, `
 
 `get_full_graph` defaults to `types=["State","County","Municipality","Individual"]`. When `state_fips` is given, County rows are filtered to `isPartOf == State_{fips}`; Municipality rows are filtered to `isPartOf` ∈ matching counties. Without `state_fips`, Municipality rows are skipped entirely (too many).
 
+`export_to_duckdb` runs `_export_to_duckdb_sync` inside the single-thread executor so it shares the same SQLite connection. Each OWL class becomes a DuckDB table; data properties become columns; object properties are skipped. Two built-in columns are added per table: `_iri` and `_id`.
+
 ### `app/services/hydration_worker.py`
 
 ```python
-async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str])
+async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], onto_configs: dict[str, str] = None)
 ```
 
 Steps:
@@ -139,7 +188,7 @@ Steps:
 4. Copy `packages/engine/sources/` into tmpdir if it exists.
 5. Spawn `python {engine_root}/engine/pipeline_runner_cli.py {pipeline_path}` with env vars: `RAIL_CACHE_DIR`, `RAIL_API_CONFIG_DIR`, `RAIL_TRANSFORM_DIR`, `RAIL_ANALYSIS_DIR`, `FRED_API_KEY`.
 6. Read stdout line-by-line; parse `[step]` and `-> N X individuals processed` lines; call `jobs:updateStep` mutations; call `jobs:appendLog` for every line.
-7. On exit code 0: upload `onto.db` and `populated_ontology.owl` via `storage_service`; call `jobs:updateJob` → `success`; call `ontology_service.load(db_key)`.
+7. On exit code 0: upload `onto.db` and `populated_ontology.owl` via `storage_service`; call `jobs:updateJob` → `success`; call `ontology_service.load(db_key)`; call `ontology_service.export_to_duckdb(duckdb_path)`; call `sql_service.set_path(duckdb_path)`.
 8. On exception: call `jobs:updateJob` → `failed` with `errorMessage`.
 
 Log levels: `"error"` if `"error"` or `"warning"` appears in line (case-insensitive); otherwise `"info"`.
@@ -175,3 +224,107 @@ Required keys and validation rules by type:
 **`"ontology"`**: `uri`; `classes[]` entries must have `name`; `object_properties[]` entries must have `name`; `data_properties[]` entries must have `name` and `range` ∈ `("str","int","float","bool")`.
 
 **`"pipeline"`**: `ontology`, `steps`; each step requires `name`, `api`, `class`, `uri`; each `relationships[]` entry requires `property`, `target_class`, `target_uri`.
+
+### `app/services/llm_service.py`
+
+Provider-agnostic LLM wrapper backed by LiteLLM. Supports any model string LiteLLM understands (Anthropic, Google, OpenRouter, OpenAI). Model is selected via `settings.ai_model`; callers may override per-request.
+
+```python
+def ensure_env_keys() -> None
+    # Pushes API keys from settings into os.environ for LiteLLM
+
+async def complete(
+    messages: list[dict],
+    model: str | None = None,
+    tools: list[dict] | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> Any
+    # Non-streaming completion; returns the full LiteLLM response object
+
+async def stream_text(
+    messages: list[dict],
+    model: str | None = None,
+    temperature: float | None = None,
+    max_tokens: int | None = None,
+) -> AsyncGenerator[str, None]
+    # Streaming text; yields text delta strings
+
+async def stream_agent(
+    messages: list[dict],
+    tools: list[dict],
+    model: str | None = None,
+) -> AsyncGenerator[dict, None]
+    # One streaming turn with tool use; yields event dicts
+    # (text_delta, tool_call, _turn_end)
+```
+
+`stream_agent` accumulates tool call deltas across chunks and yields complete tool calls at end-of-stream, followed by a `_turn_end` sentinel with `has_tool_calls` and `raw_tool_calls` fields.
+
+### `app/services/sql_service.py`
+
+Manages a DuckDB file that mirrors the OWL ontology. Each OWL class is a table; each instance is a row.
+
+```python
+def get_path() -> Optional[Path]
+def set_path(path: str | Path) -> None
+def is_ready() -> bool
+def run_query(sql: str) -> dict          # returns {columns, rows, rowCount}
+def list_tables() -> list[str]
+def get_schema() -> dict                 # returns {table: [{name, type}]}
+def get_schema_ddl() -> str              # returns CREATE TABLE statements as a string
+async def translate_to_sql(natural_language: str, model: str | None = None) -> dict
+    # returns {sql, explanation}
+```
+
+`run_query` opens a read-only connection per call, serializes datetime values via `.isoformat()`, and closes the connection before returning.
+
+`translate_to_sql` sends the DDL schema + question to the LLM with a system prompt instructing it to output only valid DuckDB SQL, then parses the explanation comment.
+
+### `app/services/code_runner.py`
+
+Executes Python code in a sandboxed `exec()` namespace. Single-user; no container isolation.
+
+```python
+def run_code(code: str, timeout_seconds: int = 60) -> dict
+    # returns {stdout, stderr, dataframes, figures, error}
+```
+
+Execution namespace (`_build_context()`) contains:
+- `sql(query: str) -> pd.DataFrame` — runs SQL via `sql_service`
+- `get_table(name: str) -> pd.DataFrame` — fetches a full DuckDB table
+- `list_tables() -> list[str]`
+- `pd` (pandas), `np` (numpy), `smf` (statsmodels.formula.api), `sm` (statsmodels.api), `sklearn`, `plt` (matplotlib.pyplot)
+
+After execution, all `pd.DataFrame` variables in the namespace (excluding `_`-prefixed names) are serialized to `{columns, rows, rowCount}` and returned in `dataframes`. Matplotlib figures are saved as base64 PNG and returned in `figures`. Execution runs in a `ThreadPoolExecutor(max_workers=1)` with the specified timeout.
+
+### `app/services/agent_service.py`
+
+Implements a streaming agentic loop. The agent can call tools across multiple turns until no tool calls remain (max 10 turns).
+
+```python
+async def run_chat(
+    user_message: str,
+    history: list[dict],
+    model: str | None = None,
+) -> AsyncGenerator[dict, None]
+    # Yields SSE event dicts: text_delta, tool_call, tool_result, done
+```
+
+**System prompt** instructs the agent to: discover data sources, write YAML configs, run pipelines, query the ontology, run SQL, and execute Python for statistical analysis.
+
+**Tools available to the agent:**
+
+| Tool name | What it does |
+|-----------|-------------|
+| `list_configs` | Fetches API, ontology, and pipeline config lists from Convex |
+| `create_config` | Creates a new config in Convex (api, ontology, or pipeline) |
+| `run_pipeline` | Triggers a hydration pipeline and polls until done (max 10 min) |
+| `query_ontology` | Lists class instances with optional keyword search (max 100) |
+| `run_sql` | Executes SQL against DuckDB |
+| `get_sql_schema` | Returns DuckDB schema as `{table: [{name, type}]}` |
+| `execute_python` | Runs Python code in the sandbox; returns stdout, DataFrames, figures |
+| `get_series_data` | Fetches time-series data for a measure series ID |
+| `search_entities` | Keyword search across all ontology entities |
+
+Tool schemas follow the OpenAI function-calling format; LiteLLM normalizes them for each provider.
