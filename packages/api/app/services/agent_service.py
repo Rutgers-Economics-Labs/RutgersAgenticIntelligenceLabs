@@ -45,6 +45,33 @@ TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "search_data_registry",
+            "description": (
+                "Search the catalog of known data sources by topic, geography, or provider. "
+                "Use this before creating an API config to find the correct series ID or endpoint."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query for a known data source"},
+                    "provider": {
+                        "type": "string",
+                        "enum": ["census", "fred", "worldbank", "bls"],
+                        "description": "Optional provider filter",
+                    },
+                    "geography": {
+                        "type": "string",
+                        "enum": ["national", "state", "county", "msa"],
+                        "description": "Optional geography filter",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "list_configs",
             "description": "List available API sources, ontology schemas, and pipeline configs stored in the platform.",
             "parameters": {
@@ -219,6 +246,16 @@ TOOLS: list[dict] = [
 
 async def _execute_tool(name: str, args: dict) -> dict:
     """Execute a named tool and return a JSON-serialisable result dict."""
+
+    if name == "search_data_registry":
+        from app.services import registry_service
+        results = await registry_service.search_registry_entries(
+            query_text=args["query"],
+            provider=args.get("provider"),
+            geography=args.get("geography"),
+            limit=min(args.get("limit", 10), 20),
+        )
+        return {"results": results}
 
     if name == "list_configs":
         from app.services.convex_client import convex

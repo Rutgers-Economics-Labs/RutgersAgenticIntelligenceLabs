@@ -1,7 +1,8 @@
 "use client";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useState, useEffect, useRef } from "react";
+import { Suspense, useState, useEffect, useRef } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { agent, configs, storage, type ConfigDoc, type DocumentPreview, type ModelInfo, type ScrapePreview } from "@/lib/api";
 
 type Tab = "apis" | "ontologies" | "pipelines";
@@ -14,21 +15,29 @@ function slugify(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
+type ConfigDraft = {
+  name: string;
+  slug: string;
+  content: string;
+  isPublic?: boolean;
+};
+
 // ── YAML Editor Panel ─────────────────────────────────────────────────────────
 
 function EditorPanel({
-  tab, doc, onClose, onSaved,
+  tab, doc, initialDraft, onClose, onSaved,
 }: {
   tab: Tab;
   doc: ConfigDoc | null; // null = new
+  initialDraft?: ConfigDraft;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const isNew = doc === null;
-  const [name, setName] = useState(doc?.name ?? "");
-  const [slug, setSlug] = useState(doc?.slug ?? "");
-  const [content, setContent] = useState(doc?.content ?? "");
-  const [isPublic, setIsPublic] = useState(doc?.isPublic ?? false);
+  const [name, setName] = useState(doc?.name ?? initialDraft?.name ?? "");
+  const [slug, setSlug] = useState(doc?.slug ?? initialDraft?.slug ?? "");
+  const [content, setContent] = useState(doc?.content ?? initialDraft?.content ?? "");
+  const [isPublic, setIsPublic] = useState(doc?.isPublic ?? initialDraft?.isPublic ?? false);
   const [errors, setErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1158,9 +1167,13 @@ function UploadDocumentModal({
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export default function ConfigsPage() {
+function ConfigsPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillKey = searchParams.toString();
   const [tab, setTab] = useState<Tab>("apis");
   const [editDoc, setEditDoc] = useState<ConfigDoc | null | undefined>(undefined); // undefined=closed, null=new
+  const [prefillDraft, setPrefillDraft] = useState<ConfigDraft | undefined>(undefined);
   const [showInference, setShowInference] = useState(false);
   const [showScrape, setShowScrape] = useState(false);
   const [showUploadDocument, setShowUploadDocument] = useState(false);
@@ -1180,13 +1193,37 @@ export default function ConfigsPage() {
     tab === "ontologies" ? ontologyConfigs :
     pipelineConfigs;
 
+  useEffect(() => {
+    const prefillType = searchParams.get("prefillType");
+    const prefillContent = searchParams.get("prefillContent");
+    if (!prefillType || !prefillContent) return;
+
+    const nextTab = prefillType === "apis" || prefillType === "ontologies" || prefillType === "pipelines"
+      ? prefillType
+      : "apis";
+    const name = searchParams.get("prefillName") ?? "Registry source";
+    const slug = searchParams.get("prefillSlug") ?? slugify(name);
+    setTab(nextTab);
+    setPrefillDraft({
+      name,
+      slug,
+      content: prefillContent,
+      isPublic: false,
+    });
+    setEditDoc(null);
+    router.replace("/configs");
+  }, [prefillKey, router]);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Configs</h1>
         <div className="flex gap-2">
           <button
-            onClick={() => setEditDoc(null)}
+            onClick={() => {
+              setPrefillDraft(undefined);
+              setEditDoc(null);
+            }}
             className="text-sm px-3 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90"
           >
             + New Config
@@ -1238,7 +1275,10 @@ export default function ConfigsPage() {
         <div className="flex flex-col items-center justify-center h-48 border border-dashed border-[--border] rounded-lg gap-3">
           <p className="text-[--muted-foreground] text-sm">No {tab} configs yet.</p>
           <button
-            onClick={() => setEditDoc(null)}
+            onClick={() => {
+              setPrefillDraft(undefined);
+              setEditDoc(null);
+            }}
             className="text-xs px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
           >
             + Create one
@@ -1289,7 +1329,11 @@ export default function ConfigsPage() {
         <EditorPanel
           tab={tab}
           doc={editDoc}
-          onClose={() => setEditDoc(undefined)}
+          initialDraft={prefillDraft}
+          onClose={() => {
+            setEditDoc(undefined);
+            setPrefillDraft(undefined);
+          }}
           onSaved={() => {}}
         />
       )}
@@ -1315,5 +1359,13 @@ export default function ConfigsPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function ConfigsPage() {
+  return (
+    <Suspense fallback={<div className="text-sm text-[--muted-foreground]">Loading configs…</div>}>
+      <ConfigsPageContent />
+    </Suspense>
   );
 }

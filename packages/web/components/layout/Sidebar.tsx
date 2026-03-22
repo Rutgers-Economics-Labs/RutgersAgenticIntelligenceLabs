@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import {
   Network, Database, GitBranch, BarChart2,
   Activity, Settings, Layers, FolderOpen, Sun, Moon,
-  BotMessageSquare, Table2,
+  BotMessageSquare, Table2, Library,
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 
@@ -18,6 +18,7 @@ const NAV = [
   { href: "/sql",       label: "SQL",           icon: Table2 },
   { href: "/analysis",  label: "Analysis",      icon: BarChart2 },
   { href: "/configs",   label: "Data Sources",  icon: Database },
+  { href: "/registry",  label: "Registry",      icon: Library },
   { href: "/pipelines", label: "Pipelines",     icon: GitBranch },
   { href: "/jobs",      label: "Jobs",          icon: Settings },
 ];

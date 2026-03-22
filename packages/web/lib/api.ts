@@ -98,6 +98,19 @@ export type DocumentPreview = {
   source_text?: string;
 };
 
+export type RegistryEntry = {
+  provider: string;
+  id: string;
+  name: string;
+  description: string;
+  unit: string;
+  frequency: string;
+  geography: string;
+  tags: string[];
+  exampleYaml: string;
+  updatedAt: number;
+};
+
 export const configs = {
   validate: (config_type: string, content: string) =>
     req<{ valid: boolean; errors: string[] }>("/configs/validate", {
@@ -114,6 +127,19 @@ export const configs = {
     req<ScrapePreview>("/configs/scrape-preview", { method: "POST", body: JSON.stringify(body) }),
   docPreview: (body: { storage_key: string; extraction_mode: "tables" | "prose" | "both"; pages?: string }) =>
     req<DocumentPreview>("/configs/doc-preview", { method: "POST", body: JSON.stringify(body) }),
+};
+
+export const registry = {
+  search: (query = "", provider?: string, geography?: string, limit = 20) => {
+    const params = new URLSearchParams({ q: query, limit: String(limit) });
+    if (provider && provider !== "all") params.set("provider", provider);
+    if (geography && geography !== "all") params.set("geography", geography);
+    return req<RegistryEntry[]>(`/registry/search?${params}`);
+  },
+  get: (provider: string, id: string) =>
+    req<RegistryEntry>(`/registry/${encodeURIComponent(provider)}/${encodeURIComponent(id)}`),
+  create: (entry: RegistryEntry) =>
+    req<RegistryEntry>("/registry", { method: "POST", body: JSON.stringify(entry) }),
 };
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────

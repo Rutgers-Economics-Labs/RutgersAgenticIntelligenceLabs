@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent
+from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry
 
 
 @asynccontextmanager
@@ -73,6 +73,7 @@ app.include_router(storage.router,  prefix="/api/v1")
 app.include_router(sql.router,      prefix="/api/v1")
 app.include_router(execute.router,  prefix="/api/v1")
 app.include_router(agent.router,    prefix="/api/v1")
+app.include_router(registry.router, prefix="/api/v1")
 
 
 @app.get("/health")

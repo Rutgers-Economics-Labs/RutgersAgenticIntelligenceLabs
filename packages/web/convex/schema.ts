@@ -41,6 +41,22 @@ export default defineSchema({
     .index("by_slug", ["slug"])
     .index("by_public", ["isPublic"]),
 
+  dataSourceRegistry: defineTable({
+    provider: v.string(),
+    sourceId: v.string(),
+    name: v.string(),
+    description: v.string(),
+    unit: v.string(),
+    frequency: v.string(),
+    geography: v.string(),
+    tags: v.array(v.string()),
+    exampleYaml: v.string(),
+    updatedAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_provider", ["provider"])
+    .index("by_provider_source", ["provider", "sourceId"]),
+
   hydrationJobs: defineTable({
     pipelineConfigId: v.id("pipelineConfigs"),
     pipelineSlug: v.string(),

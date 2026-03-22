@@ -8,9 +8,16 @@ const createConfigMock = vi.fn();
 const scrapePreviewMock = vi.fn();
 const docPreviewMock = vi.fn();
 const storageUploadMock = vi.fn();
+const replaceMock = vi.fn();
+let searchParamsState = new URLSearchParams();
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => useQueryMock(...args),
+}));
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: replaceMock }),
+  useSearchParams: () => ({ get: (key: string) => searchParamsState.get(key) }),
 }));
 
 vi.mock("@/convex/_generated/api", () => ({
@@ -44,6 +51,7 @@ vi.mock("@/lib/api", () => ({
 describe("ConfigsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    searchParamsState = new URLSearchParams();
     useQueryMock.mockImplementation((query: string) => {
       if (query === "configs.listApis") return [];
       if (query === "configs.listOntologies") return [];
