@@ -23,3 +23,41 @@ Here are the primary gaps between what exists today and the ultimate vision:
 - **Current State:** The Next.js frontend (`packages/web/`) and Streamlit explorer (`app.py`) have hardcoded UI components for rendering tables and charts.
 - **Vision State:** Agents autonomously write and deploy custom React/Next.js UI code or structured JSON to generate bespoke dashboards.
 - **The Gap:** The platform needs to support a "UI Generation" pipeline where Next.js pages or Convex schema definitions can be injected or compiled dynamically by the Analyst Agents.
+
+---
+
+## Current Closure Status
+
+Since this original gap analysis was written, the platform has moved materially beyond a static/manual foundation.
+
+Implemented or substantially implemented:
+- WO-04 entity detail page
+- WO-05 project forking
+- WO-06 auto-schema inference UI
+- WO-07 workspace persistence
+- WO-08 job detail page
+- WO-09 analysis templates
+- WO-10 semantic search
+- WO-11 partial web scraping flow
+- WO-12 partial document parsing flow
+- WO-14 data source registry
+
+Still substantially open:
+- WO-13 unstructured normalization
+- WO-15 onward, except for partial scaffolding in storage/scheduler-related areas
+
+The current system is now better described as an **AI-assisted ontology research workbench** rather than a purely manual pipeline.
+
+---
+
+## Gap-Closing Plan
+
+The detailed closure roadmap now lives in [roadmap.md](/Users/akashdubey/Documents/CodingProjects/RAIL/RutgersAgenticIntelligenceLabs/goals/roadmap.md).
+
+In short, the recommended order is:
+1. finish ingestion autonomy and freshness
+2. add specialist agents and first-class econometric modules
+3. add reproducibility, provenance, exports, and sharing
+4. harden operations, auth, and scale behavior
+
+This keeps the work orders aligned with the architecture that already exists in `packages/web`, `packages/api`, `packages/engine`, and Convex, rather than planning against an outdated greenfield assumption.
