@@ -76,6 +76,26 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_created", ["createdAt"]),
 
+  projects: defineTable({
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    approach: v.union(v.literal("data-first"), v.literal("ontology-first")),
+    ontologyConfigSlug: v.optional(v.string()),
+    apiConfigSlugs: v.array(v.string()),
+    pipelineConfigSlug: v.optional(v.string()),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("ready"),
+      v.literal("hydrated"),
+    ),
+    lastJobId: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_status", ["status"]),
+
   jobLogs: defineTable({
     jobId: v.id("hydrationJobs"),
     seq: v.number(),
@@ -86,4 +106,41 @@ export default defineSchema({
   })
     .index("by_job", ["jobId"])
     .index("by_job_seq", ["jobId", "seq"]),
+
+  // AI agent sessions — stores conversation history
+  agentSessions: defineTable({
+    title: v.string(),
+    model: v.string(),
+    messages: v.array(v.object({
+      role: v.union(v.literal("user"), v.literal("assistant"), v.literal("tool")),
+      content: v.optional(v.string()),
+      tool_calls: v.optional(v.any()),
+      tool_call_id: v.optional(v.string()),
+    })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_created", ["createdAt"]),
+
+  // Research workspaces — notebook-style cells
+  workspaces: defineTable({
+    title: v.string(),
+    sessionId: v.optional(v.string()),
+    pipelineSlug: v.optional(v.string()),
+    cells: v.array(v.object({
+      id: v.string(),
+      type: v.union(
+        v.literal("ai-text"),
+        v.literal("code"),
+        v.literal("sql"),
+        v.literal("table"),
+        v.literal("chart"),
+        v.literal("metric"),
+      ),
+      content: v.string(),
+      result: v.optional(v.any()),
+      role: v.optional(v.string()),  // "user" | "assistant" for chat cells
+    })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_created", ["createdAt"]),
 });

@@ -8,8 +8,11 @@
  * @module
  */
 
+import type * as agent from "../agent.js";
 import type * as configs from "../configs.js";
 import type * as jobs from "../jobs.js";
+import type * as projects from "../projects.js";
+import type * as workspaces from "../workspaces.js";
 
 import type {
   ApiFromModules,
@@ -18,8 +21,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agent: typeof agent;
   configs: typeof configs;
   jobs: typeof jobs;
+  projects: typeof projects;
+  workspaces: typeof workspaces;
 }>;
 
 /**

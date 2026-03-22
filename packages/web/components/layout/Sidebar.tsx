@@ -4,21 +4,27 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   Network, Database, GitBranch, BarChart2,
-  Activity, Settings, Layers
+  Activity, Settings, Layers, FolderOpen, Sun, Moon,
+  BotMessageSquare, Table2,
 } from "lucide-react";
+import { useTheme } from "@/components/ThemeProvider";
 
 const NAV = [
-  { href: "/",          label: "Dashboard",  icon: Activity },
-  { href: "/explorer",  label: "Explorer",   icon: Layers },
-  { href: "/graph",     label: "Graph",      icon: Network },
-  { href: "/analysis",  label: "Analysis",   icon: BarChart2 },
-  { href: "/configs",   label: "Data Sources", icon: Database },
-  { href: "/pipelines", label: "Pipelines",  icon: GitBranch },
-  { href: "/jobs",      label: "Jobs",       icon: Settings },
+  { href: "/workspace", label: "AI Workspace",  icon: BotMessageSquare },
+  { href: "/",          label: "Dashboard",     icon: Activity },
+  { href: "/projects",  label: "Projects",      icon: FolderOpen },
+  { href: "/explorer",  label: "Explorer",      icon: Layers },
+  { href: "/graph",     label: "Graph",         icon: Network },
+  { href: "/sql",       label: "SQL",           icon: Table2 },
+  { href: "/analysis",  label: "Analysis",      icon: BarChart2 },
+  { href: "/configs",   label: "Data Sources",  icon: Database },
+  { href: "/pipelines", label: "Pipelines",     icon: GitBranch },
+  { href: "/jobs",      label: "Jobs",          icon: Settings },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
+  const { theme, toggle } = useTheme();
   return (
     <aside className="w-56 shrink-0 flex flex-col border-r border-[--border] bg-[--card] h-screen sticky top-0">
       <div className="px-4 py-5 border-b border-[--border]">
@@ -45,8 +51,15 @@ export function Sidebar() {
           );
         })}
       </nav>
-      <div className="px-4 py-3 border-t border-[--border]">
+      <div className="px-4 py-3 border-t border-[--border] flex items-center justify-between">
         <p className="text-[10px] text-[--muted-foreground]">Rutgers Agentic Intelligence Labs</p>
+        <button
+          onClick={toggle}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          className="p-1.5 rounded text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted] transition-colors"
+        >
+          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+        </button>
       </div>
     </aside>
   );

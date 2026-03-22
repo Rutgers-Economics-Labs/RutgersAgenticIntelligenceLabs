@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* ── Dark theme (default) ───────────────────────────────────────────────────── */
 :root {
   --background: #0d1117;
   --foreground: #e6edf3;
@@ -19,6 +20,27 @@
   --color-municipality: #50C878;
   --color-individual: #B07FD4;
   --color-measure: #E05C5C;
+}
+
+/* ── Light theme ─────────────────────────────────────────────────────────────── */
+[data-theme="light"] {
+  --background: #ffffff;
+  --foreground: #1a1a2e;
+  --card: #f6f8fa;
+  --card-foreground: #1a1a2e;
+  --border: #d0d7de;
+  --muted: #eaeef2;
+  --muted-foreground: #57606a;
+  --primary: #0969da;
+  --primary-foreground: #ffffff;
+  --accent: #218bff;
+  --ring: #0969da;
+
+  --color-state: #E8920A;
+  --color-county: #1a7abf;
+  --color-municipality: #22863a;
+  --color-individual: #6f42c1;
+  --color-measure: #cb2431;
 }
 
 @theme inline {

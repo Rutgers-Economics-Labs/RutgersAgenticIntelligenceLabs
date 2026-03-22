@@ -88,7 +88,7 @@ function EditorPanel({
       <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
 
       {/* Panel */}
-      <div className="fixed right-0 top-0 h-full w-full max-w-2xl bg-[#0d1117] border-l border-[--border] z-50 flex flex-col shadow-2xl">
+      <div className="fixed right-0 top-0 h-full w-full max-w-2xl bg-[--background] border-l border-[--border] z-50 flex flex-col shadow-2xl">
 
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[--border]">
@@ -139,7 +139,7 @@ function EditorPanel({
             onChange={(e) => setContent(e.target.value)}
             onKeyDown={handleKeyDown}
             spellCheck={false}
-            className="flex-1 w-full font-mono text-sm bg-[#161b22] border border-[--border] rounded p-4 text-[--foreground] resize-none outline-none focus:border-[--primary] leading-6"
+            className="flex-1 w-full font-mono text-sm bg-[--muted] border border-[--border] rounded p-4 text-[--foreground] resize-none outline-none focus:border-[--primary] leading-6"
             placeholder={`# ${CONFIG_TYPE_LABEL[tab]} config\nname: my-config\n...`}
           />
         </div>
@@ -265,7 +265,7 @@ export default function ConfigsPage() {
             <button
               key={cfg._id}
               onClick={() => setEditDoc(cfg as unknown as ConfigDoc)}
-              className="p-4 rounded-lg border border-[--border] bg-[#0d1117] hover:border-[--primary]/60 hover:bg-[#161b22] transition-colors text-left group"
+              className="p-4 rounded-lg border border-[--border] bg-[--card] hover:border-[--primary]/60 hover:bg-[--muted] transition-colors text-left group"
             >
               <div className="flex items-start justify-between mb-2">
                 <h3 className="font-medium text-sm group-hover:text-[--primary] transition-colors">{cfg.name}</h3>
