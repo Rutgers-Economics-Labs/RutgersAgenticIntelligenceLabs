@@ -1,3 +1,4 @@
+from typing import Union
 from fastapi import APIRouter, HTTPException, Query
 from app.services import ontology_service
 
@@ -43,7 +44,7 @@ async def get_entity_graph(uri: str):
 @router.get("/graph")
 async def get_full_graph(
     types: str = Query("State,County,Municipality,Individual"),
-    state_fips: str | None = Query(None),
+    state_fips: Union[str, None] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
 ):
     type_list = [t.strip() for t in types.split(",") if t.strip()]
@@ -55,7 +56,7 @@ async def get_full_graph(
 @router.get("/search")
 async def search_entities(
     q: str = Query(..., min_length=1),
-    types: str | None = Query(None),
+    types: Union[str, None] = Query(None),
 ):
     type_list = [t.strip() for t in types.split(",")] if types else None
     return await ontology_service._run(ontology_service.search_entities, q, type_list)

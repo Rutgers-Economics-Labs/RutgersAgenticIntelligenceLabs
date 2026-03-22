@@ -123,31 +123,44 @@ def _apply_fields(df, fields_spec):
     return pd.DataFrame(result)
 
 
-def fetch_api(api_name, resolved_data=None):
-    """
-    Fetch and normalize data for a named API config.
+# --- Source Handlers ---
 
-    resolved_data: dict of {api_name: DataFrame} for foreach lookups.
-    Returns a DataFrame with aliased columns.
-    """
-    spec = _load_spec(api_name)
-    resolved_data = resolved_data or {}
-    src_type = spec.get("type", "api")
+def _handle_csv(api_name, spec, resolved_data):
+    df = pd.read_csv(spec["path"])
+    if "fields" in spec:
+        df = _apply_fields(df, spec["fields"])
+    return df
 
-    # --- CSV / Excel sources ---
-    if src_type == "csv":
-        df = pd.read_csv(spec["path"])
-        if "fields" in spec:
-            df = _apply_fields(df, spec["fields"])
-        return df
 
-    if src_type == "excel":
-        df = pd.read_excel(spec["path"])
-        if "fields" in spec:
-            df = _apply_fields(df, spec["fields"])
-        return df
+def _handle_excel(api_name, spec, resolved_data):
+    df = pd.read_excel(spec["path"])
+    if "fields" in spec:
+        df = _apply_fields(df, spec["fields"])
+    return df
 
-    # --- API sources ---
+
+def _handle_uploaded(api_name, spec, resolved_data):
+    # 'path' must be resolved by the hydration worker from the storage_key
+    path = spec.get("path")
+    if not path:
+        raise ValueError(f"Uploaded source '{api_name}' has no resolved path.")
+    
+    path = Path(path)
+    if path.suffix == ".csv":
+        df = pd.read_csv(path)
+    elif path.suffix in (".xls", ".xlsx"):
+        df = pd.read_excel(path)
+    elif path.suffix == ".json":
+        df = pd.read_json(path)
+    else:
+        raise ValueError(f"Unsupported file format for uploaded data: {path.suffix}")
+
+    if "fields" in spec:
+        df = _apply_fields(df, spec["fields"])
+    return df
+
+
+def _handle_api(api_name, spec, resolved_data):
     foreach = spec.get("foreach")
     response_format = spec.get("response_format", "json")
     response_path = spec.get("response_path")
@@ -197,7 +210,36 @@ def fetch_api(api_name, resolved_data=None):
         raw = _http_fetch(spec)
         df = _to_dataframe(raw, response_format, response_path)
 
-    if "fields" in spec:
+    return df
+
+
+SOURCE_HANDLERS = {
+    "api": _handle_api,
+    "csv": _handle_csv,
+    "excel": _handle_excel,
+    "uploaded": _handle_uploaded,
+}
+
+
+def fetch_api(api_name, resolved_data=None):
+    """
+    Fetch and normalize data for a named API config.
+
+    resolved_data: dict of {api_name: DataFrame} for foreach lookups.
+    Returns a DataFrame with aliased columns.
+    """
+    spec = _load_spec(api_name)
+    resolved_data = resolved_data or {}
+    src_type = spec.get("type", "api")
+
+    handler = SOURCE_HANDLERS.get(src_type)
+    if not handler:
+        raise ValueError(f"Unknown source type '{src_type}' for API '{api_name}'")
+
+    df = handler(api_name, spec, resolved_data)
+
+    if "fields" in spec and src_type == "api":
+        # CSV/Excel/Uploaded handlers already applied fields if present
         df = _apply_fields(df, spec["fields"])
 
     if spec.get("drop_na"):

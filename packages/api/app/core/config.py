@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     # FRED
     fred_api_key: str = ""
 
+    # AI / LLM (provider-agnostic via LiteLLM)
+    # Examples: "claude-sonnet-4-6", "gemini/gemini-2.0-flash", "openrouter/anthropic/claude-3.5-sonnet", "gpt-4o"
+    ai_model: str = "claude-sonnet-4-6"
+    ai_temperature: float = 0.3
+    ai_max_tokens: int = 8192
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    google_api_key: str = ""
+    openrouter_api_key: str = ""
+
     # Server
     # In production set API_CORS_ORIGINS="https://your-app.vercel.app,https://custom-domain.com"
     api_cors_origins: list[str] = ["http://localhost:3000"]

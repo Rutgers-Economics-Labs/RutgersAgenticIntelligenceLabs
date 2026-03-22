@@ -15,6 +15,16 @@ dependencies = [
     "pandas>=2.2.0",
     "requests>=2.32.0",
     "openpyxl>=3.1.0",
+    # AI / LLM — provider-agnostic via LiteLLM
+    "litellm>=1.40.0",
+    # SQL analytics
+    "duckdb>=0.10.0",
+    # Code execution sandbox — data science stack
+    "statsmodels>=0.14.0",
+    "scikit-learn>=1.4.0",
+    "matplotlib>=3.8.0",
+    # SSE streaming
+    "sse-starlette>=2.0.0",
 ]
 
 [build-system]

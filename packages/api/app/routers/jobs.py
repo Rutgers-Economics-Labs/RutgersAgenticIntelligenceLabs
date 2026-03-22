@@ -1,5 +1,6 @@
 import asyncio
 import time
+from typing import Union
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -14,14 +15,16 @@ class TriggerJobRequest(BaseModel):
     env_overrides: dict[str, str] = {}
 
 
-@router.post("")
-async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks):
-    # Fetch the pipeline config from Convex
-    pipeline = await convex.query("configs:getPipeline", {"slug": req.pipeline_slug})
+async def _trigger_job(pipeline_slug: str) -> dict:
+    """
+    Core job-creation logic, callable from both the HTTP router and the agent.
+    Fires hydration as a plain asyncio task (no BackgroundTasks dependency).
+    Returns {jobId, status}.
+    """
+    pipeline = await convex.query("configs:getPipeline", {"slug": pipeline_slug})
     if not pipeline:
-        raise HTTPException(404, detail=f"Pipeline '{req.pipeline_slug}' not found")
+        raise ValueError(f"Pipeline '{pipeline_slug}' not found")
 
-    # Fetch all referenced API configs
     api_slugs = pipeline.get("referencedApiSlugs", [])
     api_configs: dict[str, str] = {}
     for slug in api_slugs:
@@ -29,7 +32,49 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
         if cfg:
             api_configs[slug] = cfg["content"]
 
-    # Create the job record in Convex
+    pipeline_spec = pipeline.get("parsedSpec", {})
+    onto_ref = pipeline_spec.get("ontology", "core")
+    onto_configs: dict[str, str] = {}
+    onto_cfg = await convex.query("configs:getOntology", {"slug": onto_ref})
+    if onto_cfg:
+        onto_configs[onto_ref] = onto_cfg["content"]
+
+    result = await convex.mutation("jobs:create", {
+        "pipelineConfigId": pipeline["_id"],
+        "pipelineSlug": pipeline_slug,
+        "status": "queued",
+        "triggeredBy": "agent",
+        "createdAt": int(time.time() * 1000),
+        "stepResults": [],
+    })
+    job_id = result["jobId"]
+
+    asyncio.create_task(
+        hydration_worker.run(job_id, pipeline["content"], api_configs, onto_configs)
+    )
+    return {"jobId": job_id, "status": "queued"}
+
+
+@router.post("")
+async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks):
+    pipeline = await convex.query("configs:getPipeline", {"slug": req.pipeline_slug})
+    if not pipeline:
+        raise HTTPException(404, detail=f"Pipeline '{req.pipeline_slug}' not found")
+
+    api_slugs = pipeline.get("referencedApiSlugs", [])
+    api_configs: dict[str, str] = {}
+    for slug in api_slugs:
+        cfg = await convex.query("configs:getApi", {"slug": slug})
+        if cfg:
+            api_configs[slug] = cfg["content"]
+
+    pipeline_spec = pipeline.get("parsedSpec", {})
+    onto_ref = pipeline_spec.get("ontology", "core")
+    onto_configs: dict[str, str] = {}
+    onto_cfg = await convex.query("configs:getOntology", {"slug": onto_ref})
+    if onto_cfg:
+        onto_configs[onto_ref] = onto_cfg["content"]
+
     result = await convex.mutation("jobs:create", {
         "pipelineConfigId": pipeline["_id"],
         "pipelineSlug": req.pipeline_slug,
@@ -40,19 +85,19 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
     })
     job_id = result["jobId"]
 
-    # Fire hydration in the background
     background_tasks.add_task(
         hydration_worker.run,
         job_id,
         pipeline["content"],
         api_configs,
+        onto_configs,
     )
 
     return {"jobId": job_id, "status": "queued"}
 
 
 @router.get("")
-async def list_jobs(status: str | None = None, limit: int = 50):
+async def list_jobs(status: Union[str, None] = None, limit: int = 50):
     return await convex.query("jobs:list", {"status": status, "limit": limit})
 
 

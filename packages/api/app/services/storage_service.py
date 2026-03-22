@@ -7,6 +7,7 @@ In S3 mode: files are uploaded to S3 after hydration and downloaded before queri
 import shutil
 from pathlib import Path
 
+from typing import Union
 from app.core.config import settings
 
 
@@ -16,7 +17,7 @@ class StorageService:
         self._local_root = Path("/tmp/rail_artifacts")
         self._local_root.mkdir(parents=True, exist_ok=True)
 
-    async def upload(self, job_id: str, filename: str, local_path: str | Path) -> str:
+    async def upload(self, job_id: str, filename: str, local_path: Union[str, Path]) -> str:
         """
         Upload a file produced by hydration. Returns the storage key.
         In local mode, copies the file to a stable local location and returns that path.
@@ -29,9 +30,6 @@ class StorageService:
             return str(dest)
 
         # S3 mode
-        key = f"jobs/{job_id}/{filename}"
-        import aioboto3
-        session = aioboto3.Session()
         async with session.client(
             "s3",
             region_name=settings.s3_region,
@@ -41,7 +39,33 @@ class StorageService:
             await s3.upload_file(str(local_path), settings.s3_bucket, key)
         return key
 
-    async def download(self, storage_key: str, dest_path: str | Path) -> Path:
+    async def upload_input(self, filename: str, content: bytes) -> str:
+        """
+        Upload a file provided by a user to the inputs/ directory.
+        Returns the storage key.
+        """
+        if self.backend == "local":
+            dest = self._local_root / "inputs" / filename
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with open(dest, "wb") as f:
+                f.write(content)
+            return str(dest)
+
+        # S3 mode
+        key = f"inputs/{filename}"
+        import aioboto3
+        import io
+        session = aioboto3.Session()
+        async with session.client(
+            "s3",
+            region_name=settings.s3_region,
+            aws_access_key_id=settings.aws_access_key_id,
+            aws_secret_access_key=settings.aws_secret_access_key,
+        ) as s3:
+            await s3.upload_fileobj(io.BytesIO(content), settings.s3_bucket, key)
+        return key
+
+    async def download(self, storage_key: str, dest_path: Union[str, Path]) -> Path:
         """
         Download a stored artifact to dest_path. Returns the dest path.
         In local mode, storage_key IS the local path; copies to dest_path.

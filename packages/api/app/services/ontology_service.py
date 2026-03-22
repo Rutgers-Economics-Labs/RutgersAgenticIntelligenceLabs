@@ -5,13 +5,13 @@ The onto object is cached in memory; swapped out when a new hydration job comple
 import asyncio
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Union, List
 
 from owlready2 import World, ObjectProperty
 
 _onto = None
 _world = None
-_db_path: str | None = None
+_db_path: Union[str, None] = None
 _lock = Lock()
 # Executor ensures owlready2 SQLite access is single-threaded
 _executor = None
@@ -25,7 +25,7 @@ def _get_executor():
     return _executor
 
 
-def load(db_path: str | Path):
+def load(db_path: Union[str, Path]):
     """Load (or reload) the quadstore from db_path. Thread-safe."""
     global _onto, _world, _db_path
     db_path = str(db_path)
@@ -131,8 +131,8 @@ def get_entity_graph(uri: str) -> dict:
 
 
 def get_full_graph(
-    types: list[str] | None = None,
-    state_fips: str | None = None,
+    types: Union[List[str], None] = None,
+    state_fips: Union[str, None] = None,
     limit: int = 500,
 ) -> dict:
     onto = _require_onto()
@@ -192,7 +192,7 @@ def get_full_graph(
     return {"nodes": list(nodes.values()), "links": links}
 
 
-def search_entities(q: str, types: list[str] | None = None) -> list[dict]:
+def search_entities(q: str, types: Union[List[str], None] = None) -> List[dict]:
     onto = _require_onto()
     results = []
     q_lower = q.lower()
@@ -217,6 +217,51 @@ def list_series() -> list[str]:
         for m in measure_cls.instances()
         if getattr(m, "hasSeries", None)
     })
+
+
+def _export_to_duckdb_sync(duckdb_path: str) -> None:
+    """
+    Export all OWL individuals to DuckDB tables.
+    Each class becomes a table; data properties become columns.
+    Must be called within the executor thread (uses _world directly).
+    """
+    import duckdb
+    import pandas as pd
+
+    onto = _require_onto()
+    con = duckdb.connect(duckdb_path)
+    try:
+        for cls in onto.classes():
+            rows = []
+            for ind in list(cls.instances()):
+                row: dict = {"_iri": ind.iri, "_id": ind.name}
+                for prop in ind.get_properties():
+                    try:
+                        vals = prop[ind]
+                        if not vals:
+                            continue
+                        val = vals[0] if isinstance(vals, list) else vals
+                        # Skip object properties (they have an iri / storid)
+                        if hasattr(val, "storid") or hasattr(val, "iri"):
+                            continue
+                        col = prop.python_name or prop.name
+                        row[col] = val
+                    except Exception:
+                        pass
+                rows.append(row)
+
+            if rows:
+                df = pd.DataFrame(rows)
+                con.register("_tmp_df", df)
+                con.execute(f'CREATE OR REPLACE TABLE "{cls.name}" AS SELECT * FROM _tmp_df')
+                con.unregister("_tmp_df")
+    finally:
+        con.close()
+
+
+async def export_to_duckdb(duckdb_path: str) -> None:
+    """Async wrapper: export ontology to DuckDB. Runs in the ontology executor."""
+    await _run(_export_to_duckdb_sync, duckdb_path)
 
 
 def get_series_data(series_id: str) -> list[dict]:
