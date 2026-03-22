@@ -1,6 +1,6 @@
 from typing import Union
 from fastapi import APIRouter, HTTPException, Query
-from app.services import ontology_service
+from app.services import embedding_service, ontology_service
 
 router = APIRouter(prefix="/ontology", tags=["ontology"])
 
@@ -60,6 +60,19 @@ async def search_entities(
 ):
     type_list = [t.strip() for t in types.split(",")] if types else None
     return await ontology_service._run(ontology_service.search_entities, q, type_list)
+
+
+@router.get("/semantic-search")
+async def semantic_search_entities(
+    q: str = Query(..., min_length=1),
+    types: Union[str, None] = Query(None),
+    limit: int = Query(20, ge=1, le=100),
+):
+    type_list = [t.strip() for t in types.split(",")] if types else None
+    try:
+        return await embedding_service.search(q, top_k=limit, types=type_list)
+    except RuntimeError as e:
+        raise HTTPException(503, detail=str(e))
 
 
 @router.get("/series")

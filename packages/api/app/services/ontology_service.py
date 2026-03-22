@@ -44,6 +44,10 @@ def _require_onto():
     return _onto
 
 
+def get_db_path() -> Union[str, None]:
+    return _db_path
+
+
 async def _run(fn, *args, **kwargs):
     """Run a sync ontology function in the dedicated thread executor."""
     loop = asyncio.get_event_loop()
@@ -219,6 +223,21 @@ def list_series() -> list[str]:
     })
 
 
+def list_search_documents() -> list[dict]:
+    onto = _require_onto()
+    documents = []
+    for cls in onto.classes():
+        for ind in cls.instances():
+            entity = _serialize_entity(ind)
+            documents.append(
+                {
+                    "entity": entity,
+                    "text": _entity_search_text(entity),
+                }
+            )
+    return documents
+
+
 def _export_to_duckdb_sync(duckdb_path: str) -> None:
     """
     Export all OWL individuals to DuckDB tables.
@@ -319,6 +338,18 @@ def _serialize_entity(ind, include_relationships: bool = False) -> dict:
         result["relationships"] = rels
 
     return result
+
+
+def _entity_search_text(entity: dict) -> str:
+    pieces = [entity["class"], entity["id"]]
+    name = entity["properties"].get("hasName")
+    if name:
+        pieces.append(str(name))
+    for key, value in entity["properties"].items():
+        if key == "hasName" or value in (None, ""):
+            continue
+        pieces.append(f"{key} {value}")
+    return ". ".join(str(piece) for piece in pieces if piece)
 
 
 def _graph_node(ind, cls_name: str) -> dict:

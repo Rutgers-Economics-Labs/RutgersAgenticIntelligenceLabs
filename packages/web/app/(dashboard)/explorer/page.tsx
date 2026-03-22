@@ -15,6 +15,7 @@ export default function ExplorerPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
+  const [searchMode, setSearchMode] = useState<"keyword" | "semantic">("keyword");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -27,13 +28,24 @@ export default function ExplorerPage() {
   const load = useCallback(async () => {
     if (!selectedClass) return;
     setLoading(true);
+    setError("");
     try {
-      const res = await ontology.instances(selectedClass, page, 50, search);
-      setItems(res.items);
-      setTotal(res.total);
-    } catch { setError("Failed to load instances"); }
+      if (searchMode === "semantic" && search.trim()) {
+        const results = await ontology.semanticSearch(search, [selectedClass], 20);
+        setItems(results);
+        setTotal(results.length);
+      } else {
+        const res = await ontology.instances(selectedClass, page, 50, search);
+        setItems(res.items);
+        setTotal(res.total);
+      }
+    } catch {
+      setItems([]);
+      setTotal(0);
+      setError(searchMode === "semantic" ? "Semantic search is unavailable." : "Failed to load instances");
+    }
     finally { setLoading(false); }
-  }, [selectedClass, page, search]);
+  }, [page, search, searchMode, selectedClass]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -69,9 +81,31 @@ export default function ExplorerPage() {
         <input
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          placeholder="Search by name…"
+          placeholder={searchMode === "semantic" ? "Search by meaning…" : "Search by name…"}
           className="flex-1 min-w-48 px-3 py-1.5 rounded border border-[--border] bg-[--muted] text-sm text-[--foreground] placeholder:text-[--muted-foreground] outline-none focus:border-[--primary]"
         />
+        <div className="inline-flex rounded-md border border-[--border] overflow-hidden">
+          <button
+            onClick={() => { setSearchMode("keyword"); setPage(1); }}
+            className="px-3 py-1.5 text-sm transition-colors"
+            style={{
+              background: searchMode === "keyword" ? "var(--primary)" : "transparent",
+              color: searchMode === "keyword" ? "var(--primary-foreground)" : "var(--foreground)",
+            }}
+          >
+            Keyword
+          </button>
+          <button
+            onClick={() => { setSearchMode("semantic"); setPage(1); }}
+            className="px-3 py-1.5 text-sm transition-colors border-l border-[--border]"
+            style={{
+              background: searchMode === "semantic" ? "var(--primary)" : "transparent",
+              color: searchMode === "semantic" ? "var(--primary-foreground)" : "var(--foreground)",
+            }}
+          >
+            Semantic
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -127,7 +161,7 @@ export default function ExplorerPage() {
       </div>
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {searchMode === "keyword" && totalPages > 1 && (
         <div className="flex items-center gap-3 mt-4 text-sm text-[--muted-foreground]">
           <button
             disabled={page === 1}

@@ -171,6 +171,14 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             except Exception as e:
                 await _log(job_id, "warn", f"[job] DuckDB export failed (non-fatal): {e}", seq=seq)
 
+            try:
+                from app.services import embedding_service
+
+                await embedding_service.build_index(db_key)
+                await _log(job_id, "info", "[job] Semantic index ready", seq=seq)
+            except Exception as e:
+                await _log(job_id, "warn", f"[job] Embedding index failed (non-fatal): {e}", seq=seq)
+
     except Exception as exc:
         await _update_job(job_id, {
             "status": "failed",

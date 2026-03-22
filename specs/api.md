@@ -31,6 +31,7 @@ On startup (`lifespan`):
 | `ai_model` | `str` | `"claude-sonnet-4-6"` | `AI_MODEL` |
 | `ai_temperature` | `float` | `0.3` | `AI_TEMPERATURE` |
 | `ai_max_tokens` | `int` | `8192` | `AI_MAX_TOKENS` |
+| `embedding_model` | `str` | `"text-embedding-3-small"` | `EMBEDDING_MODEL` |
 | `anthropic_api_key` | `str` | `""` | `ANTHROPIC_API_KEY` |
 | `openai_api_key` | `str` | `""` | `OPENAI_API_KEY` |
 | `google_api_key` | `str` | `""` | `GOOGLE_API_KEY` |
@@ -53,6 +54,7 @@ All handlers delegate to `ontology_service._run(fn, *args)` (thread-safe async w
 | GET | `/entities/{uri}/graph` | — | `{nodes, links}` 1-hop subgraph |
 | GET | `/graph` | `types` (CSV), `state_fips`, `limit` (1–2000) | `{nodes, links}` filtered full graph |
 | GET | `/search` | `q` (required), `types` (CSV, optional) | `[EntitySummary]` capped at 100 |
+| GET | `/semantic-search` | `q` (required), `types` (CSV, optional), `limit` (1–100) | ranked `[EntitySummary]` |
 | GET | `/series` | — | `[series_id_string]` sorted |
 | GET | `/series/{series_id}/data` | — | `[{date, value}]` sorted by date |
 
@@ -162,6 +164,7 @@ def get_entity(uri) -> dict
 def get_entity_graph(uri) -> dict
 def get_full_graph(types, state_fips, limit) -> dict
 def search_entities(q, types) -> list[dict]
+def list_search_documents() -> list[dict]
 def list_series() -> list[str]
 def get_series_data(series_id) -> list[dict]
 def _export_to_duckdb_sync(duckdb_path: str) -> None # sync; must be called within the executor thread
@@ -174,6 +177,16 @@ Graph node serialization (`_graph_node`) extracts: `hasName`, `hasPopulation`, `
 `get_full_graph` defaults to `types=["State","County","Municipality","Individual"]`. When `state_fips` is given, County rows are filtered to `isPartOf == State_{fips}`; Municipality rows are filtered to `isPartOf` ∈ matching counties. Without `state_fips`, Municipality rows are skipped entirely (too many).
 
 `export_to_duckdb` runs `_export_to_duckdb_sync` inside the single-thread executor so it shares the same SQLite connection. Each OWL class becomes a DuckDB table; data properties become columns; object properties are skipped. Two built-in columns are added per table: `_iri` and `_id`.
+
+### `app/services/embedding_service.py`
+
+```python
+async def build_index(db_path: str | Path | None = None) -> None
+async def search(query: str, top_k: int = 20, types: list[str] | None = None) -> list[dict]
+def is_ready(db_path: str | Path | None = None) -> bool
+```
+
+The semantic index is stored in `embeddings.db` next to the active ontology database when possible. When an embedding provider key is configured, index/query embeddings use `litellm.aembedding()` with `settings.embedding_model`; otherwise the service falls back to a deterministic local hashing embedding so semantic search still works offline.
 
 ### `app/services/hydration_worker.py`
 

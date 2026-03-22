@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     ai_model: str = "claude-sonnet-4-6"
     ai_temperature: float = 0.3
     ai_max_tokens: int = 8192
+    embedding_model: str = "text-embedding-3-small"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
     google_api_key: str = ""
