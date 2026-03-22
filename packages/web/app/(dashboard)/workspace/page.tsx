@@ -5,7 +5,8 @@ import { useMutation, useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Id } from "@/convex/_generated/dataModel";
 import { api as convexApi } from "@/convex/_generated/api";
-import { agent, AgentEvent, ModelInfo } from "@/lib/api";
+import { agent, AgentEvent, ModelInfo, sql } from "@/lib/api";
+import { ANALYSIS_TEMPLATES } from "@/lib/analysis-templates";
 import {
   Bot, User, Send, ChevronDown, ChevronRight,
   Code2, Loader2, Sparkles, RotateCcw, Trash2,
@@ -55,6 +56,14 @@ function isChatMessage(
   msg: { role: "user" | "assistant" | "tool"; content?: string }
 ): msg is { role: MessageRole; content?: string } {
   return msg.role === "user" || msg.role === "assistant";
+}
+
+function formatSchemaForPrompt(schema: Record<string, { name: string; type: string }[]>) {
+  const tables = Object.entries(schema).map(([table, columns]) => {
+    const cols = columns.map((column) => `${column.name}`).join(", ");
+    return `${table}(${cols})`;
+  });
+  return tables.length > 0 ? `[Schema: ${tables.join("; ")}]` : "";
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -255,8 +264,10 @@ function WorkspacePageInner() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
+  const [schemaSummary, setSchemaSummary] = useState("");
   const [currentSessionId, setCurrentSessionId] = useState<SessionId | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -279,6 +290,9 @@ function WorkspacePageInner() {
       setModels(data.models);
       setSelectedModel(data.default);
     }).catch(() => {});
+    sql.schema()
+      .then((schema) => setSchemaSummary(formatSchemaForPrompt(schema)))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -458,6 +472,18 @@ function WorkspacePageInner() {
   };
 
   const isEmpty = messages.length === 0;
+  const groupedTemplates = ANALYSIS_TEMPLATES.reduce<Record<string, typeof ANALYSIS_TEMPLATES>>((acc, template) => {
+    acc[template.category] ??= [];
+    acc[template.category].push(template);
+    return acc;
+  }, {});
+
+  const applyTemplate = (prompt: string) => {
+    const nextPrompt = schemaSummary ? `${schemaSummary}\n${prompt}` : prompt;
+    setInput(nextPrompt);
+    setTemplatesOpen(false);
+    textareaRef.current?.focus();
+  };
 
   return (
     <div className="flex h-screen bg-[--background]">
@@ -583,6 +609,42 @@ function WorkspacePageInner() {
 
         {/* Input */}
         <div className="shrink-0 px-4 pb-4">
+          <div className="mb-3 rounded-xl border border-[--border] bg-[--card]">
+            <button
+              onClick={() => setTemplatesOpen((value) => !value)}
+              className="flex w-full items-center justify-between px-4 py-3 text-left"
+            >
+              <div>
+                <p className="text-sm font-medium text-[--foreground]">Templates</p>
+                <p className="text-xs text-[--muted-foreground]">Insert a schema-aware analysis prompt.</p>
+              </div>
+              {templatesOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </button>
+            {templatesOpen && (
+              <div className="border-t border-[--border] px-4 py-4 space-y-4">
+                {Object.entries(groupedTemplates).map(([category, templates]) => (
+                  <div key={category} className="space-y-2">
+                    <p className="text-[10px] uppercase tracking-wide text-[--muted-foreground]">{category}</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+                      {(templates ?? []).map((template) => (
+                        <button
+                          key={template.id}
+                          onClick={() => applyTemplate(template.prompt)}
+                          className="rounded-lg border border-[--border] bg-[--background] px-3 py-3 text-left hover:border-[--primary]/40 hover:bg-[--primary]/5"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="inline-block h-2 w-2 rounded-full bg-[--primary]" />
+                            <p className="text-sm font-medium text-[--foreground]">{template.label}</p>
+                          </div>
+                          <p className="mt-1 text-xs text-[--muted-foreground]">{template.description}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="relative flex items-end gap-2 rounded-xl border border-[--border] bg-[--muted] p-2 focus-within:border-[--primary]/50 transition-colors">
             <textarea
               ref={textareaRef}
