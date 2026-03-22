@@ -1,0 +1,68 @@
+dimensions:
+  geography:
+    state: state_fips
+    county: county_fips
+    municipality: muni_fips
+    tract: tract_fips
+    zip: zip_code
+    block_group: block_group_fips
+    msa: msa_code
+    utility: utility_id
+    pjm_zone: pjm_zone
+
+  time:
+    annual: year
+    quarterly: year_quarter
+    monthly: year_month
+    daily: date
+    hourly: datetime
+
+entities:
+  state: entity.state
+  county: entity.county
+  municipality: entity.municipality
+  tract: entity.tract
+  establishment: entity.establishment
+  utility: entity.utility
+  plant: entity.plant
+  person: entity.person
+  household: entity.household
+
+measures:
+  labor.unemployment.rate:
+    class: LaborIndicator
+    units: Percent
+    price_basis: null
+
+  labor.employment.count:
+    class: LaborIndicator
+    units: Count
+    price_basis: null
+
+  labor.wages.weekly_avg:
+    class: LaborIndicator
+    units: USD
+    price_basis: nominal
+
+  demo.population.total:
+    class: DemographicIndicator
+    units: Count
+    price_basis: null
+
+  housing.value.median:
+    class: HousingIndicator
+    units: USD
+    price_basis: nominal
+
+  energy.electricity.consumption_kwh:
+    class: EnergyIndicator
+    units: kWh
+    price_basis: null
+
+sources:
+  LAUS:
+    owl_class: LAUS
+  ACS:
+    owl_class: ACS
+  QCEW:
+    owl_class: QCEW

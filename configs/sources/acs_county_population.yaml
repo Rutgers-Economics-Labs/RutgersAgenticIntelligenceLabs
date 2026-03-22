@@ -1,0 +1,28 @@
+source:
+  source_name: American Community Survey
+  source_id: ACS
+  source_type: csv
+  path: data/raw/acs_demo.csv
+  owl_class: ACS
+
+entity:
+  geo_level: county
+  ontology_entity_key: entity.county
+
+time:
+  frequency: annual
+  column: year
+
+geography:
+  id_column: county_fips
+  name_column: county_name
+
+field_mappings:
+  population_total:
+    ontology_tag: demo.population.total
+    measure_class: DemographicIndicator
+    units: Count
+    price_basis: null
+
+metadata:
+  data_vintage: "2024-01-01"

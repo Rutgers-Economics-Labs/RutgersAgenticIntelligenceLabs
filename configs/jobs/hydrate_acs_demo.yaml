@@ -1,0 +1,3 @@
+job_name: hydrate_acs_demo
+source_config: configs/sources/acs_county_population.yaml
+output_owl: data/output/acs_demo.owl
