@@ -66,4 +66,20 @@ describe("ExplorerPage", () => {
     expect(await screen.findByText("Monmouth County")).toBeInTheDocument();
     expect(screen.queryByText(/Page 1 of/)).not.toBeInTheDocument();
   });
+
+  it("shows a semantic-search error without breaking the page", async () => {
+    semanticSearchMock.mockRejectedValueOnce(new Error("service unavailable"));
+
+    render(<ExplorerPage />);
+
+    expect(await screen.findByText("Hudson County")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Semantic"));
+    fireEvent.change(screen.getByPlaceholderText("Search by meaning…"), {
+      target: { value: "coastal counties" },
+    });
+
+    expect(await screen.findByText("Semantic search is unavailable.")).toBeInTheDocument();
+    expect(screen.getByText("No results.")).toBeInTheDocument();
+  });
 });
