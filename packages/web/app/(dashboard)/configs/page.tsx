@@ -2,13 +2,17 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useState, useEffect, useRef } from "react";
-import { configs, type ConfigDoc } from "@/lib/api";
+import { agent, configs, type ConfigDoc, type ModelInfo } from "@/lib/api";
 
 type Tab = "apis" | "ontologies" | "pipelines";
 
 const CONFIG_TYPE_LABEL: Record<Tab, string> = {
   apis: "api", ontologies: "ontology", pipelines: "pipeline",
 };
+
+function slugify(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
 
 // ── YAML Editor Panel ─────────────────────────────────────────────────────────
 
@@ -191,12 +195,359 @@ function EditorPanel({
   );
 }
 
+type InferenceStep = "input" | "review" | "save";
+
+function InferenceModal({
+  onClose,
+  onSaved,
+}: {
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [step, setStep] = useState<InferenceStep>("input");
+  const [inputMode, setInputMode] = useState<"sample" | "describe">("sample");
+  const [sample, setSample] = useState("");
+  const [description, setDescription] = useState("");
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [apiYaml, setApiYaml] = useState("");
+  const [ontologyYaml, setOntologyYaml] = useState("");
+  const [explanation, setExplanation] = useState("");
+  const [apiName, setApiName] = useState("Generated API Config");
+  const [apiSlug, setApiSlug] = useState("generated-api-config");
+  const [ontologyName, setOntologyName] = useState("Generated Ontology Config");
+  const [ontologySlug, setOntologySlug] = useState("generated-ontology-config");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    agent.models()
+      .then((data) => {
+        setModels(data.models);
+        setSelectedModel(data.default);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setApiSlug(slugify(apiName));
+  }, [apiName]);
+
+  useEffect(() => {
+    setOntologySlug(slugify(ontologyName));
+  }, [ontologyName]);
+
+  async function handleGenerate() {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await agent.inferSchema(
+        inputMode === "sample" ? sample : undefined,
+        description || (inputMode === "describe" ? sample : undefined),
+        selectedModel || undefined
+      );
+      setApiYaml(result.api_yaml);
+      setOntologyYaml(result.ontology_yaml);
+      setExplanation(result.explanation);
+      setStep("review");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to generate configs");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveBoth() {
+    setSaving(true);
+    setError("");
+    try {
+      await Promise.all([
+        configs.create("apis", {
+          name: apiName,
+          slug: apiSlug,
+          content: apiYaml,
+          isPublic: false,
+          tags: [],
+        }),
+        configs.create("ontologies", {
+          name: ontologyName,
+          slug: ontologySlug,
+          content: ontologyYaml,
+          isPublic: false,
+          tags: [],
+        }),
+      ]);
+      onSaved();
+      onClose();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to save generated configs");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div className="w-full max-w-6xl max-h-[92vh] overflow-hidden rounded-2xl border border-[--border] bg-[--background] shadow-2xl flex flex-col">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-[--border]">
+            <div>
+              <h2 className="font-semibold text-sm">Generate from sample</h2>
+              <p className="mt-0.5 text-xs text-[--muted-foreground]">
+                Infer API and ontology YAML from a sample or description.
+              </p>
+            </div>
+            <button onClick={onClose} className="text-[--muted-foreground] hover:text-[--foreground] text-xl leading-none px-1">×</button>
+          </div>
+
+          <div className="px-5 py-3 border-b border-[--border] flex gap-2 text-xs">
+            {[
+              { id: "input", label: "1. Input" },
+              { id: "review", label: "2. Review" },
+              { id: "save", label: "3. Save" },
+            ].map((item) => (
+              <div
+                key={item.id}
+                className={`rounded-full px-3 py-1 ${
+                  step === item.id
+                    ? "bg-[--primary] text-[#0d1117] font-semibold"
+                    : "bg-[--muted] text-[--muted-foreground]"
+                }`}
+              >
+                {item.label}
+              </div>
+            ))}
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-5">
+            {step === "input" && (
+              <div className="space-y-5">
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setInputMode("sample")}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      inputMode === "sample"
+                        ? "border-[--primary] bg-[--primary]/10 text-[--primary]"
+                        : "border-[--border] text-[--muted-foreground]"
+                    }`}
+                  >
+                    Paste sample
+                  </button>
+                  <button
+                    onClick={() => setInputMode("describe")}
+                    className={`rounded-lg border px-3 py-2 text-sm ${
+                      inputMode === "describe"
+                        ? "border-[--primary] bg-[--primary]/10 text-[--primary]"
+                        : "border-[--border] text-[--muted-foreground]"
+                    }`}
+                  >
+                    Describe the data
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_260px] gap-4">
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-xs text-[--muted-foreground] block mb-1">
+                        {inputMode === "sample" ? "CSV header / JSON sample" : "Data description"}
+                      </label>
+                      <textarea
+                        value={sample}
+                        onChange={(e) => setSample(e.target.value)}
+                        rows={12}
+                        placeholder={
+                          inputMode === "sample"
+                            ? "Paste CSV rows or JSON here..."
+                            : "Describe the data you want to ingest..."
+                        }
+                        className="w-full rounded-lg border border-[--border] bg-[--muted] p-4 text-sm text-[--foreground] outline-none focus:border-[--primary] resize-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-[--muted-foreground] block mb-1">Additional description (optional)</label>
+                      <input
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Context for the generator..."
+                        className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-xs text-[--muted-foreground] block mb-1">Model</label>
+                      <select
+                        value={selectedModel}
+                        onChange={(e) => setSelectedModel(e.target.value)}
+                        className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                      >
+                        {models.map((model) => (
+                          <option key={model.id} value={model.id}>{model.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      onClick={handleGenerate}
+                      disabled={loading || !sample.trim()}
+                      className="w-full rounded-lg bg-[--primary] px-4 py-2 text-sm font-semibold text-[#0d1117] hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {loading ? "Generating configs…" : "Generate"}
+                    </button>
+                    <p className="text-xs text-[--muted-foreground] leading-relaxed">
+                      This uses the existing `/agent/infer-schema` backend to suggest both config files.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {step === "review" && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">API Config YAML</label>
+                    <textarea
+                      value={apiYaml}
+                      onChange={(e) => setApiYaml(e.target.value)}
+                      rows={18}
+                      spellCheck={false}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] p-4 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary] resize-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">Ontology Config YAML</label>
+                    <textarea
+                      value={ontologyYaml}
+                      onChange={(e) => setOntologyYaml(e.target.value)}
+                      rows={18}
+                      spellCheck={false}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] p-4 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary] resize-none"
+                    />
+                  </div>
+                </div>
+                {explanation && (
+                  <div className="rounded-lg border border-[--border] bg-[--card] p-4 text-sm text-[--muted-foreground]">
+                    {explanation}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {step === "save" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl border border-[--border] bg-[--card] p-4 space-y-3">
+                  <h3 className="font-medium text-sm">API config</h3>
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">Name</label>
+                    <input
+                      value={apiName}
+                      onChange={(e) => setApiName(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">Slug</label>
+                    <input
+                      value={apiSlug}
+                      onChange={(e) => setApiSlug(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-[--border] bg-[--card] p-4 space-y-3">
+                  <h3 className="font-medium text-sm">Ontology config</h3>
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">Name</label>
+                    <input
+                      value={ontologyName}
+                      onChange={(e) => setOntologyName(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-[--muted-foreground] block mb-1">Slug</label>
+                    <input
+                      value={ontologySlug}
+                      onChange={(e) => setOntologySlug(e.target.value)}
+                      className="w-full rounded-lg border border-[--border] bg-[--muted] px-3 py-2 font-mono text-sm text-[--foreground] outline-none focus:border-[--primary]"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div className="mt-4 rounded-lg border border-red-700/60 bg-red-900/20 p-3 text-sm text-red-300">
+                {error}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between px-5 py-4 border-t border-[--border]">
+            <div>
+              {step !== "input" && (
+                <button
+                  onClick={() => setStep(step === "save" ? "review" : "input")}
+                  className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+                >
+                  Back
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2">
+              {error && step === "input" && (
+                <button
+                  onClick={() => {
+                    setError("");
+                    setStep("input");
+                  }}
+                  className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+                >
+                  Try again
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+              >
+                Cancel
+              </button>
+              {step === "review" && (
+                <button
+                  onClick={() => setStep("save")}
+                  disabled={!apiYaml.trim() || !ontologyYaml.trim()}
+                  className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90 disabled:opacity-40"
+                >
+                  Continue
+                </button>
+              )}
+              {step === "save" && (
+                <button
+                  onClick={handleSaveBoth}
+                  disabled={saving || !apiName.trim() || !apiSlug.trim() || !ontologyName.trim() || !ontologySlug.trim()}
+                  className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90 disabled:opacity-40"
+                >
+                  {saving ? "Saving…" : "Save Both"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ConfigsPage() {
   const [tab, setTab] = useState<Tab>("apis");
   const [editDoc, setEditDoc] = useState<ConfigDoc | null | undefined>(undefined); // undefined=closed, null=new
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [showInference, setShowInference] = useState(false);
 
   const apiConfigs = useQuery(api.configs.listApis, {});
   const ontologyConfigs = useQuery(api.configs.listOntologies, {});
@@ -217,12 +568,20 @@ export default function ConfigsPage() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-semibold">Configs</h1>
-        <button
-          onClick={() => setEditDoc(null)}
-          className="text-sm px-3 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90"
-        >
-          + New
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setEditDoc(null)}
+            className="text-sm px-3 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90"
+          >
+            + New Config
+          </button>
+          <button
+            onClick={() => setShowInference(true)}
+            className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--foreground] hover:border-[--primary]/50 hover:text-[--primary]"
+          >
+            ✦ Generate from sample
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -303,7 +662,14 @@ export default function ConfigsPage() {
           tab={tab}
           doc={editDoc}
           onClose={() => setEditDoc(undefined)}
-          onSaved={() => setRefreshKey((k) => k + 1)}
+          onSaved={() => {}}
+        />
+      )}
+
+      {showInference && (
+        <InferenceModal
+          onClose={() => setShowInference(false)}
+          onSaved={() => {}}
         />
       )}
     </div>
