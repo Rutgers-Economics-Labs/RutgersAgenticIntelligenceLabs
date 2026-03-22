@@ -338,12 +338,25 @@ function WorkspacePageInner() {
     const text = input.trim();
     if (!text || loading) return;
 
+    let resolvedModel: string | undefined = selectedModel || models[0]?.id;
+    if (!resolvedModel) {
+      try {
+        const modelData = await agent.models();
+        setModels(modelData.models);
+        setSelectedModel(modelData.default);
+        resolvedModel = modelData.default || modelData.models[0]?.id;
+      } catch {
+        resolvedModel = undefined;
+      }
+    }
+    const activeModel = resolvedModel || "unknown-model";
+
     let activeSessionId = currentSessionId;
     const shouldCreateSession = !activeSessionId && historyRef.current.length === 0;
     if (!activeSessionId) {
       const created = await createSession({
         title: text.slice(0, 60),
-        model: selectedModel || "unknown-model",
+        model: activeModel,
       });
       activeSessionId = created.sessionId;
       setCurrentSessionId(activeSessionId);
@@ -366,7 +379,7 @@ function WorkspacePageInner() {
     const pendingToolCalls: Record<string, ToolCallBlock> = {};
 
     try {
-      for await (const event of agent.chat(text, historyRef.current, selectedModel || undefined)) {
+      for await (const event of agent.chat(text, historyRef.current, activeModel)) {
         if (event.type === "text_delta") {
           setMessages(prev => prev.map(m =>
             m.id === asstId ? { ...m, content: m.content + event.content } : m
@@ -443,7 +456,7 @@ function WorkspacePageInner() {
       setLoading(false);
       textareaRef.current?.focus();
     }
-  }, [appendMessages, createSession, currentSessionId, input, loading, router, selectedModel, updateTitle]);
+  }, [appendMessages, createSession, currentSessionId, input, loading, models, router, selectedModel, updateTitle]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
