@@ -148,4 +148,20 @@ describe("ConfigsPage", () => {
       })
     );
   });
+
+  it("shows a scrape preview error without trying to generate configs", async () => {
+    scrapePreviewMock.mockRejectedValueOnce(new Error("API 502: fetch failed"));
+
+    render(<ConfigsPage />);
+
+    fireEvent.click(screen.getByText("Scrape URL"));
+    fireEvent.change(screen.getByPlaceholderText("https://example.gov/data-table"), {
+      target: { value: "https://example.gov/table" },
+    });
+
+    fireEvent.click(screen.getByText("Preview"));
+
+    expect(await screen.findByText("API 502: fetch failed")).toBeInTheDocument();
+    expect(inferSchemaMock).not.toHaveBeenCalled();
+  });
 });

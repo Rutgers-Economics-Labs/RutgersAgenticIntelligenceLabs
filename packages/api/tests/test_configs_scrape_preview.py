@@ -1,4 +1,5 @@
 import pytest
+import requests
 from unittest.mock import MagicMock, patch
 
 pytestmark = pytest.mark.asyncio
@@ -47,3 +48,17 @@ async def test_scrape_preview_selector_not_found(client):
 
     assert resp.status_code == 422
     assert "No table found" in resp.json()["detail"]
+
+
+async def test_scrape_preview_fetch_failure(client):
+    with patch(
+        "app.services.scrape_service.requests.get",
+        side_effect=requests.RequestException("timeout"),
+    ):
+        resp = await client.post(
+            "/api/v1/configs/scrape-preview",
+            json={"url": "https://example.com/table"},
+        )
+
+    assert resp.status_code == 502
+    assert "Failed to fetch URL" in resp.json()["detail"]
