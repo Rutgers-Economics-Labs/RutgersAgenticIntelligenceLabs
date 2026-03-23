@@ -12,6 +12,11 @@ export const get = query({
     ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", slug)).first(),
 });
 
+export const getById = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, { projectId }) => ctx.db.get(projectId),
+});
+
 function makeForkSlug(slug: string, suffix: number) {
   return `${slug}-copy-${suffix}`;
 }
@@ -53,6 +58,20 @@ export const update = mutation({
     const patch = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
     await ctx.db.patch(doc._id, { ...patch, updatedAt: Date.now() });
     return doc._id;
+  },
+});
+
+export const updateById = mutation({
+  args: {
+    projectId: v.id("projects"),
+    ontologyConfigSlug: v.optional(v.string()),
+    apiConfigSlugs: v.optional(v.array(v.string())),
+    pipelineConfigSlug: v.optional(v.string()),
+    status: v.optional(v.union(v.literal("draft"), v.literal("ready"), v.literal("hydrated"))),
+  },
+  handler: async (ctx, { projectId, ...fields }) => {
+    const patch = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+    await ctx.db.patch(projectId, { ...patch, updatedAt: Date.now() });
   },
 });
 

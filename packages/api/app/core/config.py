@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # AI / LLM (provider-agnostic via LiteLLM)
     # Examples: "claude-sonnet-4-6", "gemini/gemini-2.0-flash", "openrouter/anthropic/claude-3.5-sonnet", "gpt-4o"
-    ai_model: str = "claude-sonnet-4-6"
+    ai_model: str = "gemini/gemini-3-flash-preview"
     ai_temperature: float = 0.3
     ai_max_tokens: int = 8192
     embedding_model: str = "text-embedding-3-small"

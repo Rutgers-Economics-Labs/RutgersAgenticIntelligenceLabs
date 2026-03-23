@@ -5,6 +5,7 @@ export const create = mutation({
   args: {
     pipelineConfigId: v.id("pipelineConfigs"),
     pipelineSlug: v.string(),
+    projectId: v.optional(v.id("projects")),
     status: v.literal("queued"),
     triggeredBy: v.optional(v.string()),
     createdAt: v.number(),
@@ -93,6 +94,16 @@ export const list = query({
   handler: async (ctx, { limit }) => {
     return ctx.db.query("hydrationJobs")
       .withIndex("by_created")
+      .order("desc")
+      .take(limit ?? 50);
+  },
+});
+
+export const listByProject = query({
+  args: { projectId: v.id("projects"), limit: v.optional(v.number()) },
+  handler: async (ctx, { projectId, limit }) => {
+    return ctx.db.query("hydrationJobs")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
       .order("desc")
       .take(limit ?? 50);
   },

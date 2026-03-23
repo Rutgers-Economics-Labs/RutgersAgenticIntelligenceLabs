@@ -8,8 +8,8 @@ from app.core.config import settings
 
 class ConvexClient:
     def __init__(self):
-        self.base_url = settings.convex_url.rstrip("/")
-        self.deploy_key = settings.convex_deploy_key
+        self.base_url = settings.convex_url.strip().rstrip("/")
+        self.deploy_key = settings.convex_deploy_key.strip()
 
     @property
     def _headers(self):

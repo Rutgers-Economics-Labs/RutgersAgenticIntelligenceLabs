@@ -12,6 +12,9 @@ import {
   Code2, Loader2, Sparkles, RotateCcw, Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -232,13 +235,48 @@ function MessageBubble({ msg }: { msg: Message }) {
         {(msg.content || msg.streaming) && (
           <div
             className={cn(
-              "rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap",
+              "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
               isUser
-                ? "bg-[--primary] text-[--primary-foreground] rounded-tr-sm"
+                ? "bg-[--primary] text-[--primary-foreground] rounded-tr-sm whitespace-pre-wrap"
                 : "bg-[--muted] text-[--foreground] rounded-tl-sm"
             )}
           >
-            {msg.content}
+            {isUser ? (
+              msg.content
+            ) : (
+              <ReactMarkdown
+                remarkPlugins={[remarkMath]}
+                rehypePlugins={[rehypeKatex]}
+                components={{
+                  code({ className, children, ...props }) {
+                    const isBlock = className?.startsWith("language-");
+                    return isBlock ? (
+                      <pre className="overflow-x-auto rounded bg-black/30 p-3 text-[11px] my-2">
+                        <code className={className} {...props}>{children}</code>
+                      </pre>
+                    ) : (
+                      <code className="bg-black/20 rounded px-1 py-0.5 text-[11px] font-mono" {...props}>
+                        {children}
+                      </code>
+                    );
+                  },
+                  a({ href, children }) {
+                    return <a href={href} target="_blank" rel="noopener noreferrer" className="text-[--primary] underline underline-offset-2">{children}</a>;
+                  },
+                  ul({ children }) { return <ul className="list-disc list-inside space-y-0.5 my-1">{children}</ul>; },
+                  ol({ children }) { return <ol className="list-decimal list-inside space-y-0.5 my-1">{children}</ol>; },
+                  h1({ children }) { return <h1 className="text-base font-semibold mt-3 mb-1">{children}</h1>; },
+                  h2({ children }) { return <h2 className="text-sm font-semibold mt-2 mb-1">{children}</h2>; },
+                  h3({ children }) { return <h3 className="text-sm font-medium mt-2 mb-0.5">{children}</h3>; },
+                  blockquote({ children }) { return <blockquote className="border-l-2 border-[--primary] pl-3 italic text-[--muted-foreground]">{children}</blockquote>; },
+                  table({ children }) { return <div className="overflow-x-auto my-2"><table className="w-full text-[11px] border-collapse">{children}</table></div>; },
+                  th({ children }) { return <th className="border border-[--border] px-2 py-1 text-left bg-black/20 text-[--muted-foreground]">{children}</th>; },
+                  td({ children }) { return <td className="border border-[--border] px-2 py-1">{children}</td>; },
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
+            )}
             {msg.streaming && (
               <span className="inline-block w-1.5 h-4 ml-0.5 bg-current rounded-sm animate-pulse align-middle" />
             )}
@@ -499,7 +537,7 @@ function WorkspacePageInner() {
   };
 
   return (
-    <div className="flex h-screen bg-[--background]">
+    <div className="flex -m-8 h-screen overflow-hidden bg-[--background]">
       <aside className="hidden md:flex w-72 shrink-0 flex-col border-r border-[--border] bg-[--card]">
         <div className="flex items-center justify-between px-4 py-3 border-b border-[--border]">
           <div className="flex items-center gap-2">

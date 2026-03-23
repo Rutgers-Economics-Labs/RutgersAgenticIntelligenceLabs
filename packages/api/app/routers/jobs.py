@@ -12,10 +12,11 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 class TriggerJobRequest(BaseModel):
     pipeline_slug: str
+    project_id: str | None = None
     env_overrides: dict[str, str] = {}
 
 
-async def _trigger_job(pipeline_slug: str) -> dict:
+async def _trigger_job(pipeline_slug: str, project_id: str | None = None) -> dict:
     """
     Core job-creation logic, callable from both the HTTP router and the agent.
     Fires hydration as a plain asyncio task (no BackgroundTasks dependency).
@@ -39,14 +40,18 @@ async def _trigger_job(pipeline_slug: str) -> dict:
     if onto_cfg:
         onto_configs[onto_ref] = onto_cfg["content"]
 
-    result = await convex.mutation("jobs:create", {
+    mutation_args: dict = {
         "pipelineConfigId": pipeline["_id"],
         "pipelineSlug": pipeline_slug,
         "status": "queued",
         "triggeredBy": "agent",
         "createdAt": int(time.time() * 1000),
         "stepResults": [],
-    })
+    }
+    if project_id:
+        mutation_args["projectId"] = project_id
+
+    result = await convex.mutation("jobs:create", mutation_args)
     job_id = result["jobId"]
 
     asyncio.create_task(
@@ -75,14 +80,18 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
     if onto_cfg:
         onto_configs[onto_ref] = onto_cfg["content"]
 
-    result = await convex.mutation("jobs:create", {
+    mutation_args: dict = {
         "pipelineConfigId": pipeline["_id"],
         "pipelineSlug": req.pipeline_slug,
         "status": "queued",
         "triggeredBy": "api",
         "createdAt": int(time.time() * 1000),
         "stepResults": [],
-    })
+    }
+    if req.project_id:
+        mutation_args["projectId"] = req.project_id
+
+    result = await convex.mutation("jobs:create", mutation_args)
     job_id = result["jobId"]
 
     background_tasks.add_task(
