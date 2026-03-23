@@ -1,0 +1,417 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xml:base="http://example.org/rutgers_ontology.owl"
+         xmlns="http://example.org/rutgers_ontology.owl#">
+
+<owl:Ontology rdf:about="http://example.org/rutgers_ontology.owl"/>
+
+<owl:ObjectProperty rdf:about="#isPartOf">
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="#GeographicRegion"/>
+  <owl:inverseOf rdf:resource="#hasPart"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#locatedIn">
+  <rdfs:domain rdf:resource="#Individual"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="#GeographicRegion"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#measuredFor">
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="#GeographicRegion"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#belongsToSeries">
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="#DataSeries"/>
+</owl:ObjectProperty>
+
+<owl:ObjectProperty rdf:about="#hasPart">
+  <owl:inverseOf rdf:resource="#isPartOf"/>
+</owl:ObjectProperty>
+
+<owl:DatatypeProperty rdf:about="#hasName">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasFIPS">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasAbbreviation">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasISO2">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasISO3">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasRegionCode">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasLatitude">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasLongitude">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasGeometry">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasPopulation">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasIncome">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Individual"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasValue">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasDate">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasSeries">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasUnit">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasYear">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasMonth">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasQuarter">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Observation"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasSeriesID">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#DataSeries"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasSeriesTitle">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#DataSeries"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasFrequency">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#DataSeries"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasSeasonalAdj">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#DataSeries"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasSource">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#DataSeries"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasSourceURL">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasIngestDate">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasPipelineID">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:Class rdf:about="#GeographicRegion">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Nation">
+  <rdfs:subClassOf rdf:resource="#GeographicRegion"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Region">
+  <rdfs:subClassOf rdf:resource="#GeographicRegion"/>
+</owl:Class>
+
+<owl:Class rdf:about="#State">
+  <rdfs:subClassOf rdf:resource="#GeographicRegion"/>
+</owl:Class>
+
+<owl:Class rdf:about="#County">
+  <rdfs:subClassOf rdf:resource="#GeographicRegion"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Municipality">
+  <rdfs:subClassOf rdf:resource="#GeographicRegion"/>
+</owl:Class>
+
+<owl:Class rdf:about="#ZipCode">
+  <rdfs:subClassOf rdf:resource="#GeographicRegion"/>
+</owl:Class>
+
+<owl:Class rdf:about="#CensusTract">
+  <rdfs:subClassOf rdf:resource="#GeographicRegion"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Individual">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Observation">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Measure">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#LaborIndicator">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#HousingIndicator">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#IncomeIndicator">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#MacroIndicator">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#EnvironmentIndicator">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#DemographicIndicator">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#EducationIndicator">
+  <rdfs:subClassOf rdf:resource="#Observation"/>
+</owl:Class>
+
+<owl:Class rdf:about="#DataSeries">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:NamedIndividual rdf:about="#County_3434013.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.7922</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.2471</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434013.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434017.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.7376</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.0754</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434017.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434031.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">41.1396</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.3467</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434031.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434023.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.4363</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.4143</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434023.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434039.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.6601</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.3015</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434039.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434003.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.9601</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.0717</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434003.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434027.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.8601</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.5517</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434027.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434035.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.5601</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.6117</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434035.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434021.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.2801</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.7017</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434021.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434025.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.2901</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.1517</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434025.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434029.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.8501</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.2517</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434029.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434007.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.8001</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.9517</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434007.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434005.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.8801</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.6717</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434005.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434015.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.7101</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-75.1417</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434015.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434001.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.4701</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.6817</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434001.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434009.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.0801</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.8517</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434009.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434011.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.4301</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-75.1317</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434011.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434019.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.5701</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.9517</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434019.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434033.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">39.5801</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-75.3517</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434033.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434037.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">41.1401</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-74.6917</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434037.0</hasFIPS>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#County_3434041.0">
+  <rdf:type rdf:resource="#County"/>
+  <hasLatitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">40.8501</hasLatitude>
+  <hasLongitude rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">-75.0217</hasLongitude>
+  <hasFIPS rdf:datatype="http://www.w3.org/2001/XMLSchema#string">3434041.0</hasFIPS>
+</owl:NamedIndividual>
+
+
+</rdf:RDF>

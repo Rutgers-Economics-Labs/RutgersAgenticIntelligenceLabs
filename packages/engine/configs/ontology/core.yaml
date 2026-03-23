@@ -1,54 +1,215 @@
 uri: http://example.org/rutgers_ontology.owl
 
+# ---------------------------------------------------------------------------
+# CLASSES
+#
+# Abstract base classes live at the top. Concrete classes declare a `parent`.
+# To add a new entity type — Nation, ZipCode, Firm, Person, etc. — just add
+# a new entry here with the appropriate parent. No code changes needed.
+# ---------------------------------------------------------------------------
+
 classes:
+  # Geographic hierarchy — abstract root
+  - name: GeographicRegion        # abstract base for all geographic entities
+
+  # Concrete geographic classes (add more freely by giving parent: GeographicRegion)
+  - name: Nation
+    parent: GeographicRegion
+  - name: Region                  # e.g. US Census Bureau regions / World Bank regions
+    parent: GeographicRegion
   - name: State
+    parent: GeographicRegion
   - name: County
+    parent: GeographicRegion
   - name: Municipality
+    parent: GeographicRegion
+  - name: ZipCode
+    parent: GeographicRegion
+  - name: CensusTract
+    parent: GeographicRegion
+
+  # Agent / individual
   - name: Individual
-  - name: Measure
+
+  # Observational / measurement hierarchy — abstract root
+  - name: Observation             # abstract base for any measured series value
+
+  # Typed observation subtypes (add more freely by giving parent: Observation)
+  - name: Measure                 # generic/untyped — kept for backward compat
+    parent: Observation
+  - name: LaborIndicator
+    parent: Observation
+  - name: HousingIndicator
+    parent: Observation
+  - name: IncomeIndicator
+    parent: Observation
+  - name: MacroIndicator
+    parent: Observation
+  - name: EnvironmentIndicator
+    parent: Observation
+  - name: DemographicIndicator
+    parent: Observation
+  - name: EducationIndicator
+    parent: Observation
+
+  # Series metadata registry — one instance per economic/data series
+  - name: DataSeries
+
+
+# ---------------------------------------------------------------------------
+# OBJECT PROPERTIES
+# ---------------------------------------------------------------------------
 
 object_properties:
+  # Geographic containment
   - name: isPartOf
-    domain: [County, Municipality]
-    range: [State, County]
+    domain: [GeographicRegion]
+    range: [GeographicRegion]
     inverse: hasPart
+
   - name: locatedIn
-    domain: [Individual, Municipality, County]
-    range: [Municipality, County, State]
+    domain: [Individual, GeographicRegion]
+    range: [GeographicRegion]
+
+  # Observation → GeographicRegion link
   - name: measuredFor
-    domain: [Measure]
-    range: [State, County, Municipality]
+    domain: [Observation]
+    range: [GeographicRegion]
+
+  # Observation → DataSeries metadata link
+  - name: belongsToSeries
+    domain: [Observation]
+    range: [DataSeries]
+
+
+# ---------------------------------------------------------------------------
+# DATA PROPERTIES
+#
+# Properties without a specific domain apply to Thing (i.e. all entities).
+# Add new properties freely — they will be reflected automatically in the API
+# without any code changes.
+# ---------------------------------------------------------------------------
 
 data_properties:
+  # Universal
   - name: hasName
     domain: [Thing]
     range: str
     functional: true
-  - name: hasPopulation
-    domain: [State, County, Municipality]
-    range: int
-    functional: true
+
+  # Geographic identifiers
   - name: hasFIPS
-    domain: [State, County, Municipality]
+    domain: [GeographicRegion]
     range: str
     functional: true
+  - name: hasAbbreviation
+    domain: [GeographicRegion]
+    range: str
+    functional: true
+  - name: hasISO2
+    domain: [GeographicRegion]
+    range: str
+    functional: true
+  - name: hasISO3
+    domain: [GeographicRegion]
+    range: str
+    functional: true
+  - name: hasRegionCode
+    domain: [GeographicRegion]
+    range: str
+    functional: true
+
+  # GIS Properties
+  - name: hasLatitude
+    domain: [GeographicRegion]
+    range: float
+    functional: true
+  - name: hasLongitude
+    domain: [GeographicRegion]
+    range: float
+    functional: true
+  - name: hasGeometry
+    domain: [GeographicRegion]
+    range: str           # Store as WKT or GeoJSON string
+    functional: true
+
+  # Geographic measures
+  - name: hasPopulation
+    domain: [GeographicRegion]
+    range: int
+    functional: true
+
+  # Individual attributes
   - name: hasIncome
     domain: [Individual]
     range: float
     functional: true
+
+  # Observation core — shared across all Observation subtypes
   - name: hasValue
-    domain: [Measure]
+    domain: [Observation]
     range: float
     functional: true
   - name: hasDate
-    domain: [Measure]
+    domain: [Observation]
     range: str
     functional: true
   - name: hasSeries
-    domain: [Measure]
+    domain: [Observation]
     range: str
     functional: true
   - name: hasUnit
-    domain: [Measure]
+    domain: [Observation]
     range: str
     functional: true
+
+  # Temporal splits — enables efficient DuckDB range queries
+  - name: hasYear
+    domain: [Observation]
+    range: int
+    functional: true
+  - name: hasMonth
+    domain: [Observation]
+    range: int
+    functional: true
+  - name: hasQuarter
+    domain: [Observation]
+    range: int
+    functional: true
+
+  # DataSeries metadata
+  - name: hasSeriesID
+    domain: [DataSeries]
+    range: str
+    functional: true
+  - name: hasSeriesTitle
+    domain: [DataSeries]
+    range: str
+    functional: true
+  - name: hasFrequency
+    domain: [DataSeries]
+    range: str
+    functional: true
+  - name: hasSeasonalAdj
+    domain: [DataSeries]
+    range: str
+    functional: true
+  - name: hasSource
+    domain: [DataSeries]
+    range: str
+    functional: true
+
+  # Provenance — on all entities for staleness detection (WO-24)
+  - name: hasSourceURL
+    domain: [Thing]
+    range: str
+    functional: true
+  - name: hasIngestDate
+    domain: [Thing]
+    range: str
+    functional: true
+  - name: hasPipelineID
+    domain: [Thing]
+    range: str
+    functional: true
+

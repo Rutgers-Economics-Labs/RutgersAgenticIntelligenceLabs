@@ -1,0 +1,22 @@
+name: academic_courses
+type: csv
+path: sources/academic_courses.csv
+fields:
+  - source: id
+    alias: id
+  - source: name
+    alias: name
+  - source: credits
+    alias: credits
+    cast: int
+  - source: level
+    alias: level
+  - source: semester
+    alias: semester
+  - source: enrollment
+    alias: enrollment
+    cast: int
+  - source: department_id
+    alias: department_id
+  - source: instructor_id
+    alias: instructor_id

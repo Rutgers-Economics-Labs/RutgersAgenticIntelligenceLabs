@@ -1,0 +1,12 @@
+name: academic_departments
+type: csv
+path: sources/academic_departments.csv
+fields:
+  - source: id
+    alias: id
+  - source: name
+    alias: name
+  - source: discipline
+    alias: discipline
+  - source: university_id
+    alias: university_id

@@ -1,0 +1,112 @@
+ontology: configs/ontology/academic.yaml
+output_owl: ontology/academic_populated.owl
+db: ontology/academic.db
+
+steps:
+  - name: load_universities
+    api: academic_universities
+    class: University
+    uri: "{id}"
+    properties:
+      hasName: "{name}"
+      hasLocation: "{location}"
+      hasFounded: "{founded}"
+      hasRanking: "{ranking}"
+
+  - name: load_departments
+    api: academic_departments
+    class: Department
+    uri: "{id}"
+    properties:
+      hasName: "{name}"
+      hasDiscipline: "{discipline}"
+    relationships:
+      - property: belongsTo
+        target_class: University
+        target_uri: "{university_id}"
+
+  - name: load_faculty
+    api: academic_faculty
+    class: Faculty
+    uri: "{id}"
+    properties:
+      hasName: "{name}"
+      hasRank: "{rank}"
+      hasHIndex: "{h_index}"
+      hasPublicationCount: "{publication_count}"
+      hasJoinYear: "{join_year}"
+      hasEmail: "{email}"
+    relationships:
+      - property: affiliatedWith
+        target_class: Department
+        target_uri: "{department_id}"
+
+  - name: load_phd_students
+    api: academic_phd_students
+    class: PhDStudent
+    uri: "{id}"
+    properties:
+      hasName: "{name}"
+      hasHIndex: "{h_index}"
+      hasPublicationCount: "{publication_count}"
+      hasJoinYear: "{join_year}"
+      hasEmail: "{email}"
+    relationships:
+      - property: affiliatedWith
+        target_class: Department
+        target_uri: "{department_id}"
+      - property: advisedBy
+        target_class: Faculty
+        target_uri: "{advisor_id}"
+
+  - name: load_publications
+    api: academic_publications
+    class: Publication
+    uri: "{id}"
+    properties:
+      hasName: "{title}"
+      hasYear: "{year}"
+      hasVenue: "{venue}"
+      hasType: "{type}"
+      hasCitationCount: "{citation_count}"
+      hasDOI: "{doi}"
+    relationships:
+      - property: authoredBy
+        target_class: AcademicPerson
+        target_uri: "{lead_author_id}"
+
+  - name: load_grants
+    api: academic_grants
+    class: ResearchGrant
+    uri: "{id}"
+    properties:
+      hasName: "{title}"
+      hasAgency: "{agency}"
+      hasGrantID: "{grant_id}"
+      hasFundingAmount: "{amount}"
+      hasYear: "{year}"
+    relationships:
+      - property: fundedBy
+        target_class: University
+        target_uri: "{university_id}"
+      - property: supportedByGrant
+        target_class: Faculty
+        target_uri: "{pi_id}"
+
+  - name: load_courses
+    api: academic_courses
+    class: Course
+    uri: "{id}"
+    properties:
+      hasName: "{name}"
+      hasCredits: "{credits}"
+      hasLevel: "{level}"
+      hasSemester: "{semester}"
+      hasEnrollment: "{enrollment}"
+    relationships:
+      - property: offeredBy
+        target_class: Department
+        target_uri: "{department_id}"
+      - property: taughtBy
+        target_class: Faculty
+        target_uri: "{instructor_id}"

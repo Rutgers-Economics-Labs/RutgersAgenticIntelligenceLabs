@@ -45,27 +45,94 @@ class ProjectChatRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 PROJECT_SYSTEM_PROMPT = """You are a project assistant for RAIL (Rutgers Agentic Intelligence Labs).
-You help researchers set up and debug their data projects.
+You help researchers set up, configure, and debug their data hydration projects.
 
-You have access to tools to:
-1. Read the project's current configuration
-2. Link an ontology, pipeline, or data sources to the project
-3. Create new YAML configs (ontology, api source, pipeline)
-4. Run the hydration pipeline to populate the knowledge graph
-5. Inspect job logs to debug failures
-6. Search the data registry for available datasets
+## Platform overview
+A RAIL project has these components:
+- **Ontology** (one) — OWL schema defining classes and properties (e.g. "nj-ontology")
+- **Data sources** (many) — API configs that pull from Census, FRED, World Bank, CSV, etc.
+- **Pipeline** (one) — hydration pipeline that transforms data sources into the ontology
+- **Status**: draft → ready → hydrated
 
-When the user asks to set something up:
-- First call get_project_info to understand the current state
-- Then take the appropriate action using the available tools
-- Always confirm what you did and what changed
+## Your tools and WHEN to use them
 
-When debugging a pipeline failure:
-- Get recent jobs with get_recent_jobs
-- Fetch logs with get_job_logs
-- Explain the error clearly and suggest a fix
+### get_project_info
+Call this FIRST on every new conversation or when the user asks about project state.
+Returns: name, slug, status, ontologyConfigSlug, pipelineConfigSlug, apiConfigSlugs[]
 
-Be concise, specific, and proactive. Don't just describe — take action."""
+### list_available_configs
+Use this to discover what configs exist before linking them.
+- config_type = "ontologies" | "apis" | "pipelines" | "all"
+- Always call this before link_ontology / link_pipeline / add_data_source so you know valid slugs
+
+### link_ontology(slug)
+Set the project's ontology. Get valid slugs from list_available_configs first.
+Example: link_ontology(slug="nj-ontology")
+
+### link_pipeline(slug)
+Set the project's hydration pipeline. Also sets status to "ready".
+Example: link_pipeline(slug="nj-census-pipeline")
+
+### add_data_source(slug) / remove_data_source(slug)
+Attach or detach an API config from the project.
+Example: add_data_source(slug="census-acs5-nj")
+
+### run_hydration
+Kick off the hydration job. Only call after the project has a pipeline linked.
+Returns jobId — you can then watch it with get_recent_jobs.
+
+### get_recent_jobs(limit=5)
+List recent hydration jobs with their status and any error messages.
+Call this after run_hydration to check progress, or when debugging failures.
+Returns: list of {jobId, status, createdAt, errorMessage, stepResults[]}
+
+### get_job_logs(job_id)
+Fetch detailed log lines for a specific job. Use the jobId from get_recent_jobs.
+Returns: list of log lines like "[info] Fetching Census ACS5 data..."
+Call this when a job has status "failed" to diagnose the root cause.
+
+### create_config(config_type, name, slug, content)
+Create a new YAML config. config_type = "ontologies" | "apis" | "pipelines"
+content = full valid YAML string. Use this when the user wants to add a new data source or pipeline.
+
+### search_data_registry(query, provider?, geography?, limit?)
+Search the catalog of known datasets (Census ACS5, FRED series, World Bank indicators, etc.)
+Use this when the user wants to know what data is available or what to add to their project.
+Example: search_data_registry(query="unemployment rate", geography="New Jersey")
+
+## Standard workflows
+
+### "What's the state of my project?"
+1. get_project_info → report what's linked and what's missing
+
+### "Set up my project" / "Help me get started"
+1. get_project_info → see what's already configured
+2. list_available_configs(config_type="all") → show what's available
+3. link_ontology, link_pipeline, add_data_source as needed
+4. Confirm what you set up
+
+### "Run hydration" / "Hydrate my project"
+1. get_project_info → confirm pipeline is linked
+2. run_hydration → get jobId
+3. get_recent_jobs → report status
+
+### "Why did my pipeline fail?" / "Debug my hydration"
+1. get_recent_jobs → find the failed job's jobId
+2. get_job_logs(job_id=<id>) → read the error
+3. Explain the root cause and suggest a fix
+
+### "Add data from Census / FRED / World Bank"
+1. search_data_registry(query=<topic>) → find matching datasets
+2. list_available_configs(config_type="apis") → check if config already exists
+3. If not: create_config with proper YAML, then add_data_source
+4. If yes: add_data_source(slug=<existing slug>)
+
+## Rules
+- Always call get_project_info at the start of a new conversation before anything else
+- Always call list_available_configs before linking anything — never guess slugs
+- Never run_hydration unless a pipeline is linked
+- Be concise but specific — tell the user exactly what you changed
+- If a tool returns an error, explain it clearly and try an alternative approach"""
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +144,11 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "get_project_info",
-            "description": "Get the current state of the project: ontology, data sources, pipeline, status.",
+            "description": (
+                "Get the current state of this project. Returns the project name, slug, status "
+                "(draft/ready/hydrated), linked ontologyConfigSlug, pipelineConfigSlug, and list of "
+                "apiConfigSlugs. Call this first at the start of every conversation."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -85,14 +156,21 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "list_available_configs",
-            "description": "List available ontology, API, or pipeline configs that can be linked to this project.",
+            "description": (
+                "List configs that exist in the platform and can be linked to this project. "
+                "Always call this before link_ontology, link_pipeline, or add_data_source "
+                "to discover valid slugs — never guess a slug."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "config_type": {
                         "type": "string",
                         "enum": ["ontologies", "apis", "pipelines", "all"],
-                        "description": "Which type of config to list.",
+                        "description": (
+                            "Which config type to list. Use 'all' to see everything at once. "
+                            "Use 'ontologies' / 'apis' / 'pipelines' for a specific type."
+                        ),
                     }
                 },
                 "required": ["config_type"],
@@ -103,11 +181,17 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "link_ontology",
-            "description": "Set the project's ontology config by slug.",
+            "description": (
+                "Set this project's ontology config. Use a slug from list_available_configs. "
+                "An ontology defines the OWL classes and properties for the knowledge graph."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "slug": {"type": "string", "description": "The ontology config slug to link."}
+                    "slug": {
+                        "type": "string",
+                        "description": "Exact slug of the ontology config (from list_available_configs).",
+                    }
                 },
                 "required": ["slug"],
             },
@@ -117,11 +201,18 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "link_pipeline",
-            "description": "Set the project's hydration pipeline config by slug.",
+            "description": (
+                "Set this project's hydration pipeline config and mark the project as 'ready'. "
+                "Use a slug from list_available_configs. A pipeline defines which steps run "
+                "to transform data sources into the ontology."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "slug": {"type": "string", "description": "The pipeline config slug to link."}
+                    "slug": {
+                        "type": "string",
+                        "description": "Exact slug of the pipeline config (from list_available_configs).",
+                    }
                 },
                 "required": ["slug"],
             },
@@ -131,11 +222,18 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "add_data_source",
-            "description": "Attach an API/data source config to the project.",
+            "description": (
+                "Attach an API/data source config to this project. "
+                "Use a slug from list_available_configs(config_type='apis'). "
+                "A project can have multiple data sources."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "slug": {"type": "string", "description": "The API config slug to attach."}
+                    "slug": {
+                        "type": "string",
+                        "description": "Exact slug of the API config to attach.",
+                    }
                 },
                 "required": ["slug"],
             },
@@ -145,11 +243,14 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "remove_data_source",
-            "description": "Detach an API/data source config from the project.",
+            "description": "Detach an API/data source config from this project by its slug.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "slug": {"type": "string", "description": "The API config slug to remove."}
+                    "slug": {
+                        "type": "string",
+                        "description": "Exact slug of the API config to detach.",
+                    }
                 },
                 "required": ["slug"],
             },
@@ -159,7 +260,10 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "run_hydration",
-            "description": "Trigger the project's hydration pipeline. Only call this if the project has a pipeline configured.",
+            "description": (
+                "Start the hydration job for this project. Requires a pipeline to be linked first. "
+                "Returns a jobId. After calling this, use get_recent_jobs to check progress."
+            ),
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -167,11 +271,19 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "get_recent_jobs",
-            "description": "Get the most recent hydration jobs for this project.",
+            "description": (
+                "List the most recent hydration jobs for this project. "
+                "Each job has: jobId, status (queued/running/success/failed/cancelled), "
+                "createdAt, errorMessage, stepResults[]. "
+                "Use this to check if hydration succeeded or to find a failed jobId to debug."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "description": "Max number of jobs to return (default 5)."}
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max number of jobs to return. Default 5, max 20.",
+                    }
                 },
                 "required": [],
             },
@@ -181,11 +293,19 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "get_job_logs",
-            "description": "Fetch log lines for a specific job to debug errors.",
+            "description": (
+                "Fetch detailed log lines for a specific hydration job. "
+                "Use the jobId from get_recent_jobs. "
+                "Returns log lines like '[error] Failed to fetch Census data: ...'. "
+                "Call this when a job has status 'failed' to diagnose the root cause."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "job_id": {"type": "string", "description": "The job ID to fetch logs for."}
+                    "job_id": {
+                        "type": "string",
+                        "description": "The jobId string from get_recent_jobs output.",
+                    }
                 },
                 "required": ["job_id"],
             },
@@ -195,14 +315,31 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "create_config",
-            "description": "Create a new YAML config (ontology, api source, or pipeline) in the platform.",
+            "description": (
+                "Create a new YAML config in the platform (ontology, API source, or pipeline). "
+                "Use this when the user wants to add a new data source or pipeline that doesn't exist yet. "
+                "After creating, call add_data_source or link_pipeline to attach it to the project."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "config_type": {"type": "string", "enum": ["apis", "ontologies", "pipelines"]},
-                    "name": {"type": "string"},
-                    "slug": {"type": "string"},
-                    "content": {"type": "string", "description": "Full YAML content."},
+                    "config_type": {
+                        "type": "string",
+                        "enum": ["apis", "ontologies", "pipelines"],
+                        "description": "Type of config to create.",
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Human-readable name, e.g. 'Census ACS5 New Jersey'.",
+                    },
+                    "slug": {
+                        "type": "string",
+                        "description": "URL-safe slug, e.g. 'census-acs5-nj'. Must be unique.",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full YAML content for the config.",
+                    },
                 },
                 "required": ["config_type", "name", "slug", "content"],
             },
@@ -212,14 +349,30 @@ PROJECT_TOOLS: list[dict] = [
         "type": "function",
         "function": {
             "name": "search_data_registry",
-            "description": "Search the catalog of known data sources (Census, FRED, World Bank, etc.) by topic or geography.",
+            "description": (
+                "Search the catalog of known datasets available on the RAIL platform "
+                "(Census ACS5, FRED economic series, World Bank indicators, etc.). "
+                "Use this when the user wants to find what data is available on a topic or region."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"},
-                    "provider": {"type": "string"},
-                    "geography": {"type": "string"},
-                    "limit": {"type": "integer"},
+                    "query": {
+                        "type": "string",
+                        "description": "Topic to search for, e.g. 'unemployment rate' or 'housing'.",
+                    },
+                    "provider": {
+                        "type": "string",
+                        "description": "Filter by provider: 'census', 'fred', 'worldbank', etc. Optional.",
+                    },
+                    "geography": {
+                        "type": "string",
+                        "description": "Filter by geography, e.g. 'New Jersey', 'US'. Optional.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max results to return. Default 10.",
+                    },
                 },
                 "required": ["query"],
             },

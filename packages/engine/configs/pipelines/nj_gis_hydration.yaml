@@ -1,0 +1,13 @@
+ontology: configs/ontology/core.yaml
+output_owl: ontology/nj_gis_populated.owl
+db: ontology/nj_gis.db
+
+steps:
+  - name: load_counties_with_gis
+    api: nj_county_geo
+    class: County
+    uri: "County_34{fips}"   # Mapping FIPS to existing State_34 pattern
+    properties:
+      hasLatitude: "{lat}"
+      hasLongitude: "{lon}"
+      hasFIPS: "34{fips}"

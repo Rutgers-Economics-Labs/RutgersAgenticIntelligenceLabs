@@ -1,0 +1,22 @@
+name: academic_publications
+type: csv
+path: sources/academic_publications.csv
+fields:
+  - source: id
+    alias: id
+  - source: title
+    alias: title
+  - source: year
+    alias: year
+    cast: int
+  - source: venue
+    alias: venue
+  - source: type
+    alias: type
+  - source: citation_count
+    alias: citation_count
+    cast: int
+  - source: doi
+    alias: doi
+  - source: lead_author_id
+    alias: lead_author_id

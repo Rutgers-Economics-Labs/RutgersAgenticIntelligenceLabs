@@ -1107,89 +1107,123 @@ const SUGGESTIONS = [
   "Run hydration for this project",
 ];
 
-function ProjectAIPanel({
-  project,
-  onClose,
-}: {
-  project: ProjectDoc;
-  onClose: () => void;
-}) {
+type ChatId = Id<"projectChats">;
+
+function ProjectAIPanel({ project, onClose }: { project: ProjectDoc; onClose: () => void }) {
   const recentJobs = useQuery(api.jobs.listByProject, { projectId: project._id, limit: 1 }) as JobDoc[] | undefined;
   const lastJob = recentJobs?.[0];
 
-  const [messages, setMessages] = useState<AIChatMsg[]>([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const historyRef = useRef<{ role: string; content: string }[]>([]);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const savedChats = useQuery(api.projectChats.listByProject, { projectId: project._id, limit: 30 });
+  const createChat   = useMutation(api.projectChats.create);
+  const appendMsgs   = useMutation(api.projectChats.appendMessages);
+  const updateTitle  = useMutation(api.projectChats.updateTitle);
+  const deleteChat   = useMutation(api.projectChats.remove);
+
+  const [activeChatId, setActiveChatId]   = useState<ChatId | null>(null);
+  const [messages, setMessages]           = useState<AIChatMsg[]>([]);
+  const [input, setInput]                 = useState("");
+  const [loading, setLoading]             = useState(false);
+  const [showHistory, setShowHistory]     = useState(false);
+  const historyRef  = useRef<{ role: string; content: string }[]>([]);
+  const bottomRef   = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const scrollBottom = () => setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
+  function newChat() {
+    setActiveChatId(null);
+    setMessages([]);
+    historyRef.current = [];
+    setShowHistory(false);
+    textareaRef.current?.focus();
+  }
+
+  function loadChat(chat: { _id: ChatId; messages: { role: "user" | "assistant"; content: string }[] }) {
+    setActiveChatId(chat._id);
+    setMessages(chat.messages.map(m => ({ role: m.role, content: m.content })));
+    historyRef.current = chat.messages.map(m => ({ role: m.role, content: m.content }));
+    setShowHistory(false);
+    setTimeout(() => bottomRef.current?.scrollIntoView(), 50);
+  }
 
   const send = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
     if (!text || loading) return;
     setInput("");
     setLoading(true);
+    setShowHistory(false);
 
-    setMessages((prev) => [...prev, { role: "user", content: text }]);
-    const asstIdx = messages.length + 1; // will be the new assistant msg index
-    setMessages((prev) => [...prev, { role: "assistant", content: "", toolCalls: [], streaming: true }]);
+    setMessages(prev => [...prev, { role: "user", content: text }]);
+    setMessages(prev => [...prev, { role: "assistant", content: "", toolCalls: [], streaming: true }]);
 
     const pendingToolCalls: Record<string, ToolCallBlock> = {};
+    let finalAssistantText = "";
 
     try {
       for await (const event of projectAgent.chat(project._id, text, historyRef.current)) {
         if (event.type === "text_delta") {
-          setMessages((prev) => prev.map((m, i) =>
-            i === prev.length - 1 && m.role === "assistant"
-              ? { ...m, content: m.content + event.content }
-              : m
+          finalAssistantText += event.content;
+          setMessages(prev => prev.map((m, i) =>
+            i === prev.length - 1 && m.role === "assistant" ? { ...m, content: m.content + event.content } : m
           ));
           scrollBottom();
         } else if (event.type === "tool_call") {
           const tc: ToolCallBlock = { id: event.id, name: event.name, args: event.args };
           pendingToolCalls[event.id] = tc;
-          setMessages((prev) => prev.map((m, i) =>
-            i === prev.length - 1 && m.role === "assistant"
-              ? { ...m, toolCalls: [...(m.toolCalls ?? []), tc] }
-              : m
+          setMessages(prev => prev.map((m, i) =>
+            i === prev.length - 1 && m.role === "assistant" ? { ...m, toolCalls: [...(m.toolCalls ?? []), tc] } : m
           ));
         } else if (event.type === "tool_result") {
           if (pendingToolCalls[event.id]) pendingToolCalls[event.id].result = event.result;
-          setMessages((prev) => prev.map((m, i) => {
+          setMessages(prev => prev.map((m, i) => {
             if (i !== prev.length - 1 || m.role !== "assistant") return m;
             return { ...m, toolCalls: (m.toolCalls ?? []).map(tc => tc.id === event.id ? { ...tc, result: event.result } : tc) };
           }));
           scrollBottom();
         } else if (event.type === "done") {
-          historyRef.current = [
-            ...historyRef.current,
-            ...event.new_messages,
-          ];
+          historyRef.current = [...historyRef.current, ...event.new_messages];
+
+          // Persist to Convex
+          const newPair = [
+            { role: "user" as const, content: text },
+            { role: "assistant" as const, content: finalAssistantText },
+          ].filter(m => m.content);
+
+          if (activeChatId) {
+            await appendMsgs({ chatId: activeChatId, messages: newPair });
+          } else {
+            const { chatId } = await createChat({
+              projectId: project._id,
+              title: text.slice(0, 60),
+              messages: newPair,
+            });
+            setActiveChatId(chatId as ChatId);
+            // Use first assistant response as a better title
+            if (finalAssistantText) {
+              await updateTitle({ chatId: chatId as ChatId, title: text.slice(0, 60) });
+            }
+          }
         } else if (event.type === "error") {
-          setMessages((prev) => prev.map((m, i) =>
+          setMessages(prev => prev.map((m, i) =>
             i === prev.length - 1 && m.role === "assistant"
-              ? { ...m, content: `**Error:** ${event.message}`, streaming: false }
-              : m
+              ? { ...m, content: `**Error:** ${event.message}`, streaming: false } : m
           ));
         }
       }
     } catch (err) {
-      setMessages((prev) => prev.map((m, i) =>
+      setMessages(prev => prev.map((m, i) =>
         i === prev.length - 1 && m.role === "assistant"
-          ? { ...m, content: `**Error:** ${err instanceof Error ? err.message : String(err)}`, streaming: false }
-          : m
+          ? { ...m, content: `**Error:** ${err instanceof Error ? err.message : String(err)}`, streaming: false } : m
       ));
     } finally {
-      setMessages((prev) => prev.map((m, i) =>
+      setMessages(prev => prev.map((m, i) =>
         i === prev.length - 1 && m.role === "assistant" ? { ...m, streaming: false } : m
       ));
       setLoading(false);
       scrollBottom();
       textareaRef.current?.focus();
     }
-  }, [input, loading, project._id, messages.length]);
+  }, [input, loading, project._id, activeChatId, appendMsgs, createChat, updateTitle]);
 
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); }
@@ -1199,51 +1233,95 @@ function ProjectAIPanel({
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} />
       <div className="fixed right-0 top-0 h-full w-full max-w-md bg-[--card] border-l border-[--border] z-50 flex flex-col shadow-2xl">
+
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-[--border] shrink-0">
           <div className="flex items-center gap-2">
             <Sparkles size={14} className="text-[--primary]" />
             <span className="text-sm font-semibold">Project Assistant</span>
+            {activeChatId && (
+              <span className="text-[10px] text-[--muted-foreground] font-mono truncate max-w-[120px]">
+                · saved
+              </span>
+            )}
           </div>
-          <button onClick={onClose} className="text-[--muted-foreground] hover:text-[--foreground] p-1 rounded">
-            <X size={14} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setShowHistory(v => !v)}
+              title="Chat history"
+              className={`p-1.5 rounded text-xs font-medium transition-colors ${showHistory ? "bg-[--primary]/10 text-[--primary]" : "text-[--muted-foreground] hover:text-[--foreground]"}`}
+            >
+              History
+            </button>
+            <button
+              onClick={newChat}
+              title="New chat"
+              className="p-1.5 rounded text-[--muted-foreground] hover:text-[--foreground] transition-colors text-xs"
+            >
+              + New
+            </button>
+            <button onClick={onClose} className="p-1.5 rounded text-[--muted-foreground] hover:text-[--foreground]">
+              <X size={14} />
+            </button>
+          </div>
         </div>
 
         {/* Context pills */}
         <div className="px-4 py-2 border-b border-[--border] shrink-0 flex flex-wrap gap-1.5">
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-[--muted] text-[--muted-foreground] font-mono">{project.name}</span>
-          {project.ontologyConfigSlug && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-[--muted] text-[--muted-foreground] font-mono">onto: {project.ontologyConfigSlug}</span>
-          )}
-          {project.pipelineConfigSlug && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-[--muted] text-[--muted-foreground] font-mono">pipe: {project.pipelineConfigSlug}</span>
-          )}
+          {project.ontologyConfigSlug && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[--muted] text-[--muted-foreground] font-mono">onto: {project.ontologyConfigSlug}</span>}
+          {project.pipelineConfigSlug && <span className="text-[10px] px-2 py-0.5 rounded-full bg-[--muted] text-[--muted-foreground] font-mono">pipe: {project.pipelineConfigSlug}</span>}
           {lastJob && (
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-              lastJob.status === "success" ? "bg-green-900/30 text-green-400" :
-              lastJob.status === "failed"  ? "bg-red-900/30 text-red-400" :
-              "bg-yellow-900/30 text-yellow-400"
-            }`}>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${lastJob.status === "success" ? "bg-green-900/30 text-green-400" : lastJob.status === "failed" ? "bg-red-900/30 text-red-400" : "bg-yellow-900/30 text-yellow-400"}`}>
               last job: {lastJob.status}
             </span>
           )}
         </div>
 
+        {/* History overlay */}
+        {showHistory && (
+          <div className="absolute inset-x-0 top-[89px] bottom-0 z-10 bg-[--card] border-t border-[--border] flex flex-col">
+            <div className="px-4 py-3 border-b border-[--border] flex items-center justify-between shrink-0">
+              <span className="text-xs font-semibold">Saved Chats</span>
+              <button onClick={newChat} className="text-xs px-2.5 py-1 rounded bg-[--primary] text-[--primary-foreground] font-medium hover:opacity-90">
+                + New Chat
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-1.5">
+              {savedChats === undefined && <p className="text-xs text-[--muted-foreground] p-2">Loading…</p>}
+              {savedChats?.length === 0 && <p className="text-xs text-[--muted-foreground] p-2">No saved chats yet.</p>}
+              {savedChats?.map(chat => (
+                <div
+                  key={chat._id}
+                  className={`flex items-start gap-2 rounded-lg border px-3 py-2.5 transition-colors ${activeChatId === chat._id ? "border-[--primary]/50 bg-[--primary]/5" : "border-[--border] hover:border-[--primary]/30 hover:bg-[--muted]"}`}
+                >
+                  <button className="flex-1 text-left min-w-0" onClick={() => loadChat(chat)}>
+                    <p className="text-xs font-medium truncate text-[--foreground]">{chat.title}</p>
+                    <p className="text-[10px] text-[--muted-foreground] mt-0.5">
+                      {chat.messages.length} messages · {timeAgo(chat.updatedAt)}
+                    </p>
+                  </button>
+                  <button
+                    onClick={() => { void deleteChat({ chatId: chat._id }); if (activeChatId === chat._id) newChat(); }}
+                    className="shrink-0 p-1 rounded text-[--muted-foreground] hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {messages.length === 0 && (
             <div className="space-y-3">
-              <p className="text-xs text-[--muted-foreground]">
-                I can read your project config, run hydration, link configs, check job logs, and help you debug anything.
-              </p>
+              <p className="text-xs text-[--muted-foreground]">I can read your project config, run hydration, link configs, check job logs, and help you debug anything.</p>
               <div className="space-y-1.5">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    onClick={() => void send(s)}
-                    className="w-full text-left text-xs px-3 py-2 rounded-lg border border-[--border] bg-[--muted]/40 text-[--muted-foreground] hover:text-[--foreground] hover:border-[--primary]/40 transition-colors"
-                  >
+                {SUGGESTIONS.map(s => (
+                  <button key={s} onClick={() => void send(s)}
+                    className="w-full text-left text-xs px-3 py-2 rounded-lg border border-[--border] bg-[--muted]/40 text-[--muted-foreground] hover:text-[--foreground] hover:border-[--primary]/40 transition-colors">
                     {s}
                   </button>
                 ))}
@@ -1258,24 +1336,18 @@ function ProjectAIPanel({
                   <Bot size={11} className="text-[--primary]" />
                 </div>
               )}
-              <div className={`min-w-0 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
+              <div className={`min-w-0 max-w-[85%]`}>
                 {msg.role === "assistant" && msg.toolCalls && msg.toolCalls.length > 0 && (
                   <div className="space-y-0.5 mb-1">
                     {msg.toolCalls.map(tc => <AIToolCard key={tc.id} tc={tc} />)}
                   </div>
                 )}
                 {(msg.content || (msg.role === "assistant" && msg.streaming)) && (
-                  <div className={`rounded-xl px-3 py-2 text-xs leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-[--primary] text-[--primary-foreground] rounded-tr-sm whitespace-pre-wrap"
-                      : "bg-[--muted] text-[--foreground] rounded-tl-sm"
-                  }`}>
+                  <div className={`rounded-xl px-3 py-2 text-xs leading-relaxed ${msg.role === "user" ? "bg-[--primary] text-[--primary-foreground] rounded-tr-sm whitespace-pre-wrap" : "bg-[--muted] text-[--foreground] rounded-tl-sm"}`}>
                     {msg.role === "user" ? msg.content : (
                       <>
                         <MarkdownContent content={msg.content} />
-                        {msg.streaming && !msg.content && (
-                          <span className="inline-block w-1 h-3 bg-current rounded-sm animate-pulse" />
-                        )}
+                        {msg.streaming && !msg.content && <span className="inline-block w-1 h-3 bg-current rounded-sm animate-pulse" />}
                       </>
                     )}
                   </div>
@@ -1292,7 +1364,7 @@ function ProjectAIPanel({
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={e => setInput(e.target.value)}
               onKeyDown={handleKey}
               placeholder="Ask about pipelines, errors, configs… (Enter to send)"
               rows={1}
