@@ -34,7 +34,18 @@ def load(db_path: Union[str, Path]):
             _world.close()
         _world = World()
         _world.set_backend(filename=db_path, exclusive=False)
-        _onto = _world.get_ontology("http://example.org/rutgers_ontology.owl").load()
+        # Discover which ontology is stored in this quadstore dynamically.
+        # This works for any YAML-defined schema — no hardcoded IRI required.
+        # owlready2 populates _world.ontologies after set_backend() when the DB
+        # already has triples; we just grab the first (and usually only) one.
+        stored = list(_world.ontologies.values())
+        if stored:
+            _onto = stored[0]
+        else:
+            raise RuntimeError(
+                f"No ontology found in quadstore at {db_path}. "
+                "Run a hydration job first."
+            )
         _db_path = db_path
 
 
@@ -140,36 +151,35 @@ def get_full_graph(
     limit: int = 500,
 ) -> dict:
     onto = _require_onto()
-    types = types or ["State", "County", "Municipality", "Individual"]
+    all_class_names = [c.name for c in onto.classes()]
+    # Default to all classes in the ontology — generalized for any schema
+    types = types or all_class_names
 
-    # Build county filter if a state is focused
+    # When a state_fips filter is given, try to narrow via isPartOf if it exists
+    # (works even if class is not named "County" — any class with isPartOf linking to a State_* uri)
     focus_state = None
-    focus_counties = None
     if state_fips:
         focus_state = onto.search_one(iri=f"*#State_{state_fips}")
-        if focus_state:
-            county_cls = next((c for c in onto.classes() if c.name == "County"), None)
-            if county_cls:
-                focus_counties = {
-                    ind for ind in county_cls.instances()
-                    if _first(getattr(ind, "isPartOf", None)) == focus_state
-                }
 
     nodes: dict[str, dict] = {}
     for cls_name in types:
         cls = next((c for c in onto.classes() if c.name == cls_name), None)
         if cls is None:
             continue
+        instance_count = 0
         for ind in cls.instances():
-            if state_fips and focus_state:
-                if cls_name == "County" and _first(getattr(ind, "isPartOf", None)) != focus_state:
-                    continue
-                if cls_name == "Municipality":
-                    if focus_counties is None or _first(getattr(ind, "isPartOf", None)) not in focus_counties:
+            if focus_state:
+                # Filter: skip if the individual is not connected to the focused state
+                part_of = _first(getattr(ind, "isPartOf", None))
+                located_in = _first(getattr(ind, "locatedIn", None))
+                connected_state = part_of or located_in
+                if connected_state is not None and connected_state != focus_state:
+                    # Also accept children of focus_state (e.g. Municipality inside County inside State)
+                    grandparent = _first(getattr(connected_state, "isPartOf", None))
+                    if grandparent != focus_state:
                         continue
-            elif cls_name == "Municipality":
-                continue  # too many without a state filter
             nodes[ind.name] = _graph_node(ind, cls_name)
+            instance_count += 1
             if len(nodes) >= limit:
                 break
         if len(nodes) >= limit:
@@ -178,7 +188,7 @@ def get_full_graph(
     node_set = set(nodes.keys())
     links = []
     seen = set()
-    for name, node_data in nodes.items():
+    for name in node_set:
         ind = onto.search_one(iri=f"*#{name}")
         if ind is None:
             continue
@@ -211,16 +221,91 @@ def search_entities(q: str, types: Union[List[str], None] = None) -> List[dict]:
     return results[:100]
 
 
-def list_series() -> list[str]:
+def within_radius(lat: float, lon: float, radius_km: float, types: List[str] = None) -> List[dict]:
+    """
+    GIS Spatial Query: Find entities within a radius using the DuckDB spatial mirror.
+    Note: Requires that the ontology has been exported to DuckDB and contains
+    hasLatitude / hasLongitude properties.
+    """
+    import duckdb
+    from app.services import config_service
+
+    db_path = _db_path.replace(".db", ".duckdb") if _db_path else "ontology/onto.duckdb"
+    if not Path(db_path).exists():
+        raise RuntimeError("GIS query requires DuckDB export. Run hydration first.")
+
+    con = duckdb.connect(db_path)
+    try:
+        # Load spatial extension
+        con.execute("INSTALL spatial; LOAD spatial;")
+
+        # Search across all requested tables (classes)
+        results = []
+        types = types or ["GeographicRegion", "State", "County", "Municipality"]
+
+        for table in types:
+            try:
+                # Use Haversine distance via DuckDB spatial for efficiency
+                query = f"""
+                    SELECT *,
+                    st_distance_spheroid(st_point(hasLongitude, hasLatitude), st_point({lon}, {lat})) / 1000 as dist_km
+                    FROM "{table}"
+                    WHERE hasLatitude IS NOT NULL AND hasLongitude IS NOT NULL
+                    AND dist_km <= {radius_km}
+                    ORDER BY dist_km ASC
+                    LIMIT 100
+                """
+                df = con.execute(query).df()
+                for _, row in df.iterrows():
+                    results.append({
+                        "id": row["_id"],
+                        "class": table,
+                        "distance_km": row["dist_km"],
+                        "properties": row.to_dict()
+                    })
+            except Exception:
+                continue # Table might not exist yet
+
+        return sorted(results, key=lambda x: x["distance_km"])
+    finally:
+        con.close()
+
+
+def update_entity_property(uri: str, prop_name: str, value: Any):
+    """
+    Streaming/Real-time Update: Modifies a single triple in the SQLite quadstore.
+    Thread-safe and atomic.
+    """
     onto = _require_onto()
-    measure_cls = next((c for c in onto.classes() if c.name == "Measure"), None)
-    if not measure_cls:
-        return []
-    return sorted({
-        getattr(m, "hasSeries", None)
-        for m in measure_cls.instances()
-        if getattr(m, "hasSeries", None)
-    })
+    ind = onto.search_one(iri=f"*#{uri}")
+    if ind is None:
+        raise ValueError(f"Entity '{uri}' not found for update")
+
+    prop = onto.search_one(python_name=prop_name)
+    if prop is None:
+        raise ValueError(f"Property '{prop_name}' not found")
+
+    with _lock:
+        # Update owlready2 instance
+        setattr(ind, prop_name, value)
+        # Quadstore backend is updated immediately if it's already in a 'with onto:' context
+        # but here we ensure it persists.
+        _world.save()
+
+    print(f"[stream] Updated {uri}.{prop_name} = {value}")
+
+
+
+def list_series() -> list[str]:
+    """Return all distinct hasSeries values across any class that carries the property."""
+    onto = _require_onto()
+    series: set[str] = set()
+    for cls in onto.classes():
+        for ind in cls.instances():
+            val = getattr(ind, "hasSeries", None)
+            if val:
+                series.add(val)
+    return sorted(series)
 
 
 def list_search_documents() -> list[dict]:
@@ -284,16 +369,17 @@ async def export_to_duckdb(duckdb_path: str) -> None:
 
 
 def get_series_data(series_id: str) -> list[dict]:
+    """Return time-series rows for series_id from any class that carries hasSeries."""
     onto = _require_onto()
-    measure_cls = next((c for c in onto.classes() if c.name == "Measure"), None)
-    if not measure_cls:
-        return []
-    rows = [
-        {"date": m.hasDate, "value": m.hasValue}
-        for m in measure_cls.instances()
-        if getattr(m, "hasSeries", None) == series_id
-        and m.hasDate and m.hasValue is not None
-    ]
+    rows = []
+    for cls in onto.classes():
+        for ind in cls.instances():
+            if getattr(ind, "hasSeries", None) != series_id:
+                continue
+            date = getattr(ind, "hasDate", None)
+            value = getattr(ind, "hasValue", None)
+            if date and value is not None:
+                rows.append({"date": date, "value": value})
     return sorted(rows, key=lambda r: r["date"])
 
 
@@ -308,6 +394,7 @@ def _first(val):
 
 
 def _serialize_entity(ind, include_relationships: bool = False) -> dict:
+    """Serialize an individual dynamically — works for any class/property schema."""
     cls_name = type(ind).name if hasattr(type(ind), "name") else "Unknown"
     result = {
         "id": ind.name,
@@ -315,11 +402,27 @@ def _serialize_entity(ind, include_relationships: bool = False) -> dict:
         "class": cls_name,
         "properties": {},
     }
-    for attr in ("hasName", "hasPopulation", "hasFIPS", "hasIncome",
-                 "hasValue", "hasDate", "hasSeries", "hasUnit"):
-        val = getattr(ind, attr, None)
+    # Reflect all data properties (skip object-property values — they have .iri)
+    for prop in ind.get_properties():
+        try:
+            val = prop[ind]
+            if isinstance(val, list):
+                val = val[0] if val else None
+            if val is None:
+                continue
+            # Object properties point to OWL individuals — exclude from data properties
+            if hasattr(val, "iri"):
+                continue
+            result["properties"][prop.python_name] = val
+        except Exception:
+            pass
+
+    # Explicitly include GIS fields if present for frontend mapping
+    for gis_field in ["hasLatitude", "hasLongitude", "hasGeometry"]:
+        val = getattr(ind, gis_field, None)
         if val is not None:
-            result["properties"][attr] = val
+             result["properties"][gis_field] = val
+
 
     if include_relationships:
         rels = []
@@ -353,13 +456,22 @@ def _entity_search_text(entity: dict) -> str:
 
 
 def _graph_node(ind, cls_name: str) -> dict:
+    """Build a graph node, reflecting all data properties dynamically."""
+    props: dict = {}
+    for prop in ind.get_properties():
+        try:
+            val = prop[ind]
+            if isinstance(val, list):
+                val = val[0] if val else None
+            if val is None or hasattr(val, "iri"):
+                continue
+            props[prop.python_name] = val
+        except Exception:
+            pass
     return {
         "id": ind.name,
-        "label": getattr(ind, "hasName", None) or ind.name,
+        # Prefer hasName if present; otherwise fall back to the URI local name
+        "label": props.get("hasName") or ind.name,
         "group": cls_name,
-        "properties": {
-            attr: getattr(ind, attr)
-            for attr in ("hasName", "hasPopulation", "hasFIPS", "hasValue", "hasDate", "hasSeries")
-            if getattr(ind, attr, None) is not None
-        },
+        "properties": props,
     }

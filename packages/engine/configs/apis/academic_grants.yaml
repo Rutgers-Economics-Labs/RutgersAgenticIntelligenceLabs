@@ -1,0 +1,22 @@
+name: academic_grants
+type: csv
+path: sources/academic_grants.csv
+fields:
+  - source: id
+    alias: id
+  - source: title
+    alias: title
+  - source: agency
+    alias: agency
+  - source: grant_id
+    alias: grant_id
+  - source: amount
+    alias: amount
+    cast: float
+  - source: year
+    alias: year
+    cast: int
+  - source: pi_id
+    alias: pi_id
+  - source: university_id
+    alias: university_id

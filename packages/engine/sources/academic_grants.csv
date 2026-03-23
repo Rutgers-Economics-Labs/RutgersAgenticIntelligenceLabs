@@ -1,0 +1,11 @@
+id,title,agency,grant_id,amount,year,pi_id,university_id
+grant_001,Labor Market Dynamics in the Post-Pandemic Economy,NSF,SES-2145231,450000,2022,fac_001,univ_rutgers
+grant_002,Machine Learning Methods for Heterogeneous Treatment Effects,NSF,SES-2112089,380000,2021,fac_004,univ_rutgers
+grant_003,Inequality and Social Mobility in the 21st Century,NIH,R01HD098765,720000,2020,fac_007,univ_princeton
+grant_004,Causal Inference in Observational Studies,NSF,SES-2242156,290000,2023,fac_007,univ_princeton
+grant_005,Urban Housing Markets and Segregation,HUD,HUD-H-2021-0034,510000,2021,fac_011,univ_columbia
+grant_006,Deep Learning for Macroeconomic Forecasting,NSF,CCF-2235891,340000,2022,fac_005,univ_rutgers
+grant_007,Network Analysis of Financial Contagion,NSF,SES-2019876,275000,2020,fac_012,univ_columbia
+grant_008,Climate Economics and Policy Evaluation,NSF,SES-2301234,425000,2023,fac_015,univ_penn
+grant_009,Behavioral Economics and Public Policy Design,NIH,R01MH112345,680000,2021,fac_008,univ_princeton
+grant_010,Immigration and Labor Market Integration,DOL,ETA-2022-0045,390000,2022,fac_013,univ_nyu

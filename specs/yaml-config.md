@@ -135,36 +135,68 @@ Object properties are created in two passes: first all properties (without inver
 
 **URI:** `http://example.org/rutgers_ontology.owl`
 
+**Design principle:** Abstract parent classes (`GeographicRegion`, `Observation`) act as the extensibility hooks. To add a new entity type (e.g. `Nation`, `ZipCode`, `Firm`) add a single entry to `classes` with the appropriate `parent`. No code changes in the engine or API are required.
+
 **Classes:**
 
-| Name | Parent |
-|------|--------|
-| `State` | Thing |
-| `County` | Thing |
-| `Municipality` | Thing |
-| `Individual` | Thing |
-| `Measure` | Thing |
+| Name | Parent | Purpose |
+|------|--------|---------|
+| `GeographicRegion` | Thing | Abstract root for all geographic entities |
+| `Nation` | GeographicRegion | Country-level geography |
+| `Region` | GeographicRegion | Multi-state / multi-country grouping |
+| `State` | GeographicRegion | US state |
+| `County` | GeographicRegion | US county |
+| `Municipality` | GeographicRegion | City / town |
+| `ZipCode` | GeographicRegion | USPS ZIP code area |
+| `CensusTract` | GeographicRegion | Sub-county Census tract |
+| `Individual` | Thing | Agent / person record |
+| `Observation` | Thing | Abstract root for all measured series values |
+| `Measure` | Observation | Generic/untyped observation (backward-compat) |
+| `LaborIndicator` | Observation | Unemployment, labor force participation |
+| `HousingIndicator` | Observation | HPI, vacancy, permits |
+| `IncomeIndicator` | Observation | Median income, poverty rate |
+| `MacroIndicator` | Observation | GDP, CPI, rates |
+| `EnvironmentIndicator` | Observation | Air quality, emissions |
+| `DemographicIndicator` | Observation | Population, age distribution |
+| `EducationIndicator` | Observation | Graduation rates, enrollment |
+| `DataSeries` | Thing | One instance per series; holds metadata |
 
 **Object properties:**
 
 | Name | Domain | Range | Inverse |
 |------|--------|-------|---------|
-| `isPartOf` | County, Municipality | State, County | `hasPart` |
-| `locatedIn` | Individual, Municipality, County | Municipality, County, State | — |
-| `measuredFor` | Measure | State, County, Municipality | — |
+| `isPartOf` | GeographicRegion | GeographicRegion | `hasPart` |
+| `locatedIn` | Individual, GeographicRegion | GeographicRegion | — |
+| `measuredFor` | Observation | GeographicRegion | — |
+| `belongsToSeries` | Observation | DataSeries | — |
 
 **Data properties:**
 
-| Name | Domain | Range | Functional |
-|------|--------|-------|------------|
-| `hasName` | Thing | str | yes |
-| `hasPopulation` | State, County, Municipality | int | yes |
-| `hasFIPS` | State, County, Municipality | str | yes |
-| `hasIncome` | Individual | float | yes |
-| `hasValue` | Measure | float | yes |
-| `hasDate` | Measure | str | yes |
-| `hasSeries` | Measure | str | yes |
-| `hasUnit` | Measure | str | yes |
+| Name | Domain | Range | Functional | Notes |
+|------|--------|-------|------------|-------|
+| `hasName` | Thing | str | yes | Universal label |
+| `hasFIPS` | GeographicRegion | str | yes | |
+| `hasAbbreviation` | GeographicRegion | str | yes | State abbr etc. |
+| `hasISO2` / `hasISO3` | GeographicRegion | str | yes | Country codes |
+| `hasRegionCode` | GeographicRegion | str | yes | |
+| `hasPopulation` | GeographicRegion | int | yes | |
+| `hasIncome` | Individual | float | yes | |
+| `hasValue` | Observation | float | yes | |
+| `hasDate` | Observation | str | yes | ISO date string |
+| `hasSeries` | Observation | str | yes | Series identifier |
+| `hasUnit` | Observation | str | yes | |
+| `hasYear` | Observation | int | yes | For DuckDB range queries |
+| `hasMonth` | Observation | int | yes | 1–12, nullable |
+| `hasQuarter` | Observation | int | yes | 1–4, nullable |
+| `hasSeriesID` | DataSeries | str | yes | |
+| `hasSeriesTitle` | DataSeries | str | yes | |
+| `hasFrequency` | DataSeries | str | yes | `monthly`, `quarterly`, `annual` |
+| `hasSeasonalAdj` | DataSeries | str | yes | `SA`, `NSA` |
+| `hasSource` | DataSeries | str | yes | `FRED`, `Census`, etc. |
+| `hasSourceURL` | Thing | str | yes | Provenance URL |
+| `hasIngestDate` | Thing | str | yes | ISO date of hydration |
+| `hasPipelineID` | Thing | str | yes | Pipeline run identifier |
+
 
 ---
 

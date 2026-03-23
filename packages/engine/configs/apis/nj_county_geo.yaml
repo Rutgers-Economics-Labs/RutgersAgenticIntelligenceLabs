@@ -1,0 +1,12 @@
+name: nj_county_geo
+type: csv
+path: sources/nj_county_geo.csv
+fields:
+  - source: fips
+    alias: fips
+  - source: lat
+    alias: lat
+    cast: float
+  - source: lon
+    alias: lon
+    cast: float

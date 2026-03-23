@@ -1,0 +1,15 @@
+id,name,credits,level,semester,enrollment,department_id,instructor_id
+course_001,Introduction to Econometrics,3,undergraduate,Fall 2024,85,dept_rutgers_econ,fac_001
+course_002,Advanced Microeconomics,3,graduate,Fall 2024,22,dept_rutgers_econ,fac_002
+course_003,Labor Economics,3,graduate,Spring 2025,18,dept_rutgers_econ,fac_003
+course_004,Machine Learning for Economists,3,graduate,Fall 2024,31,dept_rutgers_cs,fac_004
+course_005,Causal Inference Methods,3,graduate,Spring 2025,26,dept_rutgers_econ,fac_001
+course_006,Industrial Organization,3,undergraduate,Spring 2025,67,dept_rutgers_econ,fac_002
+course_007,Advanced Macroeconomics,3,graduate,Fall 2024,19,dept_princeton_econ,fac_007
+course_008,Econometrics II,3,graduate,Spring 2025,24,dept_princeton_econ,fac_008
+course_009,Topics in Development Economics,3,graduate,Fall 2024,16,dept_columbia_econ,fac_011
+course_010,Urban Economics,3,undergraduate,Spring 2025,54,dept_columbia_econ,fac_010
+course_011,Behavioral Economics,3,undergraduate,Fall 2024,92,dept_nyu_econ,fac_013
+course_012,Financial Econometrics,3,graduate,Spring 2025,21,dept_nyu_econ,fac_014
+course_013,Public Finance,3,undergraduate,Fall 2024,78,dept_penn_econ,fac_015
+course_014,Health Economics,3,graduate,Spring 2025,17,dept_penn_econ,fac_015

@@ -1,0 +1,23 @@
+name: academic_faculty
+type: csv
+path: sources/academic_faculty.csv
+fields:
+  - source: id
+    alias: id
+  - source: name
+    alias: name
+  - source: rank
+    alias: rank
+  - source: h_index
+    alias: h_index
+    cast: int
+  - source: publication_count
+    alias: publication_count
+    cast: int
+  - source: join_year
+    alias: join_year
+    cast: int
+  - source: email
+    alias: email
+  - source: department_id
+    alias: department_id

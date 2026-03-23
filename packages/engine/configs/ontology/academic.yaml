@@ -1,0 +1,170 @@
+uri: http://example.org/rail/academic.owl
+
+# ---------------------------------------------------------------------------
+# Academic Research Network Ontology
+#
+# Models universities, departments, faculty, PhD students, publications,
+# courses, and research grants — a completely different domain from the
+# geographic/economic core ontology.
+# ---------------------------------------------------------------------------
+
+classes:
+  # Institutions
+  - name: University
+  - name: Department
+
+  # People
+  - name: AcademicPerson         # abstract base
+  - name: Faculty
+    parent: AcademicPerson
+  - name: PhDStudent
+    parent: AcademicPerson
+
+  # Research outputs / resources
+  - name: Publication
+  - name: ResearchGrant
+  - name: Course
+
+
+object_properties:
+  # Institutional structure
+  - name: belongsTo              # Department → University
+    domain: [Department]
+    range: [University]
+    inverse: hosts
+
+  # People → institution
+  - name: affiliatedWith         # Faculty or PhDStudent → Department
+    domain: [AcademicPerson]
+    range: [Department]
+
+  # Mentorship
+  - name: advisedBy              # PhDStudent → Faculty
+    domain: [PhDStudent]
+    range: [Faculty]
+    inverse: advises
+
+  # Authorship
+  - name: authoredBy             # Publication → AcademicPerson (multi-valued)
+    domain: [Publication]
+    range: [AcademicPerson]
+
+  # Teaching
+  - name: taughtBy               # Course → Faculty
+    domain: [Course]
+    range: [Faculty]
+
+  - name: offeredBy              # Course → Department
+    domain: [Course]
+    range: [Department]
+
+  # Funding
+  - name: fundedBy               # Publication or ResearchGrant → ... (kept flexible)
+    domain: [ResearchGrant]
+    range: [University]
+
+  - name: supportedByGrant       # Faculty → ResearchGrant
+    domain: [Faculty]
+    range: [ResearchGrant]
+
+
+data_properties:
+  # Universal
+  - name: hasName
+    domain: [Thing]
+    range: str
+    functional: true
+
+  # University / Department
+  - name: hasLocation            # city, state
+    domain: [University]
+    range: str
+    functional: true
+  - name: hasFounded             # founding year
+    domain: [University]
+    range: int
+    functional: true
+  - name: hasRanking             # US News ranking
+    domain: [University]
+    range: int
+    functional: true
+  - name: hasDiscipline          # e.g. "Economics", "Computer Science"
+    domain: [Department]
+    range: str
+    functional: true
+
+  # People
+  - name: hasRank                # "Assistant", "Associate", "Full", "Emeritus"
+    domain: [Faculty]
+    range: str
+    functional: true
+  - name: hasHIndex
+    domain: [AcademicPerson]
+    range: int
+    functional: true
+  - name: hasPublicationCount
+    domain: [AcademicPerson]
+    range: int
+    functional: true
+  - name: hasJoinYear
+    domain: [AcademicPerson]
+    range: int
+    functional: true
+  - name: hasEmail
+    domain: [AcademicPerson]
+    range: str
+    functional: true
+
+  # Publications
+  - name: hasYear
+    domain: [Publication, ResearchGrant]
+    range: int
+    functional: true
+  - name: hasVenue               # journal or conference name
+    domain: [Publication]
+    range: str
+    functional: true
+  - name: hasCitationCount
+    domain: [Publication]
+    range: int
+    functional: true
+  - name: hasType                # "journal", "conference", "preprint"
+    domain: [Publication]
+    range: str
+    functional: true
+  - name: hasDOI
+    domain: [Publication]
+    range: str
+    functional: true
+
+  # Grants
+  - name: hasFundingAmount       # in USD
+    domain: [ResearchGrant]
+    range: float
+    functional: true
+  - name: hasAgency              # "NSF", "NIH", "DOE", "DARPA"
+    domain: [ResearchGrant]
+    range: str
+    functional: true
+  - name: hasGrantID
+    domain: [ResearchGrant]
+    range: str
+    functional: true
+
+  # Courses
+  - name: hasCredits
+    domain: [Course]
+    range: int
+    functional: true
+  - name: hasLevel               # "undergraduate", "graduate"
+    domain: [Course]
+    range: str
+    functional: true
+  - name: hasSemester            # "Fall 2024", "Spring 2025"
+    domain: [Course]
+    range: str
+    functional: true
+  - name: hasEnrollment
+    domain: [Course]
+    range: int
+    functional: true

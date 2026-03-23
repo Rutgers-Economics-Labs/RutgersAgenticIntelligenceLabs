@@ -1,0 +1,13 @@
+id,name,discipline,university_id
+dept_rutgers_econ,Department of Economics,Economics,univ_rutgers
+dept_rutgers_cs,Department of Computer Science,Computer Science,univ_rutgers
+dept_rutgers_math,Department of Mathematics,Mathematics,univ_rutgers
+dept_rutgers_soc,Department of Sociology,Sociology,univ_rutgers
+dept_princeton_econ,Department of Economics,Economics,univ_princeton
+dept_princeton_cs,Department of Computer Science,Computer Science,univ_princeton
+dept_columbia_econ,Department of Economics,Economics,univ_columbia
+dept_columbia_cs,Department of Computer Science,Computer Science,univ_columbia
+dept_nyu_econ,Department of Economics,Economics,univ_nyu
+dept_nyu_stern,Stern School of Business,Business,univ_nyu
+dept_penn_econ,Department of Economics,Economics,univ_penn
+dept_penn_wharton,Wharton School,Business,univ_penn

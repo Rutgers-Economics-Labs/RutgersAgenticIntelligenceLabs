@@ -1,0 +1,21 @@
+id,title,year,venue,type,citation_count,doi,lead_author_id
+pub_001,Minimum Wage and Employment in New Jersey Counties,2022,American Economic Review,journal,87,10.1257/aer.20220001,fac_001
+pub_002,Difference-in-Differences with Multiple Time Periods,2021,Journal of Econometrics,journal,412,10.1016/j.jeconom.2021.01,fac_007
+pub_003,Machine Learning Methods for Causal Inference,2023,Review of Economic Studies,journal,156,10.1093/restud/rdac001,fac_004
+pub_004,Housing Prices and School Quality in Urban Areas,2022,AEA Papers and Proceedings,journal,43,10.1257/pandp.20221234,fac_002
+pub_005,Agent-Based Modeling of Labor Markets,2020,Journal of Economic Dynamics,journal,78,10.1016/j.jedc.2020.001,fac_011
+pub_006,Panel Data Methods for Heterogeneous Treatment Effects,2021,Econometrica,journal,231,10.3982/ecta19821,fac_007
+pub_007,Synthetic Control Methods in Public Policy,2022,NBER Working Paper,preprint,118,10.3386/w29999,fac_015
+pub_008,Deep Learning for Economic Forecasting,2023,NeurIPS,conference,94,10.48550/arxiv.2302.001,fac_005
+pub_009,Income Inequality and Intergenerational Mobility,2021,Quarterly Journal of Economics,journal,203,10.1093/qje/qjab028,fac_013
+pub_010,Optimal Taxation with Behavioral Agents,2022,American Economic Review,journal,67,10.1257/aer.20220567,fac_008
+pub_011,Graph Neural Networks for Economic Network Analysis,2023,ICLR,conference,45,10.48550/arxiv.2301.001,fac_009
+pub_012,Racial Disparities in Credit Markets,2022,Review of Financial Studies,journal,89,10.1093/rfs/hhab001,fac_011
+pub_013,Labor Supply Elasticities in the Gig Economy,2021,Journal of Labor Economics,journal,134,10.1086/714051,fac_003
+pub_014,Climate Change and Agricultural Productivity,2023,AEA Papers and Proceedings,journal,52,10.1257/pandp.20231234,fac_010
+pub_015,Bayesian Econometrics for Policy Analysis,2020,Journal of Political Economy,journal,176,10.1086/712506,fac_015
+pub_016,Remote Work and Urban Sorting,2022,Brookings Papers on Economic Activity,journal,98,10.1353/eca.2022.0001,fac_014
+pub_017,Network Effects in Financial Markets,2021,Journal of Finance,journal,211,10.1111/jofi.13001,fac_012
+pub_018,Mechanism Design for Public Goods,2022,Theoretical Economics,journal,63,10.3982/te4521,fac_006
+pub_019,Immigration and Local Labor Markets,2020,Review of Economics and Statistics,journal,145,10.1162/rest_a_00870,fac_001
+pub_020,Monetary Policy Uncertainty and Investment,2023,American Economic Review,journal,77,10.1257/aer.20221234,fac_008

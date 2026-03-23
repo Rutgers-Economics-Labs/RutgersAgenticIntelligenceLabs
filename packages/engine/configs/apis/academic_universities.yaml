@@ -1,0 +1,16 @@
+name: academic_universities
+type: csv
+path: sources/academic_universities.csv
+fields:
+  - source: id
+    alias: id
+  - source: name
+    alias: name
+  - source: location
+    alias: location
+  - source: founded
+    alias: founded
+    cast: int
+  - source: ranking
+    alias: ranking
+    cast: int

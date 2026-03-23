@@ -1,0 +1,16 @@
+id,name,rank,h_index,publication_count,join_year,email,department_id
+fac_001,Dr. Maria Chen,Full,42,187,2003,m.chen@rutgers.edu,dept_rutgers_econ
+fac_002,Dr. James Okonkwo,Associate,28,94,2011,j.okonkwo@rutgers.edu,dept_rutgers_econ
+fac_003,Dr. Priya Nair,Assistant,12,31,2019,p.nair@rutgers.edu,dept_rutgers_econ
+fac_004,Dr. Samuel Torres,Full,55,312,1998,s.torres@rutgers.edu,dept_rutgers_cs
+fac_005,Dr. Aisha Patel,Associate,33,118,2009,a.patel@rutgers.edu,dept_rutgers_cs
+fac_006,Dr. Kevin Walsh,Assistant,9,22,2021,k.walsh@rutgers.edu,dept_rutgers_math
+fac_007,Dr. Elena Rossi,Full,61,401,1995,e.rossi@princeton.edu,dept_princeton_econ
+fac_008,Dr. Marcus Webb,Full,48,229,2001,m.webb@princeton.edu,dept_princeton_econ
+fac_009,Dr. Sarah Kimura,Associate,31,102,2013,s.kimura@princeton.edu,dept_princeton_cs
+fac_010,Dr. David Liang,Assistant,14,38,2018,d.liang@columbia.edu,dept_columbia_econ
+fac_011,Dr. Fatima Hassan,Full,57,388,1999,f.hassan@columbia.edu,dept_columbia_econ
+fac_012,Dr. Robert Singh,Associate,25,87,2014,r.singh@columbia.edu,dept_columbia_cs
+fac_013,Dr. Nina Volkov,Full,44,201,2005,n.volkov@nyu.edu,dept_nyu_econ
+fac_014,Dr. Carlos Rivera,Associate,19,63,2016,c.rivera@nyu.edu,dept_nyu_econ
+fac_015,Dr. Mei Zhang,Full,50,267,2002,m.zhang@upenn.edu,dept_penn_econ
