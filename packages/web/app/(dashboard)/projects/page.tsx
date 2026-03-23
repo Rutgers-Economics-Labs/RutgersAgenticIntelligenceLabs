@@ -45,8 +45,8 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
     <>
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-[--background] border border-[--border] rounded-xl shadow-2xl p-6">
-          <h2 className="text-lg font-semibold mb-5">New Project</h2>
+        <div className="w-full max-w-md bg-[--card] border border-[--border] rounded-xl shadow-2xl p-6">
+          <h2 className="text-base font-semibold mb-5">New Project</h2>
 
           <div className="space-y-4">
             <div>
@@ -83,7 +83,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                     className={`p-3 rounded-lg border text-left transition-colors ${
                       approach === a
                         ? "border-[--primary] bg-[--primary]/10"
-                        : "border-[--border] hover:border-[--primary]/40"
+                        : "border-[--border] bg-[--muted] hover:border-[--primary]/40"
                     }`}
                   >
                     <p className={`text-xs font-semibold mb-1 ${approach === a ? "text-[--primary]" : "text-[--foreground]"}`}>
@@ -112,7 +112,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
             <button
               onClick={handleCreate}
               disabled={saving || !name.trim()}
-              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[--primary-foreground] font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {saving ? "Creating…" : "Create Project"}
             </button>
@@ -155,8 +155,8 @@ function ForkProjectModal({
     <>
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-[--background] border border-[--border] rounded-xl shadow-2xl p-6">
-          <h2 className="text-lg font-semibold mb-5">Fork Project</h2>
+        <div className="w-full max-w-md bg-[--card] border border-[--border] rounded-xl shadow-2xl p-6">
+          <h2 className="text-base font-semibold mb-5">Fork Project</h2>
           <div>
             <label className="text-xs text-[--muted-foreground] block mb-1">New project name</label>
             <input
@@ -177,7 +177,7 @@ function ForkProjectModal({
             <button
               onClick={handleFork}
               disabled={saving || !name.trim()}
-              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[--primary-foreground] font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {saving ? "Forking…" : "Fork Project"}
             </button>
@@ -204,7 +204,7 @@ export default function ProjectsPage() {
         <h1 className="text-2xl font-semibold">Projects</h1>
         <button
           onClick={() => setShowNew(true)}
-          className="text-sm px-3 py-1.5 rounded bg-[--primary] text-[#0d1117] font-semibold hover:opacity-90"
+          className="text-sm px-3 py-1.5 rounded bg-[--primary] text-[--primary-foreground] font-semibold hover:opacity-90"
         >
           + New Project
         </button>

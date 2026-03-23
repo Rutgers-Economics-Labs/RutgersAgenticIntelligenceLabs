@@ -145,10 +145,10 @@ export const registry = {
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
 export const jobs = {
-  trigger: (pipeline_slug: string) =>
+  trigger: (pipeline_slug: string, project_id?: string) =>
     req<{ jobId: string; status: string }>("/jobs", {
       method: "POST",
-      body: JSON.stringify({ pipeline_slug }),
+      body: JSON.stringify({ pipeline_slug, ...(project_id ? { project_id } : {}) }),
     }),
 };
 
@@ -169,6 +169,44 @@ export const sql = {
     req<SqlResult>("/sql/translate", { method: "POST", body: JSON.stringify({ question, model }) }),
   schema: () => req<Record<string, { name: string; type: string }[]>>("/sql/schema"),
   tables: () => req<string[]>("/sql/tables"),
+};
+
+// ── Project Agent ─────────────────────────────────────────────────────────────
+
+export const projectAgent = {
+  /** Streaming project-aware chat. Yields AgentEvent objects. */
+  chat: async function* (
+    projectId: string,
+    message: string,
+    history: { role: string; content: string }[] = [],
+    model?: string,
+  ): AsyncGenerator<AgentEvent> {
+    const response = await fetch(`${API_BASE}/project-agent/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: projectId, message, history, model }),
+    });
+    if (!response.ok || !response.body) {
+      const text = await response.text().catch(() => response.statusText);
+      throw new Error(`Project agent API ${response.status}: ${text}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        const line = part.trim();
+        if (line.startsWith("data: ")) {
+          try { yield JSON.parse(line.slice(6)) as AgentEvent; } catch { /* skip */ }
+        }
+      }
+    }
+  },
 };
 
 // ── Execute ───────────────────────────────────────────────────────────────────

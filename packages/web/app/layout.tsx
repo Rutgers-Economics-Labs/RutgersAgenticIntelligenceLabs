@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "katex/dist/katex.min.css";
 import { ConvexClientProvider } from "./convex-provider";
 import { ThemeProvider } from "@/components/ThemeProvider";
 

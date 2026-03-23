@@ -212,5 +212,7 @@ cache/
 ontology/onto.db
 ontology/onto.db-journal
 ontology/populated_ontology.owl
+packages/engine/ontology/onto.db-journal
+packages/engine/ontology/*.db-journal
 graph.html
 graph_full.html

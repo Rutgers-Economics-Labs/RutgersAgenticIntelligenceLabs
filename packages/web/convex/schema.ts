@@ -60,6 +60,7 @@ export default defineSchema({
   hydrationJobs: defineTable({
     pipelineConfigId: v.id("pipelineConfigs"),
     pipelineSlug: v.string(),
+    projectId: v.optional(v.id("projects")),
     status: v.union(
       v.literal("queued"),
       v.literal("running"),
@@ -89,6 +90,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_pipeline", ["pipelineConfigId"])
+    .index("by_project", ["projectId"])
     .index("by_status", ["status"])
     .index("by_created", ["createdAt"]),
 
@@ -136,6 +138,20 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_created", ["createdAt"]),
+
+  // Project assistant chat sessions
+  projectChats: defineTable({
+    projectId: v.id("projects"),
+    title: v.string(),
+    messages: v.array(v.object({
+      role: v.union(v.literal("user"), v.literal("assistant")),
+      content: v.string(),
+    })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_created", ["createdAt"]),
 
   // Research workspaces — notebook-style cells
   workspaces: defineTable({
