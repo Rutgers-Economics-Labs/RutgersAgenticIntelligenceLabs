@@ -12,8 +12,9 @@ import {
   Database, Network, Code2, BrainCircuit,
   Plus, Link2, Trash2, Play, RefreshCw,
   Bot, Send, Loader2, X, Sparkles,
+  FileCode2, Save, Download, Terminal,
 } from "lucide-react";
-import { jobs as jobsApi, configs, projectAgent } from "@/lib/api";
+import { execute, ExecuteResult, jobs as jobsApi, configs, projectAgent } from "@/lib/api";
 import { useTheme } from "@/components/ThemeProvider";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -33,7 +34,7 @@ const MonacoEditor = dynamic(
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Tab = "overview" | "ontology" | "data" | "pipeline" | "jobs" | "explore";
+type Tab = "overview" | "ontology" | "data" | "pipeline" | "jobs" | "explore" | "scripts";
 type ConfigType = "ontologies" | "apis" | "pipelines";
 type ProjectDoc = NonNullable<ReturnType<typeof useQuery<typeof api.projects.get>>>;
 
@@ -1477,6 +1478,351 @@ function ProjectAIPanel({ project, onClose }: { project: ProjectDoc; onClose: ()
   );
 }
 
+// ── Scripts Tab ───────────────────────────────────────────────────────────────
+
+const ACADEMIC_STARTER = `import pandas as pd
+import matplotlib.pyplot as plt
+
+# Available built-ins: sql(), get_table(), list_tables(), pd, np, plt, sklearn
+
+tables = list_tables()
+print("Tables:", tables)
+
+faculty_df = get_table("Faculty")
+faculty_df["hasHIndex"] = pd.to_numeric(faculty_df.get("hasHIndex"), errors="coerce")
+top = faculty_df.dropna(subset=["hasHIndex"]).sort_values("hasHIndex", ascending=False).head(10)
+
+fig, ax = plt.subplots(figsize=(9, 5))
+ax.barh(top["hasName"], top["hasHIndex"], color="#58a6ff")
+ax.set_xlabel("h-index")
+ax.set_title("Top Faculty by h-index")
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+plt.tight_layout()
+
+result_df = top[["hasName", "hasRank", "hasHIndex"]]
+print(result_df.to_string(index=False))
+`;
+
+function ScriptsTab({ project }: { project: ProjectDoc }) {
+  const scripts = useQuery(api.projectScripts.listByProject, { projectId: project._id });
+  const createScript = useMutation(api.projectScripts.create);
+  const updateScript = useMutation(api.projectScripts.update);
+  const removeScript = useMutation(api.projectScripts.remove);
+
+  const [selectedId, setSelectedId] = useState<Id<"projectScripts"> | null>(null);
+  const [editName, setEditName] = useState("");
+  const [code, setCode] = useState(ACADEMIC_STARTER);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<ExecuteResult | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Id<"projectScripts"> | null>(null);
+
+  const selected = scripts?.find(s => s._id === selectedId) ?? null;
+
+  // Load script into editor when selection changes
+  useEffect(() => {
+    if (selected) {
+      setCode(selected.code);
+      setEditName(selected.name);
+      setDirty(false);
+      setResult(null);
+      setRunError(null);
+    }
+  }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleNew() {
+    const id = await createScript({
+      projectId: project._id,
+      name: "New script",
+      code: ACADEMIC_STARTER,
+    });
+    setSelectedId(id as Id<"projectScripts">);
+    setCode(ACADEMIC_STARTER);
+    setEditName("New script");
+    setDirty(false);
+    setResult(null);
+    setRunError(null);
+  }
+
+  async function handleSave() {
+    if (!selectedId) return;
+    setSaving(true);
+    try {
+      await updateScript({ scriptId: selectedId, name: editName, code });
+      setDirty(false);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRun() {
+    if (running) return;
+    setRunning(true);
+    setRunError(null);
+    setResult(null);
+    try {
+      const res = await execute.run(code, 120);
+      setResult(res);
+      if (res.error) setRunError(res.error);
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function handleDelete(id: Id<"projectScripts">) {
+    await removeScript({ scriptId: id });
+    if (selectedId === id) {
+      setSelectedId(null);
+      setCode(ACADEMIC_STARTER);
+      setEditName("");
+      setDirty(false);
+      setResult(null);
+    }
+    setConfirmDelete(null);
+  }
+
+  const dataframeNames = result ? Object.keys(result.dataframes ?? {}) : [];
+
+  return (
+    <div className="flex gap-0 -mx-1 h-[calc(100vh-220px)] min-h-[500px]">
+      {/* Sidebar */}
+      <aside className="w-52 shrink-0 flex flex-col border-r border-[--border] pr-0">
+        <div className="flex items-center justify-between px-3 py-2.5 border-b border-[--border]">
+          <span className="text-xs font-semibold text-[--muted-foreground] uppercase tracking-wide">Scripts</span>
+          <button
+            onClick={handleNew}
+            title="New script"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-[--primary] hover:bg-[--primary]/10 transition-colors"
+          >
+            <Plus size={12} /> New
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto py-1">
+          {scripts === undefined && (
+            <p className="px-3 py-4 text-xs text-[--muted-foreground]">Loading…</p>
+          )}
+          {scripts?.length === 0 && (
+            <div className="px-3 py-6 text-center">
+              <FileCode2 size={22} className="mx-auto mb-2 text-[--muted-foreground]" />
+              <p className="text-xs text-[--muted-foreground]">No scripts yet.</p>
+              <button
+                onClick={handleNew}
+                className="mt-3 text-xs text-[--primary] hover:underline"
+              >
+                Create your first script →
+              </button>
+            </div>
+          )}
+          {scripts?.map(s => (
+            <div
+              key={s._id}
+              className={`group flex items-center justify-between gap-1 px-3 py-2 cursor-pointer transition-colors ${
+                s._id === selectedId
+                  ? "bg-[--primary]/10 text-[--primary]"
+                  : "text-[--foreground] hover:bg-[--muted]"
+              }`}
+              onClick={() => setSelectedId(s._id)}
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <FileCode2 size={13} className="shrink-0 text-[--muted-foreground]" />
+                <span className="text-xs truncate">{s.name}</span>
+              </div>
+              {confirmDelete === s._id ? (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={e => { e.stopPropagation(); handleDelete(s._id); }}
+                    className="text-[10px] text-red-400 hover:text-red-300"
+                  >
+                    Delete
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); setConfirmDelete(null); }}
+                    className="text-[10px] text-[--muted-foreground]"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={e => { e.stopPropagation(); setConfirmDelete(s._id); }}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-[--muted-foreground] hover:text-red-400 transition-all"
+                >
+                  <Trash2 size={11} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      {/* Editor + Output */}
+      <div className="flex-1 flex flex-col min-w-0 pl-4">
+        {!selectedId ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center text-[--muted-foreground]">
+            <Terminal size={32} className="opacity-40" />
+            <div>
+              <p className="text-sm font-medium">No script selected</p>
+              <p className="text-xs mt-1">Create a new script or select one from the sidebar.</p>
+            </div>
+            <button
+              onClick={handleNew}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[--primary] text-[--primary-foreground] text-sm hover:opacity-90 transition-opacity"
+            >
+              <Plus size={14} /> New Script
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col h-full gap-3">
+            {/* Toolbar */}
+            <div className="flex items-center gap-2 shrink-0">
+              <input
+                value={editName}
+                onChange={e => { setEditName(e.target.value); setDirty(true); }}
+                className="flex-1 bg-transparent text-sm font-medium text-[--foreground] border-b border-transparent focus:border-[--primary] focus:outline-none pb-0.5 transition-colors"
+                placeholder="Script name…"
+              />
+              <span className="text-[10px] text-[--muted-foreground]">⌘↵ run</span>
+              <button
+                onClick={handleSave}
+                disabled={saving || !dirty}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[--border] text-xs text-[--muted-foreground] hover:text-[--foreground] disabled:opacity-30 transition-colors"
+              >
+                {saving ? <Loader2 size={11} className="animate-spin" /> : <Save size={11} />}
+                Save
+              </button>
+              <button
+                onClick={handleRun}
+                disabled={running}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-[--primary] text-[--primary-foreground] text-xs font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
+              >
+                {running ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
+                {running ? "Running…" : "Run"}
+              </button>
+            </div>
+
+            {/* Monaco editor */}
+            <div className="rounded-lg overflow-hidden border border-[--border] shrink-0" style={{ height: 280 }}>
+              <MonacoEditor
+                height={280}
+                language="python"
+                theme="vs-dark"
+                value={code}
+                onChange={val => { setCode(val ?? ""); setDirty(true); }}
+                onMount={(editor) => {
+                  editor.addCommand(
+                    // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.Enter
+                    2048 | 3,
+                    () => handleRun(),
+                  );
+                }}
+                options={{
+                  minimap: { enabled: false },
+                  fontSize: 12,
+                  lineNumbers: "on",
+                  scrollBeyondLastLine: false,
+                  wordWrap: "off",
+                  padding: { top: 8 },
+                  automaticLayout: true,
+                  tabSize: 4,
+                }}
+              />
+            </div>
+
+            {/* Output panel */}
+            <div className="flex-1 overflow-y-auto space-y-3 pb-2">
+              {runError && (
+                <div className="rounded-lg border border-red-700/60 bg-red-900/20 p-3 font-mono text-xs text-red-300 whitespace-pre-wrap">
+                  {runError}
+                </div>
+              )}
+
+              {result && !runError && (
+                <>
+                  {result.stdout && (
+                    <div className="rounded-lg border border-[--border] overflow-hidden">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
+                        <Terminal size={11} className="text-[--muted-foreground]" />
+                        <span className="text-[11px] text-[--muted-foreground]">stdout</span>
+                      </div>
+                      <pre className="p-3 font-mono text-xs text-[--foreground] max-h-48 overflow-y-auto whitespace-pre-wrap">
+                        {result.stdout}
+                      </pre>
+                    </div>
+                  )}
+
+                  {result.figures?.map((fig, i) => (
+                    <div key={i} className="rounded-lg border border-[--border] overflow-hidden">
+                      <div className="flex items-center justify-between px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
+                        <span className="text-[11px] text-[--muted-foreground]">figure_{i + 1}.png</span>
+                        <a
+                          href={`data:image/png;base64,${fig}`}
+                          download={`figure_${i + 1}.png`}
+                          className="flex items-center gap-1 text-[10px] text-[--muted-foreground] hover:text-[--foreground]"
+                        >
+                          <Download size={11} /> Download
+                        </a>
+                      </div>
+                      <img src={`data:image/png;base64,${fig}`} alt={`figure ${i + 1}`} className="max-w-full" />
+                    </div>
+                  ))}
+
+                  {dataframeNames.map(name => {
+                    const df = result.dataframes[name];
+                    return (
+                      <div key={name} className="rounded-lg border border-[--border] overflow-hidden">
+                        <div className="px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
+                          <span className="text-[11px] text-[--muted-foreground]">
+                            {name} · {df.rowCount} rows × {df.columns.length} cols
+                          </span>
+                        </div>
+                        <div className="overflow-x-auto max-h-48">
+                          <table className="w-full text-xs border-collapse">
+                            <thead className="sticky top-0 bg-[--muted]">
+                              <tr>
+                                {df.columns.map(c => (
+                                  <th key={c} className="border-b border-[--border] px-3 py-1.5 text-left text-[--muted-foreground] font-medium whitespace-nowrap">
+                                    {c}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {df.rows.slice(0, 40).map((row, i) => (
+                                <tr key={i} className="border-b border-[--border]/40 hover:bg-[--muted]/20">
+                                  {df.columns.map(c => (
+                                    <td key={c} className="px-3 py-1.5 text-[--foreground] whitespace-nowrap max-w-xs truncate">
+                                      {String(row[c] ?? "")}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {running && (
+                <div className="flex items-center gap-2 text-xs text-[--muted-foreground] py-4">
+                  <Loader2 size={13} className="animate-spin" /> Running script…
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Project Dashboard ─────────────────────────────────────────────────────────
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -1486,9 +1832,10 @@ const TAB_LABELS: Record<Tab, string> = {
   pipeline:  "Pipeline",
   jobs:      "Jobs",
   explore:   "Explore",
+  scripts:   "Scripts",
 };
 
-const ALL_TABS: Tab[] = ["overview", "ontology", "data", "pipeline", "jobs", "explore"];
+const ALL_TABS: Tab[] = ["overview", "ontology", "data", "pipeline", "jobs", "explore", "scripts"];
 
 const STATUS_BADGE: Record<string, string> = {
   draft:    "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
@@ -1596,6 +1943,7 @@ function ProjectDashboard({ project }: { project: ProjectDoc }) {
       {activeTab === "pipeline"  && <PipelineTab  project={project} onRunSuccess={() => setActiveTab("jobs")} />}
       {activeTab === "jobs"      && <JobsTab      project={project} />}
       {activeTab === "explore"   && <ExploreTab   project={project} />}
+      {activeTab === "scripts"   && <ScriptsTab   project={project} />}
 
       {/* Floating AI button */}
       {!aiOpen && (

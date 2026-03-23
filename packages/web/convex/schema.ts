@@ -153,6 +153,17 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_created", ["createdAt"]),
 
+  // Python scripts saved to a project
+  projectScripts: defineTable({
+    projectId: v.id("projects"),
+    name: v.string(),
+    code: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId"])
+    .index("by_project_updated", ["projectId", "updatedAt"]),
+
   // Artifacts attached to hydration jobs (from rail_client SDK)
   jobArtifacts: defineTable({
     jobId: v.id("hydrationJobs"),

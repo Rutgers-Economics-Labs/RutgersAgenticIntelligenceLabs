@@ -63,6 +63,11 @@ async def validate_stored_pipeline(convex, pipeline: dict) -> list[str]:
     onto_row = await convex.query("configs:getOntology", {"slug": onto_ref})
     if onto_row:
         onto_yaml = onto_row["content"]
+    else:
+        # Fallback: load from local engine configs (matches jobs.py fallback pattern)
+        local_onto = settings.engine_root / "configs" / "ontology" / f"{onto_ref}.yaml"
+        if local_onto.exists():
+            onto_yaml = local_onto.read_text()
 
     xf = settings.engine_root / "transforms"
     transform_dir = xf if xf.is_dir() else None

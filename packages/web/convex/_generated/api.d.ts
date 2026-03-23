@@ -9,9 +9,11 @@
  */
 
 import type * as agent from "../agent.js";
+import type * as artifacts from "../artifacts.js";
 import type * as configs from "../configs.js";
 import type * as jobs from "../jobs.js";
 import type * as projectChats from "../projectChats.js";
+import type * as projectScripts from "../projectScripts.js";
 import type * as projects from "../projects.js";
 import type * as registry from "../registry.js";
 import type * as workspaces from "../workspaces.js";
@@ -24,9 +26,11 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agent: typeof agent;
+  artifacts: typeof artifacts;
   configs: typeof configs;
   jobs: typeof jobs;
   projectChats: typeof projectChats;
+  projectScripts: typeof projectScripts;
   projects: typeof projects;
   registry: typeof registry;
   workspaces: typeof workspaces;
