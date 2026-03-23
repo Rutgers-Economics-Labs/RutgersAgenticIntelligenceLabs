@@ -1,8 +1,11 @@
 "use client";
+import { Suspense } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -17,17 +20,31 @@ function timeAgo(ms: number) {
   return `${Math.floor(s / 3600)}h ago`;
 }
 
-export default function JobsPage() {
+function JobsContent() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") as Id<"projects"> | null;
+
   const [filter, setFilter] = useState<string | "all">("all");
-  const jobs = useQuery(api.jobs.list, { limit: 100 });
-  
+
+  const allJobs = useQuery(api.jobs.list, { limit: 100 });
+  const projectJobs = useQuery(
+    api.jobs.listByProject,
+    projectId ? { projectId, limit: 100 } : "skip"
+  );
+
+  const jobs = projectId ? projectJobs : allJobs;
   const filteredJobs = jobs?.filter(j => filter === "all" || j.status === filter);
   const runningCount = jobs?.filter(j => j.status === "running").length ?? 0;
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Hydration Jobs</h1>
+        <div>
+          <h1 className="text-2xl font-semibold">Hydration Jobs</h1>
+          {projectId && (
+            <p className="text-xs text-[--muted-foreground] mt-1">Filtered by project</p>
+          )}
+        </div>
         <div className="flex items-center gap-1 bg-[--muted] p-1 rounded-md border border-[--border]">
           {["all", "running", "success", "failed"].map((f) => (
             <button
@@ -35,8 +52,8 @@ export default function JobsPage() {
               onClick={() => setFilter(f)}
               className={cn(
                 "px-3 py-1 rounded text-xs font-medium transition-all capitalize",
-                filter === f 
-                  ? "bg-[--card] text-[--foreground] shadow-sm border border-[--border]" 
+                filter === f
+                  ? "bg-[--card] text-[--foreground] shadow-sm border border-[--border]"
                   : "text-[--muted-foreground] hover:text-[--foreground]"
               )}
             >
@@ -88,7 +105,10 @@ export default function JobsPage() {
                   </td>
                   <td className="px-4 py-3 text-[--muted-foreground] text-xs">{timeAgo(job.createdAt)}</td>
                   <td className="px-4 py-3">
-                    <Link href={`/jobs/${job._id}`} className="text-xs text-[--primary] hover:underline">
+                    <Link
+                      href={projectId ? `/jobs/${job._id}?projectId=${projectId}` : `/jobs/${job._id}`}
+                      className="text-xs text-[--primary] hover:underline"
+                    >
                       View →
                     </Link>
                   </td>
@@ -99,5 +119,13 @@ export default function JobsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function JobsPage() {
+  return (
+    <Suspense fallback={<p className="text-[--muted-foreground] text-sm">Loading…</p>}>
+      <JobsContent />
+    </Suspense>
   );
 }

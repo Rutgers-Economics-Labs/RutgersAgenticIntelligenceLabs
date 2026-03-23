@@ -195,12 +195,28 @@ export type SqlResult = {
 };
 
 export const sql = {
-  query: (query: string) =>
-    req<SqlResult>("/sql", { method: "POST", body: JSON.stringify({ query }) }),
-  translate: (question: string, model?: string) =>
-    req<SqlResult>("/sql/translate", { method: "POST", body: JSON.stringify({ question, model }) }),
-  schema: () => req<Record<string, { name: string; type: string }[]>>("/sql/schema"),
-  tables: () => req<string[]>("/sql/tables"),
+  query: (query: string, projectId?: string) =>
+    req<SqlResult>("/sql", {
+      method: "POST",
+      body: JSON.stringify({ query, ...(projectId ? { project_id: projectId } : {}) }),
+    }),
+  translate: (question: string, model?: string, projectId?: string) =>
+    req<SqlResult>("/sql/translate", {
+      method: "POST",
+      body: JSON.stringify({ question, model, ...(projectId ? { project_id: projectId } : {}) }),
+    }),
+  schema: (projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    return req<Record<string, { name: string; type: string }[]>>(
+      `/sql/schema${params.size ? `?${params}` : ""}`,
+    );
+  },
+  tables: (projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    return req<string[]>(`/sql/tables${params.size ? `?${params}` : ""}`);
+  },
 };
 
 // ── Project Agent ─────────────────────────────────────────────────────────────

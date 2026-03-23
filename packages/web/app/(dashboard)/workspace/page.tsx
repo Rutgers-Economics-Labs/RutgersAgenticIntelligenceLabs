@@ -5,7 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Id } from "@/convex/_generated/dataModel";
 import { api as convexApi } from "@/convex/_generated/api";
-import { agent, AgentEvent, ModelInfo, sql } from "@/lib/api";
+import { agent, projectAgent, AgentEvent, ModelInfo, sql } from "@/lib/api";
 import { ANALYSIS_TEMPLATES } from "@/lib/analysis-templates";
 import {
   Bot, User, Send, ChevronDown, ChevronRight,
@@ -299,6 +299,7 @@ function MessageBubble({ msg }: { msg: Message }) {
 function WorkspacePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") || undefined;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -417,7 +418,10 @@ function WorkspacePageInner() {
     const pendingToolCalls: Record<string, ToolCallBlock> = {};
 
     try {
-      for await (const event of agent.chat(text, historyRef.current, activeModel)) {
+      const chatStream = projectId
+        ? projectAgent.chat(projectId, text, historyRef.current, activeModel)
+        : agent.chat(text, historyRef.current, activeModel);
+      for await (const event of chatStream) {
         if (event.type === "text_delta") {
           setMessages(prev => prev.map(m =>
             m.id === asstId ? { ...m, content: m.content + event.content } : m
@@ -595,6 +599,11 @@ function WorkspacePageInner() {
           <div className="flex items-center gap-2">
             <Sparkles size={16} className="text-[--primary]" />
             <span className="text-sm font-semibold text-[--foreground]">AI Research Workspace</span>
+            {projectId && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-[--primary]/15 text-[--primary] border border-[--primary]/30">
+                project scope
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <div className="relative">

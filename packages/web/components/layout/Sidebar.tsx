@@ -10,6 +10,7 @@ import {
 import { useTheme } from "@/components/ThemeProvider";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import { ProjectSelector } from "@/components/layout/ProjectSelector";
 
 const NAV = [
   { href: "/workspace", label: "AI Workspace",  icon: BotMessageSquare },
@@ -39,6 +40,7 @@ export function Sidebar() {
         <span className="text-sm font-bold text-[--primary] tracking-wide uppercase">RAIL</span>
         <p className="text-[10px] text-[--muted-foreground] mt-0.5">Agentic Intelligence Labs</p>
       </div>
+      <ProjectSelector />
       <nav className="flex-1 py-3 overflow-y-auto">
         {NAV.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);

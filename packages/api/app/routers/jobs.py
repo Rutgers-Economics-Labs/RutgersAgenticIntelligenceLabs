@@ -1,12 +1,14 @@
 import asyncio
 import time
 from typing import Union
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File, Form
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
 from app.services import hydration_worker
 from app.services.pipeline_validate import ensure_pipeline_ready, PipelineValidationFailed
+from app.services import artifact_service
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -177,3 +179,56 @@ async def cancel_job(job_id: str):
         "status": "cancelled",
         "finishedAt": int(time.time() * 1000),
     })
+
+
+# ---------------------------------------------------------------------------
+# Artifact routes
+# ---------------------------------------------------------------------------
+
+@router.post("/{job_id}/artifacts")
+async def upload_artifact(
+    job_id: str,
+    name: str = Form(...),
+    artifact_type: str = Form(...),
+    mime_type: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """Upload an artifact and attach it to a job. Called by the rail_client SDK."""
+    if artifact_type not in ("text", "image", "model", "file"):
+        raise HTTPException(400, detail=f"Invalid artifact_type: {artifact_type}")
+    content = await file.read()
+    try:
+        result = await artifact_service.save_artifact(
+            job_id=job_id,
+            name=name,
+            artifact_type=artifact_type,
+            content_bytes=content,
+            mime_type=mime_type,
+        )
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+    return result
+
+
+@router.get("/{job_id}/artifacts")
+async def list_artifacts(job_id: str):
+    """List all artifacts attached to a job."""
+    return await artifact_service.list_artifacts(job_id)
+
+
+@router.get("/{job_id}/artifacts/{artifact_id}/download")
+async def download_artifact(job_id: str, artifact_id: str):
+    """Proxy artifact bytes through FastAPI so the frontend doesn't need direct storage access."""
+    artifacts = await artifact_service.list_artifacts(job_id)
+    artifact = next((a for a in artifacts if a.get("_id") == artifact_id), None)
+    if not artifact:
+        raise HTTPException(404, detail="Artifact not found")
+    try:
+        content = await artifact_service.get_artifact_bytes(artifact["storageKey"])
+    except Exception as e:
+        raise HTTPException(500, detail=str(e))
+    return Response(
+        content=content,
+        media_type=artifact.get("mimeType", "application/octet-stream"),
+        headers={"Content-Disposition": f'inline; filename="{artifact["name"]}"'},
+    )

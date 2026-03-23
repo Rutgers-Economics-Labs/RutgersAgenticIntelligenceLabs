@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useQuery } from "convex/react";
 import { Id } from "@/convex/_generated/dataModel";
 import { api } from "@/convex/_generated/api";
-import { AlertCircle, ArrowRight, Loader2, Square } from "lucide-react";
+import { AlertCircle, ArrowRight, Download, FileText, Image, Loader2, Package, Square } from "lucide-react";
+import { ScriptRunner } from "@/components/jobs/ScriptRunner";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const API_BASE_DOWNLOAD = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "#8b949e",
@@ -38,11 +39,14 @@ function formatDuration(start?: number, end?: number) {
   return `${(diff / 60_000).toFixed(1)}m`;
 }
 
-export default function JobDetailPage() {
+function JobDetailContent() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const jobId = id as Id<"hydrationJobs">;
   const job = useQuery(api.jobs.get, { jobId });
   const logs = useQuery(api.jobs.getLogs, { jobId, limit: 500 });
+  const artifacts = useQuery(api.artifacts.listByJob, { jobId });
+  const projectId = searchParams.get("projectId") ?? (job as any)?.projectId ?? undefined;
 
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState("");
@@ -76,7 +80,7 @@ export default function JobDetailPage() {
     }
   }
 
-  if (job === undefined || logs === undefined) {
+  if (job === undefined || logs === undefined || artifacts === undefined) {
     return (
       <div className="flex items-center justify-center h-48 text-sm text-[--muted-foreground]">
         Loading job…
@@ -277,19 +281,19 @@ export default function JobDetailPage() {
           </h2>
           <div className="flex flex-wrap gap-3">
             <Link
-              href="/explorer"
+              href={projectId ? `/explorer?projectId=${projectId}` : "/explorer"}
               className="inline-flex items-center gap-2 rounded-lg border border-[--border] bg-[--card] px-3 py-2 text-sm text-[--foreground] hover:border-[--primary]/40 hover:text-[--primary]"
             >
               Explore Data <ArrowRight size={14} />
             </Link>
             <Link
-              href="/sql"
+              href={projectId ? `/sql?projectId=${projectId}` : "/sql"}
               className="inline-flex items-center gap-2 rounded-lg border border-[--border] bg-[--card] px-3 py-2 text-sm text-[--foreground] hover:border-[--primary]/40 hover:text-[--primary]"
             >
               Open SQL <ArrowRight size={14} />
             </Link>
             <Link
-              href="/workspace"
+              href={projectId ? `/workspace?projectId=${projectId}` : "/workspace"}
               className="inline-flex items-center gap-2 rounded-lg border border-[--border] bg-[--card] px-3 py-2 text-sm text-[--foreground] hover:border-[--primary]/40 hover:text-[--primary]"
             >
               Open in Workspace <ArrowRight size={14} />
@@ -301,6 +305,87 @@ export default function JobDetailPage() {
           </div>
         </section>
       )}
+
+      <ScriptRunner jobId={jobId} />
+
+      {artifacts && artifacts.length > 0 && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-[--muted-foreground]">
+            Artifacts ({artifacts.length})
+          </h2>
+          <div className="grid gap-4">
+            {artifacts.map((artifact: any) => (
+              <div
+                key={artifact._id}
+                className="rounded-xl border border-[--border] bg-[--card] p-4 space-y-3"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 text-sm font-medium text-[--foreground]">
+                    {artifact.artifactType === "image" && <Image size={15} className="text-blue-400" />}
+                    {artifact.artifactType === "text" && <FileText size={15} className="text-green-400" />}
+                    {(artifact.artifactType === "model" || artifact.artifactType === "file") && (
+                      <Package size={15} className="text-purple-400" />
+                    )}
+                    {artifact.name}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-[--muted-foreground]">
+                      {(artifact.sizeBytes / 1024).toFixed(1)} KB
+                    </span>
+                    {(artifact.artifactType === "model" || artifact.artifactType === "file") && (
+                      <a
+                        href={`${API_BASE_DOWNLOAD}/jobs/${jobId}/artifacts/${artifact._id}/download`}
+                        download={artifact.name}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-[--border] px-2.5 py-1 text-xs text-[--muted-foreground] hover:text-[--foreground]"
+                      >
+                        <Download size={12} /> Download
+                      </a>
+                    )}
+                  </div>
+                </div>
+
+                {artifact.artifactType === "image" && (
+                  <img
+                    src={`${API_BASE_DOWNLOAD}/jobs/${jobId}/artifacts/${artifact._id}/download`}
+                    alt={artifact.name}
+                    className="max-w-full rounded-lg border border-[--border]"
+                  />
+                )}
+
+                {artifact.artifactType === "text" && artifact.inlineContent && (
+                  <pre className="max-h-64 overflow-y-auto rounded-lg bg-[#0d1117] p-3 text-xs text-[--foreground] whitespace-pre-wrap break-words">
+                    {artifact.inlineContent}
+                  </pre>
+                )}
+
+                {artifact.artifactType === "text" && !artifact.inlineContent && (
+                  <a
+                    href={`${API_BASE_DOWNLOAD}/jobs/${jobId}/artifacts/${artifact._id}/download`}
+                    download={artifact.name}
+                    className="inline-flex items-center gap-1.5 text-xs text-[--primary] hover:underline"
+                  >
+                    <Download size={12} /> Download text file
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
+  );
+}
+
+export default function JobDetailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-48 text-sm text-[--muted-foreground]">
+          Loading job…
+        </div>
+      }
+    >
+      <JobDetailContent />
+    </Suspense>
   );
 }

@@ -153,6 +153,25 @@ export default defineSchema({
     .index("by_project", ["projectId"])
     .index("by_created", ["createdAt"]),
 
+  // Artifacts attached to hydration jobs (from rail_client SDK)
+  jobArtifacts: defineTable({
+    jobId: v.id("hydrationJobs"),
+    name: v.string(),
+    artifactType: v.union(
+      v.literal("text"),
+      v.literal("image"),
+      v.literal("model"),
+      v.literal("file"),
+    ),
+    storageKey: v.string(),
+    mimeType: v.string(),
+    sizeBytes: v.number(),
+    inlineContent: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_job", ["jobId"])
+    .index("by_job_created", ["jobId", "createdAt"]),
+
   // Research workspaces — notebook-style cells
   workspaces: defineTable({
     title: v.string(),
