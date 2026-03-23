@@ -1,15 +1,33 @@
 "use client";
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { ontology, type GraphData } from "@/lib/api";
 
-const NODE_COLORS: Record<string, string> = {
+const PRESET_COLORS: Record<string, string> = {
   State: "#F5A623", County: "#4A9EDD", Municipality: "#50C878",
   Individual: "#B07FD4", Measure: "#E05C5C",
+  University: "#3b82f6", Department: "#8b5cf6", Faculty: "#f43f5e",
+  PhDStudent: "#10b981", Course: "#eab308", Publication: "#6366f1", ResearchGrant: "#14b8a6",
+  AcademicPerson: "#ec4899"
 };
-const ALL_TYPES = ["State", "County", "Municipality", "Individual"];
 
-export default function GraphPage() {
-  const [types, setTypes] = useState<string[]>(["State", "County"]);
+function hashColor(str: string) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  const h = Math.abs(hash) % 360;
+  return `hsl(${h}, 70%, 65%)`;
+}
+
+function getNodeColor(group: string) {
+  return PRESET_COLORS[group] || hashColor(group);
+}
+
+function GraphClient() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") || undefined;
+
+  const [availableTypes, setAvailableTypes] = useState<string[]>([]);
+  const [types, setTypes] = useState<string[]>([]);
   const [stateFips, setStateFips] = useState<string>("");
   const [states, setStates] = useState<{ id: string; name: string; fips: string }[]>([]);
   const [showLabels, setShowLabels] = useState(true);
@@ -17,35 +35,7 @@ export default function GraphPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const graphRef = useRef<HTMLDivElement>(null);
-  const ForceGraphRef = useRef<unknown>(null);
 
-  // Load state list for filter
-  useEffect(() => {
-    ontology.instances("State", 1, 100)
-      .then((r) => setStates(
-        r.items.map((s) => ({
-          id: s.id,
-          name: String(s.properties.hasName ?? s.id),
-          fips: String(s.properties.hasFIPS ?? ""),
-        })).sort((a, b) => a.name.localeCompare(b.name))
-      ))
-      .catch(() => {});
-  }, []);
-
-  const loadGraph = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await ontology.graph(types, stateFips || undefined);
-      setGraph(data);
-    } catch (e) {
-      setError("Could not load graph. Is the FastAPI server running?");
-    } finally { setLoading(false); }
-  }, [types, stateFips]);
-
-  useEffect(() => { loadGraph(); }, [loadGraph]);
-
-  // Dynamic import of react-force-graph (client only)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [FG, setFG] = useState<React.ElementType<any> | null>(null);
   useEffect(() => {
@@ -53,28 +43,72 @@ export default function GraphPage() {
     import("react-force-graph-2d").then((m) => setFG(() => (m as any).default));
   }, []);
 
+  // Fetch dynamically available classes
+  useEffect(() => {
+    ontology.classes(projectId)
+      .then((res) => {
+        const tList = res.map(c => c.name);
+        setAvailableTypes(tList);
+        setTypes(tList.slice(0, 5)); // Auto-select first 5
+
+        // If State exists, load states for filtering
+        if (tList.includes("State")) {
+          ontology.instances("State", 1, 100, "", projectId)
+            .then((r) => setStates(
+              r.items.map((s) => ({
+                id: s.id,
+                name: String(s.properties.hasName ?? s.id),
+                fips: String(s.properties.hasFIPS ?? ""),
+              })).sort((a, b) => a.name.localeCompare(b.name))
+            ))
+            .catch(() => {});
+        }
+      })
+      .catch(() => setError("Could not load ontology classes. Is the API running?"));
+  }, [projectId]);
+
+  const loadGraph = useCallback(async () => {
+    if (types.length === 0 && availableTypes.length > 0) {
+      setGraph({ nodes: [], links: [] });
+      return;
+    }
+    if (types.length === 0) return;
+    
+    setLoading(true);
+    setError("");
+    try {
+      const data = await ontology.graph(types, stateFips || undefined, 500, projectId);
+      setGraph(data);
+    } catch (e) {
+      setError("Could not load graph. Is the FastAPI server running?");
+    } finally { setLoading(false); }
+  }, [types, stateFips, projectId, availableTypes]);
+
+  useEffect(() => { loadGraph(); }, [loadGraph]);
+
   const toggleType = (t: string) =>
     setTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]);
 
   return (
     <div className="flex gap-6 h-[calc(100vh-4rem)]">
       {/* Controls */}
-      <div className="w-52 shrink-0 flex flex-col gap-4">
+      <div className="w-52 shrink-0 flex flex-col gap-4 overflow-y-auto pr-2 pb-10">
         <h2 className="text-lg font-semibold">Graph Explorer</h2>
 
         <div>
           <p className="text-xs text-[--muted-foreground] mb-2 uppercase tracking-wide">Entity Types</p>
-          {ALL_TYPES.map((t) => (
+          {availableTypes.length === 0 && !error && <span className="text-xs text-[--muted-foreground]">Loading...</span>}
+          {availableTypes.map((t) => (
             <label key={t} className="flex items-center gap-2 py-1 cursor-pointer">
               <input type="checkbox" checked={types.includes(t)} onChange={() => toggleType(t)}
                 className="accent-[--primary]" />
-              <span className="w-2.5 h-2.5 rounded-full" style={{ background: NODE_COLORS[t] }} />
-              <span className="text-sm">{t}</span>
+              <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: getNodeColor(t) }} />
+              <span className="text-sm truncate" title={t}>{t}</span>
             </label>
           ))}
         </div>
 
-        {(types.includes("County") || types.includes("Municipality")) && (
+        {availableTypes.includes("State") && (types.includes("County") || types.includes("Municipality")) && (
           <div>
             <p className="text-xs text-[--muted-foreground] mb-2 uppercase tracking-wide">Focus State</p>
             <select
@@ -96,18 +130,8 @@ export default function GraphPage() {
           Show edge labels
         </label>
 
-        <div>
-          <p className="text-xs text-[--muted-foreground] mb-2 uppercase tracking-wide">Legend</p>
-          {types.map((t) => (
-            <div key={t} className="flex items-center gap-2 py-0.5">
-              <span className="w-2.5 h-2.5 rounded-full" style={{ background: NODE_COLORS[t] }} />
-              <span className="text-xs text-[--muted-foreground]">{t}</span>
-            </div>
-          ))}
-        </div>
-
         {graph && (
-          <p className="text-xs text-[--muted-foreground]">
+          <p className="text-xs text-[--muted-foreground] mt-4">
             {graph.nodes.length.toLocaleString()} nodes ·{" "}
             {graph.links.length.toLocaleString()} edges
           </p>
@@ -115,44 +139,52 @@ export default function GraphPage() {
       </div>
 
       {/* Graph canvas */}
-      <div className="flex-1 rounded-lg overflow-hidden border border-[--border] bg-[#0d1117]">
+      <div className="flex-1 rounded-lg overflow-hidden border border-[--border] bg-[#0d1117] relative">
         {error && (
-          <div className="flex items-center justify-center h-full text-sm text-red-400">{error}</div>
+          <div className="absolute inset-0 flex items-center justify-center z-10 p-4 text-center">
+             <div className="p-4 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm max-w-md">{error}</div>
+          </div>
         )}
         {loading && (
-          <div className="flex items-center justify-center h-full text-sm text-[--muted-foreground]">Loading graph…</div>
+          <div className="absolute inset-0 flex items-center justify-center z-10 bg-[#0d1117]/50 backdrop-blur-sm">
+            <div className="text-sm text-[--muted-foreground]">Loading graph…</div>
+          </div>
         )}
         {!loading && !error && graph && FG && (
-          // @ts-ignore — react-force-graph types are loose
+          // @ts-ignore
           <FG
             graphData={graph}
             width={graphRef.current?.clientWidth}
             height={graphRef.current?.clientHeight}
             backgroundColor="#0d1117"
-            nodeColor={(n: { group: string }) => NODE_COLORS[n.group] ?? "#8b949e"}
+            nodeColor={(n: { group: string }) => getNodeColor(n.group)}
             nodeLabel={(n: { label: string; group: string; properties: Record<string, unknown> }) => {
-              const pop = n.properties.hasPopulation;
+              const pop = n.properties?.hasPopulation;
               return `<div style="background:#161b22;border:1px solid #30363d;padding:6px 10px;border-radius:6px;font-size:12px">
-                <b style="color:${NODE_COLORS[n.group] ?? '#8b949e'}">${n.group}</b><br/>
+                <b style="color:${getNodeColor(n.group)}">${n.group}</b><br/>
                 ${n.label}${pop != null ? `<br/><span style="color:#8b949e">Pop: ${Number(pop).toLocaleString()}</span>` : ""}
               </div>`;
             }}
-            nodeVal={(n: { group: string; properties: Record<string, unknown> }) => {
-              const pop = n.properties?.hasPopulation as number | undefined;
-              if (!pop) return 4;
-              return n.group === "State" ? 12 : n.group === "County" ? 6 : 3;
-            }}
+            nodeVal={() => 4}
             linkLabel={showLabels ? (l: { label: string }) => l.label : undefined}
             linkColor={() => "#484f58"}
             linkDirectionalArrowLength={4}
             linkDirectionalArrowRelPos={1}
+            onNodeClick={(n: { id: string }) => {
+              window.location.href = `/explorer/${encodeURIComponent(n.id)}${projectId ? `?projectId=${projectId}` : ""}`;
+            }}
           />
-        )}
-        {!loading && !error && graph && !FG && (
-          <div className="flex items-center justify-center h-full text-sm text-[--muted-foreground]">Loading renderer…</div>
         )}
         <div ref={graphRef} className="absolute inset-0 pointer-events-none" />
       </div>
     </div>
+  );
+}
+
+export default function GraphPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading graph...</div>}>
+      <GraphClient />
+    </Suspense>
   );
 }

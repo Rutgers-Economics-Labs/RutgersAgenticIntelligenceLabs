@@ -67,7 +67,7 @@ export default function JobsPage() {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((job) => (
+              {filteredJobs.map((job) => (
                 <tr key={job._id} className="border-b border-[--border] hover:bg-white/[0.03]">
                   <td className="px-4 py-3 font-mono text-xs text-[--muted-foreground]">{job.pipelineSlug}</td>
                   <td className="px-4 py-3">
