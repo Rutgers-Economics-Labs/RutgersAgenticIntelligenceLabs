@@ -308,9 +308,13 @@ async def _execute_tool(name: str, args: dict) -> dict:
         import asyncio
         from app.services.convex_client import convex
         from app.routers.jobs import _trigger_job  # internal helper
+        from app.services.pipeline_validate import PipelineValidationFailed
 
         pipeline_slug = args["pipeline_slug"]
-        result = await _trigger_job(pipeline_slug)
+        try:
+            result = await _trigger_job(pipeline_slug)
+        except PipelineValidationFailed as e:
+            return {"error": "pipeline_validation_failed", "errors": e.errors}
         job_id = result["jobId"]
 
         # Poll until done (max 10 min)
@@ -344,7 +348,16 @@ async def _execute_tool(name: str, args: dict) -> dict:
 
     elif name == "execute_python":
         from app.services import code_runner
-        return code_runner.run_code(args["code"])
+
+        if not settings.execute_python_enabled:
+            return {
+                "stdout": "",
+                "stderr": "",
+                "dataframes": {},
+                "figures": [],
+                "error": "Python execution is disabled (RAIL_EXECUTE_ENABLED=false).",
+            }
+        return await code_runner.run_code_async(args["code"])
 
     elif name == "get_series_data":
         from app.services import ontology_service

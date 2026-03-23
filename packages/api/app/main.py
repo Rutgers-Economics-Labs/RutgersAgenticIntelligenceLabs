@@ -8,13 +8,25 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import settings
+from app.services.convex_client import ConvexBackendConfigurationError
 from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    import logging
+
+    _hl = logging.getLogger("rail.hydration")
+    if not _hl.handlers:
+        _h = logging.StreamHandler()
+        _h.setFormatter(logging.Formatter("%(levelname)s [rail.hydration] %(message)s"))
+        _hl.addHandler(_h)
+    _hl.setLevel(logging.INFO)
+    _hl.propagate = False
+
     # Add engine root to sys.path so engine imports work
     engine_root = str(settings.engine_root)
     if engine_root not in sys.path:
@@ -39,7 +51,13 @@ async def lifespan(app: FastAPI):
             ontology_service.load(default_db)
             print(f"[startup] Loaded ontology from {default_db}")
         except Exception as e:
-            print(f"[startup] Could not load ontology: {e}")
+            extra = ""
+            if "locked" in str(e).lower():
+                extra = (
+                    " Another process is using onto.db (second API/uvicorn, Streamlit, hydrate.py, or a stuck job). "
+                    "Close those or run one API instance without --reload."
+                )
+            print(f"[startup] Could not load ontology: {e}{extra}")
 
         # Load DuckDB export if it exists
         default_duckdb = settings.engine_root / "ontology" / "onto.duckdb"
@@ -57,13 +75,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.api_cors_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_cors_kw: dict = {
+    "allow_origins": settings.api_cors_origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if settings.api_cors_origin_regex and settings.api_cors_origin_regex.strip():
+    _cors_kw["allow_origin_regex"] = settings.api_cors_origin_regex.strip()
+app.add_middleware(CORSMiddleware, **_cors_kw)
 
 app.include_router(configs.router,  prefix="/api/v1")
 app.include_router(jobs.router,     prefix="/api/v1")
@@ -75,6 +95,11 @@ app.include_router(execute.router,  prefix="/api/v1")
 app.include_router(agent.router,    prefix="/api/v1")
 app.include_router(registry.router,       prefix="/api/v1")
 app.include_router(project_agent.router,  prefix="/api/v1")
+
+
+@app.exception_handler(ConvexBackendConfigurationError)
+async def convex_configuration_handler(_, exc: ConvexBackendConfigurationError):
+    return JSONResponse(status_code=503, content={"detail": str(exc)})
 
 
 @app.get("/health")

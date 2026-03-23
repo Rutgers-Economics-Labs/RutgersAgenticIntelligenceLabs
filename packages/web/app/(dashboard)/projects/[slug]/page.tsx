@@ -113,7 +113,10 @@ function ConfigSlideOver({
     setSaving(true);
     setErrors([]);
     try {
-      const result = await configs.validate(typeLabel, content);
+      const result =
+        type === "pipelines"
+          ? await configs.validatePipeline(content)
+          : await configs.validate(typeLabel, content);
       if (!result.valid) { setErrors(result.errors); setSaving(false); return; }
       await configs.create(type, { name: name.trim(), slug, content, isPublic: false, tags: [] });
       await onSaved(slug);

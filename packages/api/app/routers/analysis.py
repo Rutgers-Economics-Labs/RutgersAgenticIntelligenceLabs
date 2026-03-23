@@ -1,7 +1,8 @@
 import sys
 from pathlib import Path
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.core.config import settings
 
@@ -45,6 +46,44 @@ async def list_plugins():
 
 class RunRequest(BaseModel):
     config: dict = {}
+
+
+class RunCodeRequest(BaseModel):
+    """Run arbitrary Python in a subprocess against DuckDB; optional artifact upload."""
+
+    code: str
+    timeout: int = Field(default=120, ge=1, le=600)
+    upload_artifacts: bool = True
+
+
+@router.post("/run-code")
+async def run_code_analysis(req: RunCodeRequest):
+    """
+    Execute Python in an isolated child process with the same helpers as POST /execute
+    (sql, get_table, list_tables, pd, np, sklearn, plt). User code may write files under
+    `OUTPUT_DIR` (string path); those files are copied to artifact storage when
+    `upload_artifacts` is true.
+
+    Returns: stdout, stderr, dataframes, figures, error, and `artifacts` [{filename, storageKey}].
+    """
+    if not settings.execute_python_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Python execution is disabled (RAIL_EXECUTE_ENABLED=false).",
+        )
+    from app.services import sql_service, subprocess_code_runner
+
+    if not sql_service.is_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="DuckDB mirror not ready. Run a hydration job first.",
+        )
+
+    return await subprocess_code_runner.run_user_code(
+        req.code,
+        req.timeout,
+        upload_artifacts=req.upload_artifacts,
+    )
 
 
 @router.post("/plugins/{slug}/run")

@@ -65,8 +65,11 @@ function EditorPanel({
     setSaving(true);
     setErrors([]);
     try {
-      // Validate first
-      const v = await configs.validate(CONFIG_TYPE_LABEL[tab], content);
+      // Validate first (pipelines: deep check against Convex + engine transforms)
+      const v =
+        tab === "pipelines"
+          ? await configs.validatePipeline(content)
+          : await configs.validate(CONFIG_TYPE_LABEL[tab], content);
       if (!v.valid) { setErrors(v.errors); setSaving(false); return; }
 
       const body = { name, slug, content, isPublic, tags: [] };

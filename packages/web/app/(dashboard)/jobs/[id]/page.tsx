@@ -224,7 +224,26 @@ export default function JobDetailPage() {
           className="max-h-[480px] overflow-y-auto rounded-xl border border-[--border] bg-[#0d1117] p-3 font-mono text-xs"
         >
           {sortedLogs.length === 0 && (
-            <p className="text-[--muted-foreground]">No logs yet.</p>
+            <div className="space-y-2 text-[--muted-foreground]">
+              <p>No log lines in Convex yet.</p>
+              {(job.status === "queued" || job.status === "running") && (
+                <p className="text-[11px] leading-relaxed">
+                  Logs are written by the <strong className="text-[--foreground]">FastAPI</strong> process
+                  (hydration worker) into this Convex deployment. If this stays empty: confirm{" "}
+                  <code className="text-[--foreground]">NEXT_PUBLIC_CONVEX_URL</code> in{" "}
+                  <code className="text-[--foreground]">.env.local</code> matches{" "}
+                  <code className="text-[--foreground]">CONVEX_URL</code> in the repo{" "}
+                  <code className="text-[--foreground]">.env</code>, and check the API terminal for{" "}
+                  <code className="text-[--foreground]">rail.hydration</code> lines (especially Convex{" "}
+                  <code className="text-[--foreground]">appendLog</code> errors).
+                </p>
+              )}
+              {job.status === "failed" && job.errorMessage && (
+                <p className="text-[11px] text-red-300/90">
+                  See <strong>Error</strong> above — the worker may have failed before any line was stored.
+                </p>
+              )}
+            </div>
           )}
           <div className="space-y-1">
             {sortedLogs.map((log) => {

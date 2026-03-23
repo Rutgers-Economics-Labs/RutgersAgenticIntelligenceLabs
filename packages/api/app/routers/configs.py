@@ -6,6 +6,7 @@ from app.services.convex_client import convex
 from app.services.document_service import preview_document
 from app.services.scrape_service import preview_table
 from app.services.yaml_service import validate, parse
+from app.services.pipeline_validate import validate_stored_pipeline
 
 router = APIRouter(prefix="/configs", tags=["configs"])
 
@@ -20,6 +21,11 @@ class CreateConfigRequest(BaseModel):
 
 class ValidateRequest(BaseModel):
     config_type: str   # "api" | "ontology" | "pipeline"
+    content: str
+
+
+class ValidatePipelineRequest(BaseModel):
+    """Deep validation: Convex API/ontology registry + ontology alignment + transforms."""
     content: str
 
 
@@ -41,6 +47,12 @@ class DocumentPreviewRequest(BaseModel):
 @router.post("/validate")
 async def validate_config(req: ValidateRequest):
     errors = validate(req.config_type, req.content)
+    return {"valid": len(errors) == 0, "errors": errors}
+
+
+@router.post("/pipelines/validate")
+async def validate_pipeline_config(req: ValidatePipelineRequest):
+    errors = await validate_stored_pipeline(convex, {"content": req.content})
     return {"valid": len(errors) == 0, "errors": errors}
 
 
@@ -170,9 +182,9 @@ async def list_pipeline_configs():
 
 @router.post("/pipelines")
 async def create_pipeline_config(req: CreateConfigRequest):
-    errors = validate("pipeline", req.content)
-    if errors:
-        raise HTTPException(422, detail=errors)
+    deep = await validate_stored_pipeline(convex, {"content": req.content})
+    if deep:
+        raise HTTPException(422, detail=deep)
     parsed = parse(req.content)
     api_slugs = list({step["api"] for step in parsed.get("steps", []) if "api" in step})
     return await convex.mutation("configs:createPipeline", {
@@ -192,9 +204,9 @@ async def get_pipeline_config(slug: str):
 
 @router.put("/pipelines/{slug}")
 async def update_pipeline_config(slug: str, req: CreateConfigRequest):
-    errors = validate("pipeline", req.content)
-    if errors:
-        raise HTTPException(422, detail=errors)
+    deep = await validate_stored_pipeline(convex, {"content": req.content})
+    if deep:
+        raise HTTPException(422, detail=deep)
     parsed = parse(req.content)
     api_slugs = list({step["api"] for step in parsed.get("steps", []) if "api" in step})
     return await convex.mutation("configs:updatePipeline", {

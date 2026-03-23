@@ -52,7 +52,7 @@ The Convex backend calls the FastAPI API (e.g., to trigger jobs). Pass the API k
 
 In `packages/web/convex/http.ts` (or action files), read `RAIL_API_KEY` from `process.env` and include it in the `X-API-Key` header.
 
-Document in `.env.example`:
+Document in `specs/api.md` and use a root `.env` entry:
 ```
 RAIL_API_KEY=your-secret-key
 ```
@@ -81,8 +81,8 @@ Add `slowapi>=0.1.9` to `packages/api/pyproject.toml` if rate limiting is enable
 - `packages/api/app/main.py` — apply `require_api_key` dependency to all routers
 - `packages/web/lib/api.ts` — inject API key header
 - `packages/web/convex/*.ts` (action files) — inject API key header
-- `.env.example` — document `AUTH_ENABLED`, `API_KEYS`, `RAIL_API_KEY`
-- `specs/api.md` — document authentication scheme
+- Root `.env` — set `AUTH_ENABLED`, `API_KEYS`, `RAIL_API_KEY`
+- `specs/api.md` — document authentication scheme and env vars
 
 ## Acceptance Criteria
 - [ ] `AUTH_ENABLED=false` (default) — all requests succeed without a key (no behavior change)

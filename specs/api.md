@@ -14,7 +14,7 @@ On startup (`lifespan`):
 
 ## Configuration — `app/core/config.py`
 
-`Settings` is a `pydantic_settings.BaseSettings` that reads from `.env` and env vars.
+`Settings` is a `pydantic_settings.BaseSettings` that reads from env vars and, in order (later overrides earlier): `packages/web/.env.local`, repo root `.env`, `packages/api/.env`. Put `CONVEX_DEPLOY_KEY` in root or `packages/api/.env` so it overrides any placeholder in `.env.local`.
 
 | Field | Type | Default | Source env var |
 |-------|------|---------|---------------|
@@ -37,6 +37,9 @@ On startup (`lifespan`):
 | `google_api_key` | `str` | `""` | `GOOGLE_API_KEY` |
 | `openrouter_api_key` | `str` | `""` | `OPENROUTER_API_KEY` |
 | `api_cors_origins` | `list[str]` | `["http://localhost:3000"]` | `API_CORS_ORIGINS` |
+| `execute_python_enabled` | `bool` | `true` | `RAIL_EXECUTE_ENABLED` |
+| `execute_python_mode` | `str` | `"inproc"` | `RAIL_EXECUTE_MODE` (`inproc` \| `subprocess`) |
+| `execute_docker_image` | `str` | `""` | `RAIL_EXECUTE_DOCKER_IMAGE` |
 
 ## Routers
 
@@ -62,12 +65,23 @@ All handlers delegate to `ontology_service._run(fn, *args)` (thread-safe async w
 
 Imports `engine.analysis_runner.{discover, run}` at request time (not at startup) to handle cold-start cases.
 
+**Two ways to run custom Python:**
+
+1. **Trusted, graph-native plugins** — Python files under `packages/engine/analysis/` with `analyze(onto, **kwargs)` receive the live **owlready2** ontology (object properties, full graph). Listed by `GET /plugins` and run via `POST /plugins/{slug}/run`. This is **in-process** with the API; only deploy trusted code.
+
+2. **Subprocess code + artifacts** — `POST /run-code` runs user-supplied Python in a **child process** (`engine/code_subprocess_cli.py`) against the **DuckDB** mirror (same helpers as `/execute`: `sql`, `get_table`, `list_tables`, `pd`, …). Optional writes under `OUTPUT_DIR` are uploaded via `StorageService` when `upload_artifacts` is true. Use this for **models, CSVs, PNGs**, and other files you want stored under `/tmp/rail_artifacts/{run_id}/` (local) or S3.
+
+For ad-hoc snippets without persisting files, see **`/api/v1/execute`** (in-process by default, or subprocess when `RAIL_EXECUTE_MODE=subprocess`).
+
 | Method | Path | Body | Returns |
 |--------|------|------|---------|
 | GET | `/plugins` | — | `[{slug, name, description}]` |
 | POST | `/plugins/{slug}/run` | `{config: dict}` | `{title, sections: [Section]}` |
+| POST | `/run-code` | `{code, timeout?: 1–600, upload_artifacts?: bool}` | `{stdout, stderr, dataframes, figures, error, artifacts: [{filename, storageKey}]}` |
 
-Section types match `lib/api.ts` AnalysisSection union: `metrics`, `table`, `chart`, `text`, `divider`, `group`. DataFrames are serialized to `list[dict]` + `columns` list before return.
+`POST /run-code` returns **403** when `RAIL_EXECUTE_ENABLED=false`, and **503** if DuckDB is not ready.
+
+Section types for plugins match `lib/api.ts` AnalysisSection union: `metrics`, `table`, `chart`, `text`, `divider`, `group`. DataFrames are serialized to `list[dict]` + `columns` list before return.
 
 ### `/api/v1/configs` — `app/routers/configs.py`
 
@@ -116,7 +130,15 @@ Queries run against the DuckDB export of the ontology. `/translate` calls the LL
 |--------|------|------|---------|
 | POST | `` | `{code: str, timeout?: int}` | `{stdout, stderr, dataframes, figures, error}` |
 
-`timeout` max is 300s. Executes Python in a sandboxed namespace via `code_runner.run_code()`.
+`timeout` max is 300s. Uses `code_runner.run_code_async()`:
+
+- **`RAIL_EXECUTE_ENABLED=false`** → **403** (agent `execute_python` returns an error in the tool result instead).
+- **`RAIL_EXECUTE_MODE=inproc`** (default) — `exec()` in a dedicated thread with a restricted **namespace** (not a real security boundary): `sql`, `get_table`, `list_tables`, `pd`, optional `np` / statsmodels / sklearn / matplotlib. DataFrames in the namespace are returned (**first 500 rows** per frame); matplotlib figures as **base64 PNG** strings in `figures`.
+- **`RAIL_EXECUTE_MODE=subprocess`** — same surface via `engine/code_subprocess_cli.py` in a **child process**. Optional **`RAIL_EXECUTE_DOCKER_IMAGE`** (Linux/macOS): runs that CLI inside Docker with `--network none` and bind mounts for the workspace, DuckDB parent directory, and engine root (read-only).
+
+**Ontology vs SQL:** `/execute` never exposes owlready2 directly; it only sees the **DuckDB export** (tabular projection; object properties are largely omitted). For full RDF/graph access, use **analysis plugins** or the **`/ontology`** routes.
+
+**Artifacts:** `/execute` does **not** upload files. Use **`POST /api/v1/analysis/run-code`** and write outputs under `OUTPUT_DIR` to persist binaries (e.g. `joblib.dump`, exported CSV).
 
 ### `/api/v1/agent` — `app/routers/agent.py`
 
@@ -298,20 +320,27 @@ async def translate_to_sql(natural_language: str, model: str | None = None) -> d
 
 ### `app/services/code_runner.py`
 
-Executes Python code in a sandboxed `exec()` namespace. Single-user; no container isolation.
+Dispatches to in-process `exec()` or `subprocess_code_runner` per `RAIL_EXECUTE_MODE`. Gated by `RAIL_EXECUTE_ENABLED`.
 
 ```python
 def run_code(code: str, timeout_seconds: int = 60) -> dict
+async def run_code_async(code: str, timeout_seconds: int = 60) -> dict
     # returns {stdout, stderr, dataframes, figures, error}
 ```
 
-Execution namespace (`_build_context()`) contains:
+### `app/services/subprocess_code_runner.py`
+
+Runs `engine/code_subprocess_cli.py` with `RAIL_DUCKDB_PATH` / `RAIL_OUTPUT_DIR` / `RAIL_MANIFEST_PATH`. Optional Docker wrapper when `RAIL_EXECUTE_DOCKER_IMAGE` is set (POSIX). Used by `run_code_async` in subprocess mode and by `POST /analysis/run-code`.
+
+In-process mode builds the namespace via `_build_context()`. The subprocess CLI exposes the same helpers plus `OUTPUT_DIR` for file outputs.
+
+Namespace contains:
 - `sql(query: str) -> pd.DataFrame` — runs SQL via `sql_service`
 - `get_table(name: str) -> pd.DataFrame` — fetches a full DuckDB table
 - `list_tables() -> list[str]`
 - `pd` (pandas), `np` (numpy), `smf` (statsmodels.formula.api), `sm` (statsmodels.api), `sklearn`, `plt` (matplotlib.pyplot)
 
-After execution, all `pd.DataFrame` variables in the namespace (excluding `_`-prefixed names) are serialized to `{columns, rows, rowCount}` and returned in `dataframes`. Matplotlib figures are saved as base64 PNG and returned in `figures`. Execution runs in a `ThreadPoolExecutor(max_workers=1)` with the specified timeout.
+After execution, all `pd.DataFrame` variables in the namespace (excluding `_`-prefixed names) are serialized to `{columns, rows, rowCount}` and returned in `dataframes`. Matplotlib figures are saved as base64 PNG and returned in `figures`. In-process execution uses a `ThreadPoolExecutor(max_workers=1)` with the specified timeout; subprocess mode relies on `asyncio.wait_for` around `communicate()`.
 
 ### `app/services/agent_service.py`
 

@@ -69,7 +69,7 @@ In `export_service.py`, when generating a bundle (WO-27):
 - Return a presigned download URL valid for 1 hour
 
 ### 5. Environment variable documentation
-Update `.env.example`:
+Document in `specs/api.md` (and set in root `.env`):
 ```
 STORAGE_BACKEND=local        # or "s3"
 S3_BUCKET=my-rail-bucket
@@ -92,7 +92,7 @@ Add `aioboto3>=12.0` to `packages/api/pyproject.toml`.
 - `packages/api/app/services/hydration_worker.py` — upload artifacts post-hydration
 - `packages/api/app/services/export_service.py` — upload bundles (WO-27)
 - `packages/api/pyproject.toml` — add `aioboto3`
-- `.env.example` — document storage env vars
+- `specs/api.md` — document storage env vars
 - `specs/architecture.md` — document storage backend design decision
 
 ## Acceptance Criteria

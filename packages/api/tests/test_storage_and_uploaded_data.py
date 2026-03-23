@@ -15,7 +15,8 @@ async def test_upload_and_resolve_flow(client, tmp_path):
     data = resp.json()
     assert data["filename"] == "test.csv"
     storage_key = data["storageKey"]
-    assert "inputs/test.csv" in storage_key
+    assert Path(storage_key).name == "test.csv"
+    assert "inputs" in Path(storage_key).parts
 
     # 2. Test Hydration Worker Resolution
     from app.services import hydration_worker

@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.services import code_runner
 
 router = APIRouter(prefix="/execute", tags=["execute"])
@@ -27,5 +28,9 @@ async def execute_code(req: ExecuteRequest):
     """
     if req.timeout > 300:
         raise HTTPException(status_code=400, detail="Timeout cannot exceed 300s")
-    result = code_runner.run_code(req.code, timeout_seconds=req.timeout)
-    return result
+    if not settings.execute_python_enabled:
+        raise HTTPException(
+            status_code=403,
+            detail="Python execution is disabled (RAIL_EXECUTE_ENABLED=false).",
+        )
+    return await code_runner.run_code_async(req.code, timeout_seconds=req.timeout)

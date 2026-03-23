@@ -10,16 +10,29 @@ Executes researcher-supplied Python code in an isolated namespace with:
 Captures stdout, DataFrames (any variable ending in _df or named `result`),
 and matplotlib figures (saved as base64 PNG).
 
-Security note: this is single-user; no sandboxing beyond namespace isolation.
+Security note: this is single-user; inproc mode uses namespace isolation only.
+Use RAIL_EXECUTE_MODE=subprocess (and optionally RAIL_EXECUTE_DOCKER_IMAGE) for a child process.
 """
+import asyncio
 import base64
 import contextlib
 import io
-import sys
 import traceback
 from typing import Any
 
 import pandas as pd
+
+from app.core.config import settings
+
+
+def _execute_disabled() -> dict[str, Any]:
+    return {
+        "stdout": "",
+        "stderr": "",
+        "dataframes": {},
+        "figures": [],
+        "error": "Python execution is disabled (RAIL_EXECUTE_ENABLED=false).",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -84,19 +97,7 @@ def _build_context() -> dict[str, Any]:
 # Execution
 # ---------------------------------------------------------------------------
 
-def run_code(code: str, timeout_seconds: int = 60) -> dict:
-    """
-    Execute `code` in a fresh namespace.
-
-    Returns:
-        {
-            "stdout": str,
-            "stderr": str,
-            "dataframes": {name: {columns, rows}},
-            "figures": [base64_png_str, ...],
-            "error": str | None,
-        }
-    """
+def _run_inproc(code: str, timeout_seconds: int) -> dict[str, Any]:
     import concurrent.futures
 
     def _execute() -> dict:
@@ -164,3 +165,41 @@ def run_code(code: str, timeout_seconds: int = 60) -> dict:
                 "figures": [],
                 "error": f"Execution timed out after {timeout_seconds}s",
             }
+
+
+def run_code(code: str, timeout_seconds: int = 60) -> dict:
+    """
+    Execute `code` (sync). Prefer `run_code_async` from async HTTP handlers.
+
+    Returns:
+        {
+            "stdout": str,
+            "stderr": str,
+            "dataframes": {name: {columns, rows}},
+            "figures": [base64_png_str, ...],
+            "error": str | None,
+        }
+    """
+    if not settings.execute_python_enabled:
+        return _execute_disabled()
+    if settings.execute_python_mode == "subprocess":
+        from app.services import subprocess_code_runner
+
+        return asyncio.run(
+            subprocess_code_runner.run_user_code(code, timeout_seconds, upload_artifacts=False)
+        )
+    return _run_inproc(code, timeout_seconds)
+
+
+async def run_code_async(code: str, timeout_seconds: int = 60) -> dict:
+    """Async entrypoint for /execute and agent tools."""
+    if not settings.execute_python_enabled:
+        return _execute_disabled()
+    if settings.execute_python_mode == "subprocess":
+        from app.services import subprocess_code_runner
+
+        return await subprocess_code_runner.run_user_code(
+            code, timeout_seconds, upload_artifacts=False
+        )
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, lambda: _run_inproc(code, timeout_seconds))

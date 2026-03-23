@@ -12,7 +12,7 @@ packages/
 scripts/
   seed_convex.py        One-shot script: load local YAMLs into Convex
 Makefile                Root orchestration (install, dev, hydrate, seed, …)
-.env                    Copied from .env.example; not committed
+.env                    Local secrets at repo root; not committed
 ```
 
 ## Package Responsibilities
@@ -65,9 +65,10 @@ Browser (jobs page) → GET /api/v1/jobs/{id}/logs ← FastAPI polls Convex
 
 ```
 Browser → lib/api.ts → GET /api/v1/ontology/* → ontology_service (owlready2 + onto.db)
-Browser → lib/api.ts → POST /api/v1/analysis/plugins/{slug}/run → analysis_runner
+Browser → lib/api.ts → POST /api/v1/analysis/plugins/{slug}/run → analysis_runner (owlready2, in-proc)
+Browser → lib/api.ts → POST /api/v1/analysis/run-code → subprocess_code_runner + StorageService (artifacts)
 Browser → lib/api.ts → POST /api/v1/sql → sql_service (DuckDB onto.duckdb)
-Browser → lib/api.ts → POST /api/v1/execute → code_runner (exec sandbox)
+Browser → lib/api.ts → POST /api/v1/execute → code_runner (inproc exec or subprocess per RAIL_EXECUTE_MODE)
 ```
 
 ## Data Flow — AI Agent

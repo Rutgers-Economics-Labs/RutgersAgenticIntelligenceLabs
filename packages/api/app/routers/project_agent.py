@@ -461,7 +461,15 @@ async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:
         if not pipeline_slug:
             return {"error": "No pipeline configured for this project. Link a pipeline first."}
         from app.routers.jobs import _trigger_job
-        result = await _trigger_job(pipeline_slug, project_id)
+        from app.services.pipeline_validate import PipelineValidationFailed
+        try:
+            result = await _trigger_job(pipeline_slug, project_id)
+        except PipelineValidationFailed as e:
+            return {
+                "error": "pipeline_validation_failed",
+                "errors": e.errors,
+                "message": "Fix validation errors before running hydration.",
+            }
         return {"jobId": result["jobId"], "status": result["status"], "message": "Hydration job started."}
 
     if name == "get_recent_jobs":

@@ -2,7 +2,11 @@
 YAML config validation and parsing.
 Validates that a YAML string conforms to the expected shape for its config type.
 """
+from __future__ import annotations
+
+import importlib.util
 import yaml
+from pathlib import Path
 from typing import Literal
 
 
@@ -61,9 +65,15 @@ def _validate_api(spec: dict) -> list[str]:
             if "field" not in foreach:
                 errors.append("foreach.field is required")
 
-    if spec.get("type") in ("csv", "excel", "uploaded"):
+    if spec.get("type") in ("csv", "excel"):
         if "path" not in spec:
             errors.append(f"Missing required field: path (required for type: {spec['type']})")
+
+    if spec.get("type") == "uploaded":
+        has_path = "path" in spec
+        has_storage_key = "storage_key" in spec
+        if sum(bool(x) for x in (has_path, has_storage_key)) != 1:
+            errors.append("type: uploaded requires exactly one of path or storage_key")
 
     if spec.get("type") == "scrape":
         if "url" not in spec:
@@ -131,4 +141,189 @@ def _validate_pipeline(spec: dict) -> list[str]:
             for field in ("property", "target_class", "target_uri"):
                 if field not in rel:
                     errors.append(f"steps[{i}].relationships[{j}]: missing required field '{field}'")
+    return errors
+
+
+def _check_transform_resolvable(spec_str: str, transform_dir: Path) -> str | None:
+    """Return an error message if module::function cannot be loaded from transform_dir (or import)."""
+    spec_str = (spec_str or "").strip()
+    if not spec_str:
+        return None
+    if "::" in spec_str:
+        module_name, func_name = spec_str.split("::", 1)
+    else:
+        module_name, func_name = spec_str, "transform"
+    module_name, func_name = module_name.strip(), func_name.strip()
+    if not module_name or not func_name:
+        return f"Invalid transform spec '{spec_str}'"
+
+    py_path = transform_dir / f"{module_name}.py"
+    try:
+        if py_path.is_file():
+            spec = importlib.util.spec_from_file_location(module_name, py_path)
+            if spec is None or spec.loader is None:
+                return f"Transform '{spec_str}': could not load {py_path}"
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        else:
+            mod = importlib.import_module(module_name)
+    except Exception as e:
+        return f"Transform '{spec_str}': {e}"
+
+    if not hasattr(mod, func_name):
+        return f"Transform '{spec_str}': function '{func_name}' not found"
+    return None
+
+
+def _resolve_ontology_yaml(
+    onto_ref: str,
+    ontology_yaml: str | None,
+    engine_root: Path | None,
+) -> tuple[str | None, list[str]]:
+    """Return (yaml_text, errors)."""
+    if ontology_yaml is not None and ontology_yaml.strip():
+        return ontology_yaml, []
+    if engine_root is None:
+        return None, [
+            f"Ontology '{onto_ref}' is not in Convex and engine_root is unset — "
+            "cannot load configs/ontology/{onto_ref}.yaml"
+        ]
+    path = engine_root / "configs" / "ontology" / f"{onto_ref}.yaml"
+    if not path.is_file():
+        fallback = engine_root / "configs" / "ontology" / "core.yaml"
+        if fallback.is_file():
+            path = fallback
+        else:
+            return None, [
+                f"Ontology '{onto_ref}' not found in Convex and no file at {path} "
+                f"(or fallback core.yaml)"
+            ]
+    try:
+        return path.read_text(encoding="utf-8"), []
+    except OSError as e:
+        return None, [f"Could not read ontology file {path}: {e}"]
+
+
+def validate_pipeline_runnable(
+    pipeline_content: str,
+    api_yaml_by_slug: dict[str, str],
+    *,
+    ontology_yaml: str | None,
+    engine_root: Path | None = None,
+    transform_dir: Path | None = None,
+) -> list[str]:
+    """
+    Structural pipeline validation plus checks that would fail at hydration time:
+    referenced API YAMLs exist and are valid, ontology classes/properties match steps,
+    foreach source order, transform specs resolvable on disk (when transform_dir is set).
+    """
+    errors: list[str] = []
+    errors.extend(validate("pipeline", pipeline_content))
+    if errors:
+        return errors
+
+    try:
+        pipe = parse(pipeline_content)
+    except ValueError as e:
+        return [str(e)]
+
+    onto_ref = str(pipe.get("ontology", "core")).strip() or "core"
+    onto_text, onto_errs = _resolve_ontology_yaml(onto_ref, ontology_yaml, engine_root)
+    errors.extend(onto_errs)
+    if onto_text is None:
+        return errors
+
+    ont_shape_errors = validate("ontology", onto_text)
+    errors.extend(ont_shape_errors)
+    if ont_shape_errors:
+        return errors
+
+    try:
+        onto_spec = parse(onto_text)
+    except ValueError as e:
+        errors.append(str(e))
+        return errors
+
+    class_names = {"Thing", *(c["name"] for c in onto_spec.get("classes", []) if "name" in c)}
+    obj_prop_names = {p["name"] for p in onto_spec.get("object_properties", []) if "name" in p}
+    data_prop_names = {p["name"] for p in onto_spec.get("data_properties", []) if "name" in p}
+
+    steps = pipe.get("steps", [])
+    prior_api_slugs: list[str] = []
+
+    for i, step in enumerate(steps):
+        api_slug = step.get("api")
+        if not api_slug:
+            continue
+        raw = api_yaml_by_slug.get(api_slug)
+        if raw is None:
+            errors.append(
+                f"steps[{i}] api '{api_slug}': no API config YAML (missing in Convex or bundle)"
+            )
+            continue
+
+        errors.extend(validate("api", raw))
+        try:
+            api_spec = parse(raw)
+        except ValueError as e:
+            errors.append(f"steps[{i}] api '{api_slug}': {e}")
+            prior_api_slugs.append(api_slug)
+            continue
+
+        fe = api_spec.get("foreach") or {}
+        if fe:
+            src = fe.get("source")
+            if not src:
+                errors.append(f"steps[{i}] api '{api_slug}': foreach.source is required")
+            elif src not in prior_api_slugs:
+                errors.append(
+                    f"steps[{i}] api '{api_slug}': foreach source '{src}' must appear in an "
+                    f"earlier pipeline step (prior steps use apis: {prior_api_slugs})"
+                )
+
+        prior_api_slugs.append(api_slug)
+
+        cls_name = step.get("class")
+        if cls_name and cls_name not in class_names:
+            errors.append(
+                f"steps[{i}]: class '{cls_name}' is not defined in the ontology "
+                f"(available: {sorted(class_names)})"
+            )
+
+        for pk in step.get("properties", {}).keys():
+            if data_prop_names and pk not in data_prop_names:
+                errors.append(
+                    f"steps[{i}]: property '{pk}' is not a data property in the ontology"
+                )
+
+        for j, rel in enumerate(step.get("relationships", [])):
+            pn = rel.get("property")
+            if pn and pn not in obj_prop_names:
+                errors.append(
+                    f"steps[{i}].relationships[{j}]: object property '{pn}' "
+                    f"is not defined in the ontology"
+                )
+            tc = rel.get("target_class")
+            if tc and tc not in class_names:
+                errors.append(
+                    f"steps[{i}].relationships[{j}]: target_class '{tc}' "
+                    f"is not defined in the ontology"
+                )
+
+        ts = step.get("transform")
+        if ts and transform_dir and transform_dir.is_dir():
+            msg = _check_transform_resolvable(ts, transform_dir)
+            if msg:
+                errors.append(f"steps[{i}]: {msg}")
+
+    for k, entry in enumerate(pipe.get("post_hydration_transforms", [])):
+        if isinstance(entry, str):
+            spec = entry
+        else:
+            spec = entry.get("spec", "")
+        if spec and transform_dir and transform_dir.is_dir():
+            msg = _check_transform_resolvable(spec, transform_dir)
+            if msg:
+                errors.append(f"post_hydration_transforms[{k}]: {msg}")
+
     return errors

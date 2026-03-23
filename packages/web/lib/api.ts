@@ -117,6 +117,12 @@ export const configs = {
       method: "POST",
       body: JSON.stringify({ config_type, content }),
     }),
+  /** Resolves referenced API/ontology configs in Convex + checks classes, foreach order, transforms. */
+  validatePipeline: (content: string) =>
+    req<{ valid: boolean; errors: string[] }>("/configs/pipelines/validate", {
+      method: "POST",
+      body: JSON.stringify({ content }),
+    }),
   create: (type: ConfigType, body: { name: string; slug: string; content: string; isPublic: boolean; tags: string[] }) =>
     req(`/configs/${type}`, { method: "POST", body: JSON.stringify(body) }),
   update: (type: ConfigType, slug: string, body: { name: string; slug: string; content: string; isPublic: boolean; tags: string[] }) =>

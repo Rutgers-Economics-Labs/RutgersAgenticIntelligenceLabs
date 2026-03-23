@@ -11,7 +11,12 @@ API_ROOT = str(Path(__file__).parents[1])
 if API_ROOT not in sys.path:
     sys.path.insert(0, API_ROOT)
 
-from app.services.yaml_service import validate, parse
+from pathlib import Path
+
+from app.services.yaml_service import validate, parse, validate_pipeline_runnable
+
+ENGINE_ROOT = Path(__file__).resolve().parents[2] / "engine"
+CORE_ONTOLOGY_YAML = (ENGINE_ROOT / "configs" / "ontology" / "core.yaml").read_text(encoding="utf-8")
 
 
 # ── parse ─────────────────────────────────────────────────────────────────────
@@ -216,3 +221,113 @@ def test_validate_returns_parse_error_on_bad_yaml():
     errors = validate("api", "key: [unclosed")
     assert len(errors) == 1
     assert "Invalid YAML" in errors[0]
+
+
+# ── validate_pipeline_runnable (deep) ─────────────────────────────────────────
+
+_MIN_CSV_API = """
+name: child_api
+type: csv
+path: sources/child.csv
+foreach:
+  source: parent_api
+  field: id
+fields:
+  - source: x
+    alias: x
+"""
+
+_MIN_PARENT_API = """
+name: parent_api
+type: csv
+path: sources/parent.csv
+fields:
+  - source: id
+    alias: id
+"""
+
+
+def test_validate_pipeline_runnable_ok():
+    pipe = """
+ontology: core
+steps:
+  - name: first
+    api: parent_api
+    class: State
+    uri: "State_{id}"
+    properties:
+      hasName: "{id}"
+  - name: second
+    api: child_api
+    class: County
+    uri: "County_{id}"
+"""
+    errs = validate_pipeline_runnable(
+        pipe,
+        {"parent_api": _MIN_PARENT_API, "child_api": _MIN_CSV_API},
+        ontology_yaml=CORE_ONTOLOGY_YAML,
+        engine_root=ENGINE_ROOT,
+        transform_dir=ENGINE_ROOT / "transforms",
+    )
+    assert errs == []
+
+
+def test_validate_pipeline_runnable_foreach_order():
+    pipe = """
+ontology: core
+steps:
+  - name: second_first
+    api: child_api
+    class: State
+    uri: "State_{id}"
+  - name: parent_late
+    api: parent_api
+    class: State
+    uri: "State_{id}"
+"""
+    errs = validate_pipeline_runnable(
+        pipe,
+        {"parent_api": _MIN_PARENT_API, "child_api": _MIN_CSV_API},
+        ontology_yaml=CORE_ONTOLOGY_YAML,
+        engine_root=ENGINE_ROOT,
+        transform_dir=ENGINE_ROOT / "transforms",
+    )
+    assert any("foreach source" in e for e in errs)
+
+
+def test_validate_pipeline_runnable_unknown_class():
+    pipe = """
+ontology: core
+steps:
+  - name: s
+    api: parent_api
+    class: NotInOntology
+    uri: "X_{id}"
+"""
+    errs = validate_pipeline_runnable(
+        pipe,
+        {"parent_api": _MIN_PARENT_API},
+        ontology_yaml=CORE_ONTOLOGY_YAML,
+        engine_root=ENGINE_ROOT,
+        transform_dir=ENGINE_ROOT / "transforms",
+    )
+    assert any("NotInOntology" in e for e in errs)
+
+
+def test_validate_pipeline_runnable_missing_api_yaml():
+    pipe = """
+ontology: core
+steps:
+  - name: s
+    api: missing_slug
+    class: State
+    uri: "State_{id}"
+"""
+    errs = validate_pipeline_runnable(
+        pipe,
+        {},
+        ontology_yaml=CORE_ONTOLOGY_YAML,
+        engine_root=ENGINE_ROOT,
+        transform_dir=ENGINE_ROOT / "transforms",
+    )
+    assert any("missing_slug" in e for e in errs)

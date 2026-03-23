@@ -71,11 +71,17 @@ def _get_or_create(onto, onto_class, uri, cache):
 
 
 def run_pipeline(pipeline_path):
+    print(f"[pipeline] Loading pipeline YAML: {pipeline_path}")
     with open(pipeline_path) as f:
         pipeline = yaml.safe_load(f)
 
     db_path = pipeline.get("db", "ontology/onto.db")
     output_owl = pipeline.get("output_owl", "ontology/populated_ontology.owl")
+    steps = pipeline.get("steps") or []
+    print(
+        f"[pipeline] {len(steps)} step(s); ontology schema file: {pipeline.get('ontology')}; "
+        f"quadstore: {db_path}; OWL export: {output_owl}"
+    )
 
     # Remove stale DB so we always start clean (hydration rebuilds from scratch)
     for stale in [db_path, db_path + "-journal"]:
@@ -88,7 +94,9 @@ def run_pipeline(pipeline_path):
     world.set_backend(filename=db_path)
 
     # Load / build ontology schema
+    print(f"[pipeline] Loading ontology from {pipeline['ontology']!r} …")
     onto, class_map = load_ontology(pipeline["ontology"], world=world)
+    print(f"[pipeline] Ontology ready ({len(class_map)} symbols in map, including properties)")
 
     resolved = {}  # {api_name: DataFrame} — for foreach resolution
     _cache = {}    # {uri: individual} — avoids repeat SQLite searches
@@ -104,6 +112,11 @@ def run_pipeline(pipeline_path):
         print(f"\n[step] {step_name}: {class_name} <- {api_name}")
 
         df = fetch_api(api_name, resolved_data=resolved)
+        cols = list(df.columns)
+        col_preview = ", ".join(str(c) for c in cols[:12])
+        if len(cols) > 12:
+            col_preview += f", … (+{len(cols) - 12} more)"
+        print(f"  [data] {len(df)} rows, {len(cols)} columns: {col_preview}")
 
         # Optional DataFrame transform (pre-ontology mapping)
         transform_spec = step.get("transform")

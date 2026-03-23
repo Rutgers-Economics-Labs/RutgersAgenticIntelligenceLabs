@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.services.convex_client import convex
 from app.services import hydration_worker
+from app.services.pipeline_validate import ensure_pipeline_ready, PipelineValidationFailed
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -25,6 +26,8 @@ async def _trigger_job(pipeline_slug: str, project_id: str | None = None) -> dic
     pipeline = await convex.query("configs:getPipeline", {"slug": pipeline_slug})
     if not pipeline:
         raise ValueError(f"Pipeline '{pipeline_slug}' not found")
+
+    await ensure_pipeline_ready(convex, pipeline)
 
     api_slugs = pipeline.get("referencedApiSlugs", [])
     api_configs: dict[str, str] = {}
@@ -65,6 +68,11 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
     pipeline = await convex.query("configs:getPipeline", {"slug": req.pipeline_slug})
     if not pipeline:
         raise HTTPException(404, detail=f"Pipeline '{req.pipeline_slug}' not found")
+
+    try:
+        await ensure_pipeline_ready(convex, pipeline)
+    except PipelineValidationFailed as e:
+        raise HTTPException(422, detail=e.errors)
 
     api_slugs = pipeline.get("referencedApiSlugs", [])
     api_configs: dict[str, str] = {}

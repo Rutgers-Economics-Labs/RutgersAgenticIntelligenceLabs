@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import ConfigsPage from "@/app/(dashboard)/configs/page";
+import { configs } from "@/lib/api";
 
 const useQueryMock = vi.fn();
 const modelsMock = vi.fn();
@@ -40,6 +41,7 @@ vi.mock("@/lib/api", () => ({
     scrapePreview: (...args: unknown[]) => scrapePreviewMock(...args),
     docPreview: (...args: unknown[]) => docPreviewMock(...args),
     validate: vi.fn(),
+    validatePipeline: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
   },
@@ -87,6 +89,8 @@ describe("ConfigsPage", () => {
       rows: [{ metric: "Population", value: "100" }],
       rowCount: 1,
     });
+    vi.mocked(configs.validate).mockResolvedValue({ valid: true, errors: [] });
+    vi.mocked(configs.validatePipeline).mockResolvedValue({ valid: true, errors: [] });
   });
 
   it("generates and saves inferred configs", async () => {

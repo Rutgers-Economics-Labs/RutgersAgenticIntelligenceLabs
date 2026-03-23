@@ -30,6 +30,10 @@ class StorageService:
             return str(dest)
 
         # S3 mode
+        import aioboto3
+
+        key = f"{job_id}/{filename}"
+        session = aioboto3.Session()
         async with session.client(
             "s3",
             region_name=settings.s3_region,

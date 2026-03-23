@@ -19,7 +19,7 @@ API_PORT := 8000
 WEB_PORT := 3000
 PIPELINE := configs/pipelines/nj_hydration.yaml
 
-# ── Env vars — copy .env.example → .env and fill in values ───────────────────
+# ── Env vars — root .env (create locally; not committed) —────────────────────
 -include .env
 export
 
