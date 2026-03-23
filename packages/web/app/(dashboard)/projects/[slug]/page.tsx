@@ -1,6 +1,6 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -18,6 +18,7 @@ import { useTheme } from "@/components/ThemeProvider";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
+import yaml from "yaml";
 
 // Monaco — dynamically imported to avoid SSR issues
 const MonacoEditor = dynamic(
@@ -350,6 +351,74 @@ function OverviewTab({ project, onTabSwitch }: { project: ProjectDoc; onTabSwitc
   );
 }
 
+// ── Schema Graph Component ──────────────────────────────────────────────────────
+
+function SchemaGraph({ yamlStr }: { yamlStr: string }) {
+  const [graph, setGraph] = useState<{ nodes: Record<string, unknown>[]; links: Record<string, unknown>[] } | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [FG, setFG] = useState<any>(null);
+  const graphRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    import("react-force-graph-2d").then((m) => setFG(() => m.default));
+    try {
+      const parsed = yaml.parse(yamlStr);
+      const nodes: Record<string, unknown>[] = [];
+      const links: Record<string, unknown>[] = [];
+      
+      const colors = ["#F5A623", "#4A9EDD", "#50C878", "#B07FD4", "#E05C5C", "#4DB6AC", "#F06292"];
+
+      if (parsed.classes) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        parsed.classes.forEach((c: any, i: number) => {
+          nodes.push({ id: c.name, label: c.name, group: "Class", color: colors[i % colors.length] });
+        });
+      }
+      if (parsed.object_properties) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        parsed.object_properties.forEach((p: any) => {
+          if (p.domain && p.range) {
+            links.push({ source: p.domain, target: p.range, label: p.name });
+            if (!nodes.find(n => n.id === String(p.domain))) nodes.push({ id: String(p.domain), label: String(p.domain), group: "Class", color: "#8b949e" });
+            if (!nodes.find(n => n.id === String(p.range))) nodes.push({ id: String(p.range), label: String(p.range), group: "Class", color: "#8b949e" });
+          }
+        });
+      }
+      setGraph({ nodes, links });
+    } catch {
+      setGraph(null);
+    }
+  }, [yamlStr]);
+
+  if (!graph || graph.nodes.length === 0) {
+    return <div className="h-[340px] flex items-center justify-center border border-[--border] rounded-lg text-xs text-[--muted-foreground] bg-[--muted]">No schema classes defined.</div>;
+  }
+  
+  return (
+    <div className="w-full h-[340px] rounded-lg border border-[--border] bg-[#0d1117] overflow-hidden relative">
+      {FG && (
+        <FG
+          graphData={graph}
+          width={graphRef.current?.clientWidth ?? 600}
+          height={graphRef.current?.clientHeight ?? 340}
+          backgroundColor="#0d1117"
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          nodeColor={(n: any) => n.color}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          nodeLabel={(n: any) => `<div style="background:#161b22;border:1px solid #30363d;padding:6px 10px;border-radius:6px;font-size:12px;color:${n.color}"><b>${n.label}</b></div>`}
+          nodeVal={6}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          linkLabel={(l: any) => l.label}
+          linkColor={() => "#484f58"}
+          linkDirectionalArrowLength={4}
+          linkDirectionalArrowRelPos={1}
+        />
+      )}
+      <div ref={graphRef} className="absolute inset-0 pointer-events-none" />
+    </div>
+  );
+}
+
 // ── Ontology Tab ──────────────────────────────────────────────────────────────
 
 function OntologyTab({ project }: { project: ProjectDoc }) {
@@ -361,6 +430,7 @@ function OntologyTab({ project }: { project: ProjectDoc }) {
   );
 
   const [mode, setMode] = useState<"view" | "link" | "create">("view");
+  const [viewMode, setViewMode] = useState<"yaml" | "graph">("graph");
   const [linkSelected, setLinkSelected] = useState(project.ontologyConfigSlug ?? "");
 
   const TEMPLATE = `uri: http://example.org/${project.slug}#
@@ -391,7 +461,7 @@ object_properties:
         <div>
           <h2 className="text-sm font-semibold">Ontology Schema</h2>
           <p className="text-xs text-[--muted-foreground] mt-0.5">
-            Defines the OWL classes and properties for this project's knowledge graph.
+            Defines the OWL classes and properties for this project&apos;s knowledge graph.
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -441,13 +511,31 @@ object_properties:
       {/* Linked config display */}
       {project.ontologyConfigSlug ? (
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <CheckCircle2 size={13} className="text-green-400" />
-            <span className="text-sm font-medium">{linkedConfig?.name ?? project.ontologyConfigSlug}</span>
-            <span className="text-[10px] font-mono text-[--muted-foreground] px-1.5 py-0.5 rounded bg-[--muted]">{project.ontologyConfigSlug}</span>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 size={13} className="text-green-400" />
+              <span className="text-sm font-medium">{linkedConfig?.name ?? project.ontologyConfigSlug}</span>
+              <span className="text-[10px] font-mono text-[--muted-foreground] px-1.5 py-0.5 rounded bg-[--muted]">{project.ontologyConfigSlug}</span>
+            </div>
+            {linkedConfig && (
+              <div className="flex bg-[--muted] p-0.5 rounded border border-[--border]">
+                <button
+                  onClick={() => setViewMode("graph")}
+                  className={`text-[10px] px-2 py-1 rounded transition-colors ${viewMode === "graph" ? "bg-[--card] shadow-sm text-[--foreground]" : "text-[--muted-foreground] hover:text-[--foreground]"}`}
+                >
+                  Graph
+                </button>
+                <button
+                  onClick={() => setViewMode("yaml")}
+                  className={`text-[10px] px-2 py-1 rounded transition-colors ${viewMode === "yaml" ? "bg-[--card] shadow-sm text-[--foreground]" : "text-[--muted-foreground] hover:text-[--foreground]"}`}
+                >
+                  YAML
+                </button>
+              </div>
+            )}
           </div>
           {linkedConfig
-            ? <YamlEditor value={linkedConfig.content} readOnly height="340px" />
+            ? (viewMode === "graph" ? <SchemaGraph yamlStr={linkedConfig.content} /> : <YamlEditor value={linkedConfig.content} readOnly height="340px" />)
             : <div className="h-40 rounded-xl border border-[--border] bg-[--muted] flex items-center justify-center"><span className="text-xs text-[--muted-foreground]">Loading…</span></div>
           }
           <Link href="/configs" className="mt-3 inline-flex items-center gap-1 text-xs text-[--primary] hover:underline">
@@ -541,7 +629,7 @@ fields:
         <div>
           <h2 className="text-sm font-semibold">Data Sources</h2>
           <p className="text-xs text-[--muted-foreground] mt-0.5">
-            APIs, CSVs, and other feeds that hydrate this project's ontology.
+            APIs, CSVs, and other feeds that hydrate this project&apos;s ontology.
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
@@ -955,28 +1043,28 @@ function ExploreTab({ project }: { project: ProjectDoc }) {
       icon: <Database size={22} />,
       label: "Entity Explorer",
       desc: "Browse all entities and their properties in the knowledge graph.",
-      href: "/explorer",
+      href: `/explorer?projectId=${project._id}`,
       available: hydrated,
     },
     {
       icon: <Network size={22} />,
       label: "Knowledge Graph",
       desc: "Visualize entity relationships as an interactive force-directed graph.",
-      href: "/graph",
+      href: `/graph?projectId=${project._id}`,
       available: hydrated,
     },
     {
       icon: <Code2 size={22} />,
       label: "SQL Editor",
       desc: "Query the DuckDB ontology mirror with SQL or plain-English questions.",
-      href: "/sql",
+      href: `/sql?projectId=${project._id}`,
       available: hydrated,
     },
     {
       icon: <BrainCircuit size={22} />,
       label: "AI Workspace",
       desc: "Chat with the AI agent to discover, query, and analyze your data.",
-      href: "/workspace",
+      href: `/workspace?projectId=${project._id}`,
       available: true,
     },
   ];

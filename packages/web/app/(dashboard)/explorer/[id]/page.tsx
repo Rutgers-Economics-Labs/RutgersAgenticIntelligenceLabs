@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ontology, type EntityDetail, type GraphData } from "@/lib/api";
 
@@ -9,8 +9,10 @@ const CLASS_COLORS: Record<string, string> = {
   Individual: "#B07FD4", Measure: "#E05C5C",
 };
 
-export default function EntityDetailPage() {
+function EntityDetailContent() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") || undefined;
   const decoded = decodeURIComponent(id);
 
   const [entity, setEntity] = useState<EntityDetail | null>(null);
@@ -29,13 +31,13 @@ export default function EntityDetailPage() {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      ontology.entity(decoded),
-      ontology.entityGraph(decoded),
+      ontology.entity(decoded, projectId),
+      ontology.entityGraph(decoded, projectId),
     ])
       .then(([e, g]) => { setEntity(e); setGraph(g); })
       .catch(() => setError("Entity not found."))
       .finally(() => setLoading(false));
-  }, [decoded]);
+  }, [decoded, projectId]);
 
   const color = entity ? (CLASS_COLORS[entity.class] ?? "#8b949e") : "#8b949e";
 
@@ -45,7 +47,7 @@ export default function EntityDetailPage() {
 
   if (error || !entity) return (
     <div>
-      <Link href="/explorer" className="text-sm text-[--primary] hover:underline mb-4 inline-block">← Back to Explorer</Link>
+      <Link href={`/explorer${projectId ? `?projectId=${projectId}` : ""}`} className="text-sm text-[--primary] hover:underline mb-4 inline-block">← Back to Explorer</Link>
       <div className="p-4 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm">{error || "Entity not found."}</div>
     </div>
   );
@@ -54,7 +56,7 @@ export default function EntityDetailPage() {
 
   return (
     <div className="max-w-5xl">
-      <Link href="/explorer" className="text-sm text-[--primary] hover:underline mb-4 inline-block">
+      <Link href={`/explorer${projectId ? `?projectId=${projectId}` : ""}`} className="text-sm text-[--primary] hover:underline mb-4 inline-block">
         ← Back to Explorer
       </Link>
 
@@ -120,7 +122,7 @@ export default function EntityDetailPage() {
                         <td className="px-4 py-2.5 font-mono text-xs text-[--muted-foreground]">{rel.property}</td>
                         <td className="px-4 py-2.5">
                           <Link
-                            href={`/explorer/${encodeURIComponent(rel.targetId)}`}
+                            href={`/explorer/${encodeURIComponent(rel.targetId)}${projectId ? `?projectId=${projectId}` : ""}`}
                             className="text-[--primary] hover:underline text-sm"
                           >
                             {rel.targetName}
@@ -163,7 +165,7 @@ export default function EntityDetailPage() {
                 linkDirectionalArrowLength={4}
                 linkDirectionalArrowRelPos={1}
                 onNodeClick={(n: { id: string }) => {
-                  if (n.id !== decoded) window.location.href = `/explorer/${encodeURIComponent(n.id)}`;
+                  if (n.id !== decoded) window.location.href = `/explorer/${encodeURIComponent(n.id)}${projectId ? `?projectId=${projectId}` : ""}`;
                 }}
               />
             ) : (
@@ -175,5 +177,13 @@ export default function EntityDetailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function EntityDetailPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading entity...</div>}>
+      <EntityDetailContent />
+    </Suspense>
   );
 }

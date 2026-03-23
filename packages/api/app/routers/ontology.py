@@ -43,7 +43,7 @@ async def get_entity_graph(uri: str):
 
 @router.get("/graph")
 async def get_full_graph(
-    types: str = Query("State,County,Municipality,Individual"),
+    types: str = Query("State,County,Municipality,Individual,Measure"),
     state_fips: Union[str, None] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
 ):

@@ -10,6 +10,8 @@ from owlready2 import World, FunctionalProperty
 from engine.ontology_builder import load_ontology
 from engine.api_runner import fetch_api
 from engine.transform_runner import run_dataframe_transform, run_ontology_transform
+import duckdb
+import pandas as pd
 
 
 def _sanitize(value):
@@ -194,10 +196,66 @@ def run_pipeline(pipeline_path):
         with onto:
             run_ontology_transform(spec, onto, config=cfg)
 
+    # Optional DuckDB Relational Export
+    duckdb_path = pipeline.get("duckdb")
+    if duckdb_path:
+        _export_to_duckdb(world, onto, duckdb_path)
+
     onto.save(file=output_owl, format="rdfxml")
     world.save()
-    print(f"\nDone. Saved to {output_owl} and quadstore {db_path}")
 
     # Release the exclusive SQLite lock so the DB can be reopened by other processes/tests
     if hasattr(world, "graph") and hasattr(world.graph, "db"):
         world.graph.db.close()
+
+    print(f"\nDone. Saved to {output_owl} and quadstore {db_path}")
+
+
+def _export_to_duckdb(world, onto, duckdb_path):
+    """
+    Generate a relational DuckDB mirror of the OWL individuals.
+    Creates one table per class, with columns for each data property.
+    This enables high-performance analytical queries and GIS spatial joins.
+    """
+    print(f"\n[export] Mirroring to DuckDB: {duckdb_path}")
+    if os.path.exists(duckdb_path):
+        os.remove(duckdb_path)
+
+    con = duckdb.connect(duckdb_path)
+    try:
+        for cls in onto.classes():
+            instances = list(cls.instances())
+            if not instances:
+                continue
+
+            data = []
+            for inst in instances:
+                row = {"_id": inst.name}
+                # Capture all data properties
+                for prop in inst.get_properties():
+                    try:
+                        val = prop[inst]
+                        if isinstance(val, list):
+                            val = val[0] if val else None
+                        
+                        # Only include data properties (skip object property URIs)
+                        if hasattr(val, "iri"):
+                            continue
+                        
+                        row[prop.python_name] = val
+                    except Exception:
+                        pass
+                data.append(row)
+
+            if data:
+                df = pd.DataFrame(data)
+                # Ensure _id is first column
+                cols = ["_id"] + [c for c in df.columns if c != "_id"]
+                df = df[cols]
+                
+                table_name = cls.name
+                con.execute(f'CREATE TABLE "{table_name}" AS SELECT * FROM df')
+                print(f"  -> Exported {len(df)} {table_name} individuals")
+
+    finally:
+        con.close()

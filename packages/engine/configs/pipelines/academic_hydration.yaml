@@ -1,6 +1,7 @@
 ontology: configs/ontology/academic.yaml
 output_owl: ontology/academic_populated.owl
 db: ontology/academic.db
+duckdb: ontology/academic.duckdb
 
 steps:
   - name: load_universities

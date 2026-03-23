@@ -29,30 +29,56 @@ export type GraphData = {
 export type SeriesPoint = { date: string; value: number };
 
 export const ontology = {
-  classes: () => req<OntologyClass[]>("/ontology/classes"),
-  instances: (cls: string, page = 1, limit = 50, search = "") =>
-    req<{ total: number; page: number; limit: number; items: EntitySummary[] }>(
-      `/ontology/classes/${cls}/instances?page=${page}&limit=${limit}&search=${encodeURIComponent(search)}`
-    ),
-  entity: (uri: string) => req<EntityDetail>(`/ontology/entities/${encodeURIComponent(uri)}`),
-  entityGraph: (uri: string) => req<GraphData>(`/ontology/entities/${encodeURIComponent(uri)}/graph`),
-  graph: (types: string[], stateFips?: string, limit = 500) => {
+  classes: (projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    return req<OntologyClass[]>(`/ontology/classes${params.size ? `?${params}` : ""}`);
+  },
+  instances: (cls: string, page = 1, limit = 50, search = "", projectId?: string) => {
+    const params = new URLSearchParams({ page: String(page), limit: String(limit), search });
+    if (projectId) params.set("project_id", projectId);
+    return req<{ total: number; page: number; limit: number; items: EntitySummary[] }>(
+      `/ontology/classes/${cls}/instances?${params}`
+    );
+  },
+  entity: (uri: string, projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    return req<EntityDetail>(`/ontology/entities/${encodeURIComponent(uri)}${params.size ? `?${params}` : ""}`);
+  },
+  entityGraph: (uri: string, projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    return req<GraphData>(`/ontology/entities/${encodeURIComponent(uri)}/graph${params.size ? `?${params}` : ""}`);
+  },
+  graph: (types: string[], stateFips?: string, limit = 500, projectId?: string) => {
     const params = new URLSearchParams({ types: types.join(","), limit: String(limit) });
     if (stateFips) params.set("state_fips", stateFips);
+    if (projectId) params.set("project_id", projectId);
     return req<GraphData>(`/ontology/graph?${params}`);
   },
-  search: (q: string, types?: string[]) => {
+  search: (q: string, types?: string[], projectId?: string) => {
     const params = new URLSearchParams({ q });
     if (types) params.set("types", types.join(","));
+    if (projectId) params.set("project_id", projectId);
     return req<EntitySummary[]>(`/ontology/search?${params}`);
   },
-  semanticSearch: (q: string, types?: string[], limit = 20) => {
+  semanticSearch: (q: string, types?: string[], limit = 20, projectId?: string) => {
     const params = new URLSearchParams({ q, limit: String(limit) });
     if (types) params.set("types", types.join(","));
+    if (projectId) params.set("project_id", projectId);
     return req<EntitySummary[]>(`/ontology/semantic-search?${params}`);
   },
-  series: () => req<string[]>("/ontology/series"),
-  seriesData: (id: string) => req<SeriesPoint[]>(`/ontology/series/${encodeURIComponent(id)}/data`),
+  series: (projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    return req<string[]>(`/ontology/series${params.size ? `?${params}` : ""}`);
+  },
+  seriesData: (id: string, projectId?: string) => {
+    const params = new URLSearchParams();
+    if (projectId) params.set("project_id", projectId);
+    return req<SeriesPoint[]>(`/ontology/series/${encodeURIComponent(id)}/data${params.size ? `?${params}` : ""}`);
+  },
 };
 
 // ── Analysis ──────────────────────────────────────────────────────────────────

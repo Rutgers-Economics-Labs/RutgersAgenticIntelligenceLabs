@@ -39,13 +39,17 @@ def load(db_path: Union[str, Path]):
         # owlready2 populates _world.ontologies after set_backend() when the DB
         # already has triples; we just grab the first (and usually only) one.
         stored = list(_world.ontologies.values())
-        if stored:
-            _onto = stored[0]
+        if not stored:
+             raise RuntimeError(f"No ontology found in quadstore at {db_path}.")
+
+        # Prefer the first one that isn't 'http://anonymous/'
+        filtered = [o for o in stored if o.base_iri != "http://anonymous/"]
+        if filtered:
+            _onto = filtered[0]
         else:
-            raise RuntimeError(
-                f"No ontology found in quadstore at {db_path}. "
-                "Run a hydration job first."
-            )
+            _onto = stored[0]
+
+        print(f"  [load] Active ontology: {_onto.base_iri} ({len(list(_onto.classes()))} classes found)")
         _db_path = db_path
 
 
@@ -126,21 +130,25 @@ def get_entity_graph(uri: str) -> dict:
     cls_name = type(ind).name if hasattr(type(ind), "name") else "Unknown"
     nodes[ind.name] = _graph_node(ind, cls_name)
 
-    for prop in ind.get_properties():
-        values = prop[ind]
-        if not isinstance(values, list):
-            values = [values] if values is not None else []
-        for val in values:
-            if hasattr(val, "name"):
-                target_cls = type(val).name if hasattr(type(val), "name") else "Unknown"
-                nodes[val.name] = _graph_node(val, target_cls)
-                links.append({"source": ind.name, "target": val.name, "label": prop.python_name})
+    safe_props = ind.get_properties() if hasattr(ind, "get_properties") else []
+    for prop in safe_props:
+        try:
+            values = prop[ind]
+            if not isinstance(values, list):
+                values = [values] if values is not None else []
+            for val in values:
+                if hasattr(val, "name"):
+                    target_cls = type(val).name if hasattr(type(val), "name") else "Unknown"
+                    nodes[val.name] = _graph_node(val, target_cls)
+                    links.append({"source": ind.name, "target": val.name, "label": getattr(prop, "python_name", prop.name)})
+        except Exception:
+            continue
 
     for prop, source in ind.get_inverse_properties():
         if hasattr(source, "name"):
             src_cls = type(source).name if hasattr(type(source), "name") else "Unknown"
             nodes[source.name] = _graph_node(source, src_cls)
-            links.append({"source": source.name, "target": ind.name, "label": prop.python_name})
+            links.append({"source": source.name, "target": ind.name, "label": getattr(prop, "python_name", prop.name)})
 
     return {"nodes": list(nodes.values()), "links": links}
 
@@ -192,16 +200,21 @@ def get_full_graph(
         ind = onto.search_one(iri=f"*#{name}")
         if ind is None:
             continue
-        for prop in ind.get_properties():
-            values = prop[ind]
-            if not isinstance(values, list):
-                values = [values] if values is not None else []
-            for val in values:
-                if hasattr(val, "name") and val.name in node_set:
-                    key = (name, val.name, prop.python_name)
-                    if key not in seen:
-                        seen.add(key)
-                        links.append({"source": name, "target": val.name, "label": prop.python_name})
+        safe_props = ind.get_properties() if hasattr(ind, "get_properties") else []
+        for prop in safe_props:
+            try:
+                values = prop[ind]
+                if not isinstance(values, list):
+                    values = [values] if values is not None else []
+                for val in values:
+                    if hasattr(val, "name") and val.name in node_set:
+                        pname = getattr(prop, "python_name", prop.name)
+                        key = (name, val.name, pname)
+                        if key not in seen:
+                            seen.add(key)
+                            links.append({"source": name, "target": val.name, "label": pname})
+            except Exception:
+                pass
 
     return {"nodes": list(nodes.values()), "links": links}
 
@@ -402,18 +415,19 @@ def _serialize_entity(ind, include_relationships: bool = False) -> dict:
         "class": cls_name,
         "properties": {},
     }
-    # Reflect all data properties (skip object-property values — they have .iri)
-    for prop in ind.get_properties():
+    # Reflect all data properties
+    safe_props = ind.get_properties() if hasattr(ind, "get_properties") else []
+    for prop in safe_props:
         try:
             val = prop[ind]
             if isinstance(val, list):
                 val = val[0] if val else None
             if val is None:
                 continue
-            # Object properties point to OWL individuals — exclude from data properties
             if hasattr(val, "iri"):
                 continue
-            result["properties"][prop.python_name] = val
+            pname = getattr(prop, "python_name", prop.name)
+            result["properties"][pname] = val
         except Exception:
             pass
 
@@ -426,18 +440,24 @@ def _serialize_entity(ind, include_relationships: bool = False) -> dict:
 
     if include_relationships:
         rels = []
-        for prop in ind.get_properties():
-            values = prop[ind]
-            if not isinstance(values, list):
-                values = [values] if values is not None else []
-            for val in values:
-                if hasattr(val, "name"):
-                    rels.append({"property": prop.python_name, "targetId": val.name,
-                                 "targetName": getattr(val, "hasName", None) or val.name})
+        for prop in safe_props:
+            try:
+                values = prop[ind]
+                if not isinstance(values, list):
+                    values = [values] if values is not None else []
+                for val in values:
+                    if hasattr(val, "name"):
+                        pname = getattr(prop, "python_name", prop.name)
+                        rels.append({"property": pname, "targetId": val.name,
+                                     "targetName": getattr(val, "hasName", None) or val.name})
+            except Exception:
+                pass
         for prop, source in ind.get_inverse_properties():
             if hasattr(source, "name"):
-                rels.append({"property": f"←{prop.python_name}", "targetId": source.name,
-                             "targetName": getattr(source, "hasName", None) or source.name})
+                pname = getattr(prop, "python_name", prop.name)
+                sid = getattr(source, "name", str(source))
+                rels.append({"property": f"←{pname}", "targetId": sid,
+                             "targetName": getattr(source, "hasName", None) or sid})
         result["relationships"] = rels
 
     return result
@@ -458,20 +478,22 @@ def _entity_search_text(entity: dict) -> str:
 def _graph_node(ind, cls_name: str) -> dict:
     """Build a graph node, reflecting all data properties dynamically."""
     props: dict = {}
-    for prop in ind.get_properties():
+    safe_props = ind.get_properties() if hasattr(ind, "get_properties") else []
+    for prop in safe_props:
         try:
             val = prop[ind]
             if isinstance(val, list):
                 val = val[0] if val else None
             if val is None or hasattr(val, "iri"):
                 continue
-            props[prop.python_name] = val
+            pname = getattr(prop, "python_name", prop.name)
+            props[pname] = val
         except Exception:
             pass
     return {
-        "id": ind.name,
+        "id": getattr(ind, "name", str(ind)),
         # Prefer hasName if present; otherwise fall back to the URI local name
-        "label": props.get("hasName") or ind.name,
+        "label": props.get("hasName") or getattr(ind, "name", str(ind)),
         "group": cls_name,
         "properties": props,
     }

@@ -214,5 +214,7 @@ ontology/onto.db-journal
 ontology/populated_ontology.owl
 packages/engine/ontology/onto.db-journal
 packages/engine/ontology/*.db-journal
+packages/engine/ontology/*.db
+packages/engine/ontology/*.duckdb
 graph.html
 graph_full.html

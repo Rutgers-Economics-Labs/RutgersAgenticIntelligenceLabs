@@ -9,8 +9,8 @@ import httpx, yaml
 ROOT = Path(__file__).parents[1]
 ENG  = ROOT / "packages" / "engine"
 
-CONVEX_URL = os.environ.get("CONVEX_URL", "https://colorless-elephant-150.convex.cloud")
-DEPLOY_KEY = os.environ.get("CONVEX_DEPLOY_KEY", "")
+CONVEX_URL = os.environ.get("CONVEX_URL", "https://colorless-elephant-150.convex.cloud").strip().rstrip("/")
+DEPLOY_KEY = os.environ.get("CONVEX_DEPLOY_KEY", "").strip()
 
 if not DEPLOY_KEY:
     print("ERROR: set CONVEX_DEPLOY_KEY env var")
@@ -22,7 +22,7 @@ def call(fn: str, args: dict):
     r = httpx.post(f"{CONVEX_URL}/api/mutation",
                    json={"path": fn, "args": args}, headers=headers, timeout=30)
     r.raise_for_status()
-    return r.json()
+    return r.json().get("value", r.json())
 
 def query(fn: str, args: dict):
     r = httpx.post(f"{CONVEX_URL}/api/query",

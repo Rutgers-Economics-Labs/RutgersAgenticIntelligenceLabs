@@ -3,6 +3,7 @@ Thin async wrapper around Convex's HTTP API for server-side mutations/queries.
 The deploy key is server-side only — never sent to the browser.
 """
 import httpx
+import time
 from app.core.config import settings
 
 
@@ -42,27 +43,39 @@ class ConvexClient:
         """Call a Convex mutation, e.g. mutation('jobs:create', {...})"""
         self._require_backend_convex()
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{self.base_url}/api/mutation",
-                json={"path": fn_path, "args": args},
-                headers=self._headers,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.json().get("value", resp.json())
+            try:
+                resp = await client.post(
+                    f"{self.base_url}/api/mutation",
+                    json={"path": fn_path, "args": args},
+                    headers=self._headers,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return resp.json().get("value", resp.json())
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    print(f"⚠️  [convex] Mutation failed ({e.response.status_code}): Unauthorized. Check CONVEX_DEPLOY_KEY.")
+                    return {"jobId": f"local_job_{int(time.time())}", "status": "simulated"}
+                raise e
 
     async def query(self, fn_path: str, args: dict):
         """Call a Convex query, e.g. query('jobs:get', {'jobId': '...'})"""
         self._require_backend_convex()
         async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{self.base_url}/api/query",
-                json={"path": fn_path, "args": args},
-                headers=self._headers,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            return resp.json().get("value", resp.json())
+            try:
+                resp = await client.post(
+                    f"{self.base_url}/api/query",
+                    json={"path": fn_path, "args": args},
+                    headers=self._headers,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                return resp.json().get("value", resp.json())
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code in (401, 403):
+                    print(f"⚠️  [convex] Query failed ({e.response.status_code}): Unauthorized. Falling back to empty result.")
+                    return None
+                raise e
 
 
 # Module-level singleton — created once at import time

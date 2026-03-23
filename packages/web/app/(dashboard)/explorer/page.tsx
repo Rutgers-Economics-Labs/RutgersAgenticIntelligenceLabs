@@ -1,5 +1,6 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { ontology, type OntologyClass, type EntitySummary } from "@/lib/api";
 import Link from "next/link";
 
@@ -8,7 +9,9 @@ const CLASS_COLORS: Record<string, string> = {
   Individual: "#B07FD4", Measure: "#E05C5C",
 };
 
-export default function ExplorerPage() {
+function ExplorerContent() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") || undefined;
   const [classes, setClasses] = useState<OntologyClass[]>([]);
   const [selectedClass, setSelectedClass] = useState("");
   const [items, setItems] = useState<EntitySummary[]>([]);
@@ -20,10 +23,10 @@ export default function ExplorerPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    ontology.classes()
+    ontology.classes(projectId)
       .then((cls) => { setClasses(cls); if (cls.length) setSelectedClass(cls[0].name); })
       .catch(() => setError("Could not connect to API. Is the FastAPI server running?"));
-  }, []);
+  }, [projectId]);
 
   const load = useCallback(async () => {
     if (!selectedClass) return;
@@ -31,11 +34,11 @@ export default function ExplorerPage() {
     setError("");
     try {
       if (searchMode === "semantic" && search.trim()) {
-        const results = await ontology.semanticSearch(search, [selectedClass], 20);
+        const results = await ontology.semanticSearch(search, [selectedClass], 20, projectId);
         setItems(results);
         setTotal(results.length);
       } else {
-        const res = await ontology.instances(selectedClass, page, 50, search);
+        const res = await ontology.instances(selectedClass, page, 50, search, projectId);
         setItems(res.items);
         setTotal(res.total);
       }
@@ -45,7 +48,7 @@ export default function ExplorerPage() {
       setError(searchMode === "semantic" ? "Semantic search is unavailable." : "Failed to load instances");
     }
     finally { setLoading(false); }
-  }, [page, search, searchMode, selectedClass]);
+  }, [page, search, searchMode, selectedClass, projectId]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -148,7 +151,7 @@ export default function ExplorerPage() {
                 </td>
                 <td className="px-4 py-3">
                   <Link
-                    href={`/explorer/${encodeURIComponent(item.id)}`}
+                    href={`/explorer/${encodeURIComponent(item.id)}${projectId ? `?projectId=${projectId}` : ""}`}
                     className="text-xs text-[--primary] hover:underline"
                   >
                     View →
@@ -177,5 +180,13 @@ export default function ExplorerPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ExplorerPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading explorer...</div>}>
+      <ExplorerContent />
+    </Suspense>
   );
 }

@@ -2,6 +2,8 @@
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import Link from "next/link";
+import { useState } from "react";
+import { cn } from "@/lib/utils";
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "#8b949e", running: "#58a6ff", success: "#3fb950",
@@ -16,20 +18,43 @@ function timeAgo(ms: number) {
 }
 
 export default function JobsPage() {
-  const jobs = useQuery(api.jobs.list, { limit: 50 });
+  const [filter, setFilter] = useState<string | "all">("all");
+  const jobs = useQuery(api.jobs.list, { limit: 100 });
+  
+  const filteredJobs = jobs?.filter(j => filter === "all" || j.status === filter);
+  const runningCount = jobs?.filter(j => j.status === "running").length ?? 0;
 
   return (
     <div>
-      <h1 className="text-2xl font-semibold mb-6">Hydration Jobs</h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-2xl font-semibold">Hydration Jobs</h1>
+        <div className="flex items-center gap-1 bg-[--muted] p-1 rounded-md border border-[--border]">
+          {["all", "running", "success", "failed"].map((f) => (
+            <button
+              key={f}
+              onClick={() => setFilter(f)}
+              className={cn(
+                "px-3 py-1 rounded text-xs font-medium transition-all capitalize",
+                filter === f 
+                  ? "bg-[--card] text-[--foreground] shadow-sm border border-[--border]" 
+                  : "text-[--muted-foreground] hover:text-[--foreground]"
+              )}
+            >
+              {f} {f === "running" && runningCount > 0 && `(${runningCount})`}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {jobs === undefined && (
         <p className="text-[--muted-foreground] text-sm">Loading…</p>
       )}
-      {jobs?.length === 0 && (
+      {filteredJobs?.length === 0 && (
         <div className="flex items-center justify-center h-48 border border-dashed border-[--border] rounded-lg text-[--muted-foreground] text-sm">
-          No jobs yet. Trigger one from the Pipelines page.
+          No {filter === "all" ? "" : filter} jobs found.
         </div>
       )}
-      {jobs && jobs.length > 0 && (
+      {filteredJobs && filteredJobs.length > 0 && (
         <div className="rounded-lg border border-[--border] overflow-hidden">
           <table className="w-full text-sm">
             <thead>

@@ -1,6 +1,7 @@
 ontology: configs/ontology/core.yaml
 output_owl: ontology/nj_gis_populated.owl
 db: ontology/nj_gis.db
+duckdb: ontology/nj_gis.duckdb
 
 steps:
   - name: load_counties_with_gis

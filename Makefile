@@ -10,7 +10,7 @@
         push
 
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
-PYTHON   := python3
+PYTHON   := python
 API_DIR  := $(ROOT_DIR)packages/api
 WEB_DIR  := $(ROOT_DIR)packages/web
 ENG_DIR  := $(ROOT_DIR)packages/engine
@@ -25,12 +25,12 @@ export
 
 # Env block forwarded to the API server (picks up .env values above)
 define api_env
-	CONVEX_URL=$(CONVEX_URL) \
-	CONVEX_DEPLOY_KEY=$(CONVEX_DEPLOY_KEY) \
-	ENGINE_ROOT=$(ENG_DIR) \
-	RAIL_ANALYSIS_DIR=$(ENG_DIR)/analysis \
-	RAIL_TRANSFORM_DIR=$(ENG_DIR)/transforms \
-	FRED_API_KEY=$(FRED_API_KEY)
+	CONVEX_URL="$(CONVEX_URL)" \
+	CONVEX_DEPLOY_KEY="$(CONVEX_DEPLOY_KEY)" \
+	ENGINE_ROOT="$(ENG_DIR)" \
+	RAIL_ANALYSIS_DIR="$(ENG_DIR)/analysis" \
+	RAIL_TRANSFORM_DIR="$(ENG_DIR)/transforms" \
+	FRED_API_KEY="$(FRED_API_KEY)"
 endef
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -179,10 +179,10 @@ deploy-api:
 
 convex-deploy:
 	@echo "→ Deploying Convex schema + functions…"
-	cd $(WEB_DIR) && CONVEX_DEPLOY_KEY=$(CONVEX_DEPLOY_KEY) npx convex deploy --yes
+	cd $(WEB_DIR) && CONVEX_DEPLOY_KEY="$(CONVEX_DEPLOY_KEY)" npx convex deploy --yes
 
 convex-dev:
-	cd $(WEB_DIR) && npx convex dev
+	cd $(WEB_DIR) && CONVEX_DEPLOY_KEY="$(CONVEX_DEPLOY_KEY)" npx convex dev
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Git

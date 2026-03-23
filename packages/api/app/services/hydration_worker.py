@@ -403,6 +403,7 @@ async def _update_job(job_id: str, fields: dict):
         logger.exception("[%s] Convex updateJob failed fields=%s", job_id, list(fields.keys()))
 
 
+
 async def _update_step(job_id: str, step_name: str, status: str, row_count: Union[int, None] = None):
     try:
         await convex.mutation("jobs:updateStep", {
@@ -414,3 +415,4 @@ async def _update_step(job_id: str, step_name: str, status: str, row_count: Unio
         })
     except Exception:
         logger.exception("[%s] Convex updateStep failed step=%s status=%s", job_id, step_name, status)
+

@@ -8,6 +8,8 @@ import {
   BotMessageSquare, Table2, Library,
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 const NAV = [
   { href: "/workspace", label: "AI Workspace",  icon: BotMessageSquare },
@@ -26,6 +28,11 @@ const NAV = [
 export function Sidebar() {
   const pathname = usePathname();
   const { theme, toggle } = useTheme();
+  
+  // Real-time counter of active jobs (running or queued)
+  const activeJobs = useQuery(api.jobs.list, { status: "running", limit: 10 });
+  const runningCount = activeJobs?.length ?? 0;
+
   return (
     <aside className="w-56 shrink-0 flex flex-col border-r border-[--border] bg-[--card] h-screen sticky top-0">
       <div className="px-4 py-5 border-b border-[--border]">
@@ -35,19 +42,29 @@ export function Sidebar() {
       <nav className="flex-1 py-3 overflow-y-auto">
         {NAV.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+          const isJobs = href === "/jobs";
+          
           return (
             <Link
               key={href}
               href={href}
               className={cn(
-                "flex items-center gap-3 px-4 py-2.5 text-sm transition-colors",
+                "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group",
                 active
                   ? "bg-[--accent]/20 text-[--primary] font-medium"
                   : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
               )}
             >
-              <Icon size={15} />
-              {label}
+              <div className="flex items-center gap-3">
+                <Icon size={15} />
+                {label}
+              </div>
+              
+              {isJobs && runningCount > 0 && (
+                <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-[--primary] text-white text-[10px] font-bold rounded-full animate-pulse shadow-[0_0_8px_rgba(var(--primary-rgb),0.5)]">
+                  {runningCount}
+                </span>
+              )}
             </Link>
           );
         })}

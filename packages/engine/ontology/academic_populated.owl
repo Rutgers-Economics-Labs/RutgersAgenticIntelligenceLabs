@@ -120,8 +120,8 @@
 
 <owl:DatatypeProperty rdf:about="#hasYear">
   <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
-  <rdfs:domain rdf:resource="#ResearchGrant"/>
   <rdfs:domain rdf:resource="#Publication"/>
+  <rdfs:domain rdf:resource="#ResearchGrant"/>
   <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#integer"/>
 </owl:DatatypeProperty>
 

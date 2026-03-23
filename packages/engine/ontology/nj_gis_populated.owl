@@ -15,8 +15,8 @@
 </owl:ObjectProperty>
 
 <owl:ObjectProperty rdf:about="#locatedIn">
-  <rdfs:domain rdf:resource="#Individual"/>
   <rdfs:domain rdf:resource="#GeographicRegion"/>
+  <rdfs:domain rdf:resource="#Individual"/>
   <rdfs:range rdf:resource="#GeographicRegion"/>
 </owl:ObjectProperty>
 
