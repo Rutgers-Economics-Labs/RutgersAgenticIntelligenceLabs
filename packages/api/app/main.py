@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.convex_client import ConvexBackendConfigurationError
-from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent
+from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, scripts
 
 
 @asynccontextmanager
@@ -95,6 +95,7 @@ app.include_router(execute.router,  prefix="/api/v1")
 app.include_router(agent.router,    prefix="/api/v1")
 app.include_router(registry.router,       prefix="/api/v1")
 app.include_router(project_agent.router,  prefix="/api/v1")
+app.include_router(scripts.router,        prefix="/api/v1")
 
 
 @app.exception_handler(ConvexBackendConfigurationError)

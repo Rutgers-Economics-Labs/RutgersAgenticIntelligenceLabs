@@ -16,6 +16,7 @@ import type * as projectChats from "../projectChats.js";
 import type * as projectScripts from "../projectScripts.js";
 import type * as projects from "../projects.js";
 import type * as registry from "../registry.js";
+import type * as scriptRuns from "../scriptRuns.js";
 import type * as workspaces from "../workspaces.js";
 
 import type {
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   projectScripts: typeof projectScripts;
   projects: typeof projects;
   registry: typeof registry;
+  scriptRuns: typeof scriptRuns;
   workspaces: typeof workspaces;
 }>;
 

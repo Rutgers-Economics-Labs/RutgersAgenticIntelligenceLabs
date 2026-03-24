@@ -14,7 +14,7 @@ import {
   Bot, Send, Loader2, X, Sparkles,
   FileCode2, Save, Download, Terminal,
 } from "lucide-react";
-import { execute, ExecuteResult, jobs as jobsApi, configs, projectAgent } from "@/lib/api";
+import { execute, ExecuteResult, jobs as jobsApi, configs, projectAgent, scriptRuns as scriptRunsApi, ScriptRunResult } from "@/lib/api";
 import { useTheme } from "@/components/ThemeProvider";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -1504,6 +1504,76 @@ result_df = top[["hasName", "hasRank", "hasHIndex"]]
 print(result_df.to_string(index=False))
 `;
 
+type ScriptRunDoc = {
+  _id: string;
+  status: "running" | "success" | "failed";
+  stdout?: string;
+  error?: string;
+  figureCount: number;
+  figureStorageKeys: string[];
+  dfSummary?: Record<string, { columns: string[]; rowCount: number }>;
+  createdAt: number;
+  finishedAt?: number;
+};
+
+function RunHistoryItem({ run, scriptId }: { run: ScriptRunDoc; scriptId: string }) {
+  const [open, setOpen] = useState(false);
+  const durationMs = run.finishedAt ? run.finishedAt - run.createdAt : undefined;
+  const duration = durationMs != null
+    ? durationMs < 1000 ? `${Math.round(durationMs)}ms`
+    : durationMs < 60_000 ? `${(durationMs / 1000).toFixed(1)}s`
+    : `${(durationMs / 60_000).toFixed(1)}m`
+    : "—";
+
+  return (
+    <div className="border-b border-[--border] last:border-0">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center gap-3 px-3 py-2 hover:bg-[--muted]/40 text-left transition-colors"
+      >
+        <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${
+          run.status === "success" ? "bg-green-400" :
+          run.status === "failed"  ? "bg-red-400" : "bg-yellow-400 animate-pulse"
+        }`} />
+        <span className="flex-1 text-[11px] text-[--muted-foreground]">{timeAgo(run.createdAt)}</span>
+        <span className="text-[10px] text-[--muted-foreground]">{duration}</span>
+        {run.figureCount > 0 && (
+          <span className="text-[10px] text-blue-400">{run.figureCount} fig{run.figureCount > 1 ? "s" : ""}</span>
+        )}
+        {open ? <ChevronDown size={10} className="shrink-0 text-[--muted-foreground]" /> : <ChevronRight size={10} className="shrink-0 text-[--muted-foreground]" />}
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          {run.error && (
+            <pre className="rounded bg-red-900/20 border border-red-700/40 p-2 text-[10px] text-red-300 max-h-32 overflow-y-auto whitespace-pre-wrap">
+              {run.error}
+            </pre>
+          )}
+          {run.stdout && (
+            <pre className="rounded bg-[--muted] border border-[--border] p-2 text-[10px] text-[--foreground] max-h-32 overflow-y-auto whitespace-pre-wrap">
+              {run.stdout}
+            </pre>
+          )}
+          {Array.from({ length: run.figureCount }, (_, i) => (
+            <img
+              key={i}
+              src={scriptRunsApi.figureUrl(run._id, i)}
+              alt={`figure ${i + 1}`}
+              className="max-w-full rounded border border-[--border]"
+            />
+          ))}
+          {run.dfSummary && Object.entries(run.dfSummary).map(([name, info]) => (
+            <div key={name} className="text-[10px] text-[--muted-foreground] rounded bg-[--muted] px-2 py-1">
+              {name}: {info.rowCount} rows × {info.columns.length} cols
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ScriptsTab({ project }: { project: ProjectDoc }) {
   const scripts = useQuery(api.projectScripts.listByProject, { projectId: project._id });
   const createScript = useMutation(api.projectScripts.create);
@@ -1519,6 +1589,8 @@ function ScriptsTab({ project }: { project: ProjectDoc }) {
   const [result, setResult] = useState<ExecuteResult | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Id<"projectScripts"> | null>(null);
+  const [runs, setRuns] = useState<ScriptRunDoc[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const selected = scripts?.find(s => s._id === selectedId) ?? null;
 
@@ -1532,6 +1604,14 @@ function ScriptsTab({ project }: { project: ProjectDoc }) {
       setRunError(null);
     }
   }, [selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh run history when script changes
+  useEffect(() => {
+    if (!selectedId) { setRuns([]); return; }
+    void fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"}/scripts/${selectedId}/runs`)
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setRuns(Array.isArray(data) ? data : []));
+  }, [selectedId]);
 
   async function handleNew() {
     const id = await createScript({
@@ -1564,7 +1644,30 @@ function ScriptsTab({ project }: { project: ProjectDoc }) {
     setRunError(null);
     setResult(null);
     try {
-      const res = await execute.run(code, 120);
+      let res: ExecuteResult;
+      if (selectedId) {
+        const runRes = await scriptRunsApi.run(selectedId, project._id, code, 120);
+        res = runRes.result;
+        // Prepend new run to local history
+        const newRun: ScriptRunDoc = {
+          _id: runRes.runId,
+          status: res.error ? "failed" : "success",
+          stdout: res.stdout || undefined,
+          error: res.error || undefined,
+          figureCount: runRes.figureStorageKeys.length,
+          figureStorageKeys: runRes.figureStorageKeys,
+          dfSummary: res.dataframes
+            ? Object.fromEntries(
+                Object.entries(res.dataframes).map(([k, v]) => [k, { columns: v.columns, rowCount: v.rowCount }])
+              )
+            : undefined,
+          createdAt: Date.now(),
+          finishedAt: Date.now(),
+        };
+        setRuns(prev => [newRun, ...prev]);
+      } else {
+        res = await execute.run(code, 120);
+      }
       setResult(res);
       if (res.error) setRunError(res.error);
     } catch (e) {
@@ -1582,6 +1685,7 @@ function ScriptsTab({ project }: { project: ProjectDoc }) {
       setEditName("");
       setDirty(false);
       setResult(null);
+      setRuns([]);
     }
     setConfirmDelete(null);
   }
@@ -1688,6 +1792,16 @@ function ScriptsTab({ project }: { project: ProjectDoc }) {
               />
               <span className="text-[10px] text-[--muted-foreground]">⌘↵ run</span>
               <button
+                onClick={() => setShowHistory(v => !v)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs transition-colors ${
+                  showHistory
+                    ? "border-[--primary]/50 text-[--primary] bg-[--primary]/5"
+                    : "border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+                }`}
+              >
+                History {runs.length > 0 && <span className="text-[10px] opacity-70">({runs.length})</span>}
+              </button>
+              <button
                 onClick={handleSave}
                 disabled={saving || !dirty}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[--border] text-xs text-[--muted-foreground] hover:text-[--foreground] disabled:opacity-30 transition-colors"
@@ -1705,117 +1819,139 @@ function ScriptsTab({ project }: { project: ProjectDoc }) {
               </button>
             </div>
 
-            {/* Monaco editor */}
-            <div className="rounded-lg overflow-hidden border border-[--border] shrink-0" style={{ height: 280 }}>
-              <MonacoEditor
-                height={280}
-                language="python"
-                theme="vs-dark"
-                value={code}
-                onChange={val => { setCode(val ?? ""); setDirty(true); }}
-                onMount={(editor) => {
-                  editor.addCommand(
-                    // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.Enter
-                    2048 | 3,
-                    () => handleRun(),
-                  );
-                }}
-                options={{
-                  minimap: { enabled: false },
-                  fontSize: 12,
-                  lineNumbers: "on",
-                  scrollBeyondLastLine: false,
-                  wordWrap: "off",
-                  padding: { top: 8 },
-                  automaticLayout: true,
-                  tabSize: 4,
-                }}
-              />
-            </div>
-
-            {/* Output panel */}
-            <div className="flex-1 overflow-y-auto space-y-3 pb-2">
-              {runError && (
-                <div className="rounded-lg border border-red-700/60 bg-red-900/20 p-3 font-mono text-xs text-red-300 whitespace-pre-wrap">
-                  {runError}
+            {/* History panel (replaces output when active) */}
+            {showHistory && (
+              <div className="flex-1 overflow-y-auto rounded-xl border border-[--border] overflow-hidden">
+                <div className="px-3 py-2 bg-[--muted]/40 border-b border-[--border]">
+                  <span className="text-[11px] font-medium text-[--muted-foreground] uppercase tracking-wide">Run History</span>
                 </div>
-              )}
+                {runs.length === 0 ? (
+                  <div className="px-3 py-6 text-center text-xs text-[--muted-foreground]">
+                    No runs yet — click Run to execute this script.
+                  </div>
+                ) : (
+                  runs.map(run => (
+                    <RunHistoryItem key={run._id} run={run} scriptId={selectedId!} />
+                  ))
+                )}
+              </div>
+            )}
 
-              {result && !runError && (
-                <>
-                  {result.stdout && (
-                    <div className="rounded-lg border border-[--border] overflow-hidden">
-                      <div className="flex items-center gap-2 px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
-                        <Terminal size={11} className="text-[--muted-foreground]" />
-                        <span className="text-[11px] text-[--muted-foreground]">stdout</span>
-                      </div>
-                      <pre className="p-3 font-mono text-xs text-[--foreground] max-h-48 overflow-y-auto whitespace-pre-wrap">
-                        {result.stdout}
-                      </pre>
+            {/* Editor + output (hidden when history panel is open) */}
+            {!showHistory && (
+              <>
+                <div className="rounded-lg overflow-hidden border border-[--border] shrink-0" style={{ height: 280 }}>
+                  <MonacoEditor
+                    height={280}
+                    language="python"
+                    theme="vs-dark"
+                    value={code}
+                    onChange={val => { setCode(val ?? ""); setDirty(true); }}
+                    onMount={(editor) => {
+                      editor.addCommand(
+                        // Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.Enter
+                        2048 | 3,
+                        () => handleRun(),
+                      );
+                    }}
+                    options={{
+                      minimap: { enabled: false },
+                      fontSize: 12,
+                      lineNumbers: "on",
+                      scrollBeyondLastLine: false,
+                      wordWrap: "off",
+                      padding: { top: 8 },
+                      automaticLayout: true,
+                      tabSize: 4,
+                    }}
+                  />
+                </div>
+
+                {/* Output panel */}
+                <div className="flex-1 overflow-y-auto space-y-3 pb-2">
+                  {runError && (
+                    <div className="rounded-lg border border-red-700/60 bg-red-900/20 p-3 font-mono text-xs text-red-300 whitespace-pre-wrap">
+                      {runError}
                     </div>
                   )}
 
-                  {result.figures?.map((fig, i) => (
-                    <div key={i} className="rounded-lg border border-[--border] overflow-hidden">
-                      <div className="flex items-center justify-between px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
-                        <span className="text-[11px] text-[--muted-foreground]">figure_{i + 1}.png</span>
-                        <a
-                          href={`data:image/png;base64,${fig}`}
-                          download={`figure_${i + 1}.png`}
-                          className="flex items-center gap-1 text-[10px] text-[--muted-foreground] hover:text-[--foreground]"
-                        >
-                          <Download size={11} /> Download
-                        </a>
-                      </div>
-                      <img src={`data:image/png;base64,${fig}`} alt={`figure ${i + 1}`} className="max-w-full" />
-                    </div>
-                  ))}
-
-                  {dataframeNames.map(name => {
-                    const df = result.dataframes[name];
-                    return (
-                      <div key={name} className="rounded-lg border border-[--border] overflow-hidden">
-                        <div className="px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
-                          <span className="text-[11px] text-[--muted-foreground]">
-                            {name} · {df.rowCount} rows × {df.columns.length} cols
-                          </span>
+                  {result && !runError && (
+                    <>
+                      {result.stdout && (
+                        <div className="rounded-lg border border-[--border] overflow-hidden">
+                          <div className="flex items-center gap-2 px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
+                            <Terminal size={11} className="text-[--muted-foreground]" />
+                            <span className="text-[11px] text-[--muted-foreground]">stdout</span>
+                          </div>
+                          <pre className="p-3 font-mono text-xs text-[--foreground] max-h-48 overflow-y-auto whitespace-pre-wrap">
+                            {result.stdout}
+                          </pre>
                         </div>
-                        <div className="overflow-x-auto max-h-48">
-                          <table className="w-full text-xs border-collapse">
-                            <thead className="sticky top-0 bg-[--muted]">
-                              <tr>
-                                {df.columns.map(c => (
-                                  <th key={c} className="border-b border-[--border] px-3 py-1.5 text-left text-[--muted-foreground] font-medium whitespace-nowrap">
-                                    {c}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {df.rows.slice(0, 40).map((row, i) => (
-                                <tr key={i} className="border-b border-[--border]/40 hover:bg-[--muted]/20">
-                                  {df.columns.map(c => (
-                                    <td key={c} className="px-3 py-1.5 text-[--foreground] whitespace-nowrap max-w-xs truncate">
-                                      {String(row[c] ?? "")}
-                                    </td>
+                      )}
+
+                      {result.figures?.map((fig, i) => (
+                        <div key={i} className="rounded-lg border border-[--border] overflow-hidden">
+                          <div className="flex items-center justify-between px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
+                            <span className="text-[11px] text-[--muted-foreground]">figure_{i + 1}.png</span>
+                            <a
+                              href={`data:image/png;base64,${fig}`}
+                              download={`figure_${i + 1}.png`}
+                              className="flex items-center gap-1 text-[10px] text-[--muted-foreground] hover:text-[--foreground]"
+                            >
+                              <Download size={11} /> Download
+                            </a>
+                          </div>
+                          <img src={`data:image/png;base64,${fig}`} alt={`figure ${i + 1}`} className="max-w-full" />
+                        </div>
+                      ))}
+
+                      {dataframeNames.map(name => {
+                        const df = result.dataframes[name];
+                        return (
+                          <div key={name} className="rounded-lg border border-[--border] overflow-hidden">
+                            <div className="px-3 py-1.5 bg-[--muted]/40 border-b border-[--border]">
+                              <span className="text-[11px] text-[--muted-foreground]">
+                                {name} · {df.rowCount} rows × {df.columns.length} cols
+                              </span>
+                            </div>
+                            <div className="overflow-x-auto max-h-48">
+                              <table className="w-full text-xs border-collapse">
+                                <thead className="sticky top-0 bg-[--muted]">
+                                  <tr>
+                                    {df.columns.map(c => (
+                                      <th key={c} className="border-b border-[--border] px-3 py-1.5 text-left text-[--muted-foreground] font-medium whitespace-nowrap">
+                                        {c}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {df.rows.slice(0, 40).map((row, ri) => (
+                                    <tr key={ri} className="border-b border-[--border]/40 hover:bg-[--muted]/20">
+                                      {df.columns.map(c => (
+                                        <td key={c} className="px-3 py-1.5 text-[--foreground] whitespace-nowrap max-w-xs truncate">
+                                          {String(row[c] ?? "")}
+                                        </td>
+                                      ))}
+                                    </tr>
                                   ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </>
-              )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
 
-              {running && (
-                <div className="flex items-center gap-2 text-xs text-[--muted-foreground] py-4">
-                  <Loader2 size={13} className="animate-spin" /> Running script…
+                  {running && (
+                    <div className="flex items-center gap-2 text-xs text-[--muted-foreground] py-4">
+                      <Loader2 size={13} className="animate-spin" /> Running script…
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         )}
       </div>

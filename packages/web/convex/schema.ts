@@ -183,6 +183,23 @@ export default defineSchema({
     .index("by_job", ["jobId"])
     .index("by_job_created", ["jobId", "createdAt"]),
 
+  // Script run records — persisted results of each script execution
+  scriptRuns: defineTable({
+    scriptId: v.id("projectScripts"),
+    projectId: v.id("projects"),
+    codeSnapshot: v.string(),
+    status: v.union(v.literal("running"), v.literal("success"), v.literal("failed")),
+    stdout: v.optional(v.string()),
+    error: v.optional(v.string()),
+    figureCount: v.number(),
+    figureStorageKeys: v.array(v.string()),
+    dfSummary: v.optional(v.any()),
+    createdAt: v.number(),
+    finishedAt: v.optional(v.number()),
+  })
+    .index("by_script", ["scriptId"])
+    .index("by_script_created", ["scriptId", "createdAt"]),
+
   // Research workspaces — notebook-style cells
   workspaces: defineTable({
     title: v.string(),

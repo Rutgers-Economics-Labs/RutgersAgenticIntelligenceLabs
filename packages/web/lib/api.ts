@@ -272,6 +272,24 @@ export const execute = {
     req<ExecuteResult>("/execute", { method: "POST", body: JSON.stringify({ code, timeout }) }),
 };
 
+// ── Script Runs ───────────────────────────────────────────────────────────────
+
+export type ScriptRunResult = {
+  runId: string;
+  result: ExecuteResult;
+  figureStorageKeys: string[];
+};
+
+export const scriptRuns = {
+  run: (scriptId: string, projectId: string, code: string, timeout = 120) =>
+    req<ScriptRunResult>(`/scripts/${scriptId}/runs`, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, code, timeout }),
+    }),
+  figureUrl: (runId: string, index: number) =>
+    `${API_BASE}/scripts/runs/${runId}/figures/${index}`,
+};
+
 export const storage = {
   upload: async (file: File) => {
     const form = new FormData();
