@@ -65,21 +65,27 @@ function ExplorerContent() {
 
       {/* Controls */}
       <div className="flex gap-3 mb-6 flex-wrap">
-        <div className="flex gap-2">
-          {classes.map((c) => (
-            <button
-              key={c.name}
-              onClick={() => { setSelectedClass(c.name); setPage(1); }}
-              className="px-3 py-1.5 rounded text-sm font-medium transition-all"
-              style={{
-                background: selectedClass === c.name ? CLASS_COLORS[c.name] + "33" : "transparent",
-                color: CLASS_COLORS[c.name] ?? "#8b949e",
-                border: `1px solid ${selectedClass === c.name ? CLASS_COLORS[c.name] : "#30363d"}`,
-              }}
-            >
-              {c.name} <span className="opacity-60 text-xs">({c.instanceCount.toLocaleString()})</span>
-            </button>
-          ))}
+        <div className="relative max-w-full">
+          <div className="overflow-x-auto whitespace-nowrap -mx-2 px-2 py-1 [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent] [&::-webkit-scrollbar]:h-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-[--border] [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border-[3px] [&::-webkit-scrollbar-thumb]:border-transparent [&::-webkit-scrollbar-thumb]:bg-clip-content hover:[&::-webkit-scrollbar-thumb]:bg-[--muted-foreground]">
+            <div className="inline-flex gap-2 items-center">
+            {classes.map((c) => (
+              <button
+                key={c.name}
+                onClick={() => { setSelectedClass(c.name); setPage(1); }}
+                className="px-3 py-1.5 rounded text-sm font-medium transition-all shrink-0"
+                style={{
+                  background: selectedClass === c.name ? CLASS_COLORS[c.name] + "33" : "transparent",
+                  color: CLASS_COLORS[c.name] ?? "#8b949e",
+                  border: `1px solid ${selectedClass === c.name ? CLASS_COLORS[c.name] : "#30363d"}`,
+                }}
+              >
+                {c.name} <span className="opacity-60 text-xs">({c.instanceCount.toLocaleString()})</span>
+              </button>
+            ))}
+            </div>
+          </div>
+          <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-[--background] to-transparent" />
+          <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-[--background] to-transparent" />
         </div>
         <input
           value={search}

@@ -41,10 +41,10 @@ function AnalysisPageInner() {
             <button
               key={p.slug}
               onClick={() => setSelected(p.slug)}
-              className={`text-left px-3 py-2 rounded text-sm transition-colors ${
+              className={`text-left px-3 py-2 rounded text-sm transition-colors border ${
                 selected === p.slug
-                  ? "bg-[--accent]/20 text-[--primary]"
-                  : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
+                  ? "bg-[--accent]/25 text-[--foreground] border-[--primary]/60 font-medium shadow-[inset_2px_0_0_0_var(--primary)]"
+                  : "border-transparent text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5 hover:border-[--border]"
               }`}
             >
               {p.name}

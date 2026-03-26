@@ -12,18 +12,45 @@ import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useEffect, useMemo, useState } from "react";
 
-const NAV = [
-  { href: "/workspace", label: "AI Workspace",  icon: BotMessageSquare },
-  { href: "/",          label: "Dashboard",     icon: Activity },
-  { href: "/projects",  label: "Projects",      icon: FolderOpen },
-  { href: "/explorer",  label: "Explorer",      icon: Layers },
-  { href: "/graph",     label: "Graph",         icon: Network },
-  { href: "/sql",       label: "SQL",           icon: Table2 },
-  { href: "/analysis",  label: "Analysis",      icon: BarChart2 },
-  { href: "/configs",   label: "Data Sources",  icon: Database },
-  { href: "/registry",  label: "Registry",      icon: Library },
-  { href: "/pipelines", label: "Pipelines",     icon: GitBranch },
-  { href: "/jobs",      label: "Jobs",          icon: Settings },
+type NavItem = { href: string; label: string; icon: React.ElementType };
+
+const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
+  {
+    title: "Home",
+    items: [
+      { href: "/", label: "Dashboard", icon: Activity },
+      { href: "/projects", label: "Projects", icon: FolderOpen },
+    ],
+  },
+  {
+    title: "Explore",
+    items: [
+      { href: "/explorer", label: "Explorer", icon: Layers },
+      { href: "/graph", label: "Graph", icon: Network },
+      { href: "/sql", label: "SQL", icon: Table2 },
+      { href: "/analysis", label: "Analysis", icon: BarChart2 },
+    ],
+  },
+  {
+    title: "Ops",
+    items: [
+      { href: "/jobs", label: "Jobs", icon: Settings },
+      { href: "/pipelines", label: "Pipelines", icon: GitBranch },
+    ],
+  },
+  {
+    title: "Data",
+    items: [
+      { href: "/configs", label: "Configs", icon: Database },
+      { href: "/registry", label: "Registry", icon: Library },
+    ],
+  },
+  {
+    title: "Tools",
+    items: [
+      { href: "/tools", label: "Tools", icon: BotMessageSquare },
+    ],
+  },
 ];
 
 export function Sidebar() {
@@ -85,6 +112,33 @@ export function Sidebar() {
     );
   }, [pathname]);
 
+  // Ensure the selected project is always a real project (no "All/Global" state).
+  useEffect(() => {
+    if (!projects || projects.length === 0) return;
+
+    const hasStored = !!storedProjectId;
+    const storedIsValid = hasStored && projects.some((p) => p._id === storedProjectId);
+    if (storedIsValid) return;
+
+    const fallbackId = projects[0]._id;
+    setStoredProjectId(fallbackId);
+    try {
+      localStorage.setItem("rail_projectId", fallbackId);
+    } catch {
+      /* ignore */
+    }
+
+    // If the URL already has projectId (or we're on a scoped route), keep it consistent.
+    const sp = new URLSearchParams(searchParams.toString());
+    const urlId = sp.get("projectId");
+    const shouldSyncUrl = isProjectScopedRoute || urlId !== null;
+    if (shouldSyncUrl && urlId !== fallbackId) {
+      sp.set("projectId", fallbackId);
+      router.replace(`${pathname}?${sp.toString()}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, storedProjectId, isProjectScopedRoute, pathname]);
+
   useEffect(() => {
     // Sticky behavior: if user has a saved project and is on a project-scoped route,
     // ensure the URL includes projectId so refresh/copy-paste preserves scope.
@@ -130,56 +184,60 @@ export function Sidebar() {
               // If we're already on a scoped route, update the current URL. Otherwise just persist.
               if (isProjectScopedRoute) {
                 const sp = new URLSearchParams(searchParams.toString());
-                if (next) sp.set("projectId", next);
-                else sp.delete("projectId");
+                sp.set("projectId", next);
                 router.push(`${pathname}?${sp.toString()}`);
               }
             }}
-            className="w-full px-2 py-1.5 rounded border border-[--border] bg-[--muted] text-xs text-[--foreground] outline-none focus:border-[--primary]"
+            className="w-full px-2 py-1.5 rounded border border-[--border] bg-[--muted] text-xs text-[--foreground] outline-none focus:border-[--primary]
+              dark:!text-white
+              [&>option]:bg-[#0d1117] [&>option]:text-white"
           >
-            <option value="">All / Global</option>
             {projects?.map((p) => (
               <option key={p._id} value={p._id}>
                 {p.name}
               </option>
             ))}
           </select>
-          {projectId && projectLabel && (
-            <p className="mt-1 text-[10px] text-[--muted-foreground] truncate" title={projectLabel}>
-              {projectLabel}
-            </p>
-          )}
         </div>
       </div>
       <nav className="flex-1 py-3 overflow-y-auto">
-        {NAV.map(({ href, label, icon: Icon }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
-          const isJobs = href === "/jobs";
-          
-          return (
-            <Link
-              key={href}
-              href={linkHref(href)}
-              className={cn(
-                "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group",
-                active
-                  ? "bg-[--accent]/20 text-[--primary] font-medium"
-                  : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
-              )}
-            >
-              <div className="flex items-center gap-3">
-                <Icon size={15} />
-                {label}
-              </div>
-              
-              {isJobs && runningCount > 0 && (
-                <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-[--primary] text-white text-[10px] font-bold rounded-full animate-pulse shadow-[0_0_8px_rgba(var(--primary-rgb),0.5)]">
-                  {runningCount}
-                </span>
-              )}
-            </Link>
-          );
-        })}
+        {NAV_GROUPS.map((group) => (
+          <div key={group.title} className="mb-3 last:mb-0">
+            <p className="px-4 py-1 text-[10px] text-[--muted-foreground] uppercase tracking-wide font-medium">
+              {group.title}
+            </p>
+            <div className="mt-1">
+              {group.items.map(({ href, label, icon: Icon }) => {
+                const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+                const isJobs = href === "/jobs";
+
+                return (
+                  <Link
+                    key={href}
+                    href={linkHref(href)}
+                    className={cn(
+                      "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group",
+                      active
+                        ? "bg-[--accent]/20 text-[--primary] font-medium"
+                        : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon size={15} />
+                      {label}
+                    </div>
+
+                    {isJobs && runningCount > 0 && (
+                      <span className="flex items-center justify-center min-w-[18px] h-[18px] px-1 bg-[--primary] text-white text-[10px] font-bold rounded-full animate-pulse shadow-[0_0_8px_rgba(var(--primary-rgb),0.5)]">
+                        {runningCount}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
       <div className="px-4 py-3 border-t border-[--border] flex items-center justify-between">
         <p className="text-[10px] text-[--muted-foreground]">Rutgers Agentic Intelligence Labs</p>

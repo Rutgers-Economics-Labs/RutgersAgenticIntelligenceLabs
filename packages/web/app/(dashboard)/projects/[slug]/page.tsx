@@ -1553,6 +1553,13 @@ function ProjectDashboard({ project }: { project: ProjectDoc }) {
               </button>
             )}
             <button
+              onClick={() => setAiOpen(true)}
+              className="text-xs px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground] hover:border-[--primary]/50 transition-colors flex items-center gap-1.5"
+              title="Open project assistant"
+            >
+              <Sparkles size={11} /> Assistant
+            </button>
+            <button
               onClick={handleDelete}
               className={`text-xs px-3 py-1.5 rounded border transition-colors ${
                 confirmDelete
@@ -1596,17 +1603,6 @@ function ProjectDashboard({ project }: { project: ProjectDoc }) {
       {activeTab === "pipeline"  && <PipelineTab  project={project} onRunSuccess={() => setActiveTab("jobs")} />}
       {activeTab === "jobs"      && <JobsTab      project={project} />}
       {activeTab === "explore"   && <ExploreTab   project={project} />}
-
-      {/* Floating AI button */}
-      {!aiOpen && (
-        <button
-          onClick={() => setAiOpen(true)}
-          className="fixed bottom-6 right-6 z-30 flex items-center gap-2 px-4 py-2.5 rounded-full bg-[--primary] text-[--primary-foreground] shadow-lg hover:opacity-90 transition-opacity text-sm font-semibold"
-        >
-          <Sparkles size={15} />
-          Ask AI
-        </button>
-      )}
 
       {/* AI Panel */}
       {aiOpen && <ProjectAIPanel project={project} onClose={() => setAiOpen(false)} />}
