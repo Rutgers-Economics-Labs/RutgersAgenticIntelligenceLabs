@@ -77,14 +77,16 @@ async def run_user_code(
     timeout_seconds: int,
     *,
     upload_artifacts: bool = False,
+    duckdb_path: str | Path | None = None,
 ) -> dict:
     """
     Execute `code` via code_subprocess_cli.py. Returns the same shape as code_runner.run_code,
     plus optional \"artifacts\": [{filename, storageKey}] when upload_artifacts is True.
     """
-    from app.services import sql_service
-
-    duck = sql_service.get_path()
+    duck = Path(duckdb_path) if duckdb_path is not None else None
+    if duck is None:
+        from app.services import sql_service
+        duck = sql_service.get_path()
     if duck is None or not duck.is_file():
         return {
             "stdout": "",

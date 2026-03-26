@@ -28,55 +28,60 @@ export type GraphData = {
 };
 export type SeriesPoint = { date: string; value: number };
 
+/** FastAPI uses Query(..., alias="projectId") — query string must be `projectId`, not `project_id`. */
+function withProject(params: URLSearchParams, projectId?: string) {
+  if (projectId) params.set("projectId", projectId);
+}
+
 export const ontology = {
   classes: (projectId?: string) => {
     const params = new URLSearchParams();
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<OntologyClass[]>(`/ontology/classes${params.size ? `?${params}` : ""}`);
   },
   instances: (cls: string, page = 1, limit = 50, search = "", projectId?: string) => {
     const params = new URLSearchParams({ page: String(page), limit: String(limit), search });
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<{ total: number; page: number; limit: number; items: EntitySummary[] }>(
       `/ontology/classes/${cls}/instances?${params}`
     );
   },
   entity: (uri: string, projectId?: string) => {
     const params = new URLSearchParams();
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<EntityDetail>(`/ontology/entities/${encodeURIComponent(uri)}${params.size ? `?${params}` : ""}`);
   },
   entityGraph: (uri: string, projectId?: string) => {
     const params = new URLSearchParams();
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<GraphData>(`/ontology/entities/${encodeURIComponent(uri)}/graph${params.size ? `?${params}` : ""}`);
   },
   graph: (types: string[], stateFips?: string, limit = 500, projectId?: string) => {
     const params = new URLSearchParams({ types: types.join(","), limit: String(limit) });
     if (stateFips) params.set("state_fips", stateFips);
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<GraphData>(`/ontology/graph?${params}`);
   },
   search: (q: string, types?: string[], projectId?: string) => {
     const params = new URLSearchParams({ q });
     if (types) params.set("types", types.join(","));
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<EntitySummary[]>(`/ontology/search?${params}`);
   },
   semanticSearch: (q: string, types?: string[], limit = 20, projectId?: string) => {
     const params = new URLSearchParams({ q, limit: String(limit) });
     if (types) params.set("types", types.join(","));
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<EntitySummary[]>(`/ontology/semantic-search?${params}`);
   },
   series: (projectId?: string) => {
     const params = new URLSearchParams();
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<string[]>(`/ontology/series${params.size ? `?${params}` : ""}`);
   },
   seriesData: (id: string, projectId?: string) => {
     const params = new URLSearchParams();
-    if (projectId) params.set("project_id", projectId);
+    withProject(params, projectId);
     return req<SeriesPoint[]>(`/ontology/series/${encodeURIComponent(id)}/data${params.size ? `?${params}` : ""}`);
   },
 };
@@ -95,11 +100,15 @@ export type AnalysisSection =
 
 export const analysis = {
   plugins: () => req<AnalysisPlugin[]>("/analysis/plugins"),
-  run: (slug: string, config = {}) =>
-    req<AnalysisResult>(`/analysis/plugins/${slug}/run`, {
+  run: (slug: string, config = {}, projectId?: string) => {
+    const params = new URLSearchParams();
+    withProject(params, projectId);
+    const qs = params.size ? `?${params}` : "";
+    return req<AnalysisResult>(`/analysis/plugins/${slug}/run${qs}`, {
       method: "POST",
       body: JSON.stringify({ config }),
-    }),
+    });
+  },
 };
 
 // ── Configs ───────────────────────────────────────────────────────────────────
@@ -195,12 +204,28 @@ export type SqlResult = {
 };
 
 export const sql = {
-  query: (query: string) =>
-    req<SqlResult>("/sql", { method: "POST", body: JSON.stringify({ query }) }),
-  translate: (question: string, model?: string) =>
-    req<SqlResult>("/sql/translate", { method: "POST", body: JSON.stringify({ question, model }) }),
-  schema: () => req<Record<string, { name: string; type: string }[]>>("/sql/schema"),
-  tables: () => req<string[]>("/sql/tables"),
+  query: (query: string, projectId?: string) => {
+    const params = new URLSearchParams();
+    withProject(params, projectId);
+    const qs = params.size ? `?${params}` : "";
+    return req<SqlResult>(`/sql${qs}`, { method: "POST", body: JSON.stringify({ query }) });
+  },
+  translate: (question: string, model?: string, projectId?: string) => {
+    const params = new URLSearchParams();
+    withProject(params, projectId);
+    const qs = params.size ? `?${params}` : "";
+    return req<SqlResult>(`/sql/translate${qs}`, { method: "POST", body: JSON.stringify({ question, model }) });
+  },
+  schema: (projectId?: string) => {
+    const params = new URLSearchParams();
+    withProject(params, projectId);
+    return req<Record<string, { name: string; type: string }[]>>(`/sql/schema${params.size ? `?${params}` : ""}`);
+  },
+  tables: (projectId?: string) => {
+    const params = new URLSearchParams();
+    withProject(params, projectId);
+    return req<string[]>(`/sql/tables${params.size ? `?${params}` : ""}`);
+  },
 };
 
 // ── Project Agent ─────────────────────────────────────────────────────────────

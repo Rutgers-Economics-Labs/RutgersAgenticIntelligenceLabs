@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { sql, SqlResult } from "@/lib/api";
 import { Play, Sparkles, Table2, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -12,7 +13,10 @@ const EXAMPLE_QUERIES = [
   { label: "Municipality count by state", query: `SELECT LEFT(_id, 8) as state_prefix, COUNT(*) as count FROM "Municipality" GROUP BY 1 ORDER BY count DESC LIMIT 20` },
 ];
 
-export default function SqlPage() {
+function SqlPageInner() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") || undefined;
+
   const [query, setQuery] = useState('SELECT * FROM "State" LIMIT 20');
   const [nlQuestion, setNlQuestion] = useState("");
   const [result, setResult] = useState<SqlResult | null>(null);
@@ -24,8 +28,8 @@ export default function SqlPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    sql.schema().then(setSchema).catch(() => {});
-  }, []);
+    sql.schema(projectId).then(setSchema).catch(() => {});
+  }, [projectId]);
 
   async function runQuery() {
     if (!query.trim() || loading) return;
@@ -33,7 +37,7 @@ export default function SqlPage() {
     setError(null);
     setResult(null);
     try {
-      setResult(await sql.query(query));
+      setResult(await sql.query(query, projectId));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -47,7 +51,7 @@ export default function SqlPage() {
     setError(null);
     setResult(null);
     try {
-      const res = await sql.translate(nlQuestion);
+      const res = await sql.translate(nlQuestion, undefined, projectId);
       setQuery(res.sql ?? "");
       setResult(res);
     } catch (e) {
@@ -232,5 +236,13 @@ export default function SqlPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SqlPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-[--muted-foreground]">Loading SQL…</div>}>
+      <SqlPageInner />
+    </Suspense>
   );
 }

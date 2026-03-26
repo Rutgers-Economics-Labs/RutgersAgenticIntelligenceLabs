@@ -1,80 +1,133 @@
 """
-Loads the OWL quadstore and answers queries against it.
-The onto object is cached in memory; swapped out when a new hydration job completes.
+Project-aware OWL quadstore access (onto.db via Owlready2).
+
+Historically this service used a single global in-memory ontology.
+We now support per-project ontologies by keeping separate Owlready2 Worlds,
+each guarded by its own single-thread executor (Owlready2 SQLite backend is not thread-safe).
 """
+
+from __future__ import annotations
+
 import asyncio
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 from typing import Any, Union, List
 
 from owlready2 import World, ObjectProperty
 
-_onto = None
-_world = None
-_db_path: Union[str, None] = None
-_lock = Lock()
-# Executor ensures owlready2 SQLite access is single-threaded
-_executor = None
+GLOBAL_PROJECT_ID = "__global__"
 
 
-def _get_executor():
-    global _executor
+@dataclass
+class _ProjectOntology:
+    project_id: str
+    lock: Lock
+    world: World | None = None
+    onto: Any | None = None
+    db_path: str | None = None
+    executor: Any | None = None
+
+
+_states: dict[str, _ProjectOntology] = {}
+_states_lock = Lock()
+
+
+def _get_state(project_id: str | None) -> _ProjectOntology:
+    pid = project_id or GLOBAL_PROJECT_ID
+    with _states_lock:
+        st = _states.get(pid)
+        if st is None:
+            st = _ProjectOntology(project_id=pid, lock=Lock())
+            _states[pid] = st
+        return st
+
+
+def _get_executor(st: _ProjectOntology):
     import concurrent.futures
-    if _executor is None:
-        _executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    return _executor
+
+    if st.executor is None:
+        st.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    return st.executor
 
 
-def load(db_path: Union[str, Path]):
-    """Load (or reload) the quadstore from db_path. Thread-safe."""
-    global _onto, _world, _db_path
+def load(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
+    """Load (or reload) the quadstore for project_id from db_path. Thread-safe."""
+    st = _get_state(project_id)
     db_path = str(db_path)
-    with _lock:
-        if _world is not None:
-            _world.close()
-        _world = World()
-        _world.set_backend(filename=db_path, exclusive=False)
-        # Discover which ontology is stored in this quadstore dynamically.
-        # This works for any YAML-defined schema — no hardcoded IRI required.
-        # owlready2 populates _world.ontologies after set_backend() when the DB
-        # already has triples; we just grab the first (and usually only) one.
-        stored = list(_world.ontologies.values())
-        if not stored:
-             raise RuntimeError(f"No ontology found in quadstore at {db_path}.")
-
-        # Prefer the first one that isn't 'http://anonymous/'
-        filtered = [o for o in stored if o.base_iri != "http://anonymous/"]
-        if filtered:
-            _onto = filtered[0]
-        else:
-            _onto = stored[0]
-
-        print(f"  [load] Active ontology: {_onto.base_iri} ({len(list(_onto.classes()))} classes found)")
-        _db_path = db_path
+    with st.lock:
+        _load_locked(st, db_path)
 
 
-def _require_onto():
-    if _onto is None:
+def _load_locked(st: _ProjectOntology, db_path: str) -> None:
+    """Load the quadstore with st.lock already held."""
+    if st.world is not None:
+        st.world.close()
+    st.world = World()
+    # Owlready2 uses SQLite; on some systems we can see transient "database is locked"
+    # during concurrent access / background jobs. Retry briefly to avoid 500s.
+    last_err: Exception | None = None
+    for attempt in range(9):
+        try:
+            st.world.set_backend(filename=db_path, exclusive=False)
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            if "database is locked" not in msg and "locked" not in msg:
+                raise
+            time.sleep(0.05 * (2**attempt))
+    if last_err is not None:
+        raise last_err
+
+    stored = list(st.world.ontologies.values())
+    if not stored:
+        raise RuntimeError(f"No ontology found in quadstore at {db_path}.")
+
+    filtered = [o for o in stored if o.base_iri != "http://anonymous/"]
+    st.onto = filtered[0] if filtered else stored[0]
+    st.db_path = db_path
+    print(
+        f"  [load] project={st.project_id} ontology={st.onto.base_iri} ({len(list(st.onto.classes()))} classes found)"
+    )
+
+
+def ensure_loaded(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
+    st = _get_state(project_id)
+    db_path = str(db_path)
+    # Guard the check + load together to prevent concurrent requests from both
+    # trying to open/analyze the same SQLite quadstore at once.
+    with st.lock:
+        if st.db_path != db_path or st.onto is None or st.world is None:
+            _load_locked(st, db_path)
+
+
+def _require_onto(project_id: str | None = None):
+    st = _get_state(project_id)
+    if st.onto is None:
         raise RuntimeError("Ontology not loaded. Run a hydration job first.")
-    return _onto
+    return st.onto
 
 
-def get_db_path() -> Union[str, None]:
-    return _db_path
+def get_db_path(project_id: str | None = None) -> Union[str, None]:
+    return _get_state(project_id).db_path
 
 
-async def _run(fn, *args, **kwargs):
-    """Run a sync ontology function in the dedicated thread executor."""
+async def _run(project_id: str | None, fn, *args, **kwargs):
+    """Run a sync ontology function within the project's dedicated thread executor."""
+    st = _get_state(project_id)
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(_get_executor(), lambda: fn(*args, **kwargs))
+    return await loop.run_in_executor(_get_executor(st), lambda: fn(project_id, *args, **kwargs))
 
 
 # ---------------------------------------------------------------------------
 # Query functions (all sync; call via _run() from async endpoints)
 # ---------------------------------------------------------------------------
 
-def list_classes() -> list[dict]:
-    onto = _require_onto()
+def list_classes(project_id: str | None = None) -> list[dict]:
+    onto = _require_onto(project_id)
     return sorted(
         [
             {"name": cls.name, "instanceCount": len(list(cls.instances()))}
@@ -85,12 +138,13 @@ def list_classes() -> list[dict]:
 
 
 def list_instances(
+    project_id: str | None,
     class_name: str,
     page: int = 1,
     limit: int = 50,
     search: str = "",
 ) -> dict:
-    onto = _require_onto()
+    onto = _require_onto(project_id)
     cls = next((c for c in onto.classes() if c.name == class_name), None)
     if cls is None:
         raise ValueError(f"Class '{class_name}' not found in ontology")
@@ -112,16 +166,16 @@ def list_instances(
     }
 
 
-def get_entity(uri: str) -> dict:
-    onto = _require_onto()
+def get_entity(project_id: str | None, uri: str) -> dict:
+    onto = _require_onto(project_id)
     ind = onto.search_one(iri=f"*#{uri}")
     if ind is None:
         raise ValueError(f"Entity '{uri}' not found")
     return _serialize_entity(ind, include_relationships=True)
 
 
-def get_entity_graph(uri: str) -> dict:
-    onto = _require_onto()
+def get_entity_graph(project_id: str | None, uri: str) -> dict:
+    onto = _require_onto(project_id)
     ind = onto.search_one(iri=f"*#{uri}")
     if ind is None:
         raise ValueError(f"Entity '{uri}' not found")
@@ -154,11 +208,12 @@ def get_entity_graph(uri: str) -> dict:
 
 
 def get_full_graph(
+    project_id: str | None,
     types: Union[List[str], None] = None,
     state_fips: Union[str, None] = None,
     limit: int = 500,
 ) -> dict:
-    onto = _require_onto()
+    onto = _require_onto(project_id)
     all_class_names = [c.name for c in onto.classes()]
     # Default to all classes in the ontology — generalized for any schema
     types = types or all_class_names
@@ -219,8 +274,8 @@ def get_full_graph(
     return {"nodes": list(nodes.values()), "links": links}
 
 
-def search_entities(q: str, types: Union[List[str], None] = None) -> List[dict]:
-    onto = _require_onto()
+def search_entities(project_id: str | None, q: str, types: Union[List[str], None] = None) -> List[dict]:
+    onto = _require_onto(project_id)
     results = []
     q_lower = q.lower()
     for cls in onto.classes():
@@ -234,7 +289,7 @@ def search_entities(q: str, types: Union[List[str], None] = None) -> List[dict]:
     return results[:100]
 
 
-def within_radius(lat: float, lon: float, radius_km: float, types: List[str] = None) -> List[dict]:
+def within_radius(project_id: str | None, lat: float, lon: float, radius_km: float, types: List[str] = None) -> List[dict]:
     """
     GIS Spatial Query: Find entities within a radius using the DuckDB spatial mirror.
     Note: Requires that the ontology has been exported to DuckDB and contains
@@ -243,7 +298,8 @@ def within_radius(lat: float, lon: float, radius_km: float, types: List[str] = N
     import duckdb
     from app.services import config_service
 
-    db_path = _db_path.replace(".db", ".duckdb") if _db_path else "ontology/onto.duckdb"
+    db_path = get_db_path(project_id)
+    db_path = db_path.replace(".db", ".duckdb") if db_path else "ontology/onto.duckdb"
     if not Path(db_path).exists():
         raise RuntimeError("GIS query requires DuckDB export. Run hydration first.")
 
@@ -284,12 +340,13 @@ def within_radius(lat: float, lon: float, radius_km: float, types: List[str] = N
         con.close()
 
 
-def update_entity_property(uri: str, prop_name: str, value: Any):
+def update_entity_property(project_id: str | None, uri: str, prop_name: str, value: Any):
     """
     Streaming/Real-time Update: Modifies a single triple in the SQLite quadstore.
     Thread-safe and atomic.
     """
-    onto = _require_onto()
+    st = _get_state(project_id)
+    onto = _require_onto(project_id)
     ind = onto.search_one(iri=f"*#{uri}")
     if ind is None:
         raise ValueError(f"Entity '{uri}' not found for update")
@@ -298,20 +355,20 @@ def update_entity_property(uri: str, prop_name: str, value: Any):
     if prop is None:
         raise ValueError(f"Property '{prop_name}' not found")
 
-    with _lock:
+    with st.lock:
         # Update owlready2 instance
         setattr(ind, prop_name, value)
         # Quadstore backend is updated immediately if it's already in a 'with onto:' context
         # but here we ensure it persists.
-        _world.save()
+        st.world.save()
 
     print(f"[stream] Updated {uri}.{prop_name} = {value}")
 
 
 
-def list_series() -> list[str]:
+def list_series(project_id: str | None = None) -> list[str]:
     """Return all distinct hasSeries values across any class that carries the property."""
-    onto = _require_onto()
+    onto = _require_onto(project_id)
     series: set[str] = set()
     for cls in onto.classes():
         for ind in cls.instances():
@@ -321,8 +378,8 @@ def list_series() -> list[str]:
     return sorted(series)
 
 
-def list_search_documents() -> list[dict]:
-    onto = _require_onto()
+def list_search_documents(project_id: str | None = None) -> list[dict]:
+    onto = _require_onto(project_id)
     documents = []
     for cls in onto.classes():
         for ind in cls.instances():
@@ -336,7 +393,7 @@ def list_search_documents() -> list[dict]:
     return documents
 
 
-def _export_to_duckdb_sync(duckdb_path: str) -> None:
+def _export_to_duckdb_sync(project_id: str | None, duckdb_path: str) -> None:
     """
     Export all OWL individuals to DuckDB tables.
     Each class becomes a table; data properties become columns.
@@ -345,7 +402,7 @@ def _export_to_duckdb_sync(duckdb_path: str) -> None:
     import duckdb
     import pandas as pd
 
-    onto = _require_onto()
+    onto = _require_onto(project_id)
     con = duckdb.connect(duckdb_path)
     try:
         for cls in onto.classes():
@@ -376,14 +433,14 @@ def _export_to_duckdb_sync(duckdb_path: str) -> None:
         con.close()
 
 
-async def export_to_duckdb(duckdb_path: str) -> None:
+async def export_to_duckdb(project_id: str | None, duckdb_path: str) -> None:
     """Async wrapper: export ontology to DuckDB. Runs in the ontology executor."""
-    await _run(_export_to_duckdb_sync, duckdb_path)
+    await _run(project_id, _export_to_duckdb_sync, duckdb_path)
 
 
-def get_series_data(series_id: str) -> list[dict]:
+def get_series_data(project_id: str | None, series_id: str) -> list[dict]:
     """Return time-series rows for series_id from any class that carries hasSeries."""
-    onto = _require_onto()
+    onto = _require_onto(project_id)
     rows = []
     for cls in onto.classes():
         for ind in cls.instances():

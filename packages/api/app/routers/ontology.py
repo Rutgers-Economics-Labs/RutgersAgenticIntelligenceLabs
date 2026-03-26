@@ -1,13 +1,17 @@
 from typing import Union
 from fastapi import APIRouter, HTTPException, Query
 from app.services import embedding_service, ontology_service
+from app.services import project_artifacts_service
 
 router = APIRouter(prefix="/ontology", tags=["ontology"])
 
 
 @router.get("/classes")
-async def list_classes():
-    return await ontology_service._run(ontology_service.list_classes)
+async def list_classes(project_id: str | None = Query(None, alias="projectId")):
+    if project_id:
+        art = await project_artifacts_service.resolve(project_id)
+        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+    return await ontology_service._run(project_id, ontology_service.list_classes)
 
 
 @router.get("/classes/{class_name}/instances")
@@ -16,27 +20,37 @@ async def list_instances(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     search: str = Query(""),
+    project_id: str | None = Query(None, alias="projectId"),
 ):
     try:
+        if project_id:
+            art = await project_artifacts_service.resolve(project_id)
+            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
         return await ontology_service._run(
-            ontology_service.list_instances, class_name, page, limit, search
+            project_id, ontology_service.list_instances, class_name, page, limit, search
         )
     except ValueError as e:
         raise HTTPException(404, detail=str(e))
 
 
 @router.get("/entities/{uri}")
-async def get_entity(uri: str):
+async def get_entity(uri: str, project_id: str | None = Query(None, alias="projectId")):
     try:
-        return await ontology_service._run(ontology_service.get_entity, uri)
+        if project_id:
+            art = await project_artifacts_service.resolve(project_id)
+            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await ontology_service._run(project_id, ontology_service.get_entity, uri)
     except ValueError as e:
         raise HTTPException(404, detail=str(e))
 
 
 @router.get("/entities/{uri}/graph")
-async def get_entity_graph(uri: str):
+async def get_entity_graph(uri: str, project_id: str | None = Query(None, alias="projectId")):
     try:
-        return await ontology_service._run(ontology_service.get_entity_graph, uri)
+        if project_id:
+            art = await project_artifacts_service.resolve(project_id)
+            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await ontology_service._run(project_id, ontology_service.get_entity_graph, uri)
     except ValueError as e:
         raise HTTPException(404, detail=str(e))
 
@@ -46,10 +60,14 @@ async def get_full_graph(
     types: str = Query("State,County,Municipality,Individual,Measure"),
     state_fips: Union[str, None] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
+    project_id: str | None = Query(None, alias="projectId"),
 ):
     type_list = [t.strip() for t in types.split(",") if t.strip()]
+    if project_id:
+        art = await project_artifacts_service.resolve(project_id)
+        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
     return await ontology_service._run(
-        ontology_service.get_full_graph, type_list, state_fips, limit
+        project_id, ontology_service.get_full_graph, type_list, state_fips, limit
     )
 
 
@@ -57,9 +75,13 @@ async def get_full_graph(
 async def search_entities(
     q: str = Query(..., min_length=1),
     types: Union[str, None] = Query(None),
+    project_id: str | None = Query(None, alias="projectId"),
 ):
     type_list = [t.strip() for t in types.split(",")] if types else None
-    return await ontology_service._run(ontology_service.search_entities, q, type_list)
+    if project_id:
+        art = await project_artifacts_service.resolve(project_id)
+        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+    return await ontology_service._run(project_id, ontology_service.search_entities, q, type_list)
 
 
 @router.get("/semantic-search")
@@ -67,19 +89,29 @@ async def semantic_search_entities(
     q: str = Query(..., min_length=1),
     types: Union[str, None] = Query(None),
     limit: int = Query(20, ge=1, le=100),
+    project_id: str | None = Query(None, alias="projectId"),
 ):
     type_list = [t.strip() for t in types.split(",")] if types else None
     try:
-        return await embedding_service.search(q, top_k=limit, types=type_list)
+        if project_id:
+            art = await project_artifacts_service.resolve(project_id)
+            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await embedding_service.search(q, top_k=limit, types=type_list, project_id=project_id)
     except RuntimeError as e:
         raise HTTPException(503, detail=str(e))
 
 
 @router.get("/series")
-async def list_series():
-    return await ontology_service._run(ontology_service.list_series)
+async def list_series(project_id: str | None = Query(None, alias="projectId")):
+    if project_id:
+        art = await project_artifacts_service.resolve(project_id)
+        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+    return await ontology_service._run(project_id, ontology_service.list_series)
 
 
 @router.get("/series/{series_id}/data")
-async def get_series_data(series_id: str):
-    return await ontology_service._run(ontology_service.get_series_data, series_id)
+async def get_series_data(series_id: str, project_id: str | None = Query(None, alias="projectId")):
+    if project_id:
+        art = await project_artifacts_service.resolve(project_id)
+        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+    return await ontology_service._run(project_id, ontology_service.get_series_data, series_id)

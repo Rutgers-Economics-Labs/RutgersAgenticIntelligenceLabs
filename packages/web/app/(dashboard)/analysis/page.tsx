@@ -1,9 +1,13 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { analysis, type AnalysisPlugin, type AnalysisResult, type AnalysisSection } from "@/lib/api";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
-export default function AnalysisPage() {
+function AnalysisPageInner() {
+  const searchParams = useSearchParams();
+  const projectId = searchParams.get("projectId") || undefined;
+
   const [plugins, setPlugins] = useState<AnalysisPlugin[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [result, setResult] = useState<AnalysisResult | null>(null);
@@ -20,7 +24,7 @@ export default function AnalysisPage() {
     if (!selected) return;
     setRunning(true); setResult(null); setError("");
     try {
-      setResult(await analysis.run(selected));
+      setResult(await analysis.run(selected, {}, projectId));
     } catch (e) {
       setError(String(e));
     } finally { setRunning(false); }
@@ -76,6 +80,14 @@ export default function AnalysisPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function AnalysisPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-sm text-[--muted-foreground]">Loading analysis…</div>}>
+      <AnalysisPageInner />
+    </Suspense>
   );
 }
 

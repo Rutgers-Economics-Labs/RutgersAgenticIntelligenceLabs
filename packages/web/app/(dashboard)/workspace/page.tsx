@@ -323,15 +323,17 @@ function WorkspacePageInner() {
   const updateTitle = useMutation(convexApi.agent.updateTitle);
   const deleteSession = useMutation(convexApi.agent.deleteSession);
 
+  const projectId = searchParams.get("projectId") || undefined;
+
   useEffect(() => {
     agent.models().then(data => {
       setModels(data.models);
       setSelectedModel(data.default);
     }).catch(() => {});
-    sql.schema()
+    sql.schema(projectId)
       .then((schema) => setSchemaSummary(formatSchemaForPrompt(schema)))
       .catch(() => {});
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     const sessionParam = searchParams.get("session");

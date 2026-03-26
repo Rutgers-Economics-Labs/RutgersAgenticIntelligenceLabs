@@ -108,6 +108,12 @@ export default defineSchema({
       v.literal("hydrated"),
     ),
     lastJobId: v.optional(v.string()),
+    // Active knowledge graph artifacts for this project (set after successful hydration).
+    // In local mode these are filesystem paths; in S3 mode these are storage keys.
+    activeOntologyDbPath: v.optional(v.string()),
+    activeOntologyOwlPath: v.optional(v.string()),
+    activeOntologyDuckdbPath: v.optional(v.string()),
+    activeOntologyEmbeddingsPath: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

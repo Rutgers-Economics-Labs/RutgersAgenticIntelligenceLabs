@@ -1,10 +1,11 @@
 import sys
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
+from app.services import project_artifacts_service, sql_service, ontology_service
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -57,7 +58,7 @@ class RunCodeRequest(BaseModel):
 
 
 @router.post("/run-code")
-async def run_code_analysis(req: RunCodeRequest):
+async def run_code_analysis(req: RunCodeRequest, project_id: str | None = Query(None, alias="projectId")):
     """
     Execute Python in an isolated child process with the same helpers as POST /execute
     (sql, get_table, list_tables, pd, np, sklearn, plt). User code may write files under
@@ -71,26 +72,37 @@ async def run_code_analysis(req: RunCodeRequest):
             status_code=403,
             detail="Python execution is disabled (RAIL_EXECUTE_ENABLED=false).",
         )
-    from app.services import sql_service, subprocess_code_runner
+    from app.services import subprocess_code_runner
 
-    if not sql_service.is_ready():
-        raise HTTPException(
-            status_code=503,
-            detail="DuckDB mirror not ready. Run a hydration job first.",
-        )
+    duck = None
+    if project_id:
+        art = await project_artifacts_service.resolve(project_id)
+        duck = art.duckdb_path
+
+    if not sql_service.is_ready(duck):
+        raise HTTPException(status_code=503, detail="DuckDB mirror not ready. Run a hydration job first.")
 
     return await subprocess_code_runner.run_user_code(
         req.code,
         req.timeout,
         upload_artifacts=req.upload_artifacts,
+        duckdb_path=duck,
     )
 
 
 @router.post("/plugins/{slug}/run")
-async def run_plugin(slug: str, req: RunRequest):
-    from app.services.ontology_service import _require_onto
+async def run_plugin(
+    slug: str,
+    req: RunRequest,
+    project_id: str | None = Query(None, alias="projectId"),
+):
     try:
-        onto = _require_onto()
+        if project_id:
+            art = await project_artifacts_service.resolve(project_id)
+            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        from app.services.ontology_service import _require_onto
+
+        onto = _require_onto(project_id)
     except RuntimeError as e:
         raise HTTPException(503, detail=str(e))
 

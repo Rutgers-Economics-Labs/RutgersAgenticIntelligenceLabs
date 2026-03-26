@@ -332,7 +332,7 @@ async def _execute_tool(name: str, args: dict) -> dict:
         search = args.get("search", "")
         limit = min(args.get("limit", 20), 100)
         result = await ontology_service._run(
-            ontology_service.list_instances, class_name, 1, limit, search
+            None, ontology_service.list_instances, class_name, 1, limit, search
         )
         # Trim properties for token efficiency
         items = result.get("items", [])
@@ -361,14 +361,14 @@ async def _execute_tool(name: str, args: dict) -> dict:
 
     elif name == "get_series_data":
         from app.services import ontology_service
-        data = await ontology_service._run(ontology_service.get_series_data, args["series_id"])
+        data = await ontology_service._run(None, ontology_service.get_series_data, args["series_id"])
         return {"series_id": args["series_id"], "points": data}
 
     elif name == "search_entities":
         from app.services import ontology_service
         types = args.get("types")
         results = await ontology_service._run(
-            ontology_service.search_entities, args["query"], types
+            None, ontology_service.search_entities, args["query"], types
         )
         return {"results": results}
 

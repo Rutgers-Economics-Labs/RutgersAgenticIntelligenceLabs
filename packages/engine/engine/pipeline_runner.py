@@ -221,6 +221,10 @@ def _export_to_duckdb(world, onto, duckdb_path):
     if os.path.exists(duckdb_path):
         os.remove(duckdb_path)
 
+    duckdb_dir = os.path.dirname(duckdb_path)
+    if duckdb_dir:
+        os.makedirs(duckdb_dir, exist_ok=True)
+
     con = duckdb.connect(duckdb_path)
     try:
         for cls in onto.classes():

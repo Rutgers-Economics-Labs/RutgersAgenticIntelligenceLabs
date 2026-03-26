@@ -194,18 +194,38 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                 pipeline_spec["ontology"] = str(onto_path)
                 await emit("info", f"[setup] Ontology YAML → {onto_path.relative_to(tmpdir)} (from Convex)")
             else:
-                # Fall back to engine defaults
-                engine_onto = settings.engine_root / "configs" / "ontology" / f"{onto_ref}.yaml"
-                if not engine_onto.exists():
-                    engine_onto = settings.engine_root / "configs" / "ontology" / "core.yaml"
-                
+                # Fall back to engine defaults (support both slugs and engine-relative paths)
+                onto_ref_str = str(onto_ref or "core").strip() or "core"
+                import shutil
+                from pathlib import Path as _Path
+
+                engine_onto: _Path | None = None
+
+                # If pipeline uses engine-relative path like "configs/ontology/academic.yaml",
+                # resolve it against the engine root.
+                if onto_ref_str.endswith((".yaml", ".yml", ".owl")) or "/" in onto_ref_str or "\\" in onto_ref_str:
+                    cand = _Path(onto_ref_str)
+                    if cand.is_absolute():
+                        engine_onto = cand if cand.exists() else None
+                    else:
+                        engine_onto = (settings.engine_root / cand).resolve()
+                        if not engine_onto.exists():
+                            engine_onto = None
+
+                # Otherwise treat as slug and look in configs/ontology/{slug}.yaml
+                if engine_onto is None:
+                    engine_onto = settings.engine_root / "configs" / "ontology" / f"{onto_ref_str}.yaml"
+                    if not engine_onto.exists():
+                        engine_onto = settings.engine_root / "configs" / "ontology" / "core.yaml"
+
                 if engine_onto.exists():
-                    import shutil
-                    shutil.copy2(engine_onto, onto_dir / "core.yaml")
-                    pipeline_spec["ontology"] = str(onto_dir / "core.yaml")
+                    out_name = engine_onto.name
+                    out_path = onto_dir / out_name
+                    shutil.copy2(engine_onto, out_path)
+                    pipeline_spec["ontology"] = str(out_path)
                     await emit(
                         "info",
-                        f"[setup] Ontology copied from engine: {engine_onto} → {onto_dir / 'core.yaml'}",
+                        f"[setup] Ontology copied from engine: {engine_onto} → {out_path.relative_to(tmpdir)}",
                     )
 
             output_owl = str(tmpdir / "populated_ontology.owl")
@@ -306,16 +326,49 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                 "outputOwlPath": owl_key,
             })
 
-            # Reload ontology cache with new quadstore
-            from app.services import ontology_service, sql_service
-            ontology_service.load(db_key)
+            # Persist "active ontology" onto the owning project (if any)
+            project_id = None
+            try:
+                job_doc = await convex.query("jobs:get", {"jobId": job_id})
+                project_id = job_doc.get("projectId") if job_doc else None
+            except Exception:
+                project_id = None
+
+            if project_id:
+                duckdb_path = str(Path(db_key).parent / "onto.duckdb") if "/" in db_key else str(
+                    settings.engine_root / "ontology" / "onto.duckdb"
+                )
+                embeddings_path = str(Path(db_key).parent / "embeddings.db") if "/" in db_key else str(
+                    settings.engine_root / "ontology" / "embeddings.db"
+                )
+                await convex.mutation(
+                    "projects:updateById",
+                    {
+                        "projectId": project_id,
+                        "status": "hydrated",
+                        "lastJobId": job_id,
+                        "activeOntologyDbPath": db_key,
+                        "activeOntologyOwlPath": owl_key,
+                        "activeOntologyDuckdbPath": duckdb_path,
+                        "activeOntologyEmbeddingsPath": embeddings_path,
+                    },
+                )
+                await emit("info", f"[job] Project updated: active ontology set (projectId={project_id})")
+
+            # Warm caches and build derived artifacts for project-specific querying
+            from app.services import ontology_service
+
+            try:
+                ontology_service.load(db_key, project_id=project_id)
+            except Exception as e:
+                await emit("warn", f"[job] Ontology cache warm-up failed (non-fatal): {e}")
 
             # Export to DuckDB for SQL queries
             try:
-                duckdb_path = str(Path(db_key).parent / "onto.duckdb") if "/" in db_key else \
-                              str(settings.engine_root / "ontology" / "onto.duckdb")
-                await ontology_service.export_to_duckdb(duckdb_path)
-                sql_service.set_path(duckdb_path)
+                duckdb_path = str(Path(db_key).parent / "onto.duckdb") if "/" in db_key else str(
+                    settings.engine_root / "ontology" / "onto.duckdb"
+                )
+                await ontology_service.export_to_duckdb(project_id, duckdb_path)
                 await emit("info", f"[job] DuckDB export ready: {duckdb_path}")
             except Exception as e:
                 await emit("warn", f"[job] DuckDB export failed (non-fatal): {e}")
@@ -323,7 +376,7 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             try:
                 from app.services import embedding_service
 
-                await embedding_service.build_index(db_key)
+                await embedding_service.build_index(db_key, project_id=project_id)
                 await emit("info", "[job] Semantic index ready")
             except Exception as e:
                 await emit("warn", f"[job] Embedding index failed (non-fatal): {e}")

@@ -29,47 +29,70 @@ _local_vectorizer = HashingVectorizer(
 )
 
 
-def _storage_dir(db_path: str | Path | None = None) -> Path:
+def _storage_dir(*, db_path: str | Path | None = None, project_id: str | None = None) -> Path:
     if db_path:
         candidate = Path(db_path)
         if candidate.exists():
             return candidate.parent
-    current_db = ontology_service.get_db_path()
+    current_db = ontology_service.get_db_path(project_id)
     if current_db and Path(current_db).exists():
         return Path(current_db).parent
     return settings.engine_root / "ontology"
 
 
-def _index_path(db_path: str | Path | None = None) -> Path:
-    return _storage_dir(db_path) / "embeddings.db"
+def _index_path(*, db_path: str | Path | None = None, project_id: str | None = None) -> Path:
+    return _storage_dir(db_path=db_path, project_id=project_id) / "embeddings.db"
 
 
-def is_ready(db_path: str | Path | None = None) -> bool:
-    return _index_path(db_path).exists()
+def is_ready(db_path: str | Path | None = None, *, project_id: str | None = None) -> bool:
+    return _index_path(db_path=db_path, project_id=project_id).exists()
 
 
-async def build_index(db_path: str | Path | None = None) -> None:
-    docs = await ontology_service._run(ontology_service.list_search_documents)
+async def build_index(db_path: str | Path | None = None, *, project_id: str | None = None) -> None:
+    docs = await ontology_service._run(project_id, ontology_service.list_search_documents)
     if not docs:
         raise RuntimeError("No ontology entities available to index")
 
+    # Dedupe by the key used as the SQLite primary key.
+    # An individual can be returned multiple times because Owlready2 reports subclass
+    # instances in parent class `.instances()` too (e.g. Faculty is also AcademicPerson),
+    # but our serialized `entity["class"]` is the concrete type, so duplicates collide.
+    unique: dict[str, dict[str, Any]] = {}
+    for doc in docs:
+        try:
+            ent = doc.get("entity") or {}
+            key = f'{ent.get("class")}:{ent.get("id")}'
+        except Exception:
+            continue
+        if key not in unique:
+            unique[key] = doc
+
+    docs = list(unique.values())
     texts = [doc["text"] for doc in docs]
     model_name, vectors = await _embed_texts(texts)
-    await asyncio.to_thread(_write_index, _index_path(db_path), model_name, docs, vectors)
+    await asyncio.to_thread(
+        _write_index,
+        _index_path(db_path=db_path, project_id=project_id),
+        model_name,
+        docs,
+        vectors,
+    )
 
 
 async def search(
     query: str,
     top_k: int = 20,
     types: list[str] | None = None,
+    *,
+    project_id: str | None = None,
 ) -> list[dict[str, Any]]:
     q = query.strip()
     if not q:
         return []
 
-    index_path = _index_path()
+    index_path = _index_path(project_id=project_id)
     if not index_path.exists():
-        await build_index(ontology_service.get_db_path())
+        await build_index(ontology_service.get_db_path(project_id), project_id=project_id)
 
     payload = await asyncio.to_thread(_read_index, index_path)
     model_name = payload["model_name"]
@@ -166,7 +189,7 @@ def _write_index(
             """,
             [
                 (
-                    doc["entity"]["id"],
+                    f'{doc["entity"]["class"]}:{doc["entity"]["id"]}',
                     doc["entity"]["class"],
                     json.dumps(doc["entity"]),
                     json.dumps(vector),

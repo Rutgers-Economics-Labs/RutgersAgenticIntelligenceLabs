@@ -188,14 +188,32 @@ def _resolve_ontology_yaml(
             f"Ontology '{onto_ref}' is not in Convex and engine_root is unset — "
             "cannot load configs/ontology/{onto_ref}.yaml"
         ]
-    path = engine_root / "configs" / "ontology" / f"{onto_ref}.yaml"
+
+    # Backwards compatibility: some pipelines reference ontology by engine-relative path,
+    # e.g. "configs/ontology/core.yaml". Prefer that if it exists.
+    onto_ref_str = (onto_ref or "").strip()
+    if onto_ref_str.endswith(".yaml") or "/" in onto_ref_str or "\\" in onto_ref_str:
+        candidate = (engine_root / onto_ref_str).resolve()
+        try:
+            # Ensure the resolved path stays within the engine root.
+            candidate.relative_to(engine_root.resolve())
+            if candidate.is_file():
+                try:
+                    return candidate.read_text(encoding="utf-8"), []
+                except OSError as e:
+                    return None, [f"Could not read ontology file {candidate}: {e}"]
+        except Exception:
+            # If it's outside engine_root or can't be resolved, fall back to slug behavior.
+            pass
+
+    path = engine_root / "configs" / "ontology" / f"{onto_ref_str}.yaml"
     if not path.is_file():
         fallback = engine_root / "configs" / "ontology" / "core.yaml"
         if fallback.is_file():
             path = fallback
         else:
             return None, [
-                f"Ontology '{onto_ref}' not found in Convex and no file at {path} "
+                f"Ontology '{onto_ref_str}' not found in Convex and no file at {path} "
                 f"(or fallback core.yaml)"
             ]
     try:
