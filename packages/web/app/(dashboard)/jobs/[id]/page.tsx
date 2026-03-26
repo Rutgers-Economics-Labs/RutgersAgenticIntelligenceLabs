@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
 import { useQuery } from "convex/react";
 import { Id } from "@/convex/_generated/dataModel";
 import { api } from "@/convex/_generated/api";
@@ -38,8 +37,12 @@ function formatDuration(start?: number, end?: number) {
   return `${(diff / 60_000).toFixed(1)}m`;
 }
 
-export default function JobDetailPage() {
-  const { id } = useParams<{ id: string }>();
+export default function JobDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
   const jobId = id as Id<"hydrationJobs">;
   const job = useQuery(api.jobs.get, { jobId });
   const logs = useQuery(api.jobs.getLogs, { jobId, limit: 500 });

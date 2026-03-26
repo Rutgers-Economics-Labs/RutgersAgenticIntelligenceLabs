@@ -1,7 +1,7 @@
 "use client";
 import dynamic from "next/dynamic";
-import { useState, useRef, useCallback, useEffect } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { use, useState, useRef, useCallback, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -1616,8 +1616,12 @@ function ProjectDashboard({ project }: { project: ProjectDoc }) {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
-export default function ProjectPage() {
-  const { slug } = useParams<{ slug: string }>();
+export default function ProjectPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = use(params);
   const project = useQuery(api.projects.get, { slug });
 
   if (project === undefined) return <p className="text-sm text-[--muted-foreground]">Loading…</p>;

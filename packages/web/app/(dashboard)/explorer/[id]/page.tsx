@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect, useRef, Suspense } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { use, useState, useEffect, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { ontology, type EntityDetail, type GraphData } from "@/lib/api";
 
@@ -9,8 +9,12 @@ const CLASS_COLORS: Record<string, string> = {
   Individual: "#B07FD4", Measure: "#E05C5C",
 };
 
-function EntityDetailContent() {
-  const { id } = useParams<{ id: string }>();
+function EntityDetailContent({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = use(params);
   const searchParams = useSearchParams();
   const projectId = searchParams.get("projectId") || undefined;
   const decoded = decodeURIComponent(id);
@@ -180,10 +184,14 @@ function EntityDetailContent() {
   );
 }
 
-export default function EntityDetailPage() {
+export default function EntityDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   return (
     <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading entity...</div>}>
-      <EntityDetailContent />
+      <EntityDetailContent params={params} />
     </Suspense>
   );
 }
