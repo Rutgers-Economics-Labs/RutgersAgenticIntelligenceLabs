@@ -40,6 +40,9 @@ async def get_entity(uri: str, project_id: str | None = Query(None, alias="proje
             art = await project_artifacts_service.resolve(project_id)
             ontology_service.ensure_loaded(art.db_path, project_id=project_id)
         return await ontology_service._run(project_id, ontology_service.get_entity, uri)
+    except RuntimeError as e:
+        # e.g. Ontology not loaded yet (no hydration artifacts)
+        raise HTTPException(503, detail=str(e))
     except ValueError as e:
         raise HTTPException(404, detail=str(e))
 
@@ -51,6 +54,9 @@ async def get_entity_graph(uri: str, project_id: str | None = Query(None, alias=
             art = await project_artifacts_service.resolve(project_id)
             ontology_service.ensure_loaded(art.db_path, project_id=project_id)
         return await ontology_service._run(project_id, ontology_service.get_entity_graph, uri)
+    except RuntimeError as e:
+        # e.g. Ontology not loaded yet (no hydration artifacts)
+        raise HTTPException(503, detail=str(e))
     except ValueError as e:
         raise HTTPException(404, detail=str(e))
 
