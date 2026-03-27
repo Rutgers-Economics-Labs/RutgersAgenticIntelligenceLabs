@@ -48,9 +48,11 @@ function GraphClient() {
   useEffect(() => {
     ontology.classes(projectId)
       .then((res) => {
-        const tList = res.map(c => c.name);
+        // Sort by instance count (descending)
+        const sortedRes = [...res].sort((a, b) => b.instanceCount - a.instanceCount);
+        const tList = sortedRes.map(c => c.name);
         setAvailableTypes(tList);
-        setTypes(tList.slice(0, 5)); // Auto-select first 5
+        setTypes(tList.slice(0, 5)); // Auto-select top 5 most populated
 
         // If State exists, load states for filtering
         if (tList.includes("State")) {
