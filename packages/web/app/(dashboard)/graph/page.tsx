@@ -34,6 +34,7 @@ function GraphClient() {
   const [graph, setGraph] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isStale, setIsStale] = useState(false);
   const graphRef = useRef<HTMLDivElement>(null);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -81,13 +82,19 @@ function GraphClient() {
       setGraph(data);
     } catch (e) {
       setError("Could not load graph. Is the FastAPI server running?");
-    } finally { setLoading(false); }
+    } finally { 
+      setLoading(false); 
+      setIsStale(false);
+    }
   }, [types, stateFips, projectId, availableTypes]);
 
-  useEffect(() => { loadGraph(); }, [loadGraph]);
+  // Removed automatic useEffect to allow manual control
+  // useEffect(() => { loadGraph(); }, [loadGraph]);
 
-  const toggleType = (t: string) =>
+  const toggleType = (t: string) => {
     setTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]);
+    setIsStale(true);
+  };
 
   return (
     <div className="flex gap-6 h-[calc(100vh-4rem)]">
@@ -113,7 +120,7 @@ function GraphClient() {
             <p className="text-xs text-[--muted-foreground] mb-2 uppercase tracking-wide">Focus State</p>
             <select
               value={stateFips}
-              onChange={(e) => setStateFips(e.target.value)}
+              onChange={(e) => { setStateFips(e.target.value); setIsStale(true); }}
               className="w-full px-2 py-1.5 rounded border border-[--border] bg-[--muted] text-sm text-[--foreground]"
             >
               <option value="">— All States —</option>
@@ -129,6 +136,24 @@ function GraphClient() {
             className="accent-[--primary]" />
           Show edge labels
         </label>
+
+        <button
+          onClick={loadGraph}
+          disabled={loading || types.length === 0}
+          className={`mt-4 w-full py-2 px-4 rounded font-medium transition-all ${
+            isStale || !graph 
+              ? "bg-[--primary] text-[--primary-foreground] hover:opacity-90 shadow-lg shadow-[--primary]/20" 
+              : "bg-[--muted] text-[--foreground] hover:bg-[--border]"
+          } disabled:opacity-50 disabled:cursor-not-allowed`}
+        >
+          {loading ? "Updating..." : graph ? (isStale ? "Update Graph" : "Refresh Graph") : "Show Graph"}
+        </button>
+
+        {isStale && graph && (
+          <p className="text-[10px] text-[--primary] animate-pulse text-center">
+            Settings changed. Click update to refresh.
+          </p>
+        )}
 
         {graph && (
           <p className="text-xs text-[--muted-foreground] mt-4">

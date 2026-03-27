@@ -97,7 +97,7 @@ install: install-api install-web install-engine
 install-api:
 	@echo "→ Installing FastAPI deps…"
 	$(PYTHON) -m pip install fastapi "uvicorn[standard]" httpx "pydantic>=2.7" \
-	  pydantic-settings pyyaml owlready2 "pandas>=2.2" requests openpyxl
+	  pydantic-settings pyyaml owlready2 "pandas>=2.2" requests openpyxl beautifulsoup4 lxml duckdb aioboto3 litellm matplotlib numpy pdfplumber scikit-learn statsmodels respx pytest-asyncio python-multipart playwright
 
 install-web:
 	@echo "→ Installing Next.js deps…"
@@ -105,7 +105,7 @@ install-web:
 
 install-engine:
 	@echo "→ Installing engine deps…"
-	$(PYTHON) -m pip install owlready2 pandas streamlit pyvis requests openpyxl rdflib pyyaml
+	$(PYTHON) -m pip install owlready2 pandas streamlit pyvis requests openpyxl rdflib pyyaml beautifulsoup4 lxml duckdb aioboto3 litellm matplotlib numpy pdfplumber scikit-learn statsmodels python-multipart playwright
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Development servers
@@ -135,7 +135,7 @@ dev: kill
 	echo "  API docs → http://localhost:$(API_PORT)/docs"; \
 	echo "  Web      → http://localhost:$(WEB_PORT)"; \
 	echo ""; \
-	wait -n; st=$$?; \
+	wait; st=$$?; \
 	cleanup; \
 	exit $$st'
 

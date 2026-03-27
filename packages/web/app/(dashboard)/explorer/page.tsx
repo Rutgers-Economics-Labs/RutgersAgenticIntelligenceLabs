@@ -24,7 +24,11 @@ function ExplorerContent() {
 
   useEffect(() => {
     ontology.classes(projectId)
-      .then((cls) => { setClasses(cls); if (cls.length) setSelectedClass(cls[0].name); })
+      .then((cls) => {
+        const sorted = [...cls].sort((a, b) => b.instanceCount - a.instanceCount);
+        setClasses(sorted);
+        if (sorted.length) setSelectedClass(sorted[0].name);
+      })
       .catch(() => setError("Could not connect to API. Is the FastAPI server running?"));
   }, [projectId]);
 

@@ -30,17 +30,37 @@ class _ProjectOntology:
     executor: Any | None = None
 
 
-_states: dict[str, _ProjectOntology] = {}
+_states_by_id: dict[str, _ProjectOntology] = {}
+_states_by_path: dict[str, _ProjectOntology] = {}
 _states_lock = Lock()
 
 
-def _get_state(project_id: str | None) -> _ProjectOntology:
+def _get_state(project_id: str | None, db_path: str | None = None) -> _ProjectOntology:
     pid = project_id or GLOBAL_PROJECT_ID
+    
     with _states_lock:
-        st = _states.get(pid)
-        if st is None:
-            st = _ProjectOntology(project_id=pid, lock=Lock())
-            _states[pid] = st
+        st = _states_by_id.get(pid)
+        if st is not None:
+            # Check if this PID's assigned path changed:
+            if db_path and st.db_path and st.db_path != db_path:
+                print(f"  [ontology_service] project={pid} path changed {st.db_path} -> {db_path}")
+                # We need to re-link or re-initialize.
+                pass
+            return st
+        
+        # If no state for PID, check if we have one for the same path:
+        if db_path:
+            st = _states_by_path.get(db_path)
+            if st:
+                print(f"  [ontology_service] project={pid} sharing world for path {db_path}")
+                _states_by_id[pid] = st
+                return st
+        
+        # Initialize new state:
+        st = _ProjectOntology(project_id=pid, lock=Lock())
+        _states_by_id[pid] = st
+        if db_path:
+            _states_by_path[db_path] = st
         return st
 
 
@@ -54,8 +74,8 @@ def _get_executor(st: _ProjectOntology):
 
 def load(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
     """Load (or reload) the quadstore for project_id from db_path. Thread-safe."""
-    st = _get_state(project_id)
-    db_path = str(db_path)
+    db_path = str(Path(db_path).resolve())
+    st = _get_state(project_id, db_path)
     with st.lock:
         _load_locked(st, db_path)
 
@@ -68,7 +88,7 @@ def _load_locked(st: _ProjectOntology, db_path: str) -> None:
     # Owlready2 uses SQLite; on some systems we can see transient "database is locked"
     # during concurrent access / background jobs. Retry briefly to avoid 500s.
     last_err: Exception | None = None
-    for attempt in range(9):
+    for attempt in range(12):
         try:
             st.world.set_backend(filename=db_path, exclusive=False)
             last_err = None
@@ -78,7 +98,8 @@ def _load_locked(st: _ProjectOntology, db_path: str) -> None:
             msg = str(e).lower()
             if "database is locked" not in msg and "locked" not in msg:
                 raise
-            time.sleep(0.05 * (2**attempt))
+            # Back off and wait for lock release
+            time.sleep(0.1 * (2**attempt if attempt < 5 else 32))
     if last_err is not None:
         raise last_err
 
@@ -95,8 +116,14 @@ def _load_locked(st: _ProjectOntology, db_path: str) -> None:
 
 
 def ensure_loaded(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
-    st = _get_state(project_id)
-    db_path = str(db_path)
+    db_path = str(Path(db_path).resolve())
+    st = _get_state(project_id, db_path)
+    
+    # Update pathological mapping if we just discovered this PID uses this shared path:
+    with _states_lock:
+        if db_path not in _states_by_path:
+            _states_by_path[db_path] = st
+            
     # Guard the check + load together to prevent concurrent requests from both
     # trying to open/analyze the same SQLite quadstore at once.
     with st.lock:
@@ -193,16 +220,18 @@ def get_entity_graph(project_id: str | None, uri: str) -> dict:
             for val in values:
                 if hasattr(val, "name"):
                     target_cls = type(val).name if hasattr(type(val), "name") else "Unknown"
-                    nodes[val.name] = _graph_node(val, target_cls)
-                    links.append({"source": ind.name, "target": val.name, "label": getattr(prop, "python_name", prop.name)})
+                    target_id = str(val.name)
+                    nodes[target_id] = _graph_node(val, target_cls)
+                    links.append({"source": str(ind.name), "target": target_id, "label": str(getattr(prop, "python_name", prop.name))})
         except Exception:
             continue
 
     for prop, source in ind.get_inverse_properties():
         if hasattr(source, "name"):
             src_cls = type(source).name if hasattr(type(source), "name") else "Unknown"
-            nodes[source.name] = _graph_node(source, src_cls)
-            links.append({"source": source.name, "target": ind.name, "label": getattr(prop, "python_name", prop.name)})
+            src_id = str(source.name)
+            nodes[src_id] = _graph_node(source, src_cls)
+            links.append({"source": src_id, "target": str(ind.name), "label": str(getattr(prop, "python_name", prop.name))})
 
     return {"nodes": list(nodes.values()), "links": links}
 
@@ -465,6 +494,8 @@ def _first(val):
 
 def _serialize_entity(ind, include_relationships: bool = False) -> dict:
     """Serialize an individual dynamically — works for any class/property schema."""
+    import time
+    # start = time.time()
     cls_name = type(ind).name if hasattr(type(ind), "name") else "Unknown"
     result = {
         "id": ind.name,
@@ -481,22 +512,34 @@ def _serialize_entity(ind, include_relationships: bool = False) -> dict:
                 val = val[0] if val else None
             if val is None:
                 continue
+            # Skip object properties (links) in the properties dict
             if hasattr(val, "iri"):
                 continue
+            
             pname = getattr(prop, "python_name", prop.name)
+            # Ensure val is a primitive for JSON safety
+            if hasattr(val, "__str__") and not isinstance(val, (str, int, float, bool)):
+                val = str(val)
             result["properties"][pname] = val
         except Exception:
             pass
 
     # Explicitly include GIS fields if present for frontend mapping
     for gis_field in ["hasLatitude", "hasLongitude", "hasGeometry"]:
-        val = getattr(ind, gis_field, None)
-        if val is not None:
-             result["properties"][gis_field] = val
-
+        try:
+            val = getattr(ind, gis_field, None)
+            if isinstance(val, list):
+                val = val[0] if val else None
+            if val is not None:
+                if not isinstance(val, (str, int, float, bool)):
+                    val = str(val)
+                result["properties"][gis_field] = val
+        except Exception:
+            pass
 
     if include_relationships:
         rels = []
+        # Forward relationships
         for prop in safe_props:
             try:
                 values = prop[ind]
@@ -505,18 +548,32 @@ def _serialize_entity(ind, include_relationships: bool = False) -> dict:
                 for val in values:
                     if hasattr(val, "name"):
                         pname = getattr(prop, "python_name", prop.name)
-                        rels.append({"property": pname, "targetId": val.name,
-                                     "targetName": getattr(val, "hasName", None) or val.name})
+                        rels.append({
+                            "property": pname, 
+                            "targetId": str(val.name),
+                            "targetName": str(getattr(val, "hasName", None) or val.name)
+                        })
             except Exception:
                 pass
-        for prop, source in ind.get_inverse_properties():
-            if hasattr(source, "name"):
-                pname = getattr(prop, "python_name", prop.name)
-                sid = getattr(source, "name", str(source))
-                rels.append({"property": f"←{pname}", "targetId": sid,
-                             "targetName": getattr(source, "hasName", None) or sid})
+        
+        # Inverse relationships — this can be slow, we'll wrap it in a try and keep it light
+        try:
+            # Only do this if it's a detail fetch, not a bulk list
+            for prop, source in ind.get_inverse_properties():
+                if hasattr(source, "name"):
+                    pname = getattr(prop, "python_name", prop.name)
+                    sid = str(getattr(source, "name", source))
+                    sname = str(getattr(source, "hasName", None) or sid)
+                    rels.append({
+                        "property": f"←{pname}", 
+                        "targetId": sid,
+                        "targetName": sname
+                    })
+        except Exception:
+            pass
         result["relationships"] = rels
 
+    # print(f"  [_serialize_entity] {ind.name} took {time.time() - start:.4f}s")
     return result
 
 
@@ -544,13 +601,15 @@ def _graph_node(ind, cls_name: str) -> dict:
             if val is None or hasattr(val, "iri"):
                 continue
             pname = getattr(prop, "python_name", prop.name)
+            if not isinstance(val, (str, int, float, bool)):
+                val = str(val)
             props[pname] = val
         except Exception:
             pass
+    node_id = str(getattr(ind, "name", ind))
     return {
-        "id": getattr(ind, "name", str(ind)),
-        # Prefer hasName if present; otherwise fall back to the URI local name
-        "label": props.get("hasName") or getattr(ind, "name", str(ind)),
-        "group": cls_name,
+        "id": node_id,
+        "label": str(props.get("hasName") or node_id),
+        "group": str(cls_name),
         "properties": props,
     }

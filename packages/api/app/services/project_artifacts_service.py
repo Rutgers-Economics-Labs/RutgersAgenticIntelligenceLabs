@@ -43,7 +43,23 @@ async def _materialize(storage_key_or_path: str, *, filename: str, project_id: s
     - s3 backend: download to /tmp/rail_project_artifacts/<project_id>/<filename>
     """
     if settings.storage_backend == "local":
-        return storage_key_or_path
+        p = Path(storage_key_or_path)
+        if not p.is_absolute():
+            # Assume relative to repo root if not absolute
+            repo_root = Path(__file__).resolve().parents[1] # app/services
+            repo_root = repo_root.parents[2] # RutgersAgenticIntelligenceLabs
+            p = repo_root / p
+        
+        p = p.resolve() # Handle symlinks and .. to ensure a canonical string for state mapping
+        
+        if not p.exists():
+            # FALLBACK: If the project-specific local file is missing (e.g. from /tmp cleanup),
+            # fall back to the global hydrated ontology in engine/ontology/onto.db
+            global_path = (Path(__file__).resolve().parents[4] / "packages" / "engine" / "ontology" / "onto.db").resolve()
+            if global_path.exists():
+                return str(global_path)
+                
+        return str(p)
     dest = _local_cache_dir(project_id) / filename
     await storage.download(storage_key_or_path, dest)
     return str(dest)
