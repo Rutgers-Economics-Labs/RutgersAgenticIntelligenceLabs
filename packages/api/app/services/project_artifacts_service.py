@@ -19,6 +19,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.services.convex_client import convex
 from app.services.storage_service import storage
+from app.services import ontology_service
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,16 @@ async def resolve(project_id: str) -> ProjectArtifacts:
     embeddings_path = emb_default
     if emb_key:
         embeddings_path = await _materialize(emb_key, filename="embeddings.db", project_id=project_id)
+
+    # SELF-HEALING: If DuckDB is missing but SQLite is here, regenerate it immediately.
+    # This prevents "No DuckDB database loaded" errors after /tmp cleanup.
+    if not Path(duckdb_path).exists() and Path(db_path).exists():
+        print(f"  [project_artifacts_service] project={project_id} DuckDB missing, regenerating at {duckdb_path}...")
+        # Ensure SQLite is loaded first
+        ontology_service.ensure_loaded(db_path, project_id=project_id)
+        # Export sync (it's safe here because resolve() is called in request context, 
+        # and we want the file to be ready before returning).
+        await ontology_service.export_to_duckdb(project_id, duckdb_path)
 
     return ProjectArtifacts(
         project_id=project_id,

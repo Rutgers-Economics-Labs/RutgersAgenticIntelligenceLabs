@@ -9,7 +9,9 @@
  */
 
 import type * as agent from "../agent.js";
+import type * as analysis from "../analysis.js";
 import type * as configs from "../configs.js";
+import type * as executions from "../executions.js";
 import type * as jobs from "../jobs.js";
 import type * as projectChats from "../projectChats.js";
 import type * as projects from "../projects.js";
@@ -24,7 +26,9 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agent: typeof agent;
+  analysis: typeof analysis;
   configs: typeof configs;
+  executions: typeof executions;
   jobs: typeof jobs;
   projectChats: typeof projectChats;
   projects: typeof projects;

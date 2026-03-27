@@ -340,24 +340,83 @@ async def _execute_tool(name: str, args: dict) -> dict:
 
     elif name == "run_sql":
         from app.services import sql_service
-        return sql_service.run_query(args["query"])
+        from app.services.convex_client import convex
+        
+        # Create a job for the agent's SQL query
+        job_result = await convex.mutation("executions:create", {
+            "type": "sql",
+            "input": args["query"],
+            "triggeredBy": "agent",
+            "createdAt": int(time.time() * 1000)
+        })
+        job_id = job_result["jobId"]
+        
+        try:
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "running",
+                "startedAt": int(time.time() * 1000)
+            })
+            
+            import asyncio
+            loop = asyncio.get_event_loop()
+            res = await loop.run_in_executor(None, lambda: sql_service.run_query(args["query"]))
+            
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "success",
+                "finishedAt": int(time.time() * 1000),
+                "result": res
+            })
+            return res
+        except Exception as e:
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "failed",
+                "finishedAt": int(time.time() * 1000),
+                "errorMessage": str(e)
+            })
+            return {"error": str(e)}
 
     elif name == "get_sql_schema":
         from app.services import sql_service
         return sql_service.get_schema()
 
     elif name == "execute_python":
-        from app.services import code_runner
+        from app.services import subprocess_code_runner
+        from app.services.convex_client import convex
+        from app.services.execution_manager import execution_manager
+        import asyncio
 
         if not settings.execute_python_enabled:
             return {
-                "stdout": "",
-                "stderr": "",
-                "dataframes": {},
-                "figures": [],
                 "error": "Python execution is disabled (RAIL_EXECUTE_ENABLED=false).",
             }
-        return await code_runner.run_code_async(args["code"])
+            
+        # Create a job for the agent's Python code
+        job_result = await convex.mutation("executions:create", {
+            "type": "code",
+            "input": args["code"],
+            "triggeredBy": "agent",
+            "createdAt": int(time.time() * 1000)
+        })
+        job_id = job_result["jobId"]
+        
+        # Create execution task
+        task = asyncio.create_task(
+            subprocess_code_runner.run_user_code(
+                args["code"],
+                120, # Default timeout for agent
+                upload_artifacts=False,
+                job_id=job_id
+            )
+        )
+        
+        # Register with manager
+        execution_manager.register_job(job_id, task)
+        
+        # Wait for completion (the runner handles status updates)
+        return await task
 
     elif name == "get_series_data":
         from app.services import ontology_service

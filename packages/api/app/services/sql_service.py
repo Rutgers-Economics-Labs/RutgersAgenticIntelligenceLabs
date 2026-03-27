@@ -9,10 +9,10 @@ Callers can then:
   - get schema info
   - translate natural language → SQL via the LLM
 """
-from pathlib import Path
-from typing import Optional
-
 import duckdb
+import time
+
+from app.services.convex_client import convex
 
 _duckdb_path: Optional[Path] = None
 
@@ -46,10 +46,18 @@ def _connect(*, read_only: bool = True, path: str | Path | None = None) -> duckd
     return duckdb.connect(str(p), read_only=read_only)
 
 
-def run_query(sql: str, *, duckdb_path: str | Path | None = None) -> dict:
+def run_query(sql: str, *, duckdb_path: str | Path | None = None, job_id: str | None = None) -> dict:
     """Execute SQL and return {columns, rows, rowCount}."""
     con = _connect(path=duckdb_path)
+    if job_id:
+        # Mark as running
+        # PyNote: We use a simple synchronous-style mutation trigger here
+        # but in a real async environment we might want to await it if run_query was async.
+        # Since run_query is currently sync, we'll keep it simple or make it async.
+        pass
+
     try:
+        start_ms = int(time.time() * 1000)
         result = con.execute(sql)
         columns = [d[0] for d in result.description] if result.description else []
         rows = result.fetchall()
@@ -63,8 +71,13 @@ def run_query(sql: str, *, duckdb_path: str | Path | None = None) -> dict:
                     rec[col] = val.isoformat()
                 else:
                     rec[col] = val
+                # Ensure it's JSON serializable
+                if not isinstance(rec[col], (str, int, float, bool, type(None))):
+                    rec[col] = str(rec[col])
             data.append(rec)
-        return {"columns": columns, "rows": data, "rowCount": len(data)}
+        
+        res = {"columns": columns, "rows": data, "rowCount": len(data)}
+        return res
     finally:
         con.close()
 

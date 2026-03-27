@@ -14,8 +14,11 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
+from typing import AsyncGenerator, List, Tuple
 
 from app.core.config import settings
+from app.services.convex_client import convex
+from app.services.execution_manager import execution_manager
 
 logger = logging.getLogger("rail.subprocess_code")
 
@@ -72,12 +75,41 @@ def _docker_command(tmp_path: Path, user_py: Path, duck_abs: Path) -> list[str]:
     ]
 
 
+async def _stream_output(
+    job_id: str,
+    stream: asyncio.StreamReader,
+    level: str,
+    output_accumulator: List[str],
+    seq_counter: List[int],
+):
+    """Read lines from a stream and push to Convex logs."""
+    while True:
+        line_b = await stream.readline()
+        if not line_b:
+            break
+        line = line_b.decode(errors="replace")
+        output_accumulator.append(line)
+        
+        # Push to Convex
+        try:
+            await convex.mutation("jobs:appendLog", {
+                "jobId": job_id,
+                "seq": seq_counter[0],
+                "level": level,
+                "message": line.rstrip(),
+                "timestamp": int(time.time() * 1000)
+            })
+            seq_counter[0] += 1
+        except Exception as e:
+            logger.error(f"Failed to push log to Convex: {e}")
+
 async def run_user_code(
     code: str,
     timeout_seconds: int,
     *,
     upload_artifacts: bool = False,
     duckdb_path: str | Path | None = None,
+    job_id: str | None = None,
 ) -> dict:
     """
     Execute `code` via code_subprocess_cli.py. Returns the same shape as code_runner.run_code,
@@ -139,7 +171,14 @@ async def run_user_code(
             }
 
         cwd = str(tmp_path)
-        logger.info("subprocess execute: %s (cwd=%s docker=%s)", cmd, cwd, use_docker)
+        logger.info("subprocess execute: %s (cwd=%s docker=%s job=%s)", cmd, cwd, use_docker, job_id)
+
+        if job_id:
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "running",
+                "startedAt": int(time.time() * 1000)
+            })
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -148,22 +187,54 @@ async def run_user_code(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+
+        if job_id:
+            execution_manager.update_process(job_id, proc)
+
+        stdout_acc: List[str] = []
+        stderr_acc: List[str] = []
+        seq_counter = [0]
+
         try:
-            out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+            if job_id:
+                # Stream logs in parallel
+                await asyncio.gather(
+                    _stream_output(job_id, proc.stdout, "stdout", stdout_acc, seq_counter),
+                    _stream_output(job_id, proc.stderr, "stderr", stderr_acc, seq_counter),
+                    proc.wait()
+                )
+            else:
+                out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+                stdout_acc = [out_b.decode(errors="replace")] if out_b else []
+                stderr_acc = [err_b.decode(errors="replace")] if err_b else []
         except asyncio.TimeoutError:
             proc.kill()
             await proc.wait()
+            error_msg = f"Execution timed out after {timeout_seconds}s"
+            if job_id:
+                await convex.mutation("executions:updateStatus", {
+                    "jobId": job_id,
+                    "status": "failed",
+                    "finishedAt": int(time.time() * 1000),
+                    "errorMessage": error_msg
+                })
             return {
-                "stdout": "",
-                "stderr": "",
+                "stdout": "".join(stdout_acc),
+                "stderr": "".join(stderr_acc),
                 "dataframes": {},
                 "figures": [],
-                "error": f"Execution timed out after {timeout_seconds}s",
+                "error": error_msg,
                 "artifacts": [],
             }
+        except asyncio.CancelledError:
+            # Handle task cancellation (interruption)
+            if proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            raise
 
-        wrapper_stderr = err_b.decode(errors="replace") if err_b else ""
-        wrapper_stdout = out_b.decode(errors="replace") if out_b else ""
+        wrapper_stdout = "".join(stdout_acc)
+        wrapper_stderr = "".join(stderr_acc)
 
         manifest: dict = {}
         if manifest_path.is_file():
@@ -195,5 +266,15 @@ async def run_user_code(
                     key = await storage.upload(run_id, rel, path)
                     uploaded.append({"filename": rel, "storageKey": key})
             result["artifacts"] = uploaded
+
+        if job_id:
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "success" if not result.get("error") else "failed",
+                "finishedAt": int(time.time() * 1000),
+                "result": result,
+                "errorMessage": result.get("error")
+            })
+            execution_manager.unregister_job(job_id)
 
         return result

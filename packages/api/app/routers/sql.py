@@ -1,8 +1,9 @@
-"""SQL endpoints for RAIL — backed by DuckDB export of the ontology."""
+import time
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.services import sql_service, project_artifacts_service
+from app.services.convex_client import convex
 
 router = APIRouter(prefix="/sql", tags=["sql"])
 
@@ -17,17 +18,68 @@ class NlSqlRequest(BaseModel):
 
 
 @router.post("")
-async def run_sql(req: SqlRequest, project_id: str | None = Query(None, alias="projectId")):
+async def run_sql(
+    req: SqlRequest, 
+    project_id: str | None = Query(None, alias="projectId"),
+    workspace_id: str | None = Query(None, alias="workspaceId"),
+    cell_id: str | None = Query(None, alias="cellId"),
+    hydration_id: str | None = Query(None, alias="hydrationId"),
+):
     """Execute a SQL query against the DuckDB knowledge graph export."""
+    job_id = None
     try:
+        # 1. Create Job record
+        result = await convex.mutation("executions:create", {
+            "projectId": project_id,
+            "workspaceId": workspace_id,
+            "cellId": cell_id,
+            "hydrationId": hydration_id,
+            "type": "sql",
+            "input": req.query,
+            "createdAt": int(time.time() * 1000)
+        })
+        job_id = result["jobId"]
+
+        # 2. Resolve hydration path
         duck = None
-        if project_id:
+        if hydration_id:
+            # TODO: Resolve specific hydration path from jobs table
+            # For now fallback to current active if not found
+            pass
+            
+        if not duck and project_id:
             art = await project_artifacts_service.resolve(project_id)
             duck = art.duckdb_path
-        return sql_service.run_query(req.query, duckdb_path=duck)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+            
+        # 3. Execute
+        await convex.mutation("executions:updateStatus", {
+            "jobId": job_id,
+            "status": "running",
+            "startedAt": int(time.time() * 1000)
+        })
+        
+        # Run sync query in a thread
+        import asyncio
+        loop = asyncio.get_event_loop()
+        res = await loop.run_in_executor(None, lambda: sql_service.run_query(req.query, duckdb_path=duck))
+        
+        # 4. Report success
+        await convex.mutation("executions:updateStatus", {
+            "jobId": job_id,
+            "status": "success",
+            "finishedAt": int(time.time() * 1000),
+            "result": res
+        })
+        return res
+
     except Exception as e:
+        if job_id:
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "failed",
+                "finishedAt": int(time.time() * 1000),
+                "errorMessage": str(e)
+            })
         raise HTTPException(status_code=400, detail=str(e))
 
 

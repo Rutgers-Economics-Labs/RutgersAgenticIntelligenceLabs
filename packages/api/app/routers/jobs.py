@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.services.convex_client import convex
 from app.services import hydration_worker
+from app.services.execution_manager import execution_manager
 from app.services.pipeline_validate import ensure_pipeline_ready, PipelineValidationFailed
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -177,3 +178,12 @@ async def cancel_job(job_id: str):
         "status": "cancelled",
         "finishedAt": int(time.time() * 1000),
     })
+
+
+@router.delete("/executions/{job_id}/interrupt")
+async def interrupt_execution(job_id: str):
+    """Interrupt a running code or SQL execution."""
+    success = await execution_manager.interrupt_job(job_id)
+    if not success:
+        raise HTTPException(404, detail=f"Active execution job '{job_id}' not found")
+    return {"status": "cancelled", "jobId": job_id}

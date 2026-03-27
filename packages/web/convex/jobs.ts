@@ -77,9 +77,9 @@ export const updateStep = mutation({
 
 export const appendLog = mutation({
   args: {
-    jobId: v.id("hydrationJobs"),
+    jobId: v.string(), // Generic ID (hydration or execution)
     seq: v.number(),
-    level: v.union(v.literal("info"), v.literal("warn"), v.literal("error")),
+    level: v.union(v.literal("info"), v.literal("warn"), v.literal("error"), v.literal("stdout"), v.literal("stderr")),
     message: v.string(),
     stepName: v.optional(v.string()),
     timestamp: v.number(),
@@ -116,7 +116,7 @@ export const get = query({
 
 export const getLogs = query({
   args: {
-    jobId: v.id("hydrationJobs"),
+    jobId: v.string(),
     afterSeq: v.optional(v.number()),
     limit: v.optional(v.number()),
   },

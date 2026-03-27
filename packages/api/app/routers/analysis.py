@@ -1,4 +1,4 @@
-import sys
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query
@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.services import project_artifacts_service, sql_service, ontology_service
+from app.services.convex_client import convex
+from app.services.execution_manager import execution_manager
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -58,7 +60,13 @@ class RunCodeRequest(BaseModel):
 
 
 @router.post("/run-code")
-async def run_code_analysis(req: RunCodeRequest, project_id: str | None = Query(None, alias="projectId")):
+async def run_code_analysis(
+    req: RunCodeRequest, 
+    project_id: str | None = Query(None, alias="projectId"),
+    workspace_id: str | None = Query(None, alias="workspaceId"),
+    cell_id: str | None = Query(None, alias="cellId"),
+    hydration_id: str | None = Query(None, alias="hydrationId"),
+):
     """
     Execute Python in an isolated child process with the same helpers as POST /execute
     (sql, get_table, list_tables, pd, np, sklearn, plt). User code may write files under
@@ -74,20 +82,53 @@ async def run_code_analysis(req: RunCodeRequest, project_id: str | None = Query(
         )
     from app.services import subprocess_code_runner
 
+    # 1. Create Job record
+    result = await convex.mutation("executions:create", {
+        "projectId": project_id,
+        "workspaceId": workspace_id,
+        "cellId": cell_id,
+        "hydrationId": hydration_id,
+        "type": "code",
+        "input": req.code,
+        "createdAt": int(time.time() * 1000)
+    })
+    job_id = result["jobId"]
+
+    # 2. Resolve hydration path
     duck = None
-    if project_id:
+    if hydration_id:
+        # TODO: Resolve specific hydration path
+        pass
+        
+    if not duck and project_id:
         art = await project_artifacts_service.resolve(project_id)
         duck = art.duckdb_path
 
     if not sql_service.is_ready(duck):
+        await convex.mutation("executions:updateStatus", {
+            "jobId": job_id,
+            "status": "failed",
+            "errorMessage": "DuckDB mirror not ready. Run a hydration job first."
+        })
         raise HTTPException(status_code=503, detail="DuckDB mirror not ready. Run a hydration job first.")
 
-    return await subprocess_code_runner.run_user_code(
-        req.code,
-        req.timeout,
-        upload_artifacts=req.upload_artifacts,
-        duckdb_path=duck,
+    # 3. Create execution task
+    task = asyncio.create_task(
+        subprocess_code_runner.run_user_code(
+            req.code,
+            req.timeout,
+            upload_artifacts=req.upload_artifacts,
+            duckdb_path=duck,
+            job_id=job_id
+        )
     )
+    
+    # 4. Register with manager
+    execution_manager.register_job(job_id, task)
+
+    # Note: We return the job_id to the client immediately for streaming UI.
+    # The client can wait for the result or poll status/logs.
+    return {"jobId": job_id, "status": "queued"}
 
 
 @router.post("/plugins/{slug}/run")

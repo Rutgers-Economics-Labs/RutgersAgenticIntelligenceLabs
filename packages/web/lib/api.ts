@@ -109,6 +109,15 @@ export const analysis = {
       body: JSON.stringify({ config }),
     });
   },
+  runCode: (code: string, projectId?: string, options?: { timeout?: number }) => {
+    const params = new URLSearchParams();
+    withProject(params, projectId);
+    const qs = params.size ? `?${params}` : "";
+    return req<{ jobId: string; status: string }>(`/analysis/run-code${qs}`, {
+      method: "POST",
+      body: JSON.stringify({ code, ...options }),
+    });
+  },
 };
 
 // ── Configs ───────────────────────────────────────────────────────────────────

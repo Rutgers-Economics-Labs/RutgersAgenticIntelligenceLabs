@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+         xmlns:xsd="http://www.w3.org/2001/XMLSchema#"
+         xmlns:rdfs="http://www.w3.org/2000/01/rdf-schema#"
+         xmlns:owl="http://www.w3.org/2002/07/owl#"
+         xml:base="http://test.org/synthetic.owl"
+         xmlns="http://test.org/synthetic.owl#">
+
+<owl:Ontology rdf:about="http://test.org/synthetic.owl"/>
+
+<owl:ObjectProperty rdf:about="#eats">
+  <rdfs:domain rdf:resource="#Animal"/>
+  <rdfs:range rdf:resource="#Food"/>
+</owl:ObjectProperty>
+
+<owl:DatatypeProperty rdf:about="#hasWeight">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="#Animal"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#decimal"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#hasName">
+  <rdf:type rdf:resource="http://www.w3.org/2002/07/owl#FunctionalProperty"/>
+  <rdfs:domain rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:Class rdf:about="#Animal">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Food">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:NamedIndividual rdf:about="#Lion">
+  <rdf:type rdf:resource="#Animal"/>
+  <eats rdf:resource="#Meat"/>
+  <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Leo the Lion</hasName>
+  <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">200.0</hasWeight>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#Meat">
+  <rdf:type rdf:resource="#Food"/>
+  <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Fresh Meat</hasName>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#Cow">
+  <rdf:type rdf:resource="#Animal"/>
+  <eats rdf:resource="#Grass"/>
+  <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Bessie the Cow</hasName>
+  <hasWeight rdf:datatype="http://www.w3.org/2001/XMLSchema#decimal">500.0</hasWeight>
+</owl:NamedIndividual>
+
+<owl:NamedIndividual rdf:about="#Grass">
+  <rdf:type rdf:resource="#Food"/>
+  <hasName rdf:datatype="http://www.w3.org/2001/XMLSchema#string">Green Grass</hasName>
+</owl:NamedIndividual>
+
+
+</rdf:RDF>

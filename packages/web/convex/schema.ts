@@ -90,7 +90,7 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_pipeline", ["pipelineConfigId"])
-    .index("by_project", ["projectId"])
+    .index("by_project", ["projectId", "createdAt"])
     .index("by_status", ["status"])
     .index("by_created", ["createdAt"]),
 
@@ -121,15 +121,41 @@ export default defineSchema({
     .index("by_status", ["status"]),
 
   jobLogs: defineTable({
-    jobId: v.id("hydrationJobs"),
+    jobId: v.string(), // Generic ID (can be hydrationJob or executionJob)
     seq: v.number(),
-    level: v.union(v.literal("info"), v.literal("warn"), v.literal("error")),
+    level: v.union(v.literal("info"), v.literal("warn"), v.literal("error"), v.literal("stdout"), v.literal("stderr")),
     message: v.string(),
     stepName: v.optional(v.string()),
     timestamp: v.number(),
   })
     .index("by_job", ["jobId"])
     .index("by_job_seq", ["jobId", "seq"]),
+
+  executionJobs: defineTable({
+    projectId: v.optional(v.id("projects")),
+    workspaceId: v.optional(v.id("workspaces")),
+    cellId: v.optional(v.string()),
+    hydrationId: v.optional(v.id("hydrationJobs")),
+    type: v.union(v.literal("sql"), v.literal("code")),
+    input: v.string(),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("success"),
+      v.literal("failed"),
+      v.literal("cancelled"),
+    ),
+    result: v.optional(v.any()), // Final JSON result
+    errorMessage: v.optional(v.string()),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId", "createdAt"])
+    .index("by_workspace_cell", ["workspaceId", "cellId"])
+    .index("by_hydration", ["hydrationId"])
+    .index("by_status", ["status"])
+    .index("by_created", ["createdAt"]),
 
   // AI agent sessions — stores conversation history
   agentSessions: defineTable({
@@ -176,9 +202,23 @@ export default defineSchema({
       ),
       content: v.string(),
       result: v.optional(v.any()),
+      lastJobId: v.optional(v.string()), // ID of the last execution job
       role: v.optional(v.string()),  // "user" | "assistant" for chat cells
     })),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_created", ["createdAt"]),
+
+  // Saved analysis scripts for the Analysis Workspace
+  analysisScripts: defineTable({
+    projectId: v.id("projects"),
+    name: v.string(),
+    code: v.string(),
+    description: v.optional(v.string()),
+    lastJobId: v.optional(v.id("executionJobs")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId", "createdAt"])
+    .index("by_created", ["createdAt"]),
 });
