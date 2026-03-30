@@ -15,6 +15,7 @@ Provides a streaming chat endpoint with tools scoped to a specific project:
   - search_data_registry    search the data registry (delegates to agent_service)
 """
 
+import asyncio
 import json
 import time
 from typing import AsyncGenerator
@@ -378,6 +379,31 @@ PROJECT_TOOLS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "save_to_knowledge_base",
+            "description": (
+                "Save a piece of text, research note, or compiled analysis to the project knowledge base "
+                "so it can be retrieved in future queries. Use this to persist important findings, "
+                "configuration notes, or synthesized information."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "A descriptive title for this document",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The full text content to save",
+                    },
+                },
+                "required": ["name", "content"],
+            },
+        },
+    },
 ]
 
 
@@ -537,6 +563,23 @@ async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:
         )
         return {"results": results}
 
+    if name == "save_to_knowledge_base":
+        import time as _time
+        now = int(_time.time() * 1000)
+        payload = {
+            "name": args["name"],
+            "type": "text",
+            "content": args["content"],
+            "projectId": project_id,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        try:
+            doc_id = await convex.mutation("context:create", payload)
+            return {"saved": True, "id": doc_id, "name": args["name"]}
+        except Exception as e:
+            return {"saved": False, "error": str(e)}
+
     return {"error": f"Unknown tool: {name}"}
 
 
@@ -623,3 +666,76 @@ async def project_chat(req: ProjectChatRequest):
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# Autonomous task endpoint — fire-and-forget agent run tracked as an execution job
+# ---------------------------------------------------------------------------
+
+class AgentTaskRequest(BaseModel):
+    project_id: str
+    goal: str          # The autonomous task description
+    model: str | None = None
+    max_turns: int = 20
+
+
+@router.post("/task")
+async def run_agent_task(req: AgentTaskRequest):
+    """
+    Fire off an autonomous agent task. The agent runs to completion without
+    further user interaction. Progress is tracked in Convex as an executionJob.
+    Returns {jobId} immediately; subscribe to Convex executions:get to watch.
+    """
+    now = int(time.time() * 1000)
+
+    # Create a Convex execution job to track this agent run
+    job_result = await convex.mutation("executions:create", {
+        "type": "code",
+        "input": req.goal,
+        "projectId": req.project_id,
+        "createdAt": now,
+    })
+    job_id = job_result["jobId"]
+
+    async def _run():
+        try:
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "running",
+                "startedAt": int(time.time() * 1000),
+            })
+
+            transcript: list[str] = []
+            async for event in _run_project_chat(
+                req.project_id,
+                req.goal,
+                history=[],
+                model=req.model,
+            ):
+                if event.get("type") == "text_delta":
+                    transcript.append(event["content"])
+                elif event.get("type") == "tool_call":
+                    transcript.append(f"\n[tool: {event['name']}]\n")
+                elif event.get("type") == "tool_result":
+                    result_preview = json.dumps(event.get("result", {}), default=str)[:300]
+                    transcript.append(f"→ {result_preview}\n")
+
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "success",
+                "finishedAt": int(time.time() * 1000),
+                "result": {"transcript": "".join(transcript)},
+            })
+
+        except Exception as exc:
+            await convex.mutation("executions:updateStatus", {
+                "jobId": job_id,
+                "status": "failed",
+                "finishedAt": int(time.time() * 1000),
+                "errorMessage": str(exc),
+            })
+
+    # Run in background — don't await
+    asyncio.create_task(_run())
+
+    return {"jobId": job_id}

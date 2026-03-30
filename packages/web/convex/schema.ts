@@ -221,4 +221,41 @@ export default defineSchema({
   })
     .index("by_project", ["projectId", "createdAt"])
     .index("by_created", ["createdAt"]),
+
+  // Context / Knowledge Base documents
+  contextDocuments: defineTable({
+    projectId: v.optional(v.id("projects")), // null = global (available to all projects)
+    name: v.string(),
+    type: v.union(
+      v.literal("pdf"),
+      v.literal("text"),
+      v.literal("url"),
+      v.literal("docx"),
+    ),
+    content: v.string(),       // extracted plain text
+    url: v.optional(v.string()),
+    fileSize: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId", "createdAt"])
+    .index("by_created", ["createdAt"]),
+
+  // Q&A sessions — persists question+answer history per project
+  questionSessions: defineTable({
+    projectId: v.optional(v.id("projects")),
+    question: v.string(),
+    blocks: v.array(v.object({
+      kind: v.string(),
+      text: v.optional(v.string()),
+      name: v.optional(v.string()),
+      result: v.optional(v.any()),
+      explanation: v.optional(v.string()),
+      missing: v.optional(v.string()),
+      sources: v.optional(v.array(v.string())),
+    })),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId", "createdAt"])
+    .index("by_created", ["createdAt"]),
 });

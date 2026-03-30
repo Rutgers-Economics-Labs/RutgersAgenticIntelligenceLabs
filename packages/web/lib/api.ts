@@ -273,6 +273,21 @@ export const projectAgent = {
       }
     }
   },
+
+  /** Fire-and-forget autonomous task. Returns {jobId} to track via Convex. */
+  runTask: async (
+    projectId: string,
+    goal: string,
+    model?: string,
+  ): Promise<{ jobId: string }> => {
+    const res = await fetch(`${API_BASE}/project-agent/task`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: projectId, goal, model }),
+    });
+    if (!res.ok) throw new Error(`Agent task API ${res.status}`);
+    return res.json();
+  },
 };
 
 // ── Execute ───────────────────────────────────────────────────────────────────
@@ -359,4 +374,70 @@ export const agent = {
       "/agent/infer-schema",
       { method: "POST", body: JSON.stringify({ sample, description, model }) }
     ),
+};
+
+// ── Questions ─────────────────────────────────────────────────────────────────
+
+export type QuestionEvent =
+  | { type: "text_delta";   content: string }
+  | { type: "tool_call";    id: string; name: string; args: Record<string, unknown> }
+  | { type: "tool_result";  id: string; name: string; result: unknown }
+  | { type: "done" }
+  | { type: "error";        message: string };
+
+export const questions = {
+  ask: async function* (
+    question: string,
+    projectId?: string,
+    model?: string,
+  ): AsyncGenerator<QuestionEvent> {
+    const res = await fetch(`${API_BASE}/questions/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, project_id: projectId, model }),
+    });
+    if (!res.ok || !res.body) throw new Error(`Questions API ${res.status}`);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop() ?? "";
+      for (const part of parts) {
+        const line = part.trim();
+        if (line.startsWith("data: ")) {
+          try { yield JSON.parse(line.slice(6)) as QuestionEvent; } catch { /* skip */ }
+        }
+      }
+    }
+  },
+};
+
+// ── Context / Knowledge Base ──────────────────────────────────────────────────
+
+export const context = {
+  uploadFile: async (file: File, projectId?: string, name?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (projectId) form.append("project_id", projectId);
+    if (name)      form.append("name", name);
+    const res = await fetch(`${API_BASE}/context/upload`, { method: "POST", body: form });
+    if (!res.ok) { const t = await res.text(); throw new Error(t); }
+    return res.json();
+  },
+
+  addUrl: (url: string, name?: string, projectId?: string) =>
+    req("/context/url", { method: "POST", body: JSON.stringify({ url, name, project_id: projectId }) }),
+
+  addText: (name: string, content: string, projectId?: string) =>
+    req("/context/text", { method: "POST", body: JSON.stringify({ name, content, project_id: projectId }) }),
+
+  list: (projectId?: string) =>
+    req<any[]>(`/context/list${projectId ? `?project_id=${projectId}` : ""}`),
+
+  remove: (id: string) =>
+    req(`/context/${id}`, { method: "DELETE" }),
 };

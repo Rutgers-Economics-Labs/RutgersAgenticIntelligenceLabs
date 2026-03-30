@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import {
   Network, Database, GitBranch, BarChart2,
   Activity, Settings, Layers, FolderOpen, Sun, Moon,
-  BotMessageSquare, Table2, Library,
+  BotMessageSquare, Table2, Library, MessageCircleQuestion, BookOpen,
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import { useQuery } from "convex/react";
@@ -16,12 +16,19 @@ type NavItem = { href: string; label: string; icon: React.ElementType };
 
 const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
+    title: "Research",
+    items: [
+      { href: "/questions", label: "Questions", icon: MessageCircleQuestion },
+      { href: "/analysis",  label: "Analysis",  icon: BarChart2 },
+      { href: "/context",   label: "Knowledge Base", icon: BookOpen },
+    ],
+  },
+  {
     title: "Explore",
     items: [
       { href: "/explorer", label: "Explorer", icon: Layers },
-      { href: "/graph", label: "Graph", icon: Network },
-      { href: "/sql", label: "SQL", icon: Table2 },
-      { href: "/analysis", label: "Analysis", icon: BarChart2 },
+      { href: "/graph",    label: "Graph",    icon: Network },
+      { href: "/sql",      label: "SQL",      icon: Table2 },
     ],
   },
   {
@@ -149,7 +156,7 @@ export function Sidebar() {
   function linkHref(href: string) {
     const id = searchParams.get("projectId");
     if (!id) return href;
-    if (href === "/projects" || href === "/configs" || href === "/registry" || href === "/pipelines" || href === "/jobs") {
+    if (href === "/projects" || href === "/configs" || href === "/registry" || href === "/pipelines" || href === "/jobs" || href === "/context") {
       return href;
     }
     const sp = new URLSearchParams();

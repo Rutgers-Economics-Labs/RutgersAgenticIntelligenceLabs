@@ -6,11 +6,12 @@ import { Id } from "@/convex/_generated/dataModel";
 import { analysis } from "@/lib/api";
 import { AnalysisHistory } from "./AnalysisHistory";
 import { SchemaBrowser } from "./SchemaBrowser";
+import { AgentPanel } from "./AgentPanel";
 import { ToolResult } from "@/components/jobs/ToolResult";
-import { 
-  Play, Save, Plus, LayoutDashboard, Code, Terminal, 
+import {
+  Play, Save, Plus, LayoutDashboard, Code, Terminal,
   ChevronRight, ChevronLeft, Loader2, CheckCircle2, AlertCircle,
-  Database, FileText
+  Database, FileText, Sparkles
 } from "lucide-react";
 import Editor from "@monaco-editor/react";
 import * as Tabs from "@radix-ui/react-tabs";
@@ -40,6 +41,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   const [scriptName, setScriptName] = useState("New Analysis");
   const [code, setCode] = useState(DEFAULT_CODE);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [rightPanel, setRightPanel] = useState<"schema" | "agent">("schema");
   const [activeTab, setActiveTab] = useState("results");
   
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
@@ -214,12 +216,38 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               </Tabs.Trigger>
             </Tabs.List>
             
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 text-[--muted-foreground] hover:text-[--foreground] transition-colors"
-            >
-              {isSidebarOpen ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => { setRightPanel("agent"); setIsSidebarOpen(true); }}
+                title="AI Assistant"
+                className={cn(
+                  "p-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors",
+                  isSidebarOpen && rightPanel === "agent"
+                    ? "bg-[--primary]/15 text-[--primary] font-semibold"
+                    : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted]/40"
+                )}
+              >
+                <Sparkles size={14} />
+              </button>
+              <button
+                onClick={() => { setRightPanel("schema"); setIsSidebarOpen(true); }}
+                title="Schema Browser"
+                className={cn(
+                  "p-1.5 rounded-lg transition-colors",
+                  isSidebarOpen && rightPanel === "schema"
+                    ? "bg-[--muted]/60 text-[--foreground]"
+                    : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted]/40"
+                )}
+              >
+                <Database size={14} />
+              </button>
+              <button
+                onClick={() => setIsSidebarOpen(v => !v)}
+                className="p-1.5 text-[--muted-foreground] hover:text-[--foreground] transition-colors"
+              >
+                {isSidebarOpen ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+              </button>
+            </div>
           </div>
 
           <div className="flex-1 relative min-h-0 flex overflow-hidden">
@@ -271,7 +299,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
                 />
               </Tabs.Content>
 
-              <Tabs.Content value="logs" className="h-full bg-black/20 focus:outline-none p-4 overflow-y-auto font-mono text-[11px]">
+              <Tabs.Content value="logs" className="h-full bg-[--muted]/30 focus:outline-none p-4 overflow-y-auto font-mono text-[11px]">
                  <div className="space-y-1">
                     {(logs ?? []).map((log: any) => (
                       <div key={log._id} className={cn(
@@ -293,13 +321,22 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               </Tabs.Content>
             </div>
 
-            {/* Right Schema Sidebar */}
+            {/* Right Panel — Schema or AI Agent */}
             {isSidebarOpen && (
-              <div className="w-64 border-l border-[--border] transform transition-all duration-300 animate-in slide-in-from-right-full">
-                <SchemaBrowser 
-                   projectId={projectId} 
-                   onSelect={(name) => setCode(prev => prev + `\n# Reference: ${name}`)} 
-                />
+              <div className="w-72 border-l border-[--border] transform transition-all duration-300 animate-in slide-in-from-right-full flex flex-col">
+                {rightPanel === "agent" ? (
+                  <AgentPanel
+                    projectId={projectId as string}
+                    onInsertCode={(snippet) => setCode(prev =>
+                      prev.trimEnd() + "\n\n" + snippet + "\n"
+                    )}
+                  />
+                ) : (
+                  <SchemaBrowser
+                    projectId={projectId}
+                    onSelect={(name) => setCode(prev => prev + `\n# ${name}`)}
+                  />
+                )}
               </div>
             )}
           </div>
