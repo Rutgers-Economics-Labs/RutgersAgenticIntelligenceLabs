@@ -14,18 +14,25 @@ import duckdb
 import pandas as pd
 
 
+_SAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9_\-.]")
+
 def _sanitize(value):
     """Make a string safe to use as an OWL local name (no spaces, etc.)."""
-    return re.sub(r"[^A-Za-z0-9_\-.]", "_", str(value))
+    return _SAFE_CHARS_RE.sub("_", str(value))
 
+
+_PLACEHOLDER_RE = re.compile(r"\{([^}]+)\}")
 
 def _resolve(template, row, sanitize=False):
     """Replace {field} placeholders with row values. Set sanitize=True for URIs."""
-    result = template
-    for key, val in row.items():
-        str_val = _sanitize(val) if (sanitize and isinstance(val, str)) else str(val)
-        result = result.replace("{" + key + "}", str_val)
-    return result
+    def replacer(match):
+        key = match.group(1)
+        if key in row:
+            val = row[key]
+            return _sanitize(val) if (sanitize and isinstance(val, str)) else str(val)
+        return match.group(0)
+
+    return _PLACEHOLDER_RE.sub(replacer, template)
 
 
 def _set_data_property(individual, prop_name, prop, raw_value):
@@ -135,8 +142,10 @@ def run_pipeline(pipeline_path):
 
         count = 0
         with onto:
-            for _, row in df.iterrows():
-                row_dict = {k: v for k, v in row.to_dict().items() if not str(k).startswith("_")}
+            # Iterating over dicts is faster than iterrows() + Series.to_dict()
+            for row_dict in df.to_dict("records"):
+                # Skip internal columns
+                row_dict = {k: v for k, v in row_dict.items() if not str(k).startswith("_")}
 
                 uri = _resolve(uri_template, row_dict, sanitize=True)
                 individual, created = _get_or_create(onto, onto_class, uri, _cache)
