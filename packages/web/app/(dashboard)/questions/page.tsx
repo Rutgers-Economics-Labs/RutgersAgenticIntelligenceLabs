@@ -198,7 +198,7 @@ function HistoryPanel({
   );
 
   return (
-    <div className="absolute right-0 top-0 h-full w-80 z-30 flex flex-col border-l border-[--border] bg-[--card] shadow-xl animate-in slide-in-from-right duration-200">
+    <div className="w-72 shrink-0 flex flex-col border-l border-[--border] bg-[--card] h-[calc(100vh-56px)] sticky top-0 self-start">
       <div className="px-4 py-3 border-b border-[--border] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <History size={14} className="text-[--primary]" />
@@ -225,10 +225,10 @@ function HistoryPanel({
           {sessions?.map((s: any) => (
             <button
               key={s._id}
-              onClick={() => { onSelect(s); onClose(); }}
+              onClick={() => onSelect(s)}
               className="w-full text-left px-4 py-3 hover:bg-[--muted]/20 transition-colors group"
             >
-              <p className="text-sm text-[--foreground] font-medium truncate group-hover:text-[--primary] transition-colors">
+              <p className="text-sm text-[--foreground] font-medium line-clamp-2 group-hover:text-[--primary] transition-colors">
                 {s.question}
               </p>
               <p className="text-[11px] text-[--muted-foreground] mt-0.5">
@@ -395,7 +395,9 @@ export default function QuestionsPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-56px)] max-w-4xl mx-auto w-full px-4 relative">
+    <div className="flex h-[calc(100vh-56px)] w-full">
+      {/* Main conversation column */}
+      <div className="flex flex-col flex-1 min-w-0 max-w-4xl mx-auto px-4">
       {/* Header */}
       <div className="py-6 border-b border-[--border] flex items-center justify-between shrink-0">
         <div>
@@ -514,7 +516,9 @@ export default function QuestionsPage() {
         </p>
       </div>
 
-      {/* History slide-over panel */}
+      </div>{/* end main column */}
+
+      {/* History sidebar — sits beside the main column, no overlap */}
       {showHistory && (
         <HistoryPanel
           projectId={projectId}
@@ -522,6 +526,78 @@ export default function QuestionsPage() {
           onClose={() => setShowHistory(false)}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Markdown renderer (no prose plugin — uses CSS vars so light+dark both work) ─
+
+function MarkdownContent({ text }: { text: string }) {
+  return (
+    <div className="text-sm leading-relaxed space-y-2">
+      <ReactMarkdown
+        remarkPlugins={[remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={{
+          p: ({ children }) => (
+            <p style={{ color: "var(--foreground)", lineHeight: "1.7", marginBottom: "0.5rem" }}>{children}</p>
+          ),
+          h1: ({ children }) => (
+            <h1 style={{ color: "var(--foreground)", fontSize: "1.1rem", fontWeight: 700, margin: "1rem 0 0.4rem" }}>{children}</h1>
+          ),
+          h2: ({ children }) => (
+            <h2 style={{ color: "var(--foreground)", fontSize: "1rem", fontWeight: 700, margin: "0.8rem 0 0.3rem" }}>{children}</h2>
+          ),
+          h3: ({ children }) => (
+            <h3 style={{ color: "var(--foreground)", fontSize: "0.9rem", fontWeight: 600, margin: "0.6rem 0 0.25rem" }}>{children}</h3>
+          ),
+          ul: ({ children }) => (
+            <ul style={{ color: "var(--foreground)", paddingLeft: "1.25rem", listStyleType: "disc", marginBottom: "0.5rem" }}>{children}</ul>
+          ),
+          ol: ({ children }) => (
+            <ol style={{ color: "var(--foreground)", paddingLeft: "1.25rem", listStyleType: "decimal", marginBottom: "0.5rem" }}>{children}</ol>
+          ),
+          li: ({ children }) => (
+            <li style={{ color: "var(--foreground)", lineHeight: "1.6", marginBottom: "0.15rem" }}>{children}</li>
+          ),
+          strong: ({ children }) => (
+            <strong style={{ color: "var(--foreground)", fontWeight: 600 }}>{children}</strong>
+          ),
+          em: ({ children }) => (
+            <em style={{ color: "var(--foreground)", fontStyle: "italic" }}>{children}</em>
+          ),
+          blockquote: ({ children }) => (
+            <blockquote style={{ borderLeft: "2px solid var(--primary)", paddingLeft: "0.75rem", color: "var(--muted-foreground)", fontStyle: "italic", margin: "0.5rem 0" }}>{children}</blockquote>
+          ),
+          code: ({ className, children }) => {
+            const isBlock = !!className;
+            if (isBlock) {
+              return (
+                <pre style={{ background: "var(--muted)", borderRadius: "0.5rem", padding: "0.75rem", overflowX: "auto", margin: "0.5rem 0" }}>
+                  <code style={{ color: "var(--foreground)", fontFamily: "monospace", fontSize: "0.8rem" }}>{children}</code>
+                </pre>
+              );
+            }
+            return (
+              <code style={{ background: "var(--muted)", color: "var(--primary)", fontFamily: "monospace", fontSize: "0.8rem", padding: "0.1rem 0.3rem", borderRadius: "0.25rem" }}>{children}</code>
+            );
+          },
+          pre: ({ children }) => <>{children}</>,
+          table: ({ children }) => (
+            <div style={{ overflowX: "auto", margin: "0.5rem 0" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem", color: "var(--foreground)" }}>{children}</table>
+            </div>
+          ),
+          th: ({ children }) => (
+            <th style={{ border: "1px solid var(--border)", padding: "0.4rem 0.75rem", background: "var(--muted)", fontWeight: 600, textAlign: "left" }}>{children}</th>
+          ),
+          td: ({ children }) => (
+            <td style={{ border: "1px solid var(--border)", padding: "0.4rem 0.75rem" }}>{children}</td>
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   );
 }
@@ -541,29 +617,7 @@ function AnswerBlockView({ block, projectId }: { block: AnswerBlock; projectId?:
   }
 
   if (block.kind === "text" && block.text) {
-    return (
-      <div className="text-sm text-[--foreground] leading-relaxed prose prose-sm dark:prose-invert max-w-none
-        [&_p]:mb-2 [&_p]:text-[--foreground] [&_p]:leading-relaxed
-        [&_h1]:text-lg [&_h1]:font-bold [&_h1]:text-[--foreground] [&_h1]:mt-4 [&_h1]:mb-2
-        [&_h2]:text-base [&_h2]:font-bold [&_h2]:text-[--foreground] [&_h2]:mt-3 [&_h2]:mb-1.5
-        [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:text-[--foreground] [&_h3]:mt-2 [&_h3]:mb-1
-        [&_ul]:list-disc [&_ul]:list-inside [&_ul]:space-y-1 [&_ul]:mb-2 [&_ul]:text-[--foreground]
-        [&_ol]:list-decimal [&_ol]:list-inside [&_ol]:space-y-1 [&_ol]:mb-2 [&_ol]:text-[--foreground]
-        [&_li]:text-[--foreground] [&_li]:leading-relaxed
-        [&_strong]:font-semibold [&_strong]:text-[--foreground]
-        [&_code]:text-xs [&_code]:font-mono [&_code]:bg-[--muted]/50 [&_code]:text-[--primary] [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded
-        [&_pre]:bg-[--muted]/20 [&_pre]:rounded-lg [&_pre]:p-3 [&_pre]:overflow-x-auto [&_pre]:my-2
-        [&_pre_code]:bg-transparent [&_pre_code]:text-[--foreground] [&_pre_code]:px-0
-        [&_blockquote]:border-l-2 [&_blockquote]:border-[--primary]/40 [&_blockquote]:pl-3 [&_blockquote]:my-2 [&_blockquote]:text-[--muted-foreground] [&_blockquote]:italic
-        [&_table]:w-full [&_table]:border-collapse [&_table]:my-2
-        [&_th]:border [&_th]:border-[--border] [&_th]:px-3 [&_th]:py-1.5 [&_th]:bg-[--muted]/30 [&_th]:text-xs [&_th]:font-semibold [&_th]:text-left
-        [&_td]:border [&_td]:border-[--border] [&_td]:px-3 [&_td]:py-1.5 [&_td]:text-xs [&_td]:text-[--foreground]
-      ">
-        <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-          {block.text}
-        </ReactMarkdown>
-      </div>
-    );
+    return <MarkdownContent text={block.text} />;
   }
 
   if (block.kind === "tool_result") {

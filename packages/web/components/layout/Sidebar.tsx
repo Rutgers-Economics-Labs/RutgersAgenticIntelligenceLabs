@@ -108,7 +108,9 @@ export function Sidebar() {
       pathname.startsWith("/graph") ||
       pathname.startsWith("/sql") ||
       pathname.startsWith("/workspace") ||
-      pathname.startsWith("/analysis")
+      pathname.startsWith("/analysis") ||
+      pathname.startsWith("/questions") ||
+      pathname.startsWith("/context")
     );
   }, [pathname]);
 
