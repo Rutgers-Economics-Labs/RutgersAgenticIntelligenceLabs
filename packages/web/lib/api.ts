@@ -441,3 +441,20 @@ export const context = {
   remove: (id: string) =>
     req(`/context/${id}`, { method: "DELETE" }),
 };
+
+
+// ── Quality ───────────────────────────────────────────────────────────────────
+
+export const quality = {
+  report: (projectId?: string) =>
+    req<any>(`/quality/report${projectId ? `?project_id=${projectId}` : ""}`),
+
+  snapshot: (projectId?: string, label?: string) =>
+    req<any>("/quality/snapshot", {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId, label }),
+    }),
+
+  diff: (projectId?: string) =>
+    req<any>(`/quality/diff${projectId ? `?project_id=${projectId}` : ""}`),
+};
