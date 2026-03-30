@@ -44,6 +44,8 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
 
   const saveScript = useMutation(api.analysis.saveScript);
   const runningJob = useQuery(api.executions.get, runningJobId ? { jobId: runningJobId } : "skip");
@@ -72,13 +74,20 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   };
 
   const handleSave = async () => {
-    const id = await saveScript({
-      id: activeScriptId || undefined,
-      projectId,
-      name: scriptName,
-      code,
-    });
-    if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+    setIsSaving(true);
+    try {
+      const id = await saveScript({
+        id: activeScriptId || undefined,
+        projectId,
+        name: scriptName,
+        code,
+      });
+      if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 2000);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleRun = async () => {
@@ -157,23 +166,35 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               onClick={handleNew}
               className="p-2 text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted]/50 rounded-lg transition-colors"
               title="New Analysis"
+              aria-label="Create new analysis"
             >
               <Plus size={18} />
             </button>
             <button
               onClick={handleSave}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all"
+              disabled={isSaving}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all disabled:opacity-50"
             >
-              <Save size={14} className="text-[--muted-foreground]" />
-              Save
+              {isSaving ? (
+                <Loader2 size={14} className="animate-spin text-[--primary]" />
+              ) : showSaved ? (
+                <CheckCircle2 size={14} className="text-green-500" />
+              ) : (
+                <Save size={14} className="text-[--muted-foreground]" />
+              )}
+              {isSaving ? "Saving..." : showSaved ? "Saved!" : "Save"}
             </button>
             <button
               onClick={handleRun}
               disabled={!!runningJobId}
-              className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold text-white bg-[--primary] hover:bg-[--primary]/90 rounded-lg shadow-sm shadow-[--primary]/20 transition-all disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-1.5 text-xs font-bold text-white bg-[--primary] hover:bg-[--primary]/90 rounded-lg shadow-sm shadow-[--primary]/20 transition-all disabled:opacity-50 min-w-[120px] justify-center"
             >
-              <Play size={14} fill="currentColor" />
-              Run Analysis
+              {runningJobId ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <Play size={14} fill="currentColor" />
+              )}
+              {runningJobId ? "Running..." : "Run Analysis"}
             </button>
           </div>
         </div>

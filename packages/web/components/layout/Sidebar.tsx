@@ -172,10 +172,14 @@ export function Sidebar() {
 
         {/* Project switcher */}
         <div className="mt-3">
-          <p className="text-[10px] text-[--muted-foreground] uppercase tracking-wide font-medium mb-1">
+          <label
+            htmlFor="project-switcher"
+            className="block text-[10px] text-[--muted-foreground] uppercase tracking-wide font-medium mb-1"
+          >
             Project
-          </p>
+          </label>
           <select
+            id="project-switcher"
             value={projectId}
             onChange={(e) => {
               const next = e.target.value;
