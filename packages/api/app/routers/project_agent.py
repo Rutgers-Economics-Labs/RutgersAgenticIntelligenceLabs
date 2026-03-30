@@ -128,12 +128,17 @@ Example: search_data_registry(query="unemployment rate", geography="New Jersey")
 3. If not: create_config with proper YAML, then add_data_source
 4. If yes: add_data_source(slug=<existing slug>)
 
+### save_to_knowledge_base(name, content)
+Save a research note, compiled analysis, or configuration summary to the project knowledge base.
+Use this to persist important findings so they can be retrieved in future Q&A sessions.
+
 ## Rules
 - Always call get_project_info at the start of a new conversation before anything else
 - Always call list_available_configs before linking anything — never guess slugs
 - Never run_hydration unless a pipeline is linked
 - Be concise but specific — tell the user exactly what you changed
-- If a tool returns an error, explain it clearly and try an alternative approach"""
+- If a tool returns an error, explain it clearly and try an alternative approach
+- After creating a new data source config, save a summary to the knowledge base"""
 
 
 # ---------------------------------------------------------------------------
