@@ -206,6 +206,11 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Jules/Bolt/Palette AI agent metadata
+.jules/
+.Jules/
+benchmark_optimization.py
+
 # Generated ontology outputs and API cache
 .DS_Store
 cache/

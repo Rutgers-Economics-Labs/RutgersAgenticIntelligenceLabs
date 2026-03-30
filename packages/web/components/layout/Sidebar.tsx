@@ -16,13 +16,6 @@ type NavItem = { href: string; label: string; icon: React.ElementType };
 
 const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
-    title: "Home",
-    items: [
-      { href: "/", label: "Dashboard", icon: Activity },
-      { href: "/projects", label: "Projects", icon: FolderOpen },
-    ],
-  },
-  {
     title: "Explore",
     items: [
       { href: "/explorer", label: "Explorer", icon: Layers },
@@ -167,8 +160,38 @@ export function Sidebar() {
   return (
     <aside className="w-56 shrink-0 flex flex-col border-r border-[--border] bg-[--card] h-screen sticky top-0">
       <div className="px-4 py-5 border-b border-[--border]">
-        <span className="text-sm font-bold text-[--primary] tracking-wide uppercase">RAIL</span>
-        <p className="text-[10px] text-[--muted-foreground] mt-0.5">Agentic Intelligence Labs</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm font-bold text-[--primary] tracking-wide uppercase">RAIL</span>
+            <p className="text-[10px] text-[--muted-foreground] mt-0.5">Agentic Intelligence Labs</p>
+          </div>
+          <div className="flex items-center gap-1">
+            <Link
+              href={linkHref("/")}
+              title="Dashboard"
+              className={cn(
+                "p-1.5 rounded transition-colors",
+                pathname === "/"
+                  ? "text-[--primary] bg-[--accent]/20"
+                  : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
+              )}
+            >
+              <Activity size={14} />
+            </Link>
+            <Link
+              href="/projects"
+              title="Projects"
+              className={cn(
+                "p-1.5 rounded transition-colors",
+                pathname.startsWith("/projects")
+                  ? "text-[--primary] bg-[--accent]/20"
+                  : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
+              )}
+            >
+              <FolderOpen size={14} />
+            </Link>
+          </div>
+        </div>
 
         {/* Project switcher */}
         <div className="mt-3">

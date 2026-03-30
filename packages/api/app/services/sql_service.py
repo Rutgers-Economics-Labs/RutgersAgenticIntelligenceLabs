@@ -11,6 +11,8 @@ Callers can then:
 """
 import duckdb
 import time
+from pathlib import Path
+from typing import Optional
 
 from app.services.convex_client import convex
 

@@ -139,7 +139,10 @@ async def create_ontology_config(req: CreateConfigRequest):
         raise HTTPException(422, detail=errors)
     parsed = parse(req.content)
     return await convex.mutation("configs:createOntology", {
-        **req.model_dump(),
+        "slug": req.slug,
+        "name": req.name,
+        "content": req.content,
+        "isPublic": req.isPublic,
         "parsedSpec": parsed,
         "ontologyUri": parsed.get("uri", ""),
     })
