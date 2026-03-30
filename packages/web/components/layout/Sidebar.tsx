@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import {
   Network, Database, GitBranch, BarChart2,
   Activity, Settings, Layers, FolderOpen, Sun, Moon,
-  BotMessageSquare, Table2, Library, MessageCircleQuestion, BookOpen,
+  BotMessageSquare, Table2, Library, MessageCircleQuestion, BookOpen, ShieldCheck,
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import { useQuery } from "convex/react";
@@ -29,6 +29,7 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { href: "/explorer", label: "Explorer", icon: Layers },
       { href: "/graph",    label: "Graph",    icon: Network },
       { href: "/sql",      label: "SQL",      icon: Table2 },
+      { href: "/quality",  label: "Quality",  icon: ShieldCheck },
     ],
   },
   {
@@ -110,7 +111,8 @@ export function Sidebar() {
       pathname.startsWith("/workspace") ||
       pathname.startsWith("/analysis") ||
       pathname.startsWith("/questions") ||
-      pathname.startsWith("/context")
+      pathname.startsWith("/context") ||
+      pathname.startsWith("/quality")
     );
   }, [pathname]);
 
@@ -158,7 +160,7 @@ export function Sidebar() {
   function linkHref(href: string) {
     const id = searchParams.get("projectId");
     if (!id) return href;
-    if (href === "/projects" || href === "/configs" || href === "/registry" || href === "/pipelines" || href === "/jobs" || href === "/context") {
+    if (href === "/projects" || href === "/configs" || href === "/registry" || href === "/pipelines" || href === "/jobs") {
       return href;
     }
     const sp = new URLSearchParams();

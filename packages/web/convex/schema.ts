@@ -241,6 +241,16 @@ export default defineSchema({
     .index("by_project", ["projectId", "createdAt"])
     .index("by_created", ["createdAt"]),
 
+  // Ontology snapshots — entity counts saved before/after hydration for diff tracking
+  ontologySnapshots: defineTable({
+    projectId: v.optional(v.id("projects")),
+    label: v.string(),
+    tables: v.any(), // { [tableName]: { rowCount, columns: { [col]: { nullRate, distinctCount } } } }
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId", "createdAt"])
+    .index("by_created", ["createdAt"]),
+
   // Q&A sessions — persists question+answer history per project
   questionSessions: defineTable({
     projectId: v.optional(v.id("projects")),
