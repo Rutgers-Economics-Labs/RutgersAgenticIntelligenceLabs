@@ -46,6 +46,8 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [showSaved, setShowSaved] = useState(false);
 
   const saveScript = useMutation(api.analysis.saveScript);
   const runningJob = useQuery(api.executions.get, runningJobId ? { jobId: runningJobId } : "skip");
@@ -74,13 +76,22 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   };
 
   const handleSave = async () => {
-    const id = await saveScript({
-      id: activeScriptId || undefined,
-      projectId,
-      name: scriptName,
-      code,
-    });
-    if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+    setIsSaving(true);
+    try {
+      const id = await saveScript({
+        id: activeScriptId || undefined,
+        projectId,
+        name: scriptName,
+        code,
+      });
+      if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+      setShowSaved(true);
+      setTimeout(() => setShowSaved(false), 2000);
+    } catch (err) {
+      console.error("Failed to save script:", err);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleRun = async () => {
@@ -164,10 +175,26 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
             </button>
             <button
               onClick={handleSave}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all"
+              disabled={isSaving}
+              aria-label="Save analysis"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all disabled:opacity-50"
             >
-              <Save size={14} className="text-[--muted-foreground]" />
-              Save
+              {isSaving ? (
+                <>
+                  <Loader2 size={14} className="animate-spin text-[--muted-foreground]" />
+                  Saving...
+                </>
+              ) : showSaved ? (
+                <>
+                  <CheckCircle2 size={14} className="text-green-500" />
+                  Saved
+                </>
+              ) : (
+                <>
+                  <Save size={14} className="text-[--muted-foreground]" />
+                  Save
+                </>
+              )}
             </button>
             <button
               onClick={handleRun}
