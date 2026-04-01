@@ -1,0 +1,7 @@
+version: 1
+sources:
+  - id: bad_source
+    type: unsupported
+mapping_sets: {}
+output:
+  ontology_input: rail_nj_skeleton.owl

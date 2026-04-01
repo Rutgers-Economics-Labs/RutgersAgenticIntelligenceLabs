@@ -1,0 +1,75 @@
+version: 1
+
+run:
+  fail_policy: continue
+  log_level: info
+
+connections:
+  public_api:
+    kind: api_key
+    header: X-API-Key
+    value: ${ENV:PUBLIC_API_KEY}
+
+sources:
+  - id: unemployment_csv
+    type: csv
+    enabled: true
+    extract:
+      path: data/unemployment_*.csv
+      delimiter: ","
+      encoding: utf-8
+    normalize:
+      select:
+        county: County
+        period: Month
+        metric: "'UnemploymentRate'"
+        value: Value
+        unit: "'Percent'"
+      casts:
+        value: float
+    map_set: labor_indicator_map
+
+  - id: labor_api
+    type: api
+    enabled: false
+    connection_ref: public_api
+    extract:
+      base_url: https://api.example.org
+      endpoint: /v1/labor
+      method: GET
+      params:
+        state: NJ
+      response_path: data[]
+    normalize:
+      select:
+        county: county
+        period: period
+        metric: metric
+        value: value
+        unit: unit
+      casts:
+        value: float
+    map_set: labor_indicator_map
+
+mapping_sets:
+  labor_indicator_map:
+    target_class: LaborIndicator
+    iri_template: "li:{source_id}:{county}:{period}:{metric}"
+    predicates:
+      hasValue: value
+      hasUnit: unit
+      hasTag: metric
+      measuredFor: county
+      measuredAt: period
+      fromSource: source_id
+    required: [county, period, metric, value, unit]
+
+output:
+  ontology_input: rail_nj_skeleton.owl
+  ontology_output: rail_nj_populated.owl
+  format: rdfxml
+
+quality:
+  on_missing_required: skip_record
+  on_cast_error: skip_record
+  max_errors_per_source: 100
