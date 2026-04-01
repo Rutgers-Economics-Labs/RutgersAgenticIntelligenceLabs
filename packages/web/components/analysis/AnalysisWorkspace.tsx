@@ -43,6 +43,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [rightPanel, setRightPanel] = useState<"schema" | "agent">("schema");
   const [activeTab, setActiveTab] = useState("results");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "success">("idle");
   
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
@@ -74,13 +75,21 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   };
 
   const handleSave = async () => {
-    const id = await saveScript({
-      id: activeScriptId || undefined,
-      projectId,
-      name: scriptName,
-      code,
-    });
-    if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+    setSaveStatus("saving");
+    try {
+      const id = await saveScript({
+        id: activeScriptId || undefined,
+        projectId,
+        name: scriptName,
+        code,
+      });
+      if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+      setSaveStatus("success");
+      setTimeout(() => setSaveStatus("idle"), 2000);
+    } catch (err) {
+      console.error("Failed to save analysis:", err);
+      setSaveStatus("idle");
+    }
   };
 
   const handleRun = async () => {
@@ -159,15 +168,24 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               onClick={handleNew}
               className="p-2 text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted]/50 rounded-lg transition-colors"
               title="New Analysis"
+              aria-label="Create new analysis"
             >
               <Plus size={18} />
             </button>
             <button
               onClick={handleSave}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all"
+              disabled={saveStatus === "saving"}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all disabled:opacity-50"
+              aria-label="Save analysis"
             >
-              <Save size={14} className="text-[--muted-foreground]" />
-              Save
+              {saveStatus === "saving" ? (
+                <Loader2 size={14} className="text-[--primary] animate-spin" />
+              ) : saveStatus === "success" ? (
+                <CheckCircle2 size={14} className="text-green-500" />
+              ) : (
+                <Save size={14} className="text-[--muted-foreground]" />
+              )}
+              {saveStatus === "saving" ? "Saving..." : saveStatus === "success" ? "Saved" : "Save"}
             </button>
             <button
               onClick={handleRun}
@@ -220,6 +238,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => { setRightPanel("agent"); setIsSidebarOpen(true); }}
                 title="AI Assistant"
+                aria-label="Toggle AI Assistant panel"
                 className={cn(
                   "p-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors",
                   isSidebarOpen && rightPanel === "agent"
@@ -232,6 +251,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => { setRightPanel("schema"); setIsSidebarOpen(true); }}
                 title="Schema Browser"
+                aria-label="Toggle Schema Browser panel"
                 className={cn(
                   "p-1.5 rounded-lg transition-colors",
                   isSidebarOpen && rightPanel === "schema"
@@ -244,6 +264,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => setIsSidebarOpen(v => !v)}
                 className="p-1.5 text-[--muted-foreground] hover:text-[--foreground] transition-colors"
+                aria-label={isSidebarOpen ? "Collapse right panel" : "Expand right panel"}
               >
                 {isSidebarOpen ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
               </button>
