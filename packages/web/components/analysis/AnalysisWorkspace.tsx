@@ -46,6 +46,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   
   const [runningJobId, setRunningJobId] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const saveScript = useMutation(api.analysis.saveScript);
   const runningJob = useQuery(api.executions.get, runningJobId ? { jobId: runningJobId } : "skip");
@@ -74,13 +75,18 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   };
 
   const handleSave = async () => {
-    const id = await saveScript({
-      id: activeScriptId || undefined,
-      projectId,
-      name: scriptName,
-      code,
-    });
-    if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+    setIsSaving(true);
+    try {
+      const id = await saveScript({
+        id: activeScriptId || undefined,
+        projectId,
+        name: scriptName,
+        code,
+      });
+      if (!activeScriptId) setActiveScriptId(id as Id<"analysisScripts">);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleRun = async () => {
@@ -159,15 +165,17 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               onClick={handleNew}
               className="p-2 text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted]/50 rounded-lg transition-colors"
               title="New Analysis"
+              aria-label="New Analysis"
             >
               <Plus size={18} />
             </button>
             <button
               onClick={handleSave}
-              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all"
+              disabled={isSaving}
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-[--foreground] border border-[--border] bg-[--card] hover:bg-[--muted]/50 rounded-lg transition-all disabled:opacity-50"
             >
-              <Save size={14} className="text-[--muted-foreground]" />
-              Save
+              {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} className="text-[--muted-foreground]" />}
+              {isSaving ? "Saving..." : "Save"}
             </button>
             <button
               onClick={handleRun}
@@ -220,6 +228,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => { setRightPanel("agent"); setIsSidebarOpen(true); }}
                 title="AI Assistant"
+                aria-label="AI Assistant"
                 className={cn(
                   "p-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors",
                   isSidebarOpen && rightPanel === "agent"
@@ -232,6 +241,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => { setRightPanel("schema"); setIsSidebarOpen(true); }}
                 title="Schema Browser"
+                aria-label="Schema Browser"
                 className={cn(
                   "p-1.5 rounded-lg transition-colors",
                   isSidebarOpen && rightPanel === "schema"
@@ -243,6 +253,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               </button>
               <button
                 onClick={() => setIsSidebarOpen(v => !v)}
+                aria-label={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
                 className="p-1.5 text-[--muted-foreground] hover:text-[--foreground] transition-colors"
               >
                 {isSidebarOpen ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
