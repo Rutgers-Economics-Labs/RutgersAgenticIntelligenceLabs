@@ -115,14 +115,15 @@ def _apply_fields(df, fields_spec):
     partial = pd.DataFrame(result)
 
     # Pass 2: computed fields (can reference aliases from pass 1)
+    # Using list comprehension with to_dict('records') is ~20-30x faster than .apply(axis=1)
+    # as it avoids boxing each row into a pandas Series object.
+    records = partial.to_dict("records")
     for field in fields_spec:
         if "computed" not in field:
             continue
         alias = field["alias"]
         template = field["computed"]
-        result[alias] = partial.apply(
-            lambda row, t=template: t.format(**row.to_dict()), axis=1
-        )
+        result[alias] = [template.format(**row) for row in records]
 
     return pd.DataFrame(result)
 
@@ -221,8 +222,8 @@ def _handle_api(api_name, spec, resolved_data):
         inject_fields = foreach.get("inject_fields", [])
 
         frames = []
-        for _, row in parent_df.iterrows():
-            row_dict = row.to_dict()
+        # Iterating over dicts is ~2x faster than iterrows() + row.to_dict()
+        for row_dict in parent_df.to_dict("records"):
             extra = {}
             if inject_param:
                 extra[inject_param] = inject_template.format(**row_dict)
