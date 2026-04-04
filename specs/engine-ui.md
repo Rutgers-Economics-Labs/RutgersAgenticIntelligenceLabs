@@ -1,5 +1,9 @@
 # Streamlit UI (`app.py`)
 
+> **Deprecated.** The Streamlit explorer (`packages/engine/app.py`) is superseded by the Next.js web application (`packages/web/`). It remains in the repository as a lightweight standalone tool for local engine development and debugging — useful when iterating on a pipeline without running the full platform stack. It is not part of the production platform and will not receive new features. Use `make dev` to run the full web UI instead.
+
+---
+
 Served with `streamlit run app.py`. Page title: "RAIL Explorer". App heading: "Rutgers Agentic Intelligence Labs".
 
 ## Startup

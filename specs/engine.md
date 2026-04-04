@@ -2,6 +2,22 @@
 
 The engine is five Python modules in `packages/engine/engine/`. None contain domain knowledge — all mappings come from YAML.
 
+## Kernel Injection
+
+The hydration worker (`packages/api/app/services/hydration_worker.py`) prepends the kernel ontology module to every pipeline's ontology config before writing configs to the tmpdir. The engine itself is unaware of this — it receives a merged ontology YAML that already includes the kernel properties alongside the project's own classes and properties. Projects never need to declare kernel properties explicitly.
+
+The kernel YAML lives at `packages/engine/ontology/kernel.yaml`. Its `data_properties` list is prepended to the project ontology config's `data_properties` list before the merged file is written. The project's `uri`, `classes`, and `object_properties` are unchanged. If the project accidentally declares a property with the same name as a kernel property, the kernel definition takes precedence and a warning is logged by the worker.
+
+See `specs/ontology-kernel.md` for the full kernel specification.
+
+## Connector Resolution
+
+The hydration worker also resolves `extends` fields in API configs before writing to tmpdir. Any API config with an `extends: <connector-slug>` field is deep-merged with the connector template fetched from Convex. The engine receives fully resolved YAML configs with no `extends` fields. See `specs/connectors.md` for merge rules.
+
+## Incremental Hydration Mode
+
+When a pipeline config specifies `hydration_mode: incremental`, `pipeline_runner.run_pipeline()` skips the step that deletes `db_path` and `db_path + "-journal"`. The existing quadstore is opened and individuals are upserted — `_get_or_create` returns existing individuals when their URI is already in the quadstore, and creates new ones otherwise. Data properties on existing individuals are updated to the new values from the current run. This enables append-only collection for scheduled/live data sources without losing previously collected individuals. See `specs/schedule.md`.
+
 > **Note:** All paths in this document are relative to the `packages/engine/` directory.
 
 ---

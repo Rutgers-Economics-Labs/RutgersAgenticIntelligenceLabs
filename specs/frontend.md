@@ -1,45 +1,120 @@
 # Frontend
 
 The frontend is a Next.js 15 App Router application in `packages/web/`. It has two data sources:
-- **Convex** (`convex/react` `useQuery`) — real-time config tables and job status.
+- **Convex** (`convex/react` `useQuery`) — real-time config tables, job status, and shared registries.
 - **FastAPI** (`lib/api.ts` typed fetch client) — ontology data, analysis results, SQL, code execution, and agent chat.
+
+## Navigation Model
+
+The UI has two contexts: **platform level** (projects gallery and shared registry) and **project level** (everything scoped to one project). A project switcher in the top bar moves between projects. The sidebar changes to reflect the active project context.
+
+```
+Top bar:   [RAIL]  [project switcher ▾]                    [+ New Project]
+
+Sidebar (platform):          Sidebar (inside a project):
+  Projects                     Overview
+  Registry                     Ontology
+    └ Connectors                 └ Classes
+    └ Ontology Templates         └ Graph
+                                 └ Schema
+                               Sources
+                               Pipelines
+                               SQL
+                               Agent
+                               Analysis
+                               Jobs
+                               ─────────
+                               Registry   (shared, same as platform)
+                               Settings
+```
 
 ## Directory Layout
 
 ```
 packages/web/
   app/
-    layout.tsx                  Root layout — sets up ConvexProvider and dark theme
-    convex-provider.tsx         "use client" wrapper around ConvexProvider
-    page.tsx                    Root redirect → /explorer
-    (dashboard)/
-      layout.tsx                Dashboard shell with Sidebar
-      workspace/page.tsx        AI research workspace (streaming agent chat)
-      explorer/page.tsx         Paginated entity browser
-      graph/page.tsx            Force-directed graph
-      sql/page.tsx              SQL editor with NL→SQL
-      analysis/page.tsx         Plugin runner
-      jobs/page.tsx             Hydration job list
-      configs/page.tsx          Config library (3 tabs: APIs, Ontologies, Pipelines)
-      pipelines/page.tsx        Pipeline cards with "Run" button
-      projects/page.tsx         Project management
+    layout.tsx                        Root layout — ConvexProvider, dark theme
+    convex-provider.tsx               "use client" wrapper around ConvexProvider
+    page.tsx                          Root redirect → /projects
+    (platform)/
+      layout.tsx                      Platform shell with top bar only (no sidebar)
+      projects/page.tsx               Project gallery
+      registry/
+        page.tsx                      Registry landing (tabs: Connectors, Ontology Templates)
+        connectors/page.tsx           Connector template gallery + editor
+        ontology-templates/page.tsx   Ontology template gallery + editor
+    [project]/
+      layout.tsx                      Project shell — top bar + project-scoped sidebar
+      overview/page.tsx               Project dashboard
+      ontology/
+        page.tsx                      Ontology landing — redirects to /classes
+        classes/page.tsx              Class tree + paginated instance browser
+        graph/page.tsx                Force-directed graph
+        schema/page.tsx               Merged ontology YAML viewer
+      sources/page.tsx                Data source configs + connector template picker
+      pipelines/page.tsx              Pipeline configs + run history
+      sql/page.tsx                    DuckDB SQL editor with NL→SQL
+      agent/page.tsx                  Domain agent chat
+      analysis/page.tsx               Analysis plugin runner
+      jobs/page.tsx                   Hydration job list + live logs
+      settings/page.tsx               rail.yaml viewer, GitHub sync status
   components/
     layout/
-      Sidebar.tsx               Left-nav sidebar
-    ThemeProvider.tsx           Dark/light mode context
+      TopBar.tsx                      Project switcher, platform nav
+      Sidebar.tsx                     Project-scoped left nav
+      ProjectSwitcher.tsx             Dropdown — lists all projects with status badges
+    registry/
+      ConnectorCard.tsx               Connector template card with "Use" button
+      OntologyTemplateCard.tsx        Ontology template card with "Apply" button
+      ConnectorEditor.tsx             YAML editor + validate + save for connector templates
+    ontology/
+      ClassTree.tsx                   Hierarchical class list with instance counts
+      EntityTable.tsx                 Paginated instance table with search
+      EntityDetailPanel.tsx           Slide-in panel: properties + relationships
+      GraphView.tsx                   react-force-graph-2d wrapper
+    agent/
+      AgentChat.tsx                   Message list + streaming text
+      ToolCallCard.tsx                Collapsible tool call with args + result
+      ContextSnapshot.tsx             "I have access to: N classes, M entities" card
+      SessionList.tsx                 Left panel: previous conversations
+    shared/
+      YamlEditor.tsx                  Monaco-style YAML editor with live validation
+      StatusBadge.tsx                 Colored status chip (draft/ready/hydrated/running/etc.)
+      SplitPane.tsx                   Resizable two-panel layout
   convex/
-    schema.ts                   Convex table definitions
-    configs.ts                  Convex query/mutation functions for config tables
-    jobs.ts                     Convex query/mutation functions for job tables
-    agent.ts                    Convex query/mutation functions for agent sessions
-    workspaces.ts               Convex query/mutation functions for workspaces
-    projects.ts                 Convex query/mutation functions for projects
-    _generated/                 Auto-generated Convex types (not edited manually)
+    schema.ts                         Convex table definitions
+    configs.ts                        apiConfigs, ontologyConfigs, pipelineConfigs CRUD
+    jobs.ts                           hydrationJobs, jobLogs CRUD
+    agent.ts                          agentSessions CRUD
+    workspaces.ts                     workspaces CRUD
+    projects.ts                       projects CRUD
+    connectors.ts                     connectorTemplates CRUD
+    ontologyTemplates.ts              ontologyTemplates CRUD
+    _generated/                       Auto-generated Convex types (not edited manually)
   lib/
-    api.ts                      Typed fetch client for FastAPI
-  public/                       Static assets
-  .env.local                    NEXT_PUBLIC_CONVEX_URL, NEXT_PUBLIC_API_URL
+    api.ts                            Typed fetch client for FastAPI
+  public/                             Static assets
+  .env.local                          NEXT_PUBLIC_CONVEX_URL, NEXT_PUBLIC_API_URL
 ```
+
+## New Convex Tables
+
+### `connectorTemplates`
+| Field | Type |
+|-------|------|
+| `slug` | string (indexed `by_slug`) |
+| `name` | string |
+| `description` | string |
+| `version` | string |
+| `tags` | string[] |
+| `content` | string (raw YAML) |
+| `usageCount` | number |
+| `createdBy` | string |
+| `createdAt` | number (ms) |
+| `updatedAt` | number (ms) |
+
+### `ontologyTemplates`
+Same shape as `connectorTemplates`. `content` is an ontology YAML module.
 
 ## Convex Schema — `convex/schema.ts`
 
@@ -286,24 +361,68 @@ Interactive SQL editor backed by DuckDB.
 - Pipeline cards show name, slug, referenced API count, tags.
 - "Run" button calls `jobs.trigger(pipeline_slug)` then navigates to `/jobs`.
 
+## New and Updated Pages
+
+### `/projects` — Project Gallery
+
+Card grid of all projects. Each card: project name, description, status badge (`draft`/`ready`/`hydrated`), last hydration timestamp, entity count, GitHub repo link, "Open" button. Filter bar: status filter chips, search by name. "New Project" button opens a creation modal (name, slug, GitHub repo, ontology template picker).
+
+### `/registry` — Shared Registry
+
+Two tabs: **Connectors** and **Ontology Templates**. Each tab is a searchable card gallery with tag filter chips. Cards show name, description, version, usage count ("used by N projects"), and a "Use" / "Apply" button. Clicking a card opens a detail panel with the full YAML content and an edit button.
+
+### `/[project]/overview` — Project Dashboard
+
+Four metric cards: total entities, OWL classes, last hydration time, active jobs. Below: mini job history table (last 5 runs), class breakdown bar chart (entity count per class), recent agent sessions list with timestamps and first message preview.
+
+### `/[project]/ontology/classes` — Class Browser
+
+Left panel: class tree with instance counts. Expandable hierarchy (GeographicRegion → State → County → ...). Clicking a class loads the right panel: paginated entity table with search input. Column headers auto-derived from the class's data properties. Clicking any row slides in `EntityDetailPanel` from the right showing all properties and relationships. URL updates to `/[project]/ontology/classes/[class]` and `/[project]/ontology/classes/[class]/[entityId]` for deep linking.
+
+### `/[project]/sources` — Data Sources
+
+Split layout. Left: project's API source configs as cards (name, connector template badge if using `extends`, last fetched date). "New Source" button opens YAML editor pre-filled with template selector. Right: connector template gallery — browse shared connectors and click "Use Template" to fork one into the project.
+
+### `/[project]/agent` — Domain Agent
+
+Left panel (collapsible): session list — all past conversations for this project, ordered by recency, with auto-generated titles. Main area:
+- Empty state: `ContextSnapshot` card ("In this project I have access to: 5 classes · 48,600 entities · 3 pipelines · 12 analysis plugins") + 4 example research prompt buttons.
+- Active conversation: `AgentChat` with streaming text, `ToolCallCard` components for each tool call (collapsible, shows args + result inline), model selector in the header.
+
+### `/[project]/settings` — Project Settings
+
+Three sections:
+1. **Manifest** — read-only view of `rail.yaml` with an "Edit" button that opens the YAML editor. Changes are committed to GitHub via `POST /api/v1/github/publish`.
+2. **GitHub Sync** — last sync timestamp, last commit SHA, in-sync status badge. "Force Sync" button triggers `POST /api/v1/github/sync` manually. "Re-link Repo" for changing the GitHub repo.
+3. **Danger Zone** — delete project (with confirmation modal).
+
+## Top Bar — `components/layout/TopBar.tsx`
+
+Always visible. Contains:
+- Platform name / logo (links to `/projects`)
+- `ProjectSwitcher` dropdown — lists all projects with status badges; click to navigate to `/{slug}/overview`. Includes "All Projects" option linking to `/projects`.
+- Active project name (breadcrumb)
+- "New Project" button (platform level only, hidden inside a project)
+
 ## Sidebar — `components/layout/Sidebar.tsx`
 
-Navigation links in display order:
+Project-scoped. Only visible when inside a `[project]` route. Navigation links:
 
 | Label | Route |
 |-------|-------|
-| AI Workspace | `/workspace` |
-| Dashboard | `/` |
-| Projects | `/projects` |
-| Explorer | `/explorer` |
-| Graph | `/graph` |
-| SQL | `/sql` |
-| Analysis | `/analysis` |
-| Data Sources | `/configs` |
-| Pipelines | `/pipelines` |
-| Jobs | `/jobs` |
+| Overview | `/[project]/overview` |
+| Ontology | `/[project]/ontology/classes` |
+| Sources | `/[project]/sources` |
+| Pipelines | `/[project]/pipelines` |
+| SQL | `/[project]/sql` |
+| Agent | `/[project]/agent` |
+| Analysis | `/[project]/analysis` |
+| Jobs | `/[project]/jobs` |
+| ──── | |
+| Registry | `/registry` |
+| Settings | `/[project]/settings` |
 
-Active link highlighted via `usePathname()`. Dark/light theme toggle button at bottom via `useTheme()` from `ThemeProvider`.
+Active link highlighted via `usePathname()`. Dark/light theme toggle at bottom.
 
 ## Theme
 

@@ -16,7 +16,9 @@ Defines one data source. The filename stem is the API name used to reference the
 |-------|------|----------|-------------|
 | `name` | string | yes | Must match the filename stem. Used as the key in `resolved_data` and as the base for cache filenames. |
 | `type` | string | yes | `api`, `csv`, or `excel` |
+| `extends` | string | no | Slug of a shared connector template in the Convex `connectorTemplates` table. When present, the template is fetched and deep-merged with this config before hydration. This config's fields override the template's. See `specs/connectors.md`. |
 | `fields` | list | no | Column mapping rules (see below). If absent, the raw columns are passed through unchanged. |
+| `fields_append` | list | no | Additional field entries to append to the template's `fields` list after merging. Only meaningful when `extends` is set. If `fields` is also present, it replaces the template's list entirely; `fields_append` then appends to the replacement. |
 
 ### `type: api`
 
@@ -213,6 +215,33 @@ Orchestrates a full hydration run: which ontology to use, which steps to execute
 | `db` | string | default `"ontology/onto.db"` | Path for the SQLite quadstore. |
 | `steps` | list | yes | Ordered list of hydration steps. |
 | `post_hydration_transforms` | list | no | Ontology transforms run after all steps complete. |
+| `hydration_mode` | string | default `"full"` | `full` or `incremental`. In `full` mode (default), `onto.db` is deleted and rebuilt from scratch on every run. In `incremental` mode, existing individuals are preserved and new ones are appended; existing URIs are updated in-place. Use `incremental` for scheduled/live data collection. See `specs/schedule.md`. |
+| `schedule` | map | no | Cron-based scheduling for automated hydration runs. See `specs/schedule.md` and the schedule fields table below. |
+
+### Schedule Fields (inside `schedule:`)
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `cron` | string | no | Standard 5-field cron expression (e.g. `"0 8 * * *"` = daily at 8am). Mutually exclusive with `frequency`. |
+| `frequency` | string | no | Human-readable interval shorthand: `15m`, `1h`, `6h`, `1d`, `1w`. Mutually exclusive with `cron`. |
+| `window` | string | no | Auto-stop duration after which the schedule is disabled. Format: `Nd`, `Nw`, `Nh` (e.g. `7d` = stop after 7 days). If absent, the schedule runs indefinitely. |
+| `enabled` | boolean | default `true` | Set to `false` to pause the schedule without removing it. |
+
+**Example — daily scheduled pipeline:**
+```yaml
+hydration_mode: incremental
+schedule:
+  cron: "0 8 * * *"          # every day at 8am
+  window: 30d                 # stop after 30 days
+```
+
+**Example — high-frequency collection window:**
+```yaml
+hydration_mode: incremental
+schedule:
+  frequency: 1h               # every hour
+  window: 7d                  # for one week
+```
 
 ### Step Fields
 

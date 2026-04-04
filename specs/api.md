@@ -11,6 +11,7 @@ On startup (`lifespan`):
 2. Pushes LLM API keys from settings into `os.environ` so LiteLLM can read them.
 3. If `{engine_root}/ontology/onto.db` exists, loads it via `ontology_service.load()`.
 4. If `{engine_root}/ontology/onto.duckdb` exists, loads it via `sql_service.set_path()`.
+5. Registers GitHub webhook router and initializes `github_service` with App credentials.
 
 ## Configuration — `app/core/config.py`
 
@@ -40,6 +41,9 @@ On startup (`lifespan`):
 | `execute_python_enabled` | `bool` | `true` | `RAIL_EXECUTE_ENABLED` |
 | `execute_python_mode` | `str` | `"inproc"` | `RAIL_EXECUTE_MODE` (`inproc` \| `subprocess`) |
 | `execute_docker_image` | `str` | `""` | `RAIL_EXECUTE_DOCKER_IMAGE` |
+| `github_app_id` | `str` | `""` | `GITHUB_APP_ID` |
+| `github_app_private_key` | `str` | `""` | `GITHUB_APP_PRIVATE_KEY` (PEM string) |
+| `github_webhook_secret` | `str` | `""` | `GITHUB_WEBHOOK_SECRET` |
 
 ## Routers
 
@@ -372,3 +376,122 @@ async def run_chat(
 | `search_entities` | Keyword search across all ontology entities |
 
 Tool schemas follow the OpenAI function-calling format; LiteLLM normalizes them for each provider.
+
+The `/chat` endpoint accepts an optional `project` query parameter (`?project={slug}`). When present, the agent service scopes its context snapshot to that project's ontology and configs, and filters the tool catalog to the project's `allowed_actions`. When absent, all tools are available and context is unscoped (legacy behavior).
+
+---
+
+### `/api/v1/projects` — `app/routers/projects.py`
+
+| Method | Path | Body / Params | Returns |
+|--------|------|--------------|---------|
+| GET | `` | `status?` | list of project records |
+| GET | `/{slug}` | — | project record |
+| POST | `` | `{name, slug, description?, github?, ontologyTemplates?, agentModel?, agentAllowedActions?}` | `{slug, status: "draft"}` |
+| PUT | `/{slug}` | partial project fields | updated project record |
+| DELETE | `/{slug}` | — | `{ok: true}` |
+| POST | `/{slug}/hydrate` | `{pipeline_slug}` | delegates to `POST /api/v1/jobs` with project context |
+| GET | `/{slug}/context` | — | agent context snapshot for this project (classes, schema, sources, pipelines) |
+
+`POST /` creates the project record in Convex, applies selected ontology templates to generate the initial `ontologyConfigs` entry, and (if `github` is set) triggers initial sync from the repo.
+
+---
+
+### `/api/v1/connectors` — `app/routers/connectors.py`
+
+All reads/writes proxy to the Convex `connectorTemplates` table.
+
+| Method | Path | Body / Params | Returns |
+|--------|------|--------------|---------|
+| GET | `` | `q?`, `tags?` (CSV) | list of connector template summaries |
+| GET | `/{slug}` | — | full connector template with content |
+| POST | `` | `{slug, name, description, version, tags?, content}` | created record |
+| PUT | `/{slug}` | partial fields | updated record |
+| DELETE | `/{slug}` | — | `{ok: true}` |
+| POST | `/{slug}/validate` | — | validates `content` YAML via `yaml_service.validate()`; returns `{valid, errors}` |
+| POST | `/resolve` | `{base_content, extends_slug}` | returns the fully merged YAML that the engine would see — useful for previewing connector inheritance |
+
+---
+
+### `/api/v1/ontology-templates` — `app/routers/ontology_templates.py`
+
+| Method | Path | Body / Params | Returns |
+|--------|------|--------------|---------|
+| GET | `` | `tags?` (CSV) | list of ontology template summaries |
+| GET | `/{slug}` | — | full template with content |
+| POST | `` | `{slug, name, description, version, tags?, content}` | created record |
+| PUT | `/{slug}` | partial fields | updated record |
+| DELETE | `/{slug}` | — | `{ok: true}` |
+| POST | `/{slug}/validate` | — | validates `content` YAML as `config_type: "ontology"` |
+
+---
+
+### `/api/v1/github` — `app/routers/github.py`
+
+| Method | Path | Body / Params | Returns |
+|--------|------|--------------|---------|
+| POST | `/sync` | GitHub push webhook payload | `{synced_files: int, job_triggered: bool}` — HMAC-verified |
+| POST | `/publish` | `{project_slug, files: [{path, content}], commit_message}` | `{commit_sha, branch, url}` |
+| GET | `/status/{project_slug}` | — | `{last_sync_at, last_commit_sha, in_sync: bool}` |
+| POST | `/link` | `{project_slug, github_repo}` | links project to GitHub repo; triggers initial import |
+
+`POST /sync` verifies the `X-Hub-Signature-256` header using `GITHUB_WEBHOOK_SECRET` before processing. Returns 200 immediately; sync work is dispatched as a background task.
+
+`POST /publish` uses the GitHub App installation token (short-lived, generated per request) to commit files to the project's `defaultBranch`. The resulting push fires the webhook, which the platform handles idempotently via content-hash comparison.
+
+---
+
+### New Services
+
+#### `app/services/github_service.py`
+
+```python
+class GitHubService:
+    async def get_installation_token(self, repo: str) -> str
+        # Generates short-lived installation token using GitHub App JWT
+
+    async def get_file(self, repo: str, path: str, ref: str = "main") -> str
+        # Fetches file content from GitHub Contents API
+
+    async def put_file(self, repo: str, path: str, content: str,
+                       message: str, sha: str | None = None) -> dict
+        # Creates or updates a file; returns {commit_sha, branch}
+
+    async def list_changed_files(self, repo: str, before_sha: str, after_sha: str) -> list[str]
+        # Returns list of changed file paths between two commits
+
+github_service = GitHubService()  # module-level singleton
+```
+
+#### `app/services/connector_service.py`
+
+```python
+async def resolve(base_content: str, extends_slug: str) -> str
+    # Fetches connector template from Convex, deep-merges with base_content
+    # Returns fully resolved YAML string with no `extends` field
+    # Used by hydration_worker before writing configs to tmpdir
+
+async def list_templates(q: str | None, tags: list[str] | None) -> list[dict]
+    # Queries Convex connectorTemplates with optional text and tag filters
+```
+
+#### Updated `app/services/hydration_worker.py`
+
+Step added between fetching configs and writing to tmpdir:
+
+```python
+# For each api config with `extends` field:
+for slug, content in api_configs.items():
+    parsed = yaml.safe_load(content)
+    if "extends" in parsed:
+        content = await connector_service.resolve(content, parsed["extends"])
+        api_configs[slug] = content
+```
+
+#### Updated `app/services/agent_service.py`
+
+- Accepts optional `project_slug` parameter in `run_chat()`
+- When present: fetches project context snapshot via `GET /api/v1/projects/{slug}/context`
+- Filters tool schemas to project's `allowed_actions` list
+- Prefixes system prompt with context snapshot
+- New tools added: `discover_sources`, `generate_report`, `publish_to_github` (see `specs/agents.md`)
