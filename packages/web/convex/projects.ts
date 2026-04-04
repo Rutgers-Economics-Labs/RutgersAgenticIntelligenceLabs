@@ -54,6 +54,12 @@ export const update = mutation({
     activeOntologyOwlPath: v.optional(v.string()),
     activeOntologyDuckdbPath: v.optional(v.string()),
     activeOntologyEmbeddingsPath: v.optional(v.string()),
+    github: v.optional(v.string()),
+    defaultBranch: v.optional(v.string()),
+    ontologyTemplates: v.optional(v.array(v.string())),
+    agentModel: v.optional(v.string()),
+    agentAllowedActions: v.optional(v.array(v.string())),
+    lastHydratedAt: v.optional(v.number()),
   },
   handler: async (ctx, { slug, ...fields }) => {
     const doc = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", slug)).first();
@@ -77,6 +83,12 @@ export const updateById = mutation({
     activeOntologyOwlPath: v.optional(v.string()),
     activeOntologyDuckdbPath: v.optional(v.string()),
     activeOntologyEmbeddingsPath: v.optional(v.string()),
+    github: v.optional(v.string()),
+    defaultBranch: v.optional(v.string()),
+    ontologyTemplates: v.optional(v.array(v.string())),
+    agentModel: v.optional(v.string()),
+    agentAllowedActions: v.optional(v.array(v.string())),
+    lastHydratedAt: v.optional(v.number()),
   },
   handler: async (ctx, { projectId, ...fields }) => {
     const patch = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
