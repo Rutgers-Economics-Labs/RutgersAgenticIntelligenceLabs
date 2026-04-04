@@ -2,6 +2,19 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  connectorTemplates: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    description: v.string(),
+    version: v.string(),
+    tags: v.array(v.string()),
+    content: v.string(),       // raw YAML (below the --- divider)
+    usageCount: v.number(),
+    createdBy: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_slug", ["slug"]),
+
   apiConfigs: defineTable({
     name: v.string(),
     slug: v.string(),

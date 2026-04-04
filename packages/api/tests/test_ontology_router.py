@@ -25,7 +25,7 @@ async def test_semantic_search_route(client):
 
     assert resp.status_code == 200
     assert resp.json() == expected
-    search_mock.assert_awaited_once_with("coastal counties", top_k=10, types=["County"])
+    search_mock.assert_awaited_once_with("coastal counties", top_k=10, types=["County"], project_id=None)
 
 
 async def test_semantic_search_unavailable(client):
