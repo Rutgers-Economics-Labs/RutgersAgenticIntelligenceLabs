@@ -58,6 +58,9 @@ packages/web/
       analysis/page.tsx               Analysis plugin runner
       jobs/page.tsx                   Hydration job list + live logs
       settings/page.tsx               rail.yaml viewer, GitHub sync status
+      quality/page.tsx                Data quality report, snapshot diff
+      questions/page.tsx              Q&A interface — single-shot NL questions
+      context/page.tsx                Knowledge base — upload documents and URLs
   components/
     layout/
       TopBar.tsx                      Project switcher, platform nav

@@ -57,10 +57,18 @@ Every research domain is a **project**: an isolated ontology + dataset + pipelin
 | `hydrationJobs` | Job tracking for pipeline runs |
 | `jobLogs` | Streaming log lines from hydration worker |
 | `projects` | Project registry — manifest, GitHub link, status, agent config |
-| `agentSessions` | Agent conversation history (project-scoped) |
+| `agentSessions` | Research agent conversation history (project-scoped) |
 | `workspaces` | Notebook-style workspaces with cells (project-scoped) |
 | `connectorTemplates` | Shared data source connector templates — editable by any user |
 | `ontologyTemplates` | Shared ontology module templates — editable by any user |
+| `scheduledPipelines` | Cron-based pipeline schedules per project |
+| `ontologySnapshots` | Point-in-time data quality snapshots (DuckDB metrics) |
+| `dataSourceRegistry` | Searchable catalog of known public data series (FRED/Census/BLS/WorldBank) |
+| `projectChats` | Project setup agent conversation history |
+| `questionSessions` | Q&A query history per project |
+| `contextDocuments` | Knowledge base — uploaded documents, URLs, and notes per project |
+| `executionJobs` | Async tracking for SQL/code execution and autonomous agent tasks |
+| `analysisScripts` | Saved analysis scripts per project |
 
 ## Detailed Specifications
 
@@ -78,6 +86,10 @@ Every research domain is a **project**: an isolated ontology + dataset + pipelin
 - [Data Quality](data-quality.md) — Quality reports, null rates, snapshot diffing.
 - [rail-py](rail-py.md) — Internal Python client package (cloud + local modes).
 - [Midterm Improvements](improvements.md) — Planned architectural improvements post-initial release.
+- [Data Source Registry](registry.md) — Searchable catalog of known public data series.
+- [Project Setup Agent](project-agent.md) — Project configuration and debugging agent.
+- [Q&A Interface](questions.md) — Single-shot natural-language question answering.
+- [Knowledge Base](context.md) — Per-project document store for agent context.
 
 ## Data Flow — Config-driven Hydration
 

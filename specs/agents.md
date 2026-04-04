@@ -1,5 +1,26 @@
 # Domain Agents
 
+RAIL has two distinct agent types. They serve different purposes and are implemented separately.
+
+## The Two Agent Types
+
+| | Research Agent | Project Setup Agent |
+|--|---------------|---------------------|
+| **Router** | `/api/v1/agent` | `/api/v1/project-agent` |
+| **Spec** | This file | `specs/project-agent.md` |
+| **Purpose** | Run research workflows: SQL, Python, ontology queries, reports | Configure projects: link configs, run hydration, debug jobs |
+| **Input** | Project-scoped question or research task | Project ID + configuration request |
+| **Tool focus** | `query_ontology`, `run_sql`, `execute_python`, `generate_report` | `link_ontology`, `run_hydration`, `get_job_logs`, `create_config` |
+| **Session store** | `agentSessions` Convex table | `projectChats` Convex table |
+| **UI** | `/[project]/agent` page | Project dashboard chat panel |
+| **Autonomous mode** | No | Yes — `POST /project-agent/task` |
+
+There is also a **Q&A interface** (`/api/v1/questions`) for single-shot questions — see `specs/questions.md`. Q&A is not a "conversation" — it is one question, one structured answer, no history.
+
+---
+
+## Research Agent
+
 Each project has a **domain agent** — an AI agent scoped to that project's ontology, data sources, pipelines, and action catalog. The agent is the primary interface for research workflows: it can discover data, build pipelines, hydrate the ontology, run analysis, and produce reports entirely autonomously.
 
 Domain agents come before a platform-wide agent. Each agent is an expert in its domain because it only sees its project's data and a tight, deterministic context snapshot. A platform-wide routing agent is a future concern.

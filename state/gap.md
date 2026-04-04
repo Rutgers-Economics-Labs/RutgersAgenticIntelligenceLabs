@@ -178,18 +178,16 @@ These items are prerequisites for most other phases.
 
 ## Spec Alignment Items (not new features, just keeping spec accurate)
 
-These are small fixes where the codebase diverges from the spec in naming or structure:
-
-| Item | Action |
+| Item | Status |
 |------|--------|
-| `ontologySnapshots` vs `qualitySnapshots` | Update `specs/data-quality.md` to use `ontologySnapshots` (matches codebase) |
-| `dataSourceRegistry` | Add to `specs/architecture.md` Convex tables; write `specs/registry.md` for the catalog concept |
-| `projectChats` | Add to `specs/architecture.md` Convex tables |
-| `executionJobs` | Add to `specs/architecture.md` Convex tables |
-| Q&A interface (`/questions`) | Write `specs/questions.md` |
-| Knowledge base (`/context`) | Write `specs/context.md` |
-| `project_agent.py` tools | Reconcile with `specs/agents.md` — decide which tool set wins |
-| IRI namespace | Decide: keep `http://example.org/rutgers_ontology.owl` or migrate to `http://rail.rutgers.edu/ontology/` |
+| `ontologySnapshots` vs `qualitySnapshots` | ✅ Resolved — `specs/data-quality.md` updated to use `ontologySnapshots` |
+| `dataSourceRegistry` | ✅ Resolved — `specs/registry.md` written; added to `specs/architecture.md` |
+| `projectChats` | ✅ Resolved — added to `specs/architecture.md` Convex tables; covered by `specs/project-agent.md` |
+| `executionJobs` | ✅ Resolved — added to `specs/architecture.md` Convex tables |
+| Q&A interface (`/questions`) | ✅ Resolved — `specs/questions.md` written |
+| Knowledge base (`/context`) | ✅ Resolved — `specs/context.md` written |
+| `project_agent.py` tools | ✅ Resolved — `specs/project-agent.md` written; `specs/agents.md` updated to clarify two agent types |
+| IRI namespace | ❌ Still open — decide: keep `http://example.org/rutgers_ontology.owl` or migrate to `http://rail.rutgers.edu/ontology/` |
 
 ---
 

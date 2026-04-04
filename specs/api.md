@@ -495,3 +495,87 @@ for slug, content in api_configs.items():
 - Filters tool schemas to project's `allowed_actions` list
 - Prefixes system prompt with context snapshot
 - New tools added: `discover_sources`, `generate_report`, `publish_to_github` (see `specs/agents.md`)
+
+---
+
+### `/api/v1/registry` — `app/routers/registry.py`
+
+Searchable catalog of known public data series. Distinct from connector templates — this is discovery, not configuration. See `specs/registry.md`.
+
+| Method | Path | Params / Body | Returns |
+|--------|------|--------------|---------|
+| GET | `/search` | `q?`, `provider?`, `geography?`, `limit` (default 20, max 100) | list of matching registry entries |
+| GET | `/{provider}/{source_id}` | — | single registry entry or 404 |
+| POST | `` | `{provider, id, name, description, unit, frequency, geography, tags?, exampleYaml}` | created entry |
+
+#### `app/services/registry_service.py`
+
+```python
+async def search_registry_entries(
+    query_text: str,
+    provider: str | None = None,
+    geography: str | None = None,
+    limit: int = 20,
+) -> list[dict]
+    # Queries Convex dataSourceRegistry with filters and full-text matching
+
+async def get_registry_entry(provider: str, source_id: str) -> dict | None
+    # Returns a single entry by provider + sourceId
+
+async def create_registry_entry(data: dict) -> dict
+    # Creates a new entry in Convex
+```
+
+---
+
+### `/api/v1/project-agent` — `app/routers/project_agent.py`
+
+Project setup and configuration agent. Scoped to a specific project; distinct from the research agent. See `specs/project-agent.md`.
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| POST | `/chat` | `{project_id, message, history[], model?}` | SSE stream |
+| POST | `/task` | `{project_id, task, model?}` | `{execution_job_id}` |
+
+`POST /task` runs an autonomous agent loop without user interaction. Progress tracked via `executionJobs` Convex table.
+
+---
+
+### `/api/v1/questions` — `app/routers/questions.py`
+
+Single-shot natural-language question answering against the project's DuckDB knowledge graph. See `specs/questions.md`.
+
+| Method | Path | Body | Returns |
+|--------|------|------|---------|
+| POST | `/ask` | `{question, project_id?, model?}` | SSE stream |
+
+When the question cannot be answered with available data, the agent calls `report_scope_exceeded` — the frontend renders a Data Gap card with suggested registry sources.
+
+---
+
+### `/api/v1/context` — `app/routers/context.py`
+
+Per-project knowledge base document store. Agents search these documents via `search_context`. See `specs/context.md`.
+
+| Method | Path | Body / Params | Returns |
+|--------|------|--------------|---------|
+| POST | `/upload` | multipart: `file`, `project_id?`, `name?` | `{id, name, type, size}` |
+| POST | `/url` | `{url, name?, project_id?}` | `{id, name, type}` |
+| POST | `/text` | `{name, content, project_id?}` | `{id, name, type}` |
+| GET | `/list` | `project_id?` | list of document records |
+| DELETE | `/{doc_id}` | — | `{deleted: true}` |
+
+Supported file types: PDF (pdfplumber), DOCX (python-docx), TXT/MD (UTF-8). Content capped at 100k characters per document. URLs scraped with BeautifulSoup (50k char cap).
+
+---
+
+### `/api/v1/storage` — `app/routers/storage.py`
+
+File upload and download for artifacts produced by code execution.
+
+| Method | Path | Body / Params | Returns |
+|--------|------|--------------|---------|
+| POST | `/upload` | multipart: `file`, `job_id` | `{storage_key}` |
+| GET | `/download/{storage_key}` | — | file stream |
+
+`storage_key` is either a local filesystem path (local mode) or an S3 key (`jobs/{job_id}/{filename}`). Used by `POST /analysis/run-code` for artifact persistence.

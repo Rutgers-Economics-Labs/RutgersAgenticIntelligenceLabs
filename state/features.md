@@ -200,16 +200,16 @@ Cross-cutting feature status. Each feature may span Engine, API, Convex, and Fro
 
 ## Unspecced Features (Built but Not in Spec)
 
-These exist in the codebase and work, but are not yet covered by a spec document.
+These exist in the codebase and work. Previously-unspecced items have been documented:
 
-| Feature | Where | Description |
-|---------|-------|-------------|
-| Data source registry | `registry.py`, `registry_service.py`, `dataSourceRegistry` Convex table, `/registry` page | Searchable catalog of known public data series (FRED/Census/BLS) with metadata and example YAML. Distinct from connector templates. |
-| Q&A interface | `questions.py` router, `questionSessions` Convex table, `/questions` page | Structured question-answering with typed response blocks (SQL result, text, chart, etc.) |
-| Knowledge base / Context docs | `document_service.py`, `contextDocuments` Convex table, `/context` page | Upload and manage PDF/text/URL reference documents per project |
-| Execution job tracking | `execution_manager.py`, `executionJobs` Convex table | Async job tracking for SQL and code execution (separate from hydration jobs) |
-| Project chat sessions | `project_agent.py`, `projectChats` Convex table | Project-scoped agent with tools: link_ontology, link_pipeline, run_hydration, get_job_logs |
-| Web scraping | `scrape_service.py`, `scrape_runner.py` | Scrape web pages for data source configuration |
-| Stream simulation | `stream_runner.py` | Simulates live data streams (not production-ready) |
-| Analysis scripts management | `analysisScripts` Convex table | Save/load analysis scripts per project |
-| Tools page | `/tools` frontend page | Not yet understood — to be explored |
+| Feature | Spec | Status |
+|---------|------|--------|
+| Data source registry | `specs/registry.md` | ✅ Now specced |
+| Q&A interface | `specs/questions.md` | ✅ Now specced |
+| Knowledge base / Context docs | `specs/context.md` | ✅ Now specced |
+| Project setup agent | `specs/project-agent.md` | ✅ Now specced |
+| Execution job tracking | Referenced in `specs/project-agent.md` (autonomous task endpoint) | ✅ Partially specced |
+| Web scraping | `scrape_service.py`, `scrape_runner.py` | 🔵 Still unspecced |
+| Stream simulation | `stream_runner.py` | 🔵 Still unspecced — not production-ready |
+| Analysis scripts management | `analysisScripts` Convex table | 🔵 Still unspecced |
+| Tools page | `/tools` frontend page | 🔵 Still unspecced — purpose unclear |
