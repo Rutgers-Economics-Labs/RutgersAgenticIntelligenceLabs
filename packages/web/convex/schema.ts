@@ -127,6 +127,12 @@ export default defineSchema({
     activeOntologyOwlPath: v.optional(v.string()),
     activeOntologyDuckdbPath: v.optional(v.string()),
     activeOntologyEmbeddingsPath: v.optional(v.string()),
+    github: v.optional(v.string()),          // "owner/repo" e.g. "rutgers-rail/nj-econ"
+    defaultBranch: v.optional(v.string()),   // default "main"
+    ontologyTemplates: v.optional(v.array(v.string())),  // slugs of applied templates
+    agentModel: v.optional(v.string()),      // LiteLLM model string override
+    agentAllowedActions: v.optional(v.array(v.string())),  // allowed tool names
+    lastHydratedAt: v.optional(v.number()), // ms timestamp
     createdAt: v.number(),
     updatedAt: v.number(),
   })
