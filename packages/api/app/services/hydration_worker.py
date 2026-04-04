@@ -21,6 +21,30 @@ from app.services.yaml_service import parse as parse_config_yaml, validate_pipel
 
 logger = logging.getLogger("rail.hydration")
 
+import yaml
+from pathlib import Path
+from app.core.config import settings
+
+def _merge_kernel(project_onto_yaml: str) -> str:
+    """Prepend kernel data_properties to the project ontology."""
+    kernel_path = Path(__file__).parent.parent.parent.parent / "engine" / "ontology" / "kernel.yaml"
+    # also check settings.engine_root
+    if not kernel_path.exists():
+        kernel_path = settings.engine_root / "ontology" / "kernel.yaml"
+
+    kernel = yaml.safe_load(kernel_path.read_text())
+    project = yaml.safe_load(project_onto_yaml)
+
+    kernel_props = kernel.get("data_properties", [])
+    project_props = project.get("data_properties", [])
+
+    # Kernel takes precedence — remove any project property with same name as kernel
+    kernel_names = {p["name"] for p in kernel_props}
+    filtered_project_props = [p for p in project_props if p["name"] not in kernel_names]
+
+    project["data_properties"] = kernel_props + filtered_project_props
+    return yaml.dump(project, default_flow_style=False)
+
 # Patterns from pipeline_runner.py print() calls
 _STEP_START = re.compile(r"\[step\] (.+?):")
 _STEP_DONE  = re.compile(r"-> (\d+) (\w+) individuals processed")
@@ -190,9 +214,10 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             if onto_ref in onto_configs:
                 # Use user-provided ontology from Convex
                 onto_path = onto_dir / f"{onto_ref}.yaml"
-                onto_path.write_text(onto_configs[onto_ref])
+                merged_onto = _merge_kernel(onto_configs[onto_ref])
+                onto_path.write_text(merged_onto)
                 pipeline_spec["ontology"] = str(onto_path)
-                await emit("info", f"[setup] Ontology YAML → {onto_path.relative_to(tmpdir)} (from Convex)")
+                await emit("info", f"[setup] Ontology YAML → {onto_path.relative_to(tmpdir)} (from Convex, merged with kernel)")
             else:
                 # Fall back to engine defaults (support both slugs and engine-relative paths)
                 onto_ref_str = str(onto_ref or "core").strip() or "core"
@@ -221,11 +246,14 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                 if engine_onto.exists():
                     out_name = engine_onto.name
                     out_path = onto_dir / out_name
-                    shutil.copy2(engine_onto, out_path)
+
+                    merged_onto = _merge_kernel(engine_onto.read_text())
+                    out_path.write_text(merged_onto)
+
                     pipeline_spec["ontology"] = str(out_path)
                     await emit(
                         "info",
-                        f"[setup] Ontology copied from engine: {engine_onto} → {out_path.relative_to(tmpdir)}",
+                        f"[setup] Ontology copied from engine: {engine_onto} → {out_path.relative_to(tmpdir)} (merged with kernel)",
                     )
 
             output_owl = str(tmpdir / "populated_ontology.owl")

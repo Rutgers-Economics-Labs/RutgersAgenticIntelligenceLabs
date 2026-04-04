@@ -35,7 +35,13 @@ def validate(config_type: ConfigType, content: str) -> list[str]:
     if config_type == "api":
         errors.extend(_validate_api(spec))
     elif config_type == "ontology":
-        errors.extend(_validate_ontology(spec))
+        ont_errors, warnings = _validate_ontology(spec)
+        errors.extend(ont_errors)
+        if warnings:
+            import logging
+            logger = logging.getLogger("rail.yaml_service")
+            for w in warnings:
+                logger.warning(w)
     elif config_type == "pipeline":
         errors.extend(_validate_pipeline(spec))
 
@@ -109,8 +115,10 @@ def _validate_api(spec: dict) -> list[str]:
     return errors
 
 
-def _validate_ontology(spec: dict) -> list[str]:
+def _validate_ontology(spec: dict) -> tuple[list[str], list[str]]:
+    KERNEL_PROPERTY_NAMES = {"hasName", "hasSource", "hasSourceURL", "hasIngestDate", "hasPipelineID", "hasCreatedAt"}
     errors = []
+    warnings = []
     if "uri" not in spec:
         errors.append("Missing required field: uri")
     for i, cls in enumerate(spec.get("classes", [])):
@@ -122,9 +130,12 @@ def _validate_ontology(spec: dict) -> list[str]:
     for i, prop in enumerate(spec.get("data_properties", [])):
         if "name" not in prop:
             errors.append(f"data_properties[{i}]: missing name")
+        elif prop["name"] in KERNEL_PROPERTY_NAMES:
+            warnings.append(f"Property '{prop['name']}' is a kernel property and will be overridden at hydration time.")
+
         if "range" in prop and prop["range"] not in ("str", "int", "float", "bool"):
             errors.append(f"data_properties[{i}]: invalid range '{prop['range']}'")
-    return errors
+    return errors, warnings
 
 
 def _validate_pipeline(spec: dict) -> list[str]:
