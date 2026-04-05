@@ -1,7 +1,57 @@
+import yaml
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from app.services.convex_client import convex
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+class CreateProjectRequest(BaseModel):
+    name: str
+    slug: str
+    description: str = ""
+    approach: str = "data-first"
+    ontologyConfigSlug: str | None = None
+    apiConfigSlugs: list[str] = []
+    pipelineConfigSlug: str | None = None
+    ontologyTemplates: list[str] | None = None
+
+
+@router.post("/")
+async def create_project(data: CreateProjectRequest):
+    project_data = data.model_dump()
+
+    # Process ontologyTemplates if provided
+    ontology_templates = project_data.pop("ontologyTemplates", None)
+    if ontology_templates:
+        merged_onto = {
+            "uri": f"http://rail.rutgers.edu/ontology/{data.slug}",
+            "classes": [],
+            "data_properties": [],
+            "object_properties": []
+        }
+        for template_slug in ontology_templates:
+            tpl = await convex.query("ontologyTemplates:getBySlug", {"slug": template_slug})
+            if tpl and tpl.get("content"):
+                tpl_content = yaml.safe_load(tpl["content"])
+                merged_onto["classes"].extend(tpl_content.get("classes", []))
+                merged_onto["data_properties"].extend(tpl_content.get("data_properties", []))
+                merged_onto["object_properties"].extend(tpl_content.get("object_properties", []))
+
+        # Create as the project's initial ontologyConfig
+        config_slug = f"{data.slug}-ontology"
+        await convex.mutation("configs:createOntology", {
+            "name": f"{data.name} Ontology",
+            "slug": config_slug,
+            "content": yaml.dump(merged_onto),
+            "parsedSpec": merged_onto,
+            "ontologyUri": merged_onto["uri"],
+            "isPublic": False
+        })
+        project_data["ontologyConfigSlug"] = config_slug
+        project_data["ontologyTemplates"] = ontology_templates
+
+    project_id = await convex.mutation("projects:create", project_data)
+    return await convex.query("projects:getBySlug", {"slug": data.slug})
 
 @router.get("/{slug}/context")
 async def get_project_context(slug: str):
