@@ -48,8 +48,8 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   const [lastJobId, setLastJobId] = useState<string | null>(null);
 
   const saveScript = useMutation(api.analysis.saveScript);
-  const runningJob = useQuery(api.executions.get, runningJobId ? { jobId: runningJobId } : "skip");
-  const lastJob = useQuery(api.executions.get, lastJobId ? { jobId: lastJobId } : "skip");
+  const runningJob = useQuery(api.executions.get, runningJobId ? { jobId: runningJobId } : "skip") as any;
+  const lastJob = useQuery(api.executions.get, lastJobId ? { jobId: lastJobId } : "skip") as any;
   
   const logs = useQuery(api.jobs.getLogs, (runningJobId || lastJobId) ? { jobId: (runningJobId || lastJobId) as string } : "skip");
 

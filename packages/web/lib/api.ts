@@ -167,8 +167,12 @@ export const configs = {
       method: "POST",
       body: JSON.stringify({ content }),
     }),
-  create: (type: ConfigType, body: { name: string; slug: string; content: string; isPublic: boolean; tags: string[] }) =>
-    req(`/configs/${type}`, { method: "POST", body: JSON.stringify(body) }),
+  create: (type: ConfigType, body: { name: string; slug: string; content: string; isPublic: boolean; tags: string[] }, projectId?: string) => {
+    const params = new URLSearchParams();
+    withProject(params, projectId);
+    const qs = params.size ? `?${params}` : "";
+    return req(`/configs/${type}${qs}`, { method: "POST", body: JSON.stringify(body) });
+  },
   update: (type: ConfigType, slug: string, body: { name: string; slug: string; content: string; isPublic: boolean; tags: string[] }) =>
     req(`/configs/${type}/${slug}`, { method: "PUT", body: JSON.stringify(body) }),
   delete: (type: ConfigType, slug: string) =>
@@ -177,6 +181,39 @@ export const configs = {
     req<ScrapePreview>("/configs/scrape-preview", { method: "POST", body: JSON.stringify(body) }),
   docPreview: (body: { storage_key: string; extraction_mode: "tables" | "prose" | "both"; pages?: string }) =>
     req<DocumentPreview>("/configs/doc-preview", { method: "POST", body: JSON.stringify(body) }),
+};
+
+export type ConnectorTemplate = {
+  _id: string;
+  name: string;
+  slug: string;
+  description: string;
+  version: string;
+  content: string;
+  tags: string[];
+  usageCount?: number;
+};
+
+export const connectors = {
+  list: (q?: string, tags?: string[]) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (tags && tags.length > 0) params.set("tags", tags.join(","));
+    const qs = params.size ? `?${params}` : "";
+    return req<ConnectorTemplate[]>(`/connectors${qs}`);
+  },
+  get: (slug: string) => req<ConnectorTemplate>(`/connectors/${slug}`),
+  create: (data: Partial<ConnectorTemplate>) => req<ConnectorTemplate>("/connectors", { method: "POST", body: JSON.stringify(data) }),
+  update: (slug: string, data: Partial<ConnectorTemplate>) => req<ConnectorTemplate>(`/connectors/${slug}`, { method: "PUT", body: JSON.stringify(data) }),
+  remove: (slug: string) => req(`/connectors/${slug}`, { method: "DELETE" }),
+  validate: (slug: string, content: string) => req<{ valid: boolean; errors: string[] }>(`/connectors/${slug}/validate`, {
+    method: "POST",
+    body: JSON.stringify({ slug, content, name: "", description: "", version: "" })
+  }),
+  resolve: (baseContent: string, extendsSlug: string) => req<{ resolved_content: string }>("/connectors/resolve", {
+    method: "POST",
+    body: JSON.stringify({ base_content: baseContent, extends_slug: extendsSlug })
+  }),
 };
 
 export const registry = {
