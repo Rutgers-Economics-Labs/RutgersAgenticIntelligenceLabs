@@ -58,6 +58,62 @@ export const deleteApi = mutation({
   },
 });
 
+export const upsertPipeline = mutation({
+  args: {
+    slug: v.string(),
+    content: v.string(),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.query("pipelineConfigs").withIndex("by_slug", (q) => q.eq("slug", args.slug)).first();
+    const now = Date.now();
+    if (existing) {
+      await ctx.db.patch(existing._id, { content: args.content, updatedAt: now });
+      return existing._id;
+    } else {
+      return await ctx.db.insert("pipelineConfigs", {
+        name: args.slug,
+        slug: args.slug,
+        content: args.content,
+        parsedSpec: {},
+        referencedApiSlugs: [],
+        isPublic: false,
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
+export const upsertApi = mutation({
+  args: {
+    slug: v.string(),
+    content: v.string(),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.query("apiConfigs").withIndex("by_slug", (q) => q.eq("slug", args.slug)).first();
+    const now = Date.now();
+    if (existing) {
+      await ctx.db.patch(existing._id, { content: args.content, updatedAt: now });
+      return existing._id;
+    } else {
+      return await ctx.db.insert("apiConfigs", {
+        name: args.slug,
+        slug: args.slug,
+        content: args.content,
+        parsedSpec: {},
+        sourceType: args.source || "unknown",
+        isPublic: false,
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+  },
+});
+
 // ── Ontology configs ─────────────────────────────────────────────────────────
 
 export const listOntologies = query({
@@ -107,6 +163,33 @@ export const deleteOntology = mutation({
   handler: async (ctx, { slug }) => {
     const doc = await ctx.db.query("ontologyConfigs").withIndex("by_slug", (q) => q.eq("slug", slug)).first();
     if (doc) await ctx.db.delete(doc._id);
+  },
+});
+
+export const upsertOntology = mutation({
+  args: {
+    slug: v.string(),
+    content: v.string(),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.query("ontologyConfigs").withIndex("by_slug", (q) => q.eq("slug", args.slug)).first();
+    const now = Date.now();
+    if (existing) {
+      await ctx.db.patch(existing._id, { content: args.content, updatedAt: now });
+      return existing._id;
+    } else {
+      return await ctx.db.insert("ontologyConfigs", {
+        name: args.slug,
+        slug: args.slug,
+        content: args.content,
+        parsedSpec: {},
+        ontologyUri: `https://rail.rutgers.edu/ontology/${args.slug}`,
+        isPublic: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
   },
 });
 
