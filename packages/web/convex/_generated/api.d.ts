@@ -15,6 +15,7 @@ import type * as connectors from "../connectors.js";
 import type * as context from "../context.js";
 import type * as executions from "../executions.js";
 import type * as jobs from "../jobs.js";
+import type * as ontologyTemplates from "../ontologyTemplates.js";
 import type * as projectChats from "../projectChats.js";
 import type * as projects from "../projects.js";
 import type * as quality from "../quality.js";
@@ -36,6 +37,7 @@ declare const fullApi: ApiFromModules<{
   context: typeof context;
   executions: typeof executions;
   jobs: typeof jobs;
+  ontologyTemplates: typeof ontologyTemplates;
   projectChats: typeof projectChats;
   projects: typeof projects;
   quality: typeof quality;
