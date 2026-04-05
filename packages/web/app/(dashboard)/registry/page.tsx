@@ -92,12 +92,9 @@ export default function RegistryPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Registry</h1>
-          <p className="mt-1 text-sm text-[--muted-foreground] max-w-2xl">
-            Search known public series and variables before creating a new data source config.
-          </p>
-        </div>
+        <p className="mt-1 text-sm text-[--muted-foreground] max-w-2xl">
+          Search known public series and variables before creating a new data source config.
+        </p>
         <Link
           href="/configs"
           className="rounded-lg border border-[--border] px-3 py-2 text-sm text-[--muted-foreground] hover:text-[--foreground]"

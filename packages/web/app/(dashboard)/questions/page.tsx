@@ -54,7 +54,7 @@ function DataSourceAgentModal({
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const job = useQuery(api.executions.get, jobId ? { jobId } : "skip");
+  const job = useQuery(api.executions.get, jobId ? { jobId } : "skip") as any;
 
   const launch = async () => {
     setLaunching(true);
