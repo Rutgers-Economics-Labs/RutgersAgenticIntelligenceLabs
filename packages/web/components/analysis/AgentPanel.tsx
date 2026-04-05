@@ -155,7 +155,7 @@ export function AgentPanel({ projectId, onInsertCode }: AgentPanelProps) {
             ) : (
               <div className="space-y-2">
                 {/* Render text with code blocks */}
-                {renderMessageContent(msg.content, msg.codeBlocks, onInsertCode)}
+                {renderMessageContent(msg.content, (msg as any).codeBlocks, onInsertCode)}
               </div>
             )}
           </div>
