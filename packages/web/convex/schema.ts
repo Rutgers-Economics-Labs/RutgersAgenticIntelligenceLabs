@@ -15,6 +15,17 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_slug", ["slug"]),
 
+  ontologyTemplates: defineTable({
+    slug: v.string(),
+    name: v.string(),
+    description: v.string(),
+    version: v.string(),
+    tags: v.array(v.string()),
+    content: v.string(),       // ontology YAML (classes, properties)
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_slug", ["slug"]),
+
   apiConfigs: defineTable({
     name: v.string(),
     slug: v.string(),

@@ -253,6 +253,121 @@ for tmpl in SEED_CONNECTORS:
     call("connectors:create", tmpl)
     print(f"  ✓ {tmpl['slug']}")
 
+# ── Seed Ontology Templates ───────────────────────────────────────────────────
+print("\n=== Seeding Ontology Templates ===")
+existing_onto_templates = {c["slug"] for c in (query("ontologyTemplates:list", {}) or [])}
+
+SEED_ONTO_TEMPLATES = [
+    {
+        "slug": "us-geography",
+        "name": "US Geography",
+        "description": "Standard US geography hierarchy (Nation, State, County, Municipality, ZipCode).",
+        "version": "1.0",
+        "tags": ["geography", "core"],
+        "content": yaml.dump({
+            "config_type": "ontology",
+            "classes": [
+                {"name": "Nation", "description": "A sovereign state."},
+                {"name": "State", "description": "A primary administrative division of a nation."},
+                {"name": "County", "description": "A secondary administrative division of a state."},
+                {"name": "Municipality", "description": "An incorporated local government."},
+                {"name": "ZipCode", "description": "A postal code area."}
+            ],
+            "data_properties": [
+                {"name": "hasFIPS", "domain": "State, County", "range": "xsd:string", "description": "FIPS code."},
+                {"name": "hasStateAbbreviation", "domain": "State", "range": "xsd:string", "description": "State abbreviation."},
+                {"name": "hasStateName", "domain": "State", "range": "xsd:string", "description": "State name."},
+                {"name": "hasRegion", "domain": "State", "range": "xsd:string", "description": "Geographic region."},
+                {"name": "hasPopulation", "domain": "State, County, Municipality", "range": "xsd:integer", "description": "Population count."}
+            ],
+            "object_properties": [
+                {"name": "isPartOf", "domain": "State, County, Municipality", "range": "Nation, State, County", "description": "Part-whole relationship."}
+            ]
+        })
+    },
+    {
+        "slug": "economic-indicators",
+        "name": "Economic Indicators",
+        "description": "Core economic indicators like labor, housing, income, and GDP.",
+        "version": "1.0",
+        "tags": ["economics", "core"],
+        "content": yaml.dump({
+            "config_type": "ontology",
+            "classes": [
+                {"name": "LaborIndicator", "description": "Labor market metric."},
+                {"name": "HousingIndicator", "description": "Housing market metric."},
+                {"name": "IncomeIndicator", "description": "Income metric."},
+                {"name": "GDPIndicator", "description": "GDP metric."}
+            ],
+            "data_properties": [
+                {"name": "hasValue", "domain": "LaborIndicator, HousingIndicator, IncomeIndicator, GDPIndicator", "range": "xsd:decimal", "description": "Metric value."},
+                {"name": "hasUnit", "domain": "LaborIndicator, HousingIndicator, IncomeIndicator, GDPIndicator", "range": "xsd:string", "description": "Unit of measurement."},
+                {"name": "hasDate", "domain": "LaborIndicator, HousingIndicator, IncomeIndicator, GDPIndicator", "range": "xsd:date", "description": "Observation date."},
+                {"name": "hasSeries", "domain": "LaborIndicator, HousingIndicator, IncomeIndicator, GDPIndicator", "range": "xsd:string", "description": "Source series ID."},
+                {"name": "hasFrequency", "domain": "LaborIndicator, HousingIndicator, IncomeIndicator, GDPIndicator", "range": "xsd:string", "description": "Observation frequency."},
+                {"name": "hasSeasonal", "domain": "LaborIndicator, HousingIndicator, IncomeIndicator, GDPIndicator", "range": "xsd:boolean", "description": "Is seasonally adjusted."}
+            ],
+            "object_properties": [
+                {"name": "measuredIn", "domain": "LaborIndicator, HousingIndicator, IncomeIndicator, GDPIndicator", "range": "State, County, Municipality, Nation", "description": "Geography where the metric is measured."}
+            ]
+        })
+    },
+    {
+        "slug": "demographics",
+        "name": "Demographics",
+        "description": "Demographic groups and population segments.",
+        "version": "1.0",
+        "tags": ["demographics", "core"],
+        "content": yaml.dump({
+            "config_type": "ontology",
+            "classes": [
+                {"name": "DemographicGroup", "description": "General demographic segment."},
+                {"name": "AgeGroup", "description": "Age-based demographic segment."},
+                {"name": "RaceEthnicityGroup", "description": "Race or ethnicity-based segment."}
+            ],
+            "data_properties": [
+                {"name": "hasCount", "domain": "DemographicGroup, AgeGroup, RaceEthnicityGroup", "range": "xsd:integer", "description": "Population count."},
+                {"name": "hasPercent", "domain": "DemographicGroup, AgeGroup, RaceEthnicityGroup", "range": "xsd:decimal", "description": "Percentage of total population."},
+                {"name": "hasYear", "domain": "DemographicGroup, AgeGroup, RaceEthnicityGroup", "range": "xsd:integer", "description": "Year of measurement."}
+            ],
+            "object_properties": [
+                {"name": "characterizes", "domain": "DemographicGroup, AgeGroup, RaceEthnicityGroup", "range": "State, County, Municipality, Nation", "description": "Geography characterized by the demographic."}
+            ]
+        })
+    },
+    {
+        "slug": "platform-objects",
+        "name": "Platform Objects",
+        "description": "System concepts for representing the data platform itself.",
+        "version": "1.0",
+        "tags": ["system", "core"],
+        "content": yaml.dump({
+            "config_type": "ontology",
+            "classes": [
+                {"name": "DataSource", "description": "Data source configuration."},
+                {"name": "Pipeline", "description": "Data ingestion pipeline."},
+                {"name": "AgentSession", "description": "AI agent session."},
+                {"name": "Project", "description": "User project."}
+            ],
+            "data_properties": [
+                {"name": "hasPipelineSlug", "domain": "Project, DataSource", "range": "xsd:string", "description": "Associated pipeline slug."},
+                {"name": "hasProjectSlug", "domain": "Pipeline, AgentSession, DataSource", "range": "xsd:string", "description": "Associated project slug."},
+                {"name": "hasRunStatus", "domain": "Pipeline", "range": "xsd:string", "description": "Pipeline execution status."},
+                {"name": "hasStartedAt", "domain": "Pipeline, AgentSession", "range": "xsd:dateTime", "description": "Start timestamp."},
+                {"name": "hasEndedAt", "domain": "Pipeline, AgentSession", "range": "xsd:dateTime", "description": "End timestamp."}
+            ],
+            "object_properties": []
+        })
+    }
+]
+
+for tmpl in SEED_ONTO_TEMPLATES:
+    if tmpl["slug"] in existing_onto_templates:
+        print(f"  skip {tmpl['slug']} (already exists)")
+        continue
+    call("ontologyTemplates:create", tmpl)
+    print(f"  ✓ {tmpl['slug']}")
+
 # ── Seed API configs ──────────────────────────────────────────────────────────
 print("\n=== Seeding API configs ===")
 existing_apis = {c["slug"] for c in (query("configs:listApis", {}) or [])}
