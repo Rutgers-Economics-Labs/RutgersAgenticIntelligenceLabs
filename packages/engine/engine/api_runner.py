@@ -90,7 +90,7 @@ def _apply_fields(df, fields_spec):
     Rename + cast + compute columns according to the fields spec.
     Two passes: (1) source→alias renames/casts, (2) computed fields using aliases.
     """
-    result = {}
+    result_cols = {}
 
     # Pass 1: source fields
     for field in fields_spec:
@@ -110,21 +110,22 @@ def _apply_fields(df, fields_spec):
                 col = col.round().astype("Int64")
         elif cast == "str":
             col = col.astype(str)
-        result[alias] = col
+        result_cols[alias] = col
 
-    partial = pd.DataFrame(result)
+    partial = pd.DataFrame(result_cols)
 
     # Pass 2: computed fields (can reference aliases from pass 1)
-    for field in fields_spec:
-        if "computed" not in field:
-            continue
-        alias = field["alias"]
-        template = field["computed"]
-        result[alias] = partial.apply(
-            lambda row, t=template: t.format(**row.to_dict()), axis=1
-        )
+    # Optimized: iterate over records once instead of using .apply() multiple times
+    computed_fields = [f for f in fields_spec if "computed" in f]
+    if computed_fields:
+        records = partial.to_dict("records")
+        for field in computed_fields:
+            alias = field["alias"]
+            template = field["computed"]
+            # Formatting from a dictionary is significantly faster than row-wise apply
+            result_cols[alias] = [template.format(**r) for r in records]
 
-    return pd.DataFrame(result)
+    return pd.DataFrame(result_cols)
 
 
 # --- Source Handlers ---
@@ -221,15 +222,19 @@ def _handle_api(api_name, spec, resolved_data):
         inject_fields = foreach.get("inject_fields", [])
 
         frames = []
-        for _, row in parent_df.iterrows():
-            row_dict = row.to_dict()
+        # Optimized: to_dict('records') is much faster than iterrows()
+        for row_dict in parent_df.to_dict("records"):
             extra = {}
             if inject_param:
                 extra[inject_param] = inject_template.format(**row_dict)
             try:
                 raw = _http_fetch(spec, extra_params=extra)
             except Exception as e:
-                label = inject_template.format(**row_dict) if inject_param else str(row_dict.get(field, "?"))
+                label = (
+                    inject_template.format(**row_dict)
+                    if inject_param
+                    else str(row_dict.get(field, "?"))
+                )
                 print(f"  [skip] {label}: {e}")
                 continue
             chunk = _to_dataframe(raw, response_format, response_path)
