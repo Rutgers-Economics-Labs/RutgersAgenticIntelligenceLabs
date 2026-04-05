@@ -41,7 +41,68 @@ Be concise and research-focused."""
 # Tool schemas (OpenAI function-calling format — LiteLLM normalizes to each provider)
 # ---------------------------------------------------------------------------
 
-TOOLS: list[dict] = [
+ALL_TOOLS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "discover_sources",
+            "description": "Search the shared connector template registry for data sources relevant to a topic. Use this to find what data providers are available before creating a new API config.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Topic or provider to search for"},
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Filter by tags e.g. ['economics', 'fred', 'census']"
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_report",
+            "description": "Save a research report or analysis artifact to platform storage. Returns a storage URL. Use after producing a complete analysis.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Report title"},
+                    "content": {"type": "string", "description": "Markdown report body"},
+                    "format": {"type": "string", "enum": ["markdown", "json"], "default": "markdown"},
+                },
+                "required": ["title", "content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "publish_to_github",
+            "description": "Commit one or more config files to the project's GitHub repo. Only call after the user has explicitly confirmed they want to publish.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
+                            },
+                            "required": ["path", "content"],
+                        },
+                        "description": "Files to commit. Paths must be within configs/ or ontology/.",
+                    },
+                    "commit_message": {"type": "string"},
+                },
+                "required": ["files"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -276,8 +337,63 @@ async def _build_context_snapshot(project_slug: str) -> dict:
 # Tool executor
 # ---------------------------------------------------------------------------
 
-async def _execute_tool(name: str, args: dict) -> dict:
+async def _execute_tool(name: str, args: dict, project_slug: str | None = None) -> dict:
     """Execute a named tool and return a JSON-serialisable result dict."""
+
+    if name == "discover_sources":
+        from app.services import connector_service
+        results = await connector_service.list_templates(
+            q=args["query"],
+            tags=args.get("tags"),
+        )
+        return {"results": [{"slug": r["slug"], "name": r["name"], "description": r["description"]} for r in results[:10]]}
+
+    if name == "generate_report":
+        from app.services.storage_service import StorageService
+        import time, json as _json
+        storage = StorageService()
+        job_id = f"report_{int(time.time())}"
+        filename = f"{args['title'].lower().replace(' ', '_')}.md"
+        content = args["content"]
+
+        # Write to temp file and upload
+        import tempfile, pathlib
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            tmp_path = f.name
+
+        storage_key = await storage.upload(job_id, filename, tmp_path)
+        pathlib.Path(tmp_path).unlink(missing_ok=True)
+        return {"storage_key": storage_key, "title": args["title"], "filename": filename}
+
+    if name == "publish_to_github":
+        if not project_slug:
+            return {"error": "publish_to_github requires a project context (pass ?project= to the chat endpoint)"}
+
+        # Verify paths
+        ALLOWED_PREFIXES = ["configs/", "ontology/"]
+        for f in args["files"]:
+            path = f["path"]
+            if not any(path.startswith(p) for p in ALLOWED_PREFIXES):
+                return {"error": f"Path not allowed: {path}. Must be within configs/ or ontology/."}
+            if ".." in path:
+                return {"error": f"Path traversal not allowed: {path}"}
+
+        # Call the publish endpoint
+        import httpx
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "http://localhost:8000/api/v1/github/publish",
+                json={
+                    "project_slug": project_slug,
+                    "files": args["files"],
+                    "commit_message": args.get("commit_message", "chore: publish from RAIL agent"),
+                }
+            )
+
+        if resp.status_code != 200:
+            return {"error": resp.text}
+        return resp.json()
 
     if name == "search_data_registry":
         from app.services import registry_service
@@ -519,7 +635,7 @@ async def run_chat(
         allowed_set = set(allowed)
         return [t for t in tools if t["function"]["name"] in allowed_set]
 
-    filtered_tools = _filter_tools(TOOLS, allowed)
+    filtered_tools = _filter_tools(ALL_TOOLS, allowed)
 
     # Agentic loop: keep calling until no tool calls remain
     max_turns = 10
@@ -564,7 +680,7 @@ async def run_chat(
                 # Execute each tool call and feed results back
                 for tc_event in turn_tool_calls:
                     try:
-                        result = await _execute_tool(tc_event["name"], tc_event["args"])
+                        result = await _execute_tool(tc_event["name"], tc_event["args"], project_slug=project_slug)
                     except Exception as exc:
                         result = {"error": str(exc)}
 
