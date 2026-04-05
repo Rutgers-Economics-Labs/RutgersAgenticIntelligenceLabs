@@ -241,6 +241,38 @@ TOOLS: list[dict] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+async def _build_context_snapshot(project_slug: str) -> dict:
+    from app.services.convex_client import convex
+    from app.services import sql_service
+
+    project = await convex.query("projects:getBySlug", {"slug": project_slug})
+    if not project:
+        return {}
+
+    context = {"project": project, "ontology": {}, "data_sources": [], "pipelines": []}
+
+    if project.get("activeOntologyDuckdbPath"):
+        sql_service.set_path(project["activeOntologyDuckdbPath"])
+        context["ontology"]["schema_ddl"] = sql_service.get_schema_ddl()
+        # Get class/instance counts from DuckDB
+        tables = sql_service.list_tables()
+        counts = []
+        for t in tables:
+            try:
+                r = sql_service.run_query(f"SELECT COUNT(*) as n FROM {t}")
+                counts.append({"name": t, "instance_count": r["rows"][0][0]})
+            except Exception:
+                pass
+        context["ontology"]["classes"] = counts
+
+    # Optional context population for data_sources and pipelines could be added here
+    # from project fields.
+    return context
+
+# ---------------------------------------------------------------------------
 # Tool executor
 # ---------------------------------------------------------------------------
 
@@ -443,6 +475,7 @@ async def run_chat(
     user_message: str,
     history: list[dict],
     model: str | None = None,
+    project_slug: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Run the agent for one user message.
@@ -456,11 +489,37 @@ async def run_chat(
     """
     from app.services import llm_service
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    context_snapshot = None
+    if project_slug:
+        context_snapshot = await _build_context_snapshot(project_slug)
+
+    if context_snapshot:
+        yield {"type": "context_snapshot", "data": context_snapshot}
+
+        # Inject into system prompt
+        context_block = f"\n\n## Project Context\n```json\n{json.dumps(context_snapshot, indent=2)}\n```\n"
+        system_prompt = SYSTEM_PROMPT + context_block
+    else:
+        system_prompt = SYSTEM_PROMPT
+
+    messages = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
     messages.append({"role": "user", "content": user_message})
 
     new_messages: list[dict] = [{"role": "user", "content": user_message}]
+
+    allowed = None
+    if context_snapshot:
+        project_data = context_snapshot.get("project", {})
+        allowed = project_data.get("agentAllowedActions")  # None = all allowed
+
+    def _filter_tools(tools: list[dict], allowed: list[str] | None) -> list[dict]:
+        if allowed is None:
+            return tools
+        allowed_set = set(allowed)
+        return [t for t in tools if t["function"]["name"] in allowed_set]
+
+    filtered_tools = _filter_tools(TOOLS, allowed)
 
     # Agentic loop: keep calling until no tool calls remain
     max_turns = 10
@@ -468,7 +527,7 @@ async def run_chat(
         assistant_text = ""
         turn_tool_calls: list[dict] = []  # {id, name, args}
 
-        async for event in llm_service.stream_agent(messages, TOOLS, model=model):
+        async for event in llm_service.stream_agent(messages, filtered_tools, model=model):
             if event["type"] == "text_delta":
                 assistant_text += event["content"]
                 yield event
