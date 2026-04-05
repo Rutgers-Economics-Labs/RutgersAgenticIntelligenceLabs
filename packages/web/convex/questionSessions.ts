@@ -18,8 +18,13 @@ export const save = mutation({
     blocks: v.array(blockValidator),
   },
   handler: async (ctx, { projectSlug, question, blocks }) => {
+    let projectId = undefined;
+    if (projectSlug) {
+      const p = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", projectSlug)).first();
+      projectId = p?._id;
+    }
     return await ctx.db.insert("questionSessions", {
-      projectSlug,
+      projectId,
       question,
       blocks,
       createdAt: Date.now(),
@@ -30,10 +35,12 @@ export const save = mutation({
 export const list = query({
   args: { projectSlug: v.optional(v.string()), limit: v.optional(v.number()) },
   handler: async (ctx, { projectSlug, limit = 50 }) => {
-    if (projectId) {
+    if (projectSlug) {
+      const p = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", projectSlug)).first();
+      if (!p) return [];
       return await ctx.db
         .query("questionSessions")
-        .withIndex("by_project", q => q.eq("projectSlug", projectSlug))
+        .withIndex("by_project", q => q.eq("projectId", p._id))
         .order("desc")
         .take(limit);
     }

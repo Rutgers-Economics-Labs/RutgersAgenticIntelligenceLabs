@@ -74,6 +74,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   };
 
   const handleSave = async () => {
+    if (!projectId) return alert("Project is not selected.");
     const id = await saveScript({
       id: activeScriptId || undefined,
       projectId,
@@ -84,6 +85,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
   };
 
   const handleRun = async () => {
+    if (!projectId) return alert("Project is not selected.");
     try {
       setRunningJobId(null);
       setActiveTab("logs");
@@ -121,11 +123,13 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
       
       {/* Left History Sidebar */}
       <div className="w-64 shrink-0 overflow-hidden hidden md:block">
-        <AnalysisHistory 
-          projectId={projectId} projectSlug={projectSlug}
-          onSelect={handleSelectScript} 
-          selectedId={activeScriptId || undefined} 
-        />
+        {projectId && (
+          <AnalysisHistory
+            projectId={projectId}
+            onSelect={handleSelectScript}
+            selectedId={activeScriptId || undefined}
+          />
+        )}
       </div>
 
       {/* Main Workspace */}
@@ -333,7 +337,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
                   />
                 ) : (
                   <SchemaBrowser
-                    projectId={projectId} projectSlug={projectSlug}
+                    projectId={projectId}
                     onSelect={(name) => setCode(prev => prev + `\n# ${name}`)}
                   />
                 )}

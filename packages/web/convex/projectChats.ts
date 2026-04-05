@@ -12,7 +12,10 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const id = await ctx.db.insert("projectChats", { ...args, createdAt: now, updatedAt: now });
+    const project = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", args.projectSlug)).first();
+    if (!project) throw new Error("Project not found");
+    const { projectSlug, ...rest } = args;
+    const id = await ctx.db.insert("projectChats", { ...rest, projectId: project._id, createdAt: now, updatedAt: now });
     return { chatId: id };
   },
 });
@@ -49,11 +52,14 @@ export const remove = mutation({
 
 export const listByProject = query({
   args: { projectSlug: v.string(), limit: v.optional(v.number()) },
-  handler: async (ctx, { projectSlug, limit }) =>
-    ctx.db.query("projectChats")
-      .withIndex("by_project", (q) => q.eq("projectSlug", projectSlug))
+  handler: async (ctx, { projectSlug, limit }) => {
+    const project = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", projectSlug)).first();
+    if (!project) return [];
+    return ctx.db.query("projectChats")
+      .withIndex("by_project", (q) => q.eq("projectId", project._id))
       .order("desc")
-      .take(limit ?? 30),
+      .take(limit ?? 30);
+  }
 });
 
 export const get = query({
