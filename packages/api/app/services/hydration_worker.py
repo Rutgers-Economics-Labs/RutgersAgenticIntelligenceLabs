@@ -272,6 +272,33 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             pipeline_spec["output_owl"] = output_owl
             pipeline_spec["db"]         = output_db
 
+            # Copy existing ontology DB if hydration_mode is incremental
+            hydration_mode = pipeline_spec.get("hydration_mode", "full")
+            if hydration_mode == "incremental":
+                project_id = None
+                try:
+                    job_doc = await convex.query("jobs:get", {"jobId": job_id})
+                    if job_doc:
+                        project_id = job_doc.get("projectId")
+                except Exception as e:
+                    logger.warning("[%s] Error checking job info for incremental mode: %s", job_id, e)
+
+                existing_db_path = None
+                if project_id:
+                    try:
+                        project_doc = await convex.query("projects:get", {"projectId": project_id})
+                        if project_doc:
+                            existing_db_path = project_doc.get("activeOntologyDbPath")
+                    except Exception as e:
+                        logger.warning("[%s] Error fetching project %s for incremental mode: %s", job_id, project_id, e)
+
+                if existing_db_path and Path(existing_db_path).exists():
+                    import shutil
+                    shutil.copy2(existing_db_path, output_db)
+                    await emit("info", "[setup] Incremental mode: using existing onto.db as base")
+                else:
+                    await emit("info", "[setup] Incremental mode: no existing onto.db, starting fresh")
+
             pipeline_path = pipeline_dir / "pipeline.yaml"
             pipeline_path.write_text(yaml.dump(pipeline_spec))
             await emit("info", f"[setup] Pipeline file: {pipeline_path.relative_to(tmpdir)}")
@@ -285,6 +312,7 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
 
             cli_script = settings.engine_root / "engine" / "pipeline_runner_cli.py"
             py = sys.executable
+
             env = {
                 **os.environ,
                 "PYTHONPATH": os.pathsep.join(
@@ -296,6 +324,7 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                 "RAIL_TRANSFORM_DIR":  str(settings.engine_root / "transforms"),
                 "RAIL_ANALYSIS_DIR":   str(settings.engine_root / "analysis"),
                 "FRED_API_KEY":        settings.fred_api_key,
+                "RAIL_HYDRATION_MODE": hydration_mode,
             }
 
             fred_set = "yes" if (settings.fred_api_key or "").strip() else "no"
