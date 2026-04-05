@@ -13,13 +13,13 @@ const blockValidator = v.object({
 
 export const save = mutation({
   args: {
-    projectId: v.optional(v.id("projects")),
+    projectSlug: v.optional(v.string()),
     question: v.string(),
     blocks: v.array(blockValidator),
   },
-  handler: async (ctx, { projectId, question, blocks }) => {
+  handler: async (ctx, { projectSlug, question, blocks }) => {
     return await ctx.db.insert("questionSessions", {
-      projectId,
+      projectSlug,
       question,
       blocks,
       createdAt: Date.now(),
@@ -28,12 +28,12 @@ export const save = mutation({
 });
 
 export const list = query({
-  args: { projectId: v.optional(v.id("projects")), limit: v.optional(v.number()) },
-  handler: async (ctx, { projectId, limit = 50 }) => {
+  args: { projectSlug: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, { projectSlug, limit = 50 }) => {
     if (projectId) {
       return await ctx.db
         .query("questionSessions")
-        .withIndex("by_project", q => q.eq("projectId", projectId))
+        .withIndex("by_project", q => q.eq("projectSlug", projectSlug))
         .order("desc")
         .take(limit);
     }
