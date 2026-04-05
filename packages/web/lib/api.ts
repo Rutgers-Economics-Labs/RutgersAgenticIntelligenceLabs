@@ -372,7 +372,8 @@ export type AgentEvent =
   | { type: "tool_call";    id: string; name: string; args: Record<string, unknown> }
   | { type: "tool_result";  id: string; name: string; result: unknown }
   | { type: "done";         new_messages: { role: string; content: string }[] }
-  | { type: "error";        message: string };
+  | { type: "error";        message: string }
+  | { type: "context_snapshot"; data: any };
 
 export type ModelInfo = { id: string; label: string };
 
@@ -384,11 +385,16 @@ export const agent = {
     message: string,
     history: { role: string; content: string }[] = [],
     model?: string,
+    projectSlug?: string,
   ): AsyncGenerator<AgentEvent> {
-    const response = await fetch(`${API_BASE}/agent/chat`, {
+    const params = new URLSearchParams();
+    if (projectSlug) params.set("project", projectSlug);
+    const qs = params.size ? `?${params}` : "";
+
+    const response = await fetch(`${API_BASE}/agent/chat${qs}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, history, model }),
+      body: JSON.stringify({ message, history, model, project_id: projectSlug }),
     });
     if (!response.ok || !response.body) {
       throw new Error(`Agent API ${response.status}`);
@@ -461,6 +467,10 @@ export const questions = {
 };
 
 // ── Context / Knowledge Base ──────────────────────────────────────────────────
+
+export const projects = {
+  context: (slug: string) => req<any>(`/projects/${slug}/context`),
+};
 
 export const context = {
   uploadFile: async (file: File, projectId?: string, name?: string) => {
