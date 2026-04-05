@@ -84,6 +84,11 @@ class Settings(BaseSettings):
     google_api_key: str = ""
     openrouter_api_key: str = ""
 
+    # GitHub App
+    github_app_id: str = Field(default="", validation_alias="GITHUB_APP_ID")
+    github_app_private_key: str = Field(default="", validation_alias="GITHUB_APP_PRIVATE_KEY")
+    github_webhook_secret: str = Field(default="", validation_alias="GITHUB_WEBHOOK_SECRET")
+
     # Server
     # In production set API_CORS_ORIGINS="https://your-app.vercel.app,https://custom-domain.com"
     # Include 127.0.0.1: browsers treat localhost vs 127.0.0.1 as different origins for CORS.
