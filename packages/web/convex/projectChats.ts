@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 export const create = mutation({
   args: {
-    projectId: v.id("projects"),
+    projectSlug: v.string(),
     title: v.string(),
     messages: v.array(v.object({
       role: v.union(v.literal("user"), v.literal("assistant")),
@@ -48,10 +48,10 @@ export const remove = mutation({
 });
 
 export const listByProject = query({
-  args: { projectId: v.id("projects"), limit: v.optional(v.number()) },
-  handler: async (ctx, { projectId, limit }) =>
+  args: { projectSlug: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { projectSlug, limit }) =>
     ctx.db.query("projectChats")
-      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .withIndex("by_project", (q) => q.eq("projectSlug", projectSlug))
       .order("desc")
       .take(limit ?? 30),
 });

@@ -202,7 +202,7 @@ const STATUS_COLOR: Record<string, string> = {
 // ── Overview Tab ──────────────────────────────────────────────────────────────
 
 function OverviewTab({ project, onTabSwitch }: { project: ProjectDoc; onTabSwitch: (t: Tab) => void }) {
-  const recentJobs = useQuery(api.jobs.listByProject, { projectId: project._id, limit: 1 });
+  const recentJobs = useQuery(api.jobs.listByProject, { projectSlug: project.slug, limit: 1 });
   const lastJob = recentJobs?.[0] as JobDoc | undefined;
 
   const checklist = [
@@ -998,7 +998,7 @@ function JobRow({ job }: { job: JobDoc }) {
 }
 
 function JobsTab({ project }: { project: ProjectDoc }) {
-  const projectJobs = useQuery(api.jobs.listByProject, { projectId: project._id, limit: 25 }) as JobDoc[] | undefined;
+  const projectJobs = useQuery(api.jobs.listByProject, { projectSlug: project.slug, limit: 25 }) as JobDoc[] | undefined;
 
   return (
     <div className="space-y-5 max-w-3xl">
@@ -1201,10 +1201,10 @@ const SUGGESTIONS = [
 type ChatId = Id<"projectChats">;
 
 function ProjectAIPanel({ project, onClose }: { project: ProjectDoc; onClose: () => void }) {
-  const recentJobs = useQuery(api.jobs.listByProject, { projectId: project._id, limit: 1 }) as JobDoc[] | undefined;
+  const recentJobs = useQuery(api.jobs.listByProject, { projectSlug: project.slug, limit: 1 }) as JobDoc[] | undefined;
   const lastJob = recentJobs?.[0];
 
-  const savedChats = useQuery(api.projectChats.listByProject, { projectId: project._id, limit: 30 });
+  const savedChats = useQuery(api.projectChats.listByProject, { projectSlug: project.slug, limit: 30 });
   const createChat   = useMutation(api.projectChats.create);
   const appendMsgs   = useMutation(api.projectChats.appendMessages);
   const updateTitle  = useMutation(api.projectChats.updateTitle);
@@ -1284,7 +1284,7 @@ function ProjectAIPanel({ project, onClose }: { project: ProjectDoc; onClose: ()
             await appendMsgs({ chatId: activeChatId, messages: newPair });
           } else {
             const { chatId } = await createChat({
-              projectId: project._id,
+              projectSlug: project.slug,
               title: text.slice(0, 60),
               messages: newPair,
             });

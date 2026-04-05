@@ -18,7 +18,7 @@ import * as Tabs from "@radix-ui/react-tabs";
 import { cn } from "@/lib/utils";
 
 interface AnalysisWorkspaceProps {
-  projectId: Id<"projects">;
+  projectId?: Id<"projects">; projectSlug?: string;
 }
 
 const DEFAULT_CODE = `import pandas as pd
@@ -122,7 +122,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
       {/* Left History Sidebar */}
       <div className="w-64 shrink-0 overflow-hidden hidden md:block">
         <AnalysisHistory 
-          projectId={projectId} 
+          projectId={projectId} projectSlug={projectSlug}
           onSelect={handleSelectScript} 
           selectedId={activeScriptId || undefined} 
         />
@@ -333,7 +333,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
                   />
                 ) : (
                   <SchemaBrowser
-                    projectId={projectId}
+                    projectId={projectId} projectSlug={projectSlug}
                     onSelect={(name) => setCode(prev => prev + `\n# ${name}`)}
                   />
                 )}

@@ -1,3 +1,4 @@
+import asyncio
 import time
 from pathlib import Path
 
@@ -62,7 +63,7 @@ class RunCodeRequest(BaseModel):
 @router.post("/run-code")
 async def run_code_analysis(
     req: RunCodeRequest, 
-    project_id: str | None = Query(None, alias="projectId"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
     workspace_id: str | None = Query(None, alias="workspaceId"),
     cell_id: str | None = Query(None, alias="cellId"),
     hydration_id: str | None = Query(None, alias="hydrationId"),
@@ -84,7 +85,7 @@ async def run_code_analysis(
 
     # 1. Create Job record
     result = await convex.mutation("executions:create", {
-        "projectId": project_id,
+        "projectSlug": project_slug,
         "workspaceId": workspace_id,
         "cellId": cell_id,
         "hydrationId": hydration_id,
@@ -100,8 +101,8 @@ async def run_code_analysis(
         # TODO: Resolve specific hydration path
         pass
         
-    if not duck and project_id:
-        art = await project_artifacts_service.resolve(project_id)
+    if not duck and project_slug:
+        art = await project_artifacts_service.resolve(project_slug)
         duck = art.duckdb_path
 
     if not sql_service.is_ready(duck):
@@ -135,15 +136,15 @@ async def run_code_analysis(
 async def run_plugin(
     slug: str,
     req: RunRequest,
-    project_id: str | None = Query(None, alias="projectId"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
 ):
     try:
-        if project_id:
-            art = await project_artifacts_service.resolve(project_id)
-            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        if project_slug:
+            art = await project_artifacts_service.resolve(project_slug)
+            ontology_service.ensure_loaded(art.db_path, project_slug=project_slug)
         from app.services.ontology_service import _require_onto
 
-        onto = _require_onto(project_id)
+        onto = _require_onto(project_slug)
     except RuntimeError as e:
         raise HTTPException(503, detail=str(e))
 

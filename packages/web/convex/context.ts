@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 export const create = mutation({
   args: {
-    projectId: v.optional(v.id("projects")),
+    projectSlug: v.optional(v.string()),
     name: v.string(),
     type: v.union(v.literal("pdf"), v.literal("text"), v.literal("url"), v.literal("docx")),
     content: v.string(),
@@ -22,18 +22,18 @@ export const remove = mutation({
 });
 
 export const list = query({
-  args: { projectId: v.optional(v.id("projects")) },
-  handler: async (ctx, { projectId }) => {
+  args: { projectSlug: v.optional(v.string()) },
+  handler: async (ctx, { projectSlug }) => {
     // Return project-specific + global docs
     const global = await ctx.db
       .query("contextDocuments")
-      .withIndex("by_project", (q) => q.eq("projectId", undefined))
+      .withIndex("by_project", (q) => q.eq("projectSlug", undefined))
       .order("desc")
       .collect();
-    if (!projectId) return global;
+    if (!projectSlug) return global;
     const scoped = await ctx.db
       .query("contextDocuments")
-      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .withIndex("by_project", (q) => q.eq("projectSlug", projectSlug))
       .order("desc")
       .collect();
     return [...scoped, ...global];
