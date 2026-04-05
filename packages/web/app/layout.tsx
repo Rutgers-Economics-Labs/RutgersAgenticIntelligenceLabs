@@ -3,6 +3,7 @@ import "./globals.css";
 import "katex/dist/katex.min.css";
 import { ConvexClientProvider } from "./convex-provider";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { Suspense } from "react";
 
 export const metadata: Metadata = {
   title: "RAIL — Rutgers Agentic Intelligence Labs",
@@ -14,7 +15,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="antialiased">
         <ConvexClientProvider>
-          <ThemeProvider>{children}</ThemeProvider>
+          <ThemeProvider>
+            <Suspense fallback={<div className="flex h-screen items-center justify-center">Loading...</div>}>
+              {children}
+            </Suspense>
+          </ThemeProvider>
         </ConvexClientProvider>
       </body>
     </html>
