@@ -159,6 +159,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               onClick={handleNew}
               className="p-2 text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted]/50 rounded-lg transition-colors"
               title="New Analysis"
+              aria-label="New Analysis"
             >
               <Plus size={18} />
             </button>
@@ -220,6 +221,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => { setRightPanel("agent"); setIsSidebarOpen(true); }}
                 title="AI Assistant"
+                aria-label="AI Assistant"
                 className={cn(
                   "p-1.5 rounded-lg text-xs flex items-center gap-1.5 transition-colors",
                   isSidebarOpen && rightPanel === "agent"
@@ -232,6 +234,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => { setRightPanel("schema"); setIsSidebarOpen(true); }}
                 title="Schema Browser"
+                aria-label="Schema Browser"
                 className={cn(
                   "p-1.5 rounded-lg transition-colors",
                   isSidebarOpen && rightPanel === "schema"
@@ -244,6 +247,7 @@ export function AnalysisWorkspace({ projectId }: AnalysisWorkspaceProps) {
               <button
                 onClick={() => setIsSidebarOpen(v => !v)}
                 className="p-1.5 text-[--muted-foreground] hover:text-[--foreground] transition-colors"
+                aria-label={isSidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
               >
                 {isSidebarOpen ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
               </button>

@@ -186,6 +186,7 @@ export function AgentPanel({ projectId, onInsertCode }: AgentPanelProps) {
           <button
             onClick={() => send(input)}
             disabled={streaming || !input.trim()}
+            aria-label="Send message"
             className="shrink-0 p-1.5 rounded-lg bg-[--primary] text-white hover:bg-[--primary]/90 disabled:opacity-40 transition-colors"
           >
             {streaming ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
