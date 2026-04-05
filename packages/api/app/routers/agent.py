@@ -7,7 +7,7 @@ POST /agent/infer-schema — CSV/JSON sample → suggested YAML configs
 import json
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -28,7 +28,7 @@ class ChatRequest(BaseModel):
 
 
 @router.post("/chat")
-async def agent_chat(req: ChatRequest):
+async def agent_chat(req: ChatRequest, project: str | None = Query(default=None)):
     """
     Stream an agent response as Server-Sent Events.
 
@@ -45,6 +45,7 @@ async def agent_chat(req: ChatRequest):
                 user_message=req.message,
                 history=req.history,
                 model=req.model,
+                project_slug=project,
             ):
                 yield f"data: {json.dumps(event, default=str)}\n\n"
         except Exception as exc:
