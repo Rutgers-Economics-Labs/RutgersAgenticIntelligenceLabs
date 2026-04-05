@@ -151,8 +151,23 @@ def _validate_ontology(spec: dict) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+PIPELINE_ALLOWED_MODES = {"full", "incremental"}
+ALLOWED_TOP_LEVEL_PIPELINE_FIELDS = {"ontology", "steps", "hydration_mode", "schedule", "post_hydration_transforms"}
+
 def _validate_pipeline(spec: dict) -> list[str]:
     errors = []
+
+    for key in spec.keys():
+        if key not in ALLOWED_TOP_LEVEL_PIPELINE_FIELDS:
+            errors.append(f"Unknown field: {key}")
+
+    mode = spec.get("hydration_mode", "full")
+    if mode not in PIPELINE_ALLOWED_MODES:
+        errors.append(f"hydration_mode must be 'full' or 'incremental', got '{mode}'")
+
+    if "schedule" in spec and not isinstance(spec["schedule"], dict):
+        errors.append("schedule must be an object")
+
     if "ontology" not in spec:
         errors.append("Missing required field: ontology")
     if "steps" not in spec:

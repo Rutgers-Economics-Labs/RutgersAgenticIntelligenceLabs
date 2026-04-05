@@ -92,15 +92,17 @@ def run_pipeline(pipeline_path):
         f"quadstore: {db_path}; OWL export: {output_owl}"
     )
 
-    # Remove stale DB so we always start clean (hydration rebuilds from scratch)
-    for stale in [db_path, db_path + "-journal"]:
-        if os.path.exists(stale):
-            os.remove(stale)
+    hydration_mode = os.environ.get("RAIL_HYDRATION_MODE", "full")
+
+    # Remove stale DB so we always start clean, UNLESS incremental mode
+    if hydration_mode != "incremental":
+        for stale in [db_path, db_path + "-journal"]:
+            if os.path.exists(stale):
+                os.remove(stale)
 
     # Use a fresh World() — default_world is pre-populated by owlready2 imports
     # and would cause "Cannot save existent quadstore" if the DB file exists.
-    world = World()
-    world.set_backend(filename=db_path)
+    world = World(filename=db_path)
 
     # Load / build ontology schema
     print(f"[pipeline] Loading ontology from {pipeline['ontology']!r} …")
