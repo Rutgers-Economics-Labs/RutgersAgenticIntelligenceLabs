@@ -190,6 +190,7 @@ export default defineSchema({
 
   // AI agent sessions — stores conversation history
   agentSessions: defineTable({
+    projectSlug: v.optional(v.string()),
     title: v.string(),
     model: v.string(),
     messages: v.array(v.object({
@@ -200,7 +201,9 @@ export default defineSchema({
     })),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_created", ["createdAt"]),
+  })
+    .index("by_created", ["createdAt"])
+    .index("by_project", ["projectSlug", "createdAt"]),
 
   // Project assistant chat sessions
   projectChats: defineTable({

@@ -12,6 +12,17 @@ export const listSessions = query({
   },
 });
 
+export const listByProject = query({
+  args: { projectSlug: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, { projectSlug, limit = 20 }) => {
+    return await ctx.db
+      .query("agentSessions")
+      .withIndex("by_project", q => q.eq("projectSlug", projectSlug))
+      .order("desc")
+      .take(limit);
+  },
+});
+
 export const getSession = query({
   args: { sessionId: v.id("agentSessions") },
   handler: async (ctx, { sessionId }) => {
@@ -23,12 +34,14 @@ export const createSession = mutation({
   args: {
     title: v.string(),
     model: v.string(),
+    projectSlug: v.optional(v.string()),
   },
-  handler: async (ctx, { title, model }) => {
+  handler: async (ctx, { title, model, projectSlug }) => {
     const now = Date.now();
     const sessionId = await ctx.db.insert("agentSessions", {
       title,
       model,
+      projectSlug,
       messages: [],
       createdAt: now,
       updatedAt: now,
