@@ -15,6 +15,12 @@ function SettingsContent({ projectSlug }: { projectSlug: string }) {
   const updateProject = useMutation(api.projects.updateById);
   const deleteProjectConvex = useMutation(api.projects.remove);
 
+  const apiConfigs = useQuery(api.configs.listApis, {})?.filter(c => project?.apiConfigSlugs?.includes(c.slug));
+  const pipelineConfigs = useQuery(api.configs.listPipelines, {});
+  const pipelineConfig = pipelineConfigs?.find(c => c.slug === project?.pipelineConfigSlug);
+  const ontologyConfigs = useQuery(api.configs.listOntologies, {});
+  const ontologyConfig = ontologyConfigs?.find(c => c.slug === project?.ontologyConfigSlug);
+
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [model, setModel] = useState("gpt-4o");
@@ -142,24 +148,86 @@ function SettingsContent({ projectSlug }: { projectSlug: string }) {
           <CardTitle>GitHub Integration</CardTitle>
           <CardDescription>Link this project to a GitHub repository.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4 opacity-50 pointer-events-none">
-          <div className="flex items-center gap-4">
-            <div className="flex-1">
-              <label className="block text-sm font-medium mb-1">Repository</label>
-              <input disabled value="owner/repo" className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
+        <CardContent className="space-y-4">
+          {project.github ? (
+            <>
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium mb-1">Repository</label>
+                  <input disabled value={project.github} className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
+                </div>
+                <div className="w-1/3">
+                  <label className="block text-sm font-medium mb-1">Default Branch</label>
+                  <input disabled value={project.defaultBranch || "main"} className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground flex justify-between">
+                <span>Status: Linked</span>
+              </div>
+            </>
+          ) : (
+            <div className="opacity-50 pointer-events-none">
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-medium mb-1">Repository</label>
+                  <input disabled value="owner/repo" className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
+                </div>
+                <div className="w-1/3">
+                  <label className="block text-sm font-medium mb-1">Default Branch</label>
+                  <input disabled value="main" className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground flex justify-between mt-4">
+                <span>Status: Not linked</span>
+              </div>
             </div>
-            <div className="w-1/3">
-              <label className="block text-sm font-medium mb-1">Default Branch</label>
-              <input disabled value="main" className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
-            </div>
-          </div>
-          <div className="text-xs text-muted-foreground flex justify-between">
-            <span>Status: Not linked</span>
-          </div>
+          )}
         </CardContent>
-        <CardFooter className="border-t border-border bg-muted/20 px-6 py-4 flex gap-3 opacity-50 pointer-events-none">
-          <Button variant="outline">Link to GitHub</Button>
-          <Button>Publish to GitHub</Button>
+        <CardFooter className="border-t border-border bg-muted/20 px-6 py-4 flex gap-3">
+          {!project.github ? (
+            <Button variant="outline" className="opacity-50 pointer-events-none">Link to GitHub</Button>
+          ) : (
+            <Button
+              onClick={async () => {
+                const files = [
+                  ...(apiConfigs || []).map((c) => ({
+                    path: `configs/apis/${c.slug}.yaml`,
+                    content: c.content,
+                  })),
+                  ...(pipelineConfig ? [{
+                    path: `configs/pipelines/${pipelineConfig.slug}.yaml`,
+                    content: pipelineConfig.content,
+                  }] : []),
+                  ...(ontologyConfig ? [{
+                    path: `configs/ontology/${ontologyConfig.slug}.yaml`,
+                    content: ontologyConfig.content,
+                  }] : []),
+                ].filter(Boolean);
+
+                if (files.length === 0) {
+                  alert("No files to publish.");
+                  return;
+                }
+
+                if (!confirm(`Are you sure you want to publish ${files.length} file(s) to GitHub?\n\nFiles:\n${files.map(f => f.path).join("\n")}`)) return;
+
+                try {
+                  const { github } = await import("@/lib/api");
+                  const res = await github.publish({
+                    project_slug: project.slug,
+                    files,
+                    commit_message: "chore: sync configs from RAIL platform",
+                  });
+                  alert(`Successfully published ${res.published} file(s) to GitHub.`);
+                } catch (err: any) {
+                  console.error(err);
+                  alert(`Failed to publish to GitHub: ${err.message || err}`);
+                }
+              }}
+            >
+              Publish to GitHub
+            </Button>
+          )}
         </CardFooter>
       </Card>
 

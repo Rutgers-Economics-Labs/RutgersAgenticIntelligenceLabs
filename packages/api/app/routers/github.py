@@ -5,9 +5,63 @@ from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from app.services.github_service import github_service
 from app.services.convex_client import convex
+import httpx
 from app.core.config import settings
 
 router = APIRouter(prefix="/github", tags=["github"])
+
+class PublishRequest(BaseModel):
+    project_slug: str
+    files: list[dict]
+    commit_message: str | None = None
+
+@router.post("/publish")
+async def publish_to_github(req: PublishRequest):
+    project = await convex.query("projects:getBySlug", {"slug": req.project_slug})
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    repo = project.get("github")
+    if not repo:
+        raise HTTPException(422, "Project is not linked to a GitHub repo")
+
+    branch = project.get("defaultBranch", "main")
+
+    # Validate all paths are within allowed directories
+    ALLOWED_PREFIXES = ["configs/apis/", "configs/pipelines/", "configs/ontology/", "ontology/"]
+    for f in req.files:
+        path = f["path"]
+        if not any(path.startswith(p) for p in ALLOWED_PREFIXES):
+            raise HTTPException(422, f"Path not allowed: {path}")
+        if ".." in path:
+            raise HTTPException(422, f"Path traversal not allowed: {path}")
+
+    message = req.commit_message or f"chore: sync configs from RAIL platform"
+    results = []
+
+    for file in req.files:
+        path = file["path"]
+        content = file["content"]
+
+        sha = None
+        try:
+            # Check if file exists to get SHA
+            token = await github_service.get_installation_token(repo)
+            async with httpx.AsyncClient() as client:
+                r = await client.get(
+                    f"https://api.github.com/repos/{repo}/contents/{path}",
+                    params={"ref": branch},
+                    headers={"Authorization": f"token {token}"},
+                )
+                if r.status_code == 200:
+                    sha = r.json().get("sha")
+        except Exception:
+            pass
+
+        result = await github_service.put_file(repo, path, content, message, sha=sha)
+        results.append({"path": path, **result})
+
+    return {"published": len(results), "files": results}
 
 # Config files in a project repo that we care about
 WATCHED_PATTERNS = [
@@ -61,15 +115,24 @@ async def _sync_repo_changes(repo: str, before_sha: str, after_sha: str, project
 
         if path.startswith("configs/apis/"):
             slug = path.removeprefix("configs/apis/").removesuffix(".yaml")
+            existing = await convex.query("configs:getApi", {"slug": slug})
+            if existing and existing.get("content") == content:
+                continue
             await convex.mutation("configs:upsertApi", {"slug": slug, "content": content, "source": "github"})
             synced_count += 1
         elif path.startswith("configs/pipelines/"):
             slug = path.removeprefix("configs/pipelines/").removesuffix(".yaml")
+            existing = await convex.query("configs:getPipeline", {"slug": slug})
+            if existing and existing.get("content") == content:
+                continue
             await convex.mutation("configs:upsertPipeline", {"slug": slug, "content": content, "source": "github"})
             pipeline_changed = True
             synced_count += 1
         elif path.startswith("configs/ontology/"):
             slug = path.removeprefix("configs/ontology/").removesuffix(".yaml")
+            existing = await convex.query("configs:getOntology", {"slug": slug})
+            if existing and existing.get("content") == content:
+                continue
             await convex.mutation("configs:upsertOntology", {"slug": slug, "content": content, "source": "github"})
             synced_count += 1
 
