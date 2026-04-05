@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -244,7 +244,7 @@ function HistoryPanel({
 
 // ─── Main page ────────────────────────────────────────────────────────────────
 
-export default function QuestionsPageInner({ projectSlug }: { projectSlug: string }) {
+function QuestionsPageInner({ projectSlug }: { projectSlug: string }) {
 
 
 

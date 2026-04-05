@@ -105,7 +105,7 @@ export function AgentPanel({ projectId, onInsertCode }: AgentPanelProps) {
         ];
         if (!chatIdRef.current) {
           const { chatId } = await createChat({
-            projectId: projectId as Id<"projects">,
+            projectSlug: projectId,
             title: text.slice(0, 60),
             messages: pair,
           });
