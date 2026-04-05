@@ -327,6 +327,13 @@ export const projectAgent = {
   },
 };
 
+// ── GitHub ────────────────────────────────────────────────────────────────────
+
+export const github = {
+  publish: (data: { project_slug: string; files: { path: string; content: string }[]; commit_message?: string }) =>
+    req<{ published: number; files: any[] }>("/github/publish", { method: "POST", body: JSON.stringify(data) }),
+};
+
 // ── Execute ───────────────────────────────────────────────────────────────────
 
 export type ExecuteResult = {
