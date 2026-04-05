@@ -148,7 +148,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_slug", ["slug"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_github", ["github"]),
 
   jobLogs: defineTable({
     jobId: v.string(), // Generic ID (can be hydrationJob or executionJob)

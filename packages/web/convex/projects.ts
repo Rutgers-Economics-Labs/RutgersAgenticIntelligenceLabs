@@ -17,6 +17,12 @@ export const getById = query({
   handler: async (ctx, { projectId }) => ctx.db.get(projectId),
 });
 
+export const getByGithubRepo = query({
+  args: { github: v.string() },
+  handler: async (ctx, { github }) =>
+    ctx.db.query("projects").withIndex("by_github", (q) => q.eq("github", github)).first(),
+});
+
 function makeForkSlug(slug: string, suffix: number) {
   return `${slug}-copy-${suffix}`;
 }
