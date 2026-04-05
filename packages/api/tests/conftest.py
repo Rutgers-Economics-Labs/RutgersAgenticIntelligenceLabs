@@ -43,7 +43,7 @@ def convex_mock():
             return_value=httpx.Response(200, json={"value": []})
         )
         mock.post("/api/mutation").mock(
-            return_value=httpx.Response(200, json={"value": {}})
+            return_value=httpx.Response(200, json={"value": {"jobId": "test_job_123"}})
         )
         yield mock
 

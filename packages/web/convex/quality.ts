@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 export const saveSnapshot = mutation({
   args: {
-    projectId: v.optional(v.id("projects")),
+    projectSlug: v.optional(v.string()),
     label: v.string(),
     tables: v.any(),
     createdAt: v.number(),
@@ -15,14 +15,14 @@ export const saveSnapshot = mutation({
 
 export const listSnapshots = query({
   args: {
-    projectId: v.optional(v.id("projects")),
+    projectSlug: v.optional(v.string()),
     limit: v.optional(v.number()),
   },
-  handler: async (ctx, { projectId, limit = 10 }) => {
+  handler: async (ctx, { projectSlug, limit = 10 }) => {
     if (projectId) {
       return await ctx.db
         .query("ontologySnapshots")
-        .withIndex("by_project", q => q.eq("projectId", projectId))
+        .withIndex("by_project", q => q.eq("projectSlug", projectSlug))
         .order("desc")
         .take(limit);
     }

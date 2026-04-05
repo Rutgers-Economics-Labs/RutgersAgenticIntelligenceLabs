@@ -7,7 +7,7 @@ import { ProjectSwitcher } from "./ProjectSwitcher";
 import { usePathname } from "next/navigation";
 import { useMemo, Suspense } from "react";
 
-export function TopBar() {
+export function TopBar({ projectSlug }: { projectSlug?: string }) {
   const pathname = usePathname();
 
   const isProjectScopedRoute = useMemo(() => {
@@ -36,7 +36,7 @@ export function TopBar() {
       <div className="flex-1 flex justify-center">
         {isProjectScopedRoute && (
           <Suspense fallback={<div className="h-9 w-[250px] bg-muted animate-pulse rounded-md" />}>
-            <ProjectSwitcher />
+            <ProjectSwitcher projectSlug={projectSlug} />
           </Suspense>
         )}
       </div>

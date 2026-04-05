@@ -26,7 +26,7 @@ import Link from "next/link";
 
 import { Suspense } from "react";
 
-function ProjectSwitcherContent() {
+function ProjectSwitcherContent({ projectSlug }: { projectSlug?: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -52,10 +52,14 @@ function ProjectSwitcherContent() {
   }, [urlProjectId]);
 
   const projectId = storedProjectId;
-  const currentProject = projects.find((p) => p._id === projectId);
+
+  const currentProject = projectSlug
+    ? projects.find((p) => p.slug === projectSlug)
+    : projects.find((p) => p._id === projectId);
 
   const isProjectScopedRoute = React.useMemo(() => {
     return (
+      projectSlug !== undefined ||
       pathname.startsWith("/explorer") ||
       pathname.startsWith("/graph") ||
       pathname.startsWith("/sql") ||
@@ -65,22 +69,29 @@ function ProjectSwitcherContent() {
       pathname.startsWith("/context") ||
       pathname.startsWith("/quality")
     );
-  }, [pathname]);
+  }, [pathname, projectSlug]);
 
-  const onProjectSelect = (id: string) => {
+  const onProjectSelect = (project: any) => {
     setOpen(false);
-    setStoredProjectId(id);
+    setStoredProjectId(project._id);
     try {
-      localStorage.setItem("rail_projectId", id);
+      localStorage.setItem("rail_projectId", project._id);
     } catch {}
 
-    const sp = new URLSearchParams(searchParams.toString());
-    sp.set("projectId", id);
-
-    if (isProjectScopedRoute) {
-      router.push(`${pathname}?${sp.toString()}`);
+    if (projectSlug) {
+      // Replace the current slug in the URL with the new project's slug
+      const newPathname = pathname.replace(`/${projectSlug}`, `/${project.slug}`);
+      router.push(newPathname);
     } else {
-      router.push(`/explorer?${sp.toString()}`); // navigate to overview/explorer if currently not in a scoped route
+      const sp = new URLSearchParams(searchParams.toString());
+      sp.set("projectId", project._id);
+
+      if (isProjectScopedRoute) {
+        router.push(`${pathname}?${sp.toString()}`);
+      } else {
+        // Fallback for old routing
+        router.push(`/explorer?${sp.toString()}`);
+      }
     }
   };
 
@@ -130,7 +141,7 @@ function ProjectSwitcherContent() {
                 <CommandItem
                   key={project._id}
                   value={project.name}
-                  onSelect={() => onProjectSelect(project._id)}
+                  onSelect={() => onProjectSelect(project)}
                   className="flex items-center justify-between"
                 >
                   <div className="flex items-center gap-2 truncate">
@@ -145,7 +156,7 @@ function ProjectSwitcherContent() {
                   <Check
                     className={cn(
                       "mr-2 h-4 w-4 shrink-0",
-                      projectId === project._id ? "opacity-100" : "opacity-0"
+                      currentProject && currentProject._id === project._id ? "opacity-100" : "opacity-0"
                     )}
                   />
                 </CommandItem>
@@ -167,10 +178,10 @@ function ProjectSwitcherContent() {
   );
 }
 
-export function ProjectSwitcher() {
+export function ProjectSwitcher({ projectSlug }: { projectSlug?: string }) {
   return (
     <Suspense fallback={<div className="h-9 w-[250px] bg-muted animate-pulse rounded-md" />}>
-      <ProjectSwitcherContent />
+      <ProjectSwitcherContent projectSlug={projectSlug} />
     </Suspense>
   );
 }
