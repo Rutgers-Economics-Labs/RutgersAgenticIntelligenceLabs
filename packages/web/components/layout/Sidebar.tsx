@@ -54,7 +54,9 @@ const NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   },
 ];
 
-export function Sidebar() {
+import { Suspense } from "react";
+
+function SidebarContent() {
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -158,7 +160,7 @@ export function Sidebar() {
   // Only use the URL for link hrefs so SSR and the first client pass match. Sticky
   // projectId is applied via router.replace; after that, searchParams include it here too.
   function linkHref(href: string) {
-    const id = searchParams.get("projectId");
+    const id = storedProjectId;
     if (!id) return href;
     if (href === "/projects" || href === "/configs" || href === "/registry" || href === "/pipelines" || href === "/jobs") {
       return href;
@@ -168,74 +170,49 @@ export function Sidebar() {
     return `${href}?${sp.toString()}`;
   }
 
+  // Only render project-scoped links if we are inside a project scoped route
+  const visibleNavGroups = NAV_GROUPS.filter((group) => {
+    if (!isProjectScopedRoute && (group.title === "Research" || group.title === "Explore")) {
+      return false;
+    }
+    return true;
+  });
+
   return (
-    <aside className="w-56 shrink-0 flex flex-col border-r border-[--border] bg-[--card] h-screen sticky top-0">
-      <div className="px-4 py-5 border-b border-[--border]">
-        <div className="flex items-center justify-between">
-          <div>
-            <span className="text-sm font-bold text-[--primary] tracking-wide uppercase">RAIL</span>
-            <p className="text-[10px] text-[--muted-foreground] mt-0.5">Agentic Intelligence Labs</p>
-          </div>
-          <div className="flex items-center gap-1">
-            <Link
-              href={linkHref("/")}
-              title="Dashboard"
-              className={cn(
-                "p-1.5 rounded transition-colors",
-                pathname === "/"
-                  ? "text-[--primary] bg-[--accent]/20"
-                  : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
-              )}
-            >
-              <Activity size={14} />
-            </Link>
-            <Link
-              href="/projects"
-              title="Projects"
-              className={cn(
-                "p-1.5 rounded transition-colors",
-                pathname.startsWith("/projects")
-                  ? "text-[--primary] bg-[--accent]/20"
-                  : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
-              )}
-            >
-              <FolderOpen size={14} />
-            </Link>
-          </div>
+    <aside className="w-56 shrink-0 flex flex-col border-r border-[--border] bg-[--card] h-[calc(100vh-3rem)] sticky top-12">
+      <nav className="flex-1 py-3 overflow-y-auto">
+        <div className="mb-3">
+          <Link
+            href={linkHref("/")}
+            className={cn(
+              "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group",
+              pathname === "/"
+                ? "bg-[--accent]/20 text-[--primary] font-medium"
+                : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
+            )}
+          >
+            <div className="flex items-center gap-3">
+              <Activity size={15} />
+              Dashboard
+            </div>
+          </Link>
+          <Link
+            href="/projects"
+            className={cn(
+              "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group",
+              pathname.startsWith("/projects")
+                ? "bg-[--accent]/20 text-[--primary] font-medium"
+                : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
+            )}
+          >
+            <div className="flex items-center gap-3">
+              <FolderOpen size={15} />
+              Projects
+            </div>
+          </Link>
         </div>
 
-        {/* Project switcher */}
-        <div className="mt-3">
-          <p className="text-[10px] text-[--muted-foreground] uppercase tracking-wide font-medium mb-1">
-            Project
-          </p>
-          <select
-            value={projectId}
-            onChange={(e) => {
-              const next = e.target.value;
-              try { localStorage.setItem("rail_projectId", next); } catch {}
-              setStoredProjectId(next);
-              // If we're already on a scoped route, update the current URL. Otherwise just persist.
-              if (isProjectScopedRoute) {
-                const sp = new URLSearchParams(searchParams.toString());
-                sp.set("projectId", next);
-                router.push(`${pathname}?${sp.toString()}`);
-              }
-            }}
-            className="w-full px-2 py-1.5 rounded border border-[--border] bg-[--muted] text-xs text-[--foreground] outline-none focus:border-[--primary]
-              dark:!text-white
-              [&>option]:bg-[#0d1117] [&>option]:text-white"
-          >
-            {projects?.map((p) => (
-              <option key={p._id} value={p._id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <nav className="flex-1 py-3 overflow-y-auto">
-        {NAV_GROUPS.map((group) => (
+        {visibleNavGroups.map((group) => (
           <div key={group.title} className="mb-3 last:mb-0">
             <p className="px-4 py-1 text-[10px] text-[--muted-foreground] uppercase tracking-wide font-medium">
               {group.title}
@@ -284,5 +261,13 @@ export function Sidebar() {
         </button>
       </div>
     </aside>
+  );
+}
+
+export function Sidebar() {
+  return (
+    <Suspense fallback={<aside className="w-56 shrink-0 flex flex-col border-r border-[--border] bg-[--card] h-[calc(100vh-3rem)] sticky top-12" />}>
+      <SidebarContent />
+    </Suspense>
   );
 }
