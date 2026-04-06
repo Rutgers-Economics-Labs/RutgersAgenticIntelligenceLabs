@@ -7,6 +7,8 @@ import { Id } from "@/convex/_generated/dataModel";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Database, Code, Zap, FileText, ChevronRight } from "lucide-react";
+import { ScheduleModal } from "@/components/schedules/ScheduleModal";
+import { schedules } from "@/lib/api";
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "#8b949e",
@@ -65,7 +67,10 @@ function ResultPreview({ job }: { job: any }) {
 
 function JobsPageInner({ projectSlug }: { projectSlug: string }) {
 
+  const activeSchedules = useQuery(api.schedules.listByProject, { projectSlug })?.filter(s => s.status === "active") || [];
+  const pipelines = useQuery(api.configs.listPipelines, {}) || [];
 
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
 
   const [filter, setFilter] = useState<string | "all">("all");
 
@@ -89,6 +94,24 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
 
   const filteredJobs = allJobs.filter((j: any) => filter === "all" || j.status === filter);
   const runningCount = allJobs.filter((j: any) => j.status === "running").length;
+
+  const handlePause = async (id: string) => {
+    try {
+      await schedules.pause(id);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to pause schedule.");
+    }
+  };
+
+  const handleRemove = async (id: string) => {
+    try {
+      await schedules.remove(id);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to remove schedule.");
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -206,6 +229,75 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
           </table>
         </div>
       )}
+
+      {projectSlug && (
+        <div className="mt-8 space-y-4">
+          <div className="flex items-center justify-between">
+             <h2 className="text-lg font-semibold tracking-tight">Active Schedules</h2>
+             <button
+                onClick={() => setIsScheduleModalOpen(true)}
+                className="px-3 py-1.5 rounded-md bg-[--primary]/10 text-[--primary] text-xs font-medium hover:bg-[--primary]/20 transition-colors"
+             >
+                + Add Schedule
+             </button>
+          </div>
+          <div className="rounded-xl border border-[--border] bg-[--card] overflow-hidden">
+            {activeSchedules.length === 0 ? (
+              <div className="p-8 text-center text-[--muted-foreground] text-sm">
+                No active schedules.
+              </div>
+            ) : (
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-[--border] bg-[--muted]/30">
+                    <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Pipeline</th>
+                    <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Frequency</th>
+                    <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Window</th>
+                    <th className="text-right px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[--border]">
+                  {activeSchedules.map((s: any) => {
+                    const timeUntilExpires = s.windowEndsAt
+                      ? `Ends in ${Math.ceil((s.windowEndsAt - Date.now()) / (1000 * 60 * 60 * 24))}d`
+                      : "Indefinite";
+
+                    return (
+                      <tr key={s._id} className="group hover:bg-white/[0.02] transition-colors">
+                        <td className="px-4 py-4 font-mono text-[13px] text-[--foreground] font-medium">{s.pipelineSlug}</td>
+                        <td className="px-4 py-4 text-[13px] text-[--foreground]">{s.frequency}</td>
+                        <td className="px-4 py-4 text-[12px] text-[--muted-foreground]">{timeUntilExpires}</td>
+                        <td className="px-4 py-4 text-right flex justify-end gap-2">
+                           <button
+                             onClick={() => handlePause(s._id)}
+                             className="text-[12px] text-[--muted-foreground] hover:text-[--foreground] px-2 py-1 rounded hover:bg-[--muted] transition-colors"
+                           >
+                             Pause
+                           </button>
+                           <button
+                             onClick={() => handleRemove(s._id)}
+                             className="text-[12px] text-red-400 hover:text-red-500 px-2 py-1 rounded hover:bg-red-500/10 transition-colors"
+                           >
+                             Remove
+                           </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
+
+      <ScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        projectSlug={projectSlug}
+        onSuccess={() => {}}
+        pipelines={pipelines}
+      />
     </div>
   );
 }
