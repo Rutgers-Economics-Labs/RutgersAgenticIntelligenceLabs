@@ -74,6 +74,8 @@ export const update = mutation({
 export const updateById = mutation({
   args: {
     projectId: v.id("projects"),
+    name: v.optional(v.string()),
+    description: v.optional(v.string()),
     ontologyConfigSlug: v.optional(v.string()),
     apiConfigSlugs: v.optional(v.array(v.string())),
     pipelineConfigSlug: v.optional(v.string()),

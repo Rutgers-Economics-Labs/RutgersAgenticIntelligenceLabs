@@ -12,7 +12,13 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    return ctx.db.insert("contextDocuments", { ...args, createdAt: now, updatedAt: now });
+    let projectId = undefined;
+    if (args.projectSlug) {
+      const p = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", args.projectSlug!)).first();
+      projectId = p?._id;
+    }
+    const { projectSlug, ...rest } = args;
+    return ctx.db.insert("contextDocuments", { ...rest, projectId, createdAt: now, updatedAt: now });
   },
 });
 
@@ -27,13 +33,15 @@ export const list = query({
     // Return project-specific + global docs
     const global = await ctx.db
       .query("contextDocuments")
-      .withIndex("by_project", (q) => q.eq("projectSlug", undefined))
+      .withIndex("by_project", (q) => q.eq("projectId", undefined))
       .order("desc")
       .collect();
     if (!projectSlug) return global;
+    const p = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", projectSlug)).first();
+    if (!p) return global;
     const scoped = await ctx.db
       .query("contextDocuments")
-      .withIndex("by_project", (q) => q.eq("projectSlug", projectSlug))
+      .withIndex("by_project", (q) => q.eq("projectId", p._id))
       .order("desc")
       .collect();
     return [...scoped, ...global];
