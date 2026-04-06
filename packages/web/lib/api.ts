@@ -327,6 +327,27 @@ export const projectAgent = {
   },
 };
 
+// ── Schedules ─────────────────────────────────────────────────────────────────
+
+export type CreateScheduleRequest = {
+  project_slug: string;
+  pipeline_slug: string;
+  frequency: string;
+  cron?: string;
+  window?: string;
+  window_ends_at?: number;
+  enabled: boolean;
+};
+
+export const schedules = {
+  list: (projectSlug: string) => req<any[]>(`/schedules?project=${projectSlug}`),
+  create: (data: CreateScheduleRequest) => req<{ id: string }>("/schedules", { method: "POST", body: JSON.stringify(data) }),
+  update: (id: string, data: Partial<CreateScheduleRequest>) => req<{ id: string }>(`/schedules/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  remove: (id: string) => req(`/schedules/${id}`, { method: "DELETE" }),
+  pause: (id: string) => req(`/schedules/${id}/pause`, { method: "POST" }),
+  resume: (id: string) => req(`/schedules/${id}/resume`, { method: "POST" }),
+};
+
 // ── GitHub ────────────────────────────────────────────────────────────────────
 
 export const github = {
