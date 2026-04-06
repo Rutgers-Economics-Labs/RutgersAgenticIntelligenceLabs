@@ -12,7 +12,8 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.convex_client import ConvexBackendConfigurationError
-from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, questions, context, quality, connectors, projects, ontology_templates, github
+from app.services.scheduler_service import scheduler
+from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, questions, context, quality, connectors, projects, ontology_templates, github, schedules
 
 
 @asynccontextmanager
@@ -65,7 +66,9 @@ async def lifespan(app: FastAPI):
             sql_service.set_path(default_duckdb)
             print(f"[startup] Loaded DuckDB from {default_duckdb}")
 
+    await scheduler.start()
     yield
+    await scheduler.stop()
 
 
 app = FastAPI(
@@ -102,6 +105,7 @@ app.include_router(connectors.router,     prefix="/api/v1/connectors")
 app.include_router(ontology_templates.router, prefix="/api/v1")
 app.include_router(projects.router,       prefix="/api/v1")
 app.include_router(github.router,         prefix="/api/v1")
+app.include_router(schedules.router,      prefix="/api/v1")
 
 
 @app.exception_handler(ConvexBackendConfigurationError)

@@ -21,6 +21,7 @@ import type * as projects from "../projects.js";
 import type * as quality from "../quality.js";
 import type * as questionSessions from "../questionSessions.js";
 import type * as registry from "../registry.js";
+import type * as schedules from "../schedules.js";
 import type * as workspaces from "../workspaces.js";
 
 import type {
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   quality: typeof quality;
   questionSessions: typeof questionSessions;
   registry: typeof registry;
+  schedules: typeof schedules;
   workspaces: typeof workspaces;
 }>;
 
