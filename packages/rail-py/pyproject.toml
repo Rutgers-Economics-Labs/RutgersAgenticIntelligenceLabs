@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rail"
+version = "0.1.0"
+description = "RAIL platform client — cloud and local modes"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2",
+]
+
+[project.optional-dependencies]
+analysis = ["numpy", "pandas", "statsmodels", "matplotlib"]
+local = ["owlready2", "duckdb", "pyyaml"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["rail*"]
