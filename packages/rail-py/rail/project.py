@@ -34,6 +34,28 @@ class Project:
     def run_analysis(self, plugin_slug: str, **kwargs) -> dict:
         return self._backend.run_analysis(plugin_slug, config=kwargs)
 
+    @property
+    def agent(self) -> "AgentClient":
+        """Access the research agent for this project."""
+        from rail.agent import AgentClient
+        if not hasattr(self._backend, "base_url"):
+            raise RuntimeError("Agent access requires cloud mode (rail.connect())")
+        return AgentClient(
+            base_url=self._backend.base_url,
+            project_slug=self.slug,
+            api_key=getattr(self._backend, "api_key", ""),
+        )
+
+    def ontology(self) -> "OntologyView":
+        """Access the owlready2 ontology directly (local mode or local onto.db path)."""
+        from rail.ontology import OntologyView
+        if hasattr(self._backend, "project_path"):
+            # Local mode
+            db_path = str(self._backend.project_path / "ontology/onto.db")
+        else:
+            raise RuntimeError("ontology() requires local mode or a local onto.db path")
+        return OntologyView(db_path)
+
     def __repr__(self):
         mode = "cloud" if hasattr(self._backend, "base_url") else "local"
         return f"Project(slug={self.slug!r}, mode={mode!r})"
