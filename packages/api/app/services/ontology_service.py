@@ -149,6 +149,42 @@ async def _run(project_id: str | None, fn, *args, **kwargs):
     return await loop.run_in_executor(_get_executor(st), lambda: fn(project_id, *args, **kwargs))
 
 
+async def ensure_loaded_async(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
+    """
+    Load the quadstore on the project's ontology thread.
+
+    Call this instead of ensure_loaded() from asyncio routes: Owlready2's SQLite
+    backend must be used from a single thread; ensure_loaded on the event-loop
+    thread while _run() uses the executor caused deadlocks/hangs.
+    """
+    db_path = str(Path(db_path).resolve())
+    st = _get_state(project_id, db_path)
+    loop = asyncio.get_event_loop()
+
+    def sync_work():
+        ensure_loaded(db_path, project_id=project_id)
+
+    await loop.run_in_executor(_get_executor(st), sync_work)
+
+
+async def _run_with_ensure(
+    project_id: str | None,
+    db_path: str,
+    fn,
+    *args,
+    **kwargs,
+):
+    """ensure_loaded + fn in one executor job (same thread, safe for Owlready2)."""
+    st = _get_state(project_id, str(Path(db_path).resolve()))
+    loop = asyncio.get_event_loop()
+
+    def sync_work():
+        ensure_loaded(db_path, project_id=project_id)
+        return fn(project_id, *args, **kwargs)
+
+    return await loop.run_in_executor(_get_executor(st), sync_work)
+
+
 # ---------------------------------------------------------------------------
 # Query functions (all sync; call via _run() from async endpoints)
 # ---------------------------------------------------------------------------

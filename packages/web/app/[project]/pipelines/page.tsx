@@ -29,7 +29,7 @@ export default function PipelinesPage({ params }: { params: Promise<{ project: s
   }
 
   return (
-    <div>
+    <div className="p-10 pb-20 max-w-6xl mx-auto w-full">
       <h1 className="text-2xl font-semibold mb-6">Pipelines</h1>
       {pipelines === undefined && <p className="text-[--muted-foreground] text-sm">Loading…</p>}
       {pipelines?.length === 0 && (

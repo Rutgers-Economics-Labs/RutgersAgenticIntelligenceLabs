@@ -9,6 +9,7 @@ Yields SSE-ready event dicts throughout execution.
 """
 import json
 import time
+from pathlib import Path
 from typing import AsyncGenerator
 
 from app.core.config import settings
@@ -35,6 +36,8 @@ When a researcher asks a question:
 - Explain your findings clearly with concrete numbers
 
 Always show your reasoning. When you write code or SQL, explain the results after seeing them.
+Never invent CSV paths, table names, or column names — call get_sql_schema or describe_database first, then run_sql or execute_python to verify.
+To save maps or HTML reports, write files under OUTPUT_DIR in execute_python; saved files are returned as artifacts you can reference.
 Be concise and research-focused."""
 
 # ---------------------------------------------------------------------------
@@ -246,13 +249,27 @@ ALL_TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "describe_database",
+            "description": (
+                "Live introspection of the hydrated DuckDB: every table with row counts and column types. "
+                "Flags likely geometry/spatial columns (names or types). Use this before mapping or spatial joins "
+                "when you need to confirm what is actually in the database."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "execute_python",
             "description": (
                 "Execute Python code with access to the knowledge graph data. "
                 "Available helpers: sql(query) → DataFrame, get_table(name) → DataFrame, list_tables(). "
-                "Also available: pd, np, smf (statsmodels), sm, sklearn, plt (matplotlib). "
+                "Also available when installed: np, smf, sm, sklearn, plt (matplotlib), folium, geopandas (gpd). "
+                "OUTPUT_DIR is a writable folder — save Folium maps (.html), GeoJSON, CSV, or PNG there; "
+                "files are uploaded and returned in the artifacts list. "
                 "Any DataFrame variable in scope is returned. Matplotlib figures are captured. "
-                "Use for: regression, DiD, clustering, time-series analysis, custom transforms."
+                "Use for: regression, maps, geospatial summaries, clustering, time-series analysis."
             ),
             "parameters": {
                 "type": "object",
@@ -301,9 +318,42 @@ ALL_TOOLS: list[dict] = [
     },
 ]
 
+# Tools merged into `/project-agent/chat` so dashboard + project flows can query DuckDB the same way.
+PROJECT_AGENT_DATA_TOOLS: list[dict] = [
+    t for t in ALL_TOOLS
+    if t["function"]["name"] in (
+        "run_sql",
+        "get_sql_schema",
+        "describe_database",
+        "execute_python",
+    )
+]
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+async def _resolve_duckdb_path(
+    *,
+    project_slug: str | None = None,
+    project_id: str | None = None,
+) -> str | None:
+    """Return absolute path to the project's DuckDB file, or None if missing/not hydrated."""
+    from app.services.convex_client import convex
+
+    project = None
+    if project_slug:
+        project = await convex.query("projects:getBySlug", {"slug": project_slug})
+    elif project_id:
+        project = await convex.query("projects:getById", {"projectId": project_id})
+    if not project:
+        return None
+    raw = project.get("activeOntologyDuckdbPath")
+    if not raw:
+        return None
+    p = Path(raw).expanduser().resolve()
+    return str(p) if p.is_file() else None
+
 
 async def _build_context_snapshot(project_slug: str) -> dict:
     from app.services.convex_client import convex
@@ -315,29 +365,33 @@ async def _build_context_snapshot(project_slug: str) -> dict:
 
     context = {"project": project, "ontology": {}, "data_sources": [], "pipelines": []}
 
-    if project.get("activeOntologyDuckdbPath"):
-        sql_service.set_path(project["activeOntologyDuckdbPath"])
-        context["ontology"]["schema_ddl"] = sql_service.get_schema_ddl()
-        # Get class/instance counts from DuckDB
-        tables = sql_service.list_tables()
+    duck = await _resolve_duckdb_path(project_slug=project_slug)
+    if duck:
+        context["ontology"]["schema_ddl"] = sql_service.get_schema_ddl(duckdb_path=duck)
+        tables = sql_service.list_tables(duckdb_path=duck)
         counts = []
         for t in tables:
             try:
-                r = sql_service.run_query(f"SELECT COUNT(*) as n FROM {t}")
-                counts.append({"name": t, "instance_count": r["rows"][0][0]})
+                r = sql_service.run_query(f'SELECT COUNT(*) AS n FROM "{t}"', duckdb_path=duck)
+                n = r["rows"][0].get("n") if r.get("rows") else None
+                counts.append({"name": t, "instance_count": n})
             except Exception:
-                pass
+                counts.append({"name": t, "instance_count": None})
         context["ontology"]["classes"] = counts
 
-    # Optional context population for data_sources and pipelines could be added here
-    # from project fields.
     return context
 
 # ---------------------------------------------------------------------------
 # Tool executor
 # ---------------------------------------------------------------------------
 
-async def _execute_tool(name: str, args: dict, project_slug: str | None = None) -> dict:
+async def _execute_tool(
+    name: str,
+    args: dict,
+    project_slug: str | None = None,
+    *,
+    project_id: str | None = None,
+) -> dict:
     """Execute a named tool and return a JSON-serialisable result dict."""
 
     if name == "discover_sources":
@@ -489,7 +543,16 @@ async def _execute_tool(name: str, args: dict, project_slug: str | None = None) 
     elif name == "run_sql":
         from app.services import sql_service
         from app.services.convex_client import convex
-        
+
+        duck = await _resolve_duckdb_path(project_slug=project_slug, project_id=project_id)
+        if not duck:
+            return {
+                "error": (
+                    "No hydrated DuckDB for this project. Link an ontology, run hydration, "
+                    "and wait until a DuckDB export exists (activeOntologyDuckdbPath)."
+                ),
+            }
+
         # Create a job for the agent's SQL query
         job_result = await convex.mutation("executions:create", {
             "type": "sql",
@@ -498,18 +561,21 @@ async def _execute_tool(name: str, args: dict, project_slug: str | None = None) 
             "createdAt": int(time.time() * 1000)
         })
         job_id = job_result["jobId"]
-        
+
         try:
             await convex.mutation("executions:updateStatus", {
                 "jobId": job_id,
                 "status": "running",
                 "startedAt": int(time.time() * 1000)
             })
-            
+
             import asyncio
             loop = asyncio.get_event_loop()
-            res = await loop.run_in_executor(None, lambda: sql_service.run_query(args["query"]))
-            
+            res = await loop.run_in_executor(
+                None,
+                lambda q=args["query"], d=duck: sql_service.run_query(q, duckdb_path=d),
+            )
+
             await convex.mutation("executions:updateStatus", {
                 "jobId": job_id,
                 "status": "success",
@@ -528,7 +594,61 @@ async def _execute_tool(name: str, args: dict, project_slug: str | None = None) 
 
     elif name == "get_sql_schema":
         from app.services import sql_service
-        return sql_service.get_schema()
+
+        duck = await _resolve_duckdb_path(project_slug=project_slug, project_id=project_id)
+        if not duck:
+            return {"error": "No hydrated DuckDB for this project. Run hydration first."}
+        return sql_service.get_schema(duckdb_path=duck)
+
+    elif name == "describe_database":
+        from app.services import sql_service
+
+        duck = await _resolve_duckdb_path(project_slug=project_slug, project_id=project_id)
+        if not duck:
+            return {"error": "No hydrated DuckDB for this project. Run hydration first."}
+        schema = sql_service.get_schema(duckdb_path=duck)
+        tables_out: list[dict] = []
+        for table, cols in schema.items():
+            row_count = None
+            try:
+                r = sql_service.run_query(f'SELECT COUNT(*) AS n FROM "{table}"', duckdb_path=duck)
+                if r.get("rows"):
+                    row_count = r["rows"][0].get("n")
+            except Exception:
+                pass
+            columns_out = []
+            for c in cols:
+                typ = (c.get("type") or "").upper()
+                cname = (c.get("name") or "").lower()
+                geometry_hint = (
+                    "GEOM" in typ
+                    or "GEOGRAPHY" in typ
+                    or "WKB" in typ
+                    or "WKT" in typ
+                    or any(
+                        x in cname
+                        for x in (
+                            "geom",
+                            "geometry",
+                            "wkt",
+                            "shape",
+                            "outline",
+                            "the_geom",
+                            "latitude",
+                            "longitude",
+                            "lat",
+                            "lon",
+                            "lng",
+                        )
+                    )
+                )
+                columns_out.append({
+                    "name": c["name"],
+                    "type": c.get("type"),
+                    "geometry_hint": geometry_hint,
+                })
+            tables_out.append({"name": table, "row_count": row_count, "columns": columns_out})
+        return {"tables": tables_out}
 
     elif name == "execute_python":
         from app.services import subprocess_code_runner
@@ -540,7 +660,16 @@ async def _execute_tool(name: str, args: dict, project_slug: str | None = None) 
             return {
                 "error": "Python execution is disabled (RAIL_EXECUTE_ENABLED=false).",
             }
-            
+
+        duck = await _resolve_duckdb_path(project_slug=project_slug, project_id=project_id)
+        if not duck:
+            return {
+                "error": (
+                    "No hydrated DuckDB for this project. Run hydration first so Python can query "
+                    "the same database."
+                ),
+            }
+
         # Create a job for the agent's Python code
         job_result = await convex.mutation("executions:create", {
             "type": "code",
@@ -549,20 +678,21 @@ async def _execute_tool(name: str, args: dict, project_slug: str | None = None) 
             "createdAt": int(time.time() * 1000)
         })
         job_id = job_result["jobId"]
-        
-        # Create execution task
+
+        # Create execution task — upload HTML/GeoJSON/etc. written to OUTPUT_DIR
         task = asyncio.create_task(
             subprocess_code_runner.run_user_code(
                 args["code"],
-                120, # Default timeout for agent
-                upload_artifacts=False,
-                job_id=job_id
+                120,  # Default timeout for agent
+                upload_artifacts=True,
+                duckdb_path=duck,
+                job_id=job_id,
             )
         )
-        
+
         # Register with manager
         execution_manager.register_job(job_id, task)
-        
+
         # Wait for completion (the runner handles status updates)
         return await task
 

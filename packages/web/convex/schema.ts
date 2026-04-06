@@ -100,6 +100,8 @@ export default defineSchema({
   hydrationJobs: defineTable({
     pipelineConfigId: v.id("pipelineConfigs"),
     pipelineSlug: v.string(),
+    /** Denormalized slug for API/worker fallback when linking to Convex projectId. */
+    projectSlug: v.optional(v.string()),
     projectId: v.optional(v.id("projects")),
     status: v.union(
       v.literal("queued"),
@@ -128,6 +130,7 @@ export default defineSchema({
       finishedAt: v.optional(v.number()),
     })),
     createdAt: v.number(),
+    machine: v.optional(v.string()),
   })
     .index("by_pipeline", ["pipelineConfigId"])
     .index("by_project", ["projectId", "createdAt"])
@@ -197,6 +200,7 @@ export default defineSchema({
     startedAt: v.optional(v.number()),
     finishedAt: v.optional(v.number()),
     createdAt: v.number(),
+    machine: v.optional(v.string()),
   })
     .index("by_project", ["projectId", "createdAt"])
     .index("by_workspace_cell", ["workspaceId", "cellId"])

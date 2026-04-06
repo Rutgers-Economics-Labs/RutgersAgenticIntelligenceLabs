@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, Suspense, use } from "react";
 
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -463,10 +463,11 @@ function QualityPageInner({ projectSlug }: { projectSlug: string }) {
   );
 }
 
-export default async function QualityPage({ params }: { params: Promise<{ project: string }> }) {
+export default function QualityPage({ params }: { params: Promise<{ project: string }> }) {
+  const { project } = use(params);
   return (
     <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading quality report...</div>}>
-      <QualityPageInner projectSlug={(await params).project} />
+      <QualityPageInner projectSlug={project} />
     </Suspense>
   );
 }

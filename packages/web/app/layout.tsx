@@ -10,6 +10,8 @@ export const metadata: Metadata = {
   description: "Open data and ontology platform",
 };
 
+import { Toaster } from "sonner";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
@@ -19,6 +21,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Suspense fallback={<div className="flex h-screen items-center justify-center">Loading...</div>}>
               {children}
             </Suspense>
+            <Toaster richColors position="bottom-right" />
           </ThemeProvider>
         </ConvexClientProvider>
       </body>

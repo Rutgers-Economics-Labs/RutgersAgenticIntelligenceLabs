@@ -1,15 +1,32 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...init?.headers },
-    ...init,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Content-Type": "application/json", ...init?.headers },
+      ...init,
+    });
+  } catch (e) {
+    const isNetwork =
+      e instanceof TypeError &&
+      (e.message === "Failed to fetch" || e.message.includes("fetch") || e.message.includes("NetworkError"));
+    const hint = isNetwork
+      ? ` Cannot reach ${API_BASE}. Start the FastAPI server (e.g. \`make api\` from the repo root) and ensure NEXT_PUBLIC_API_URL matches it.`
+      : "";
+    throw new Error(
+      e instanceof Error ? `${e.message}.${hint}` : `Request failed: ${String(e)}${hint}`,
+    );
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`API ${res.status}: ${text}`);
   }
   return res.json() as Promise<T>;
+}
+
+export function isSyncRequiredError(error: any): boolean {
+  return error?.message?.includes("API 428");
 }
 
 // ── Ontology ──────────────────────────────────────────────────────────────────
@@ -231,7 +248,32 @@ export const registry = {
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
+export type JobRecord = {
+  jobId: string;
+  pipelineSlug: string;
+  projectId?: string;
+  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  createdAt: number;
+  finishedAt?: number;
+  stepResults?: any[];
+};
+
+export type JobLog = {
+  seq: number;
+  message: string;
+  level: string;
+  timestamp: number;
+};
+
 export const jobs = {
+  list: (projectId?: string, limit = 50) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (projectId) params.set("projectId", projectId);
+    return req<JobRecord[]>(`/jobs?${params}`);
+  },
+  get: (jobId: string) => req<JobRecord>(`/jobs/${jobId}`),
+  getLogs: (jobId: string, afterSeq = 0) =>
+    req<JobLog[]>(`/jobs/${jobId}/logs?after_seq=${afterSeq}`),
   trigger: (pipeline_slug: string, project_id?: string) =>
     req<{ jobId: string; status: string }>("/jobs", {
       method: "POST",
@@ -491,6 +533,19 @@ export const questions = {
 
 export const projects = {
   context: (slug: string) => req<any>(`/projects/${slug}/context`),
+  /** Point Convex project at paths from a successful hydration job (fixes 428 without re-running the pipeline). */
+  registerArtifacts: (
+    slug: string,
+    jobId?: string,
+    paths?: { output_db_path?: string; output_owl_path?: string },
+  ) => {
+    const q = jobId ? `?jobId=${encodeURIComponent(jobId)}` : "";
+    const hasPaths = paths && (paths.output_db_path || paths.output_owl_path);
+    return req<{ ok: boolean; jobId: string | null; activeOntologyDbPath: string; activeOntologyDuckdbPath: string }>(
+      `/projects/${encodeURIComponent(slug)}/register-artifacts${q}`,
+      hasPaths ? { method: "POST", body: JSON.stringify(paths) } : { method: "POST" },
+    );
+  },
 };
 
 export const context = {

@@ -152,7 +152,7 @@ def _validate_ontology(spec: dict) -> tuple[list[str], list[str]]:
 
 
 PIPELINE_ALLOWED_MODES = {"full", "incremental"}
-ALLOWED_TOP_LEVEL_PIPELINE_FIELDS = {"ontology", "steps", "hydration_mode", "schedule", "post_hydration_transforms"}
+ALLOWED_TOP_LEVEL_PIPELINE_FIELDS = {"ontology", "steps", "hydration_mode", "schedule", "post_hydration_transforms", "output_owl", "db", "duckdb"}
 
 def _validate_pipeline(spec: dict) -> list[str]:
     errors = []

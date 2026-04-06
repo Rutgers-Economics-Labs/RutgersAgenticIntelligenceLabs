@@ -1,299 +1,303 @@
 "use client";
-import { useState } from "react";
+
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import Link from "next/link";
-import { GitFork, Trash2 } from "lucide-react";
+import { 
+  Plus, Search, Filter, ArrowUpRight, 
+  FolderOpen, Activity, Database, Sparkles,
+  ChevronRight, MoreVertical, GitFork, Trash2,
+  Clock, Layers
+} from "lucide-react";
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { 
+  Dialog, DialogContent, DialogHeader, 
+  DialogTitle, DialogTrigger, DialogFooter,
+  DialogDescription
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Id } from "@/convex/_generated/dataModel";
+import { formatDistanceToNow } from "date-fns";
+
+const STATUS_STYLES: Record<string, string> = {
+  hydrated: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+  ready: "bg-blue-500/10 text-blue-500 border-blue-500/20",
+  draft: "bg-slate-500/10 text-slate-500 border-slate-500/20",
+};
 
 const APPROACH_LABEL = {
   "data-first": "Data → Ontology",
   "ontology-first": "Ontology → Data",
 };
 
-const STATUS_STYLES: Record<string, string> = {
-  draft:    "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
-  ready:    "bg-blue-500/10 text-blue-400 border-blue-500/20",
-  hydrated: "bg-green-500/10 text-green-400 border-green-500/20",
-};
-
-function NewProjectModal({ onClose }: { onClose: () => void }) {
-  const createProject = useMutation(api.projects.create);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [approach, setApproach] = useState<"data-first" | "ontology-first">("data-first");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-
-  async function handleCreate() {
-    if (!name.trim()) return;
-    setSaving(true);
-    setError("");
-    try {
-      await createProject({ name: name.trim(), slug, description: description.trim() || undefined, approach });
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create project");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-[--card] border border-[--border] rounded-xl shadow-2xl p-6">
-          <h2 className="text-base font-semibold mb-5">New Project</h2>
-
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs text-[--muted-foreground] block mb-1">Project Name</label>
-              <input
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="My Research Project"
-                className="w-full px-3 py-2 rounded border border-[--border] bg-[--muted] text-sm text-[--foreground] outline-none focus:border-[--primary]"
-              />
-              {name && (
-                <p className="text-[10px] text-[--muted-foreground] mt-1 font-mono">slug: {slug}</p>
-              )}
-            </div>
-
-            <div>
-              <label className="text-xs text-[--muted-foreground] block mb-1">Description (optional)</label>
-              <input
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Brief description…"
-                className="w-full px-3 py-2 rounded border border-[--border] bg-[--muted] text-sm text-[--foreground] outline-none focus:border-[--primary]"
-              />
-            </div>
-
-            <div>
-              <label className="text-xs text-[--muted-foreground] block mb-2">Approach</label>
-              <div className="grid grid-cols-2 gap-3">
-                {(["data-first", "ontology-first"] as const).map((a) => (
-                  <button
-                    key={a}
-                    onClick={() => setApproach(a)}
-                    className={`p-3 rounded-lg border text-left transition-colors ${
-                      approach === a
-                        ? "border-[--primary] bg-[--primary]/10"
-                        : "border-[--border] bg-[--muted] hover:border-[--primary]/40"
-                    }`}
-                  >
-                    <p className={`text-xs font-semibold mb-1 ${approach === a ? "text-[--primary]" : "text-[--foreground]"}`}>
-                      {a === "data-first" ? "Data First" : "Ontology First"}
-                    </p>
-                    <p className="text-[10px] text-[--muted-foreground] leading-relaxed">
-                      {a === "data-first"
-                        ? "Pick data sources, then build an ontology to organize them."
-                        : "Define your ontology schema, then find data sources to populate it."}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
-
-          <div className="flex justify-end gap-2 mt-6">
-            <button
-              onClick={onClose}
-              className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreate}
-              disabled={saving || !name.trim()}
-              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[--primary-foreground] font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {saving ? "Creating…" : "Create Project"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
-function ForkProjectModal({
-  projectId,
-  initialName,
-  onClose,
-}: {
-  projectId: Id<"projects">;
-  initialName: string;
-  onClose: () => void;
-}) {
-  const forkProject = useMutation(api.projects.forkProject);
-  const [name, setName] = useState(`${initialName} (fork)`);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  async function handleFork() {
-    if (!name.trim()) return;
-    setSaving(true);
-    setError("");
-    try {
-      await forkProject({ projectId, newName: name.trim() });
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to fork project");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <>
-      <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-        <div className="w-full max-w-md bg-[--card] border border-[--border] rounded-xl shadow-2xl p-6">
-          <h2 className="text-base font-semibold mb-5">Fork Project</h2>
-          <div>
-            <label className="text-xs text-[--muted-foreground] block mb-1">New project name</label>
-            <input
-              autoFocus
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded border border-[--border] bg-[--muted] text-sm text-[--foreground] outline-none focus:border-[--primary]"
-            />
-          </div>
-          {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
-          <div className="flex justify-end gap-2 mt-6">
-            <button
-              onClick={onClose}
-              className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleFork}
-              disabled={saving || !name.trim()}
-              className="text-sm px-4 py-1.5 rounded bg-[--primary] text-[--primary-foreground] font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              {saving ? "Forking…" : "Fork Project"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
 export default function ProjectsPage() {
-  const projects = useQuery(api.projects.list, {});
+  const projects = useQuery(api.projects.list, {}) || [];
+  const createProject = useMutation(api.projects.create);
   const removeProject = useMutation(api.projects.remove);
-  const [showNew, setShowNew] = useState(false);
-  const [forkingProject, setForkingProject] = useState<{ id: Id<"projects">; name: string } | null>(null);
+  const forkProject = useMutation(api.projects.forkProject);
 
-  async function handleDelete(slug: string) {
-    await removeProject({ slug });
-  }
+  const [search, setSearch] = useState("");
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newDesc, setNewDesc] = useState("");
+  const [approach, setApproach] = useState<"data-first" | "ontology-first">("data-first");
+  
+  const [forkingProject, setForkingProject] = useState<{ id: Id<"projects">; name: string } | null>(null);
+  const [forkName, setForkName] = useState("");
+
+  const filtered = projects.filter(p => 
+    p.name.toLowerCase().includes(search.toLowerCase()) ||
+    p.description?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const handleCreate = async () => {
+    if (!newName) return;
+    try {
+      const slug = newName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      await createProject({
+        name: newName,
+        slug,
+        description: newDesc,
+        approach,
+      });
+      setIsCreateOpen(false);
+      setNewName("");
+      setNewDesc("");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to create project");
+    }
+  };
+
+  const handleFork = async () => {
+    if (!forkingProject || !forkName) return;
+    try {
+      await forkProject({ projectId: forkingProject.id, newName: forkName });
+      setForkingProject(null);
+      setForkName("");
+    } catch (err) {
+      console.error(err);
+      alert("Failed to fork project");
+    }
+  };
+
+  const handleDelete = async (slug: string) => {
+    if (!confirm("Are you sure you want to delete this project?")) return;
+    try {
+      await removeProject({ slug });
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   return (
-    <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">Projects</h1>
-        <button
-          onClick={() => setShowNew(true)}
-          className="text-sm px-3 py-1.5 rounded bg-[--primary] text-[--primary-foreground] font-semibold hover:opacity-90"
-        >
-          + New Project
-        </button>
+    <div className="flex flex-col gap-10 max-w-7xl mx-auto w-full px-4 py-8 pb-20">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-xl bg-[--primary]/10 border border-[--primary]/20">
+              <FolderOpen className="text-[--primary]" size={24} />
+            </div>
+            <h1 className="text-3xl font-extrabold tracking-tight">Projects</h1>
+          </div>
+          <p className="text-muted-foreground max-w-lg font-medium opacity-80">Research ontologies, data pipelines, and agent configurations.</p>
+        </div>
+
+        <div className="flex gap-3">
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-11 px-6 gap-2 bg-[--primary] hover:bg-[--accent] shadow-lg shadow-[--primary]/20">
+                <Plus size={18} /> New Project
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[500px] bg-[--card] border-[--border]">
+              <DialogHeader>
+                <DialogTitle className="text-xl font-bold">Initialize Project</DialogTitle>
+                <DialogDescription>Setup a new research context. Choose your architectural starting point.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-6 py-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider opacity-50">Project Name</label>
+                  <Input
+                    value={newName}
+                    onChange={e => setNewName(e.target.value)}
+                    placeholder="e.g. Healthcare Supply Chain"
+                    className="bg-black/20 border-[--border] focus-visible:ring-[--primary]"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider opacity-50">Description</label>
+                  <Textarea
+                    value={newDesc}
+                    onChange={e => setNewDesc(e.target.value)}
+                    placeholder="Briefly describe the research goals..."
+                    rows={2}
+                    className="bg-black/20 border-[--border] focus-visible:ring-[--primary]"
+                  />
+                </div>
+                <div className="space-y-3">
+                  <label className="text-xs font-bold uppercase tracking-wider opacity-50">Approach</label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {(["data-first", "ontology-first"] as const).map((a) => (
+                      <button
+                        key={a}
+                        onClick={() => setApproach(a)}
+                        className={`p-4 rounded-xl border text-left transition-all ${
+                          approach === a
+                            ? "border-[--primary] bg-[--primary]/10 ring-1 ring-[--primary]/50"
+                            : "border-[--border] bg-black/10 hover:border-[--primary]/40"
+                        }`}
+                      >
+                        <p className={`text-xs font-bold mb-1 ${approach === a ? "text-[--primary]" : "text-[--foreground]"}`}>
+                          {a === "data-first" ? "Data Driven" : "Ontology First"}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground leading-relaxed">
+                          {a === "data-first" ? "Start with data connectors." : "Start with schema definition."}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>Cancel</Button>
+                <Button onClick={handleCreate} disabled={!newName} className="bg-[--primary]">Create Project</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
-      {projects === undefined && (
-        <p className="text-[--muted-foreground] text-sm">Loading…</p>
-      )}
+      {/* Toolbar */}
+      <div className="flex flex-col sm:flex-row items-center gap-4 py-2">
+        <div className="relative flex-1 w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground opacity-50" size={16} />
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Filter projects by name or description..."
+            className="w-full bg-[--card]/40 border border-[--border] rounded-xl pl-10 pr-4 py-2.5 text-sm outline-none focus:border-[--primary]/50 focus:ring-1 focus:ring-[--primary]/20 transition-all font-medium"
+          />
+        </div>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <Button variant="outline" className="h-10 border-[--border] gap-2 flex-1 sm:flex-none">
+            <Filter size={14} /> Sort
+          </Button>
+        </div>
+      </div>
 
-      {projects?.length === 0 && (
-        <div className="flex flex-col items-center justify-center h-64 border border-dashed border-[--border] rounded-xl gap-4">
-          <div className="text-center">
-            <p className="text-[--foreground] font-medium mb-1">No projects yet</p>
-            <p className="text-sm text-[--muted-foreground]">
-              Create a project to start building ontologies and pipelines.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowNew(true)}
-            className="text-sm px-3 py-1.5 rounded border border-[--border] text-[--muted-foreground] hover:text-[--foreground]"
+      {/* Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {filtered.map((p) => (
+          <div
+            key={p._id}
+            className="group relative flex flex-col p-6 rounded-2xl border border-[--border] bg-[--card]/40 backdrop-blur-sm hover:border-[--primary]/40 hover:bg-[--card]/60 transition-all duration-300 shadow-sm hover:shadow-xl hover:shadow-[--primary]/5"
           >
-            + Create your first project
-          </button>
-        </div>
-      )}
-
-      {projects && projects.length > 0 && (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {projects.map((p) => (
-            <div
-              key={p._id}
-              className="p-5 rounded-xl border border-[--border] bg-[--card] hover:border-[--primary]/60 hover:bg-[--muted] transition-colors group"
-            >
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <Link href={`/projects/${p.slug}`} className="min-w-0 flex-1">
-                  <h3 className="font-semibold text-sm group-hover:text-[--primary] transition-colors truncate">{p.name}</h3>
-                </Link>
-                <span className={`text-[10px] px-2 py-0.5 rounded border font-medium shrink-0 ${STATUS_STYLES[p.status]}`}>
-                  {p.status}
-                </span>
-              </div>
-              <Link href={`/projects/${p.slug}`} className="block">
-                {p.description && (
-                  <p className="text-xs text-[--muted-foreground] mb-3 line-clamp-2">{p.description}</p>
-                )}
-                <div className="flex items-center gap-3 text-[10px] text-[--muted-foreground]">
-                  <span className="px-1.5 py-0.5 rounded bg-[--muted] font-mono">
-                    {APPROACH_LABEL[p.approach]}
-                  </span>
-                  {p.ontologyConfigSlug && (
-                    <span>ontology: {p.ontologyConfigSlug}</span>
-                  )}
-                  {p.apiConfigSlugs.length > 0 && (
-                    <span>{p.apiConfigSlugs.length} data source{p.apiConfigSlugs.length > 1 ? "s" : ""}</span>
-                  )}
+             <div className="flex items-start justify-between gap-4 mb-4">
+                <div className="p-2.5 rounded-xl bg-gradient-to-br from-[--primary]/20 to-[--accent]/20 border border-[--primary]/20 text-[--primary] group-hover:scale-110 transition-transform">
+                   <FolderOpen size={20} />
                 </div>
-                <p className="text-[10px] text-[--muted-foreground] mt-3">
-                  Updated {new Date(p.updatedAt).toLocaleDateString()}
-                </p>
-              </Link>
-              <div className="mt-4 flex items-center gap-2">
-                <button
-                  onClick={() => setForkingProject({ id: p._id, name: p.name })}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-[--border] px-2.5 py-1.5 text-xs text-[--muted-foreground] hover:border-[--primary]/50 hover:text-[--primary]"
-                >
-                  <GitFork size={12} />
-                  Fork
-                </button>
-                <button
-                  onClick={() => void handleDelete(p.slug)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-[--border] px-2.5 py-1.5 text-xs text-[--muted-foreground] hover:border-red-600/50 hover:text-red-400"
-                >
-                  <Trash2 size={12} />
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+                <div className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-widest border ${STATUS_STYLES[p.status]}`}>
+                  {p.status}
+                </div>
+             </div>
 
-      {showNew && <NewProjectModal onClose={() => setShowNew(false)} />}
-      {forkingProject && (
-        <ForkProjectModal
-          projectId={forkingProject.id}
-          initialName={forkingProject.name}
-          onClose={() => setForkingProject(null)}
-        />
-      )}
+             <div className="flex-1 mb-6">
+                <Link href={`/${p.slug}`} className="block group/title">
+                   <h3 className="text-lg font-bold tracking-tight mb-2 group-hover/title:text-[--primary] transition-colors flex items-center gap-1">
+                      {p.name}
+                      <ArrowUpRight size={14} className="opacity-0 group-hover/title:opacity-100 -translate-y-0.5 transition-all text-[--primary]" />
+                   </h3>
+                </Link>
+                <p className="text-sm text-muted-foreground line-clamp-2 min-h-[40px] font-medium opacity-70">
+                   {p.description || "No description provided for this research context."}
+                </p>
+                <div className="mt-4 flex items-center gap-3">
+                   <div className="flex items-center gap-1 text-[10px] bg-white/5 border border-white/5 px-2 py-0.5 rounded uppercase tracking-tighter font-mono font-bold opacity-60">
+                      <Layers size={10} /> {APPROACH_LABEL[p.approach]}
+                   </div>
+                </div>
+             </div>
+
+             <div className="grid grid-cols-2 gap-2 border-t border-[--border]/50 pt-5 mt-auto">
+                <div className="flex flex-col gap-0.5">
+                   <span className="text-[9px] uppercase tracking-wider font-bold opacity-30 flex items-center gap-1">
+                      <Clock size={10} /> Updated
+                   </span>
+                   <span className="text-[10px] font-semibold opacity-60 truncate">
+                      {formatDistanceToNow(p.updatedAt, { addSuffix: true })}
+                   </span>
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                   <button 
+                     onClick={() => { setForkingProject({ id: p._id, name: p.name }); setForkName(`${p.name} (fork)`); }}
+                     className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-muted-foreground hover:text-[--primary] hover:bg-[--primary]/10 transition-all"
+                     title="Fork Project"
+                   >
+                     <GitFork size={14} />
+                   </button>
+                   <button 
+                     onClick={() => handleDelete(p.slug)}
+                     className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-all"
+                     title="Delete Project"
+                   >
+                     <Trash2 size={14} />
+                   </button>
+                   <Link 
+                     href={`/${p.slug}`}
+                     className="w-8 h-8 rounded-lg bg-[--primary]/10 border border-[--primary]/20 flex items-center justify-center text-[--primary] hover:bg-[--primary] hover:text-white transition-all shadow-sm"
+                   >
+                     <ChevronRight size={16} />
+                   </Link>
+                </div>
+             </div>
+          </div>
+        ))}
+
+        {filtered.length === 0 && (
+          <div className="col-span-full py-24 text-center flex flex-col items-center border-2 border-dashed border-[--border] rounded-3xl opacity-40">
+            <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
+              <Search size={32} className="opacity-20" />
+            </div>
+            <h2 className="text-xl font-bold mb-1">No research contexts found</h2>
+            <p className="text-sm text-muted-foreground max-w-xs">Create a new project to begin your agentic intelligence journey.</p>
+          </div>
+        )}
+      </div>
+
+      {/* Fork Dialog */}
+      <Dialog open={!!forkingProject} onOpenChange={(open) => !open && setForkingProject(null)}>
+        <DialogContent className="bg-[--card] border-[--border]">
+          <DialogHeader>
+            <DialogTitle>Fork Project</DialogTitle>
+            <DialogDescription>Create a copy of this research context, including its ontology and pipeline settings.</DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <label className="text-xs font-bold uppercase tracking-wider opacity-50 block mb-2">New Name</label>
+            <Input value={forkName} onChange={e => setForkName(e.target.value)} className="bg-black/20 border-[--border]" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setForkingProject(null)}>Cancel</Button>
+            <Button onClick={handleFork} className="bg-[--primary]">Confirm Fork</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Footer Info */}
+      <div className="flex items-center justify-center gap-6 mt-16 opacity-30 select-none">
+        <div className="flex items-center gap-2">
+          <Activity size={12} />
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Live Registry</span>
+        </div>
+        <div className="w-1 h-1 rounded-full bg-foreground/50" />
+        <div className="flex items-center gap-2">
+          <Sparkles size={12} />
+          <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Research Optimized</span>
+        </div>
+      </div>
     </div>
   );
 }

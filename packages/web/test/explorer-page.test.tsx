@@ -5,6 +5,14 @@ const classesMock = vi.fn();
 const instancesMock = vi.fn();
 const semanticSearchMock = vi.fn();
 
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams("projectSlug=test-project"),
+}));
+
+vi.mock("convex/react", () => ({
+  useQuery: () => ({ pipelineConfigSlug: "test-pipeline" }),
+}));
+
 vi.mock("next/link", () => ({
   default: ({ children, href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { href: string }) => (
     <a href={href} {...props}>{children}</a>
@@ -60,7 +68,7 @@ describe("ExplorerPage", () => {
     });
 
     await waitFor(() => {
-      expect(semanticSearchMock).toHaveBeenCalledWith("coastal counties", ["County"], 20);
+      expect(semanticSearchMock).toHaveBeenCalledWith("coastal counties", ["Municipality"], 20, "test-project");
     });
 
     expect(await screen.findByText("Monmouth County")).toBeInTheDocument();

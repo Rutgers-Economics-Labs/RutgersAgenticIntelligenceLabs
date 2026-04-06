@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect, useCallback, Suspense } from "react";
+import { useState, useRef, useEffect, useCallback, Suspense, use } from "react";
 
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -691,10 +691,11 @@ function AnswerBlockView({ block, projectSlug }: { block: AnswerBlock; projectSl
   return null;
 }
 
-export default async function QuestionsPage({ params }: { params: Promise<{ project: string }> }) {
+export default function QuestionsPage({ params }: { params: Promise<{ project: string }> }) {
+  const { project } = use(params);
   return (
     <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading questions...</div>}>
-      <QuestionsPageInner projectSlug={(await params).project} />
+      <QuestionsPageInner projectSlug={project} />
     </Suspense>
   );
 }

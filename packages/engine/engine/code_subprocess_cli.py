@@ -88,6 +88,21 @@ def _build_namespace(db_path: str, output_dir: str) -> dict:
     except ImportError:
         pass
 
+    try:
+        import folium
+
+        ctx["folium"] = folium
+    except ImportError:
+        pass
+
+    try:
+        import geopandas as gpd
+
+        ctx["gpd"] = gpd
+        ctx["geopandas"] = gpd
+    except ImportError:
+        pass
+
     return ctx
 
 

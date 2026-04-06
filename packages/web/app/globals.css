@@ -1,18 +1,21 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tailwindcss";
 
 /* ── Dark theme (default) ───────────────────────────────────────────────────── */
 :root {
-  --background: #0d1117;
-  --foreground: #e6edf3;
-  --card: #161b22;
-  --card-foreground: #e6edf3;
-  --border: #30363d;
-  --muted: #21262d;
-  --muted-foreground: #8b949e;
-  --primary: #58a6ff;
-  --primary-foreground: #0d1117;
-  --accent: #1f6feb;
-  --ring: #58a6ff;
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #121215;
+  --card-foreground: #fafafa;
+  --popover: #121215;
+  --popover-foreground: #fafafa;
+  --border: #242427;
+  --muted: #1a1a1c;
+  --muted-foreground: #a1a1aa;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --accent: #2563eb;
+  --ring: #3b82f6;
 
   /* node colors — keep in sync with engine/app.py */
   --color-state: #F5A623;
@@ -25,16 +28,18 @@
 /* ── Light theme ─────────────────────────────────────────────────────────────── */
 [data-theme="light"] {
   --background: #ffffff;
-  --foreground: #1a1a2e;
-  --card: #f6f8fa;
-  --card-foreground: #1a1a2e;
-  --border: #d0d7de;
-  --muted: #eaeef2;
-  --muted-foreground: #57606a;
-  --primary: #0969da;
+  --foreground: #09090b;
+  --card: #f9f9fa;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --border: #e4e4e7;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --primary: #2563eb;
   --primary-foreground: #ffffff;
-  --accent: #218bff;
-  --ring: #0969da;
+  --accent: #3b82f6;
+  --ring: #2563eb;
 
   --color-state: #E8920A;
   --color-county: #1a7abf;
@@ -46,12 +51,49 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  overflow-x: hidden;
 }
 
 * { box-sizing: border-box; }
+
+.glass {
+  background: rgba(var(--background), 0.7);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+  border: 4px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted-foreground);
+  border: 4px solid transparent;
+  background-clip: content-box;
+}

@@ -37,7 +37,7 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] w-full max-w-6xl mx-auto">
+    <div className="flex flex-col h-full w-full max-w-6xl mx-auto p-10 pb-20">
       <div className="flex justify-between items-center mb-6 shrink-0">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Ontology Schema</h1>

@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from app.services.convex_client import convex
 from app.services import llm_service
+from app.services.agent_service import PROJECT_AGENT_DATA_TOOLS, _execute_tool
 
 router = APIRouter(prefix="/project-agent", tags=["project-agent"])
 
@@ -127,6 +128,15 @@ Example: search_data_registry(query="unemployment rate", geography="New Jersey")
 2. list_available_configs(config_type="apis") → check if config already exists
 3. If not: create_config with proper YAML, then add_data_source
 4. If yes: add_data_source(slug=<existing slug>)
+
+### Analyzing hydrated data (SQL / Python / maps)
+After the project is hydrated (status can be checked via get_project_info), you can call:
+- **describe_database** — table names, row counts, column types, geometry hints (use before spatial work)
+- **get_sql_schema** — column names/types only (lighter than describe_database)
+- **run_sql** — run read-only DuckDB SQL against the project's ontology export
+- **execute_python** — pandas/stats/plots; write Folium HTML or GeoJSON under OUTPUT_DIR; artifacts are uploaded and listed in the tool result
+
+Never invent table or file paths — use describe_database or get_sql_schema first.
 
 ### save_to_knowledge_base(name, content)
 Save a research note, compiled analysis, or configuration summary to the project knowledge base.
@@ -411,6 +421,9 @@ PROJECT_TOOLS: list[dict] = [
     },
 ]
 
+# Same DuckDB/SQL/Python tools as `/agent/chat` so this endpoint can analyze hydrated data.
+PROJECT_TOOLS_MERGED: list[dict] = [*PROJECT_TOOLS, *PROJECT_AGENT_DATA_TOOLS]
+
 
 # ---------------------------------------------------------------------------
 # Tool executor
@@ -585,6 +598,9 @@ async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:
         except Exception as e:
             return {"saved": False, "error": str(e)}
 
+    if name in ("run_sql", "get_sql_schema", "describe_database", "execute_python"):
+        return await _execute_tool(name, args, project_slug=None, project_id=project_id)
+
     return {"error": f"Unknown tool: {name}"}
 
 
@@ -609,7 +625,7 @@ async def _run_project_chat(
         assistant_text = ""
         turn_tool_calls: list[dict] = []
 
-        async for event in llm_service.stream_agent(messages, PROJECT_TOOLS, model=model):
+        async for event in llm_service.stream_agent(messages, PROJECT_TOOLS_MERGED, model=model):
             if event["type"] == "text_delta":
                 assistant_text += event["content"]
                 yield event

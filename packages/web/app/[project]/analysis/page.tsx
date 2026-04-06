@@ -1,5 +1,5 @@
 "use client";
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 
 import { AnalysisWorkspace } from "@/components/analysis/AnalysisWorkspace";
 import { Id } from "@/convex/_generated/dataModel";
@@ -36,10 +36,11 @@ function AnalysisPageInner({ projectSlug }: { projectSlug: string }) {
   return <AnalysisWorkspace projectSlug={projectSlug} />;
 }
 
-export default async function AnalysisPage({ params }: { params: Promise<{ project: string }> }) {
+export default function AnalysisPage({ params }: { params: Promise<{ project: string }> }) {
+  const { project } = use(params);
   return (
     <Suspense fallback={<div className="p-8 text-sm text-[--muted-foreground] animate-pulse">Initializing Analysis Workspace...</div>}>
-      <AnalysisPageInner projectSlug={(await params).project} />
+      <AnalysisPageInner projectSlug={project} />
     </Suspense>
   );
 }

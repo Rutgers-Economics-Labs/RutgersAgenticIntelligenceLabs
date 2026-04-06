@@ -1,6 +1,6 @@
 "use client";
 import { useQuery } from "convex/react";
-import { useMemo, useState, Suspense } from "react";
+import { useMemo, useState, Suspense, use } from "react";
 
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { Database, Code, Zap, FileText, ChevronRight } from "lucide-react";
 import { ScheduleModal } from "@/components/schedules/ScheduleModal";
 import { schedules } from "@/lib/api";
+import { countPipelineStepsFromSpec, hydrationStepProgress } from "@/lib/pipeline-steps";
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "#8b949e",
@@ -26,13 +27,20 @@ function timeAgo(ms: number) {
   return new Date(ms).toLocaleDateString();
 }
 
-function ResultPreview({ job }: { job: any }) {
+function ResultPreview({
+  job,
+  pipelineStepTotal,
+}: {
+  job: any;
+  /** From pipeline `parsedSpec.steps.length` when the pipeline config is in Convex */
+  pipelineStepTotal?: number;
+}) {
   if (job.kind === "hydration") {
-    const done = job.stepResults.filter((s: any) => s.status === "done").length;
+    const { done, total } = hydrationStepProgress(job.stepResults ?? [], pipelineStepTotal);
     return (
       <div className="flex items-center gap-1.5 text-[11px] text-[--muted-foreground]">
         <Zap size={12} className="text-blue-400" />
-        <span>{done}/{job.stepResults.length} steps complete</span>
+        <span>{done}/{total} steps complete</span>
       </div>
     );
   }
@@ -70,9 +78,20 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
   const activeSchedules = useQuery(api.schedules.listByProject, { projectSlug })?.filter(s => s.status === "active") || [];
   const pipelines = useQuery(api.configs.listPipelines, {}) || [];
 
+  const pipelineStepTotalBySlug = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of pipelines) {
+      const n = countPipelineStepsFromSpec(p.parsedSpec);
+      if (n !== undefined && n > 0) m.set(p.slug, n);
+    }
+    return m;
+  }, [pipelines]);
+
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
 
   const [filter, setFilter] = useState<string | "all">("all");
+
+  const project = useQuery(api.projects.get, { slug: projectSlug });
 
   const hydrationJobs = useQuery(
     projectSlug ? api.jobs.listByProject : api.jobs.list,
@@ -80,8 +99,8 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
   );
   
   const executionJobs = useQuery(
-    projectSlug ? (api as any).executions.listByProject : (api as any).executions.list,
-    projectSlug ? { projectSlug, limit: 100 } : { limit: 100 }
+    projectSlug && project ? (api as any).executions.listByProject : (api as any).executions.list,
+    projectSlug && project ? { projectId: project._id as Id<"projects">, limit: 100 } : { limit: 100 }
   );
   
   const allJobs = useMemo(() => {
@@ -114,7 +133,7 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-8 max-w-6xl mx-auto w-full p-10 pb-20">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Project Activity</h1>
@@ -158,6 +177,7 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
                 <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Activity / Source</th>
                 <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Category</th>
                 <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Status</th>
+                <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Node</th>
                 <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Result Insight</th>
                 <th className="text-left px-4 py-3 text-[11px] uppercase tracking-wider text-[--muted-foreground] font-semibold">Timing</th>
                 <th className="w-10 px-4 py-3"></th>
@@ -205,7 +225,19 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
                     </span>
                   </td>
                   <td className="px-4 py-4">
-                    <ResultPreview job={job} />
+                    <span className="text-[11px] font-mono text-[--muted-foreground] bg-[--muted]/50 px-1.5 py-0.5 rounded">
+                      {job.machine || "unknown"}
+                    </span>
+                  </td>
+                  <td className="px-4 py-4">
+                    <ResultPreview
+                      job={job}
+                      pipelineStepTotal={
+                        job.kind === "hydration"
+                          ? pipelineStepTotalBySlug.get(job.pipelineSlug)
+                          : undefined
+                      }
+                    />
                   </td>
                   <td className="px-4 py-4 text-[--muted-foreground] text-[11px]">
                     <div className="flex flex-col">
@@ -217,7 +249,7 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
                   </td>
                   <td className="px-4 py-4 text-right">
                     <Link 
-                      href={`/jobs/${job._id}`} 
+                      href={`/${projectSlug}/jobs/${job._id}`} 
                       className="inline-flex h-8 w-8 items-center justify-center rounded-lg hover:bg-[--muted] transition-colors text-[--muted-foreground] hover:text-[--primary]"
                     >
                       <ChevronRight size={18} />
@@ -302,10 +334,11 @@ function JobsPageInner({ projectSlug }: { projectSlug: string }) {
   );
 }
 
-export default async function JobsPage({ params }: { params: { project: string } }) {
+export default function JobsPage({ params }: { params: Promise<{ project: string }> }) {
+  const { project } = use(params);
   return (
     <Suspense fallback={<div className="p-8 text-sm text-[--muted-foreground] animate-pulse">Syncing platform activity...</div>}>
-      <JobsPageInner projectSlug={(await params).project} />
+      <JobsPageInner projectSlug={project} />
     </Suspense>
   );
 }

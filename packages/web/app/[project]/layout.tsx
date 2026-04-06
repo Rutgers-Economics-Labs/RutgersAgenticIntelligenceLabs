@@ -13,7 +13,7 @@ export default async function ProjectLayout({
       <TopBar projectSlug={(await params).project} />
       <div className="flex flex-1 overflow-hidden">
         <ProjectSidebar projectSlug={(await params).project} />
-        <main className="flex-1 overflow-auto p-10">{children}</main>
+        <main className="flex-1 overflow-auto">{children}</main>
       </div>
     </div>
   );

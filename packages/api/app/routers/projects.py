@@ -1,9 +1,22 @@
+import time
 import yaml
-from fastapi import APIRouter, HTTPException
+from pathlib import Path
+
+from fastapi import APIRouter, Body, HTTPException, Query
 from pydantic import BaseModel
+
 from app.services.convex_client import convex
+from app.services import ontology_service, sql_service
+from app.services.project_artifacts_service import find_latest_success_job_with_outputs
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+
+class RegisterArtifactsBody(BaseModel):
+    """Optional explicit paths when job discovery fails (e.g. paths only on disk)."""
+
+    output_db_path: str | None = None
+    output_owl_path: str | None = None
+
 
 class CreateProjectRequest(BaseModel):
     name: str
@@ -52,6 +65,102 @@ async def create_project(data: CreateProjectRequest):
 
     project_id = await convex.mutation("projects:create", project_data)
     return await convex.query("projects:getBySlug", {"slug": data.slug})
+
+
+@router.post("/{slug}/register-artifacts")
+async def register_artifacts_from_job(
+    slug: str,
+    job_id: str | None = Query(None, alias="jobId"),
+    body: RegisterArtifactsBody | None = Body(None),
+):
+    """
+    Copy ontology artifact paths from a successful hydration job onto the Convex project.
+
+    Use when hydration finished but the project doc was never updated (428 Sync Required).
+    Defaults to the latest successful job for this project that has outputDbPath.
+    Optional JSON body: {"output_db_path": "/abs/path/onto.db", "output_owl_path": "..."} to set paths without job lookup.
+    """
+    project = await convex.query("projects:get", {"slug": slug})
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    convex_project_id = project["_id"]
+    job: dict | None = None
+    db_key: str | None = None
+    owl_key: str | None = None
+    last_job_convex_id: str | None = None
+
+    if body and body.output_db_path:
+        db_key = body.output_db_path.strip()
+        owl_key = body.output_owl_path
+        if job_id:
+            j = await convex.query("jobs:get", {"jobId": job_id})
+            if j:
+                last_job_convex_id = j["_id"]
+    elif job_id:
+        job = await convex.query("jobs:get", {"jobId": job_id})
+        if not job:
+            raise HTTPException(404, "Job not found")
+        if job.get("status") not in ("success", "completed"):
+            raise HTTPException(400, "Job is not in success status")
+        db_key = job.get("outputDbPath")
+        owl_key = job.get("outputOwlPath")
+        last_job_convex_id = job["_id"]
+    else:
+        job = await find_latest_success_job_with_outputs(project)
+        if not job:
+            raise HTTPException(
+                400,
+                "No successful hydration job with stored outputs found for this project. "
+                "Run hydration with this project selected, POST with ?jobId=..., or send "
+                '{"output_db_path": "/path/to/onto.db"} in the request body.',
+            )
+        db_key = job.get("outputDbPath")
+        owl_key = job.get("outputOwlPath")
+        last_job_convex_id = job["_id"]
+
+    if not db_key:
+        raise HTTPException(400, "Job has no outputDbPath stored")
+
+    parent = Path(db_key).parent
+    duckdb_path = str(parent / "onto.duckdb")
+    embeddings_path = str(parent / "embeddings.db")
+
+    now_ms = int(time.time() * 1000)
+    patch: dict = {
+        "projectId": convex_project_id,
+        "status": "hydrated",
+        "lastHydratedAt": now_ms,
+        "activeOntologyDbPath": db_key,
+        "activeOntologyOwlPath": owl_key,
+        "activeOntologyDuckdbPath": duckdb_path,
+        "activeOntologyEmbeddingsPath": embeddings_path,
+    }
+    if last_job_convex_id is not None:
+        patch["lastJobId"] = last_job_convex_id
+    await convex.mutation("projects:updateById", patch)
+
+    # Warm ontology on the same thread the API uses for Owlready2 (executor), not the event loop.
+    db_path = Path(db_key).resolve()
+    if db_path.is_file():
+        try:
+            await ontology_service.ensure_loaded_async(str(db_path), project_id=slug)
+        except Exception:
+            pass
+    duck_p = Path(duckdb_path).resolve()
+    if duck_p.is_file():
+        try:
+            sql_service.set_path(str(duck_p))
+        except Exception:
+            pass
+
+    return {
+        "ok": True,
+        "jobId": last_job_convex_id,
+        "activeOntologyDbPath": db_key,
+        "activeOntologyDuckdbPath": duckdb_path,
+    }
+
 
 @router.get("/{slug}/context")
 async def get_project_context(slug: str):

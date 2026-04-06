@@ -10,6 +10,7 @@ import "katex/dist/katex.min.css";
 import { useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
+import { toast } from "sonner";
 
 interface AgentPanelProps {
   projectId: string;
@@ -90,22 +91,35 @@ export function AgentPanel({ projectId, onInsertCode }: AgentPanelProps) {
       }
     } catch {
       assistantText = "Something went wrong. Make sure the API is running.";
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: assistantText,
-        codeBlocks: [],
-      }]);
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") {
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: assistantText,
+            codeBlocks: extractCodeBlocks(assistantText),
+          };
+        } else {
+          updated.push({
+            role: "assistant",
+            content: assistantText,
+            codeBlocks: [],
+          });
+        }
+        return updated;
+      });
     } finally {
       setStreaming(false);
-      // Persist to projectChats
+      // Persist to projectChats (Convex id — not slug — was incorrectly passed as projectSlug before)
       try {
         const pair = [
           { role: "user" as const, content: text },
-          { role: "assistant" as const, content: assistantText },
+          { role: "assistant" as const, content: assistantText || "(no response)" },
         ];
         if (!chatIdRef.current) {
           const { chatId } = await createChat({
-            projectSlug: projectId,
+            projectId: projectId as Id<"projects">,
             title: text.slice(0, 60),
             messages: pair,
           });
@@ -113,8 +127,9 @@ export function AgentPanel({ projectId, onInsertCode }: AgentPanelProps) {
         } else {
           await appendMessages({ chatId: chatIdRef.current, messages: pair });
         }
-      } catch {
-        /* ignore persistence errors */
+      } catch (e) {
+        console.error("[AgentPanel] Failed to save chat to Convex:", e);
+        toast.error("Could not save this chat to history. Check your connection.");
       }
     }
   };

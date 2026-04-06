@@ -10,7 +10,9 @@ router = APIRouter(prefix="/ontology", tags=["ontology"])
 async def list_classes(project_id: str | None = Query(None, alias="projectId")):
     if project_id:
         art = await project_artifacts_service.resolve(project_id)
-        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await ontology_service._run_with_ensure(
+            project_id, art.db_path, ontology_service.list_classes
+        )
     return await ontology_service._run(project_id, ontology_service.list_classes)
 
 
@@ -25,7 +27,15 @@ async def list_instances(
     try:
         if project_id:
             art = await project_artifacts_service.resolve(project_id)
-            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+            return await ontology_service._run_with_ensure(
+                project_id,
+                art.db_path,
+                ontology_service.list_instances,
+                class_name,
+                page,
+                limit,
+                search,
+            )
         return await ontology_service._run(
             project_id, ontology_service.list_instances, class_name, page, limit, search
         )
@@ -38,7 +48,9 @@ async def get_entity(uri: str, project_id: str | None = Query(None, alias="proje
     try:
         if project_id:
             art = await project_artifacts_service.resolve(project_id)
-            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+            return await ontology_service._run_with_ensure(
+                project_id, art.db_path, ontology_service.get_entity, uri
+            )
         return await ontology_service._run(project_id, ontology_service.get_entity, uri)
     except RuntimeError as e:
         # e.g. Ontology not loaded yet (no hydration artifacts)
@@ -52,7 +64,9 @@ async def get_entity_graph(uri: str, project_id: str | None = Query(None, alias=
     try:
         if project_id:
             art = await project_artifacts_service.resolve(project_id)
-            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+            return await ontology_service._run_with_ensure(
+                project_id, art.db_path, ontology_service.get_entity_graph, uri
+            )
         return await ontology_service._run(project_id, ontology_service.get_entity_graph, uri)
     except RuntimeError as e:
         # e.g. Ontology not loaded yet (no hydration artifacts)
@@ -71,7 +85,14 @@ async def get_full_graph(
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     if project_id:
         art = await project_artifacts_service.resolve(project_id)
-        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await ontology_service._run_with_ensure(
+            project_id,
+            art.db_path,
+            ontology_service.get_full_graph,
+            type_list,
+            state_fips,
+            limit,
+        )
     return await ontology_service._run(
         project_id, ontology_service.get_full_graph, type_list, state_fips, limit
     )
@@ -86,7 +107,9 @@ async def search_entities(
     type_list = [t.strip() for t in types.split(",")] if types else None
     if project_id:
         art = await project_artifacts_service.resolve(project_id)
-        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await ontology_service._run_with_ensure(
+            project_id, art.db_path, ontology_service.search_entities, q, type_list
+        )
     return await ontology_service._run(project_id, ontology_service.search_entities, q, type_list)
 
 
@@ -101,7 +124,7 @@ async def semantic_search_entities(
     try:
         if project_id:
             art = await project_artifacts_service.resolve(project_id)
-            ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+            await ontology_service.ensure_loaded_async(art.db_path, project_id=project_id)
         return await embedding_service.search(q, top_k=limit, types=type_list, project_id=project_id)
     except RuntimeError as e:
         raise HTTPException(503, detail=str(e))
@@ -111,7 +134,9 @@ async def semantic_search_entities(
 async def list_series(project_id: str | None = Query(None, alias="projectId")):
     if project_id:
         art = await project_artifacts_service.resolve(project_id)
-        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await ontology_service._run_with_ensure(
+            project_id, art.db_path, ontology_service.list_series
+        )
     return await ontology_service._run(project_id, ontology_service.list_series)
 
 
@@ -119,5 +144,7 @@ async def list_series(project_id: str | None = Query(None, alias="projectId")):
 async def get_series_data(series_id: str, project_id: str | None = Query(None, alias="projectId")):
     if project_id:
         art = await project_artifacts_service.resolve(project_id)
-        ontology_service.ensure_loaded(art.db_path, project_id=project_id)
+        return await ontology_service._run_with_ensure(
+            project_id, art.db_path, ontology_service.get_series_data, series_id
+        )
     return await ontology_service._run(project_id, ontology_service.get_series_data, series_id)

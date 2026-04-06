@@ -197,3 +197,20 @@ export const forkProject = mutation({
     return { newProjectId, slug: newProjectSlug };
   },
 });
+
+export const resetStatus = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const projects = await ctx.db.query("projects").collect();
+    for (const p of projects) {
+      await ctx.db.patch(p._id, {
+        status: "ready",
+        activeOntologyDbPath: undefined,
+        activeOntologyOwlPath: undefined,
+        activeOntologyDuckdbPath: undefined,
+        activeOntologyEmbeddingsPath: undefined,
+        lastHydratedAt: undefined,
+      });
+    }
+  },
+});

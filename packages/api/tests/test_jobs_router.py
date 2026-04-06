@@ -82,6 +82,20 @@ async def test_trigger_job_queued(client, convex_mock):
     assert body["status"] == "queued"
 
 
+async def test_trigger_job_missing_job_id_returns_500(client, convex_mock):
+    """Regression: empty Convex mutation value must not start hydration with job_id=None."""
+    convex_mock.post("/api/query").mock(side_effect=_convex_query_dispatch)
+    convex_mock.post("/api/mutation").mock(
+        return_value=httpx.Response(200, json={"value": {}})
+    )
+
+    with patch("app.services.hydration_worker.run", new=AsyncMock()) as run_mock:
+        resp = await client.post("/api/v1/jobs", json={"pipeline_slug": "nj-hydration"})
+
+    assert resp.status_code == 500
+    run_mock.assert_not_called()
+
+
 async def test_trigger_job_pipeline_not_found(client, convex_mock):
     convex_mock.post("/api/query").mock(
         return_value=httpx.Response(200, json={"value": None})

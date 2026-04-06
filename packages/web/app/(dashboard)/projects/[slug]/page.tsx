@@ -19,6 +19,7 @@ import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import yaml from "yaml";
+import { countPipelineStepsFromSpec, hydrationStepProgress } from "@/lib/pipeline-steps";
 
 // Monaco — dynamically imported to avoid SSR issues
 const MonacoEditor = dynamic(
@@ -204,6 +205,16 @@ const STATUS_COLOR: Record<string, string> = {
 function OverviewTab({ project, onTabSwitch }: { project: ProjectDoc; onTabSwitch: (t: Tab) => void }) {
   const recentJobs = useQuery(api.jobs.listByProject, { projectSlug: project.slug, limit: 1 });
   const lastJob = recentJobs?.[0] as JobDoc | undefined;
+  const lastJobPipeline = useQuery(
+    api.configs.getPipeline,
+    lastJob?.pipelineSlug ? { slug: lastJob.pipelineSlug } : "skip",
+  );
+  const lastJobStepSummary = lastJob
+    ? hydrationStepProgress(
+        lastJob.stepResults,
+        countPipelineStepsFromSpec(lastJobPipeline?.parsedSpec),
+      )
+    : null;
 
   const checklist = [
     { label: "Project created",        done: true,                              tab: null          as Tab | null },
@@ -309,9 +320,9 @@ function OverviewTab({ project, onTabSwitch }: { project: ProjectDoc; onTabSwitc
               {lastJob.status}
             </span>
             <span className="text-xs text-[--muted-foreground]">{timeAgo(lastJob.createdAt)}</span>
-            {lastJob.stepResults.length > 0 && (
+            {lastJobStepSummary && lastJobStepSummary.total > 0 && (
               <span className="text-xs text-[--muted-foreground]">
-                {lastJob.stepResults.filter((s) => s.status === "done").length}/{lastJob.stepResults.length} steps
+                {lastJobStepSummary.done}/{lastJobStepSummary.total} steps
               </span>
             )}
             <button
@@ -923,9 +934,11 @@ function PipelineTab({ project, onRunSuccess }: { project: ProjectDoc; onRunSucc
 function JobRow({ job }: { job: JobDoc }) {
   const [expanded, setExpanded] = useState(false);
   const logs = useQuery(api.jobs.getLogs, expanded ? { jobId: job._id, limit: 400 } : "skip");
-
-  const stepsDone = job.stepResults.filter((s) => s.status === "done").length;
-  const stepsTotal = job.stepResults.length;
+  const pipeline = useQuery(api.configs.getPipeline, { slug: job.pipelineSlug });
+  const { done: stepsDone, total: stepsTotal } = hydrationStepProgress(
+    job.stepResults,
+    countPipelineStepsFromSpec(pipeline?.parsedSpec),
+  );
 
   function duration() {
     if (!job.startedAt || !job.finishedAt) return "—";

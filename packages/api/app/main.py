@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.services.convex_client import ConvexBackendConfigurationError
+from app.services.project_artifacts_service import HydrationRequiredError
 from app.services.scheduler_service import scheduler
 from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, questions, context, quality, connectors, projects, ontology_templates, github, schedules
 
@@ -79,13 +80,15 @@ app = FastAPI(
 )
 
 _cors_kw: dict = {
-    "allow_origins": settings.api_cors_origins,
+    "allow_origins": [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],
 }
-if settings.api_cors_origin_regex and settings.api_cors_origin_regex.strip():
-    _cors_kw["allow_origin_regex"] = settings.api_cors_origin_regex.strip()
+# Removed regex temporarily to avoid conflict with generic origin allow
 app.add_middleware(CORSMiddleware, **_cors_kw)
 
 app.include_router(configs.router,  prefix="/api/v1")
@@ -111,6 +114,24 @@ app.include_router(schedules.router,      prefix="/api/v1")
 @app.exception_handler(ConvexBackendConfigurationError)
 async def convex_configuration_handler(_, exc: ConvexBackendConfigurationError):
     return JSONResponse(status_code=503, content={"detail": str(exc)})
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(_, exc: Exception):
+    import logging
+    logging.exception(f"Unhandled error: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "message": str(exc)}
+    )
+
+
+@app.exception_handler(HydrationRequiredError)
+async def hydration_required_handler(_, exc: HydrationRequiredError):
+    return JSONResponse(
+        status_code=428,
+        content={"detail": "Sync Required", "message": str(exc)}
+    )
 
 
 @app.get("/health")

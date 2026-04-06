@@ -3,7 +3,10 @@ import { v } from "convex/values";
 
 export const create = mutation({
   args: {
-    projectSlug: v.string(),
+    /** Prefer this when the client already has Convex `projects._id` (e.g. analysis workspace). */
+    projectId: v.optional(v.id("projects")),
+    /** Resolve project by slug when `projectId` is not passed. */
+    projectSlug: v.optional(v.string()),
     title: v.string(),
     messages: v.array(v.object({
       role: v.union(v.literal("user"), v.literal("assistant")),
@@ -12,9 +15,17 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const project = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", args.projectSlug)).first();
+    if (!args.projectId && !args.projectSlug) {
+      throw new Error("projectId or projectSlug is required");
+    }
+    let project = null;
+    if (args.projectId) {
+      project = await ctx.db.get(args.projectId);
+    } else if (args.projectSlug) {
+      project = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", args.projectSlug)).first();
+    }
     if (!project) throw new Error("Project not found");
-    const { projectSlug, ...rest } = args;
+    const { projectSlug: _ps, projectId: _pid, ...rest } = args;
     const id = await ctx.db.insert("projectChats", { ...rest, projectId: project._id, createdAt: now, updatedAt: now });
     return { chatId: id };
   },

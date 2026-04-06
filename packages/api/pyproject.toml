@@ -27,6 +27,7 @@ dependencies = [
     "statsmodels>=0.14.0",
     "scikit-learn>=1.4.0",
     "matplotlib>=3.8.0",
+    "folium>=0.15.0",
     # SSE streaming
     "sse-starlette>=2.0.0",
     "pytest-asyncio (>=1.3.0,<2.0.0)",

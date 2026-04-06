@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
 
 export const create = mutation({
   args: {
@@ -17,9 +18,31 @@ export const create = mutation({
       startedAt: v.optional(v.number()),
       finishedAt: v.optional(v.number()),
     })),
+    machine: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const jobId = await ctx.db.insert("hydrationJobs", args);
+    const { projectSlug, machine, ...rest } = args;
+    let projectId: Id<"projects"> | undefined;
+    if (projectSlug) {
+      const project = await ctx.db
+        .query("projects")
+        .withIndex("by_slug", (q) => q.eq("slug", projectSlug))
+        .first();
+      if (project) {
+        projectId = project._id;
+      }
+    }
+    const jobId = await ctx.db.insert("hydrationJobs", {
+      pipelineConfigId: rest.pipelineConfigId,
+      pipelineSlug: rest.pipelineSlug,
+      projectId,
+      ...(projectSlug ? { projectSlug } : {}),
+      status: rest.status,
+      triggeredBy: rest.triggeredBy,
+      createdAt: rest.createdAt,
+      stepResults: rest.stepResults,
+      ...(machine !== undefined ? { machine } : {}),
+    });
     return { jobId };
   },
 });

@@ -24,6 +24,8 @@ function SettingsContent({ projectSlug }: { projectSlug: string }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [model, setModel] = useState("gpt-4o");
+  const [githubRepo, setGithubRepo] = useState("");
+  const [githubBranch, setGithubBranch] = useState("main");
 
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -35,6 +37,8 @@ function SettingsContent({ projectSlug }: { projectSlug: string }) {
       setName(project.name);
       setDescription(project.description || "");
       setModel(project.agentModel || "gpt-4o");
+      setGithubRepo(project.github || "");
+      setGithubBranch(project.defaultBranch || "main");
     }
   }, [project]);
 
@@ -54,6 +58,8 @@ function SettingsContent({ projectSlug }: { projectSlug: string }) {
         name,
         description,
         agentModel: model,
+        github: githubRepo || undefined,
+        defaultBranch: githubBranch || "main",
       });
     } catch (err) {
       console.error(err);
@@ -97,7 +103,7 @@ function SettingsContent({ projectSlug }: { projectSlug: string }) {
   };
 
   return (
-    <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full pb-10">
+    <div className="flex flex-col gap-8 max-w-4xl mx-auto w-full p-10 pb-20">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Project Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Manage project details, agent configuration, and integration settings.</p>
@@ -149,83 +155,37 @@ function SettingsContent({ projectSlug }: { projectSlug: string }) {
           <CardDescription>Link this project to a GitHub repository.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {project.github ? (
-            <>
-              <div className="flex items-center gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium mb-1">Repository</label>
-                  <input disabled value={project.github} className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
-                </div>
-                <div className="w-1/3">
-                  <label className="block text-sm font-medium mb-1">Default Branch</label>
-                  <input disabled value={project.defaultBranch || "main"} className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
-                </div>
+           <div className="flex items-center gap-4">
+              <div className="flex-1">
+                <label className="block text-sm font-medium mb-1">GitHub Repository</label>
+                <input
+                  value={githubRepo}
+                  onChange={e => setGithubRepo(e.target.value)}
+                  className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm"
+                  placeholder="owner/repo"
+                />
               </div>
-              <div className="text-xs text-muted-foreground flex justify-between">
-                <span>Status: Linked</span>
-              </div>
-            </>
-          ) : (
-            <div className="opacity-50 pointer-events-none">
-              <div className="flex items-center gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium mb-1">Repository</label>
-                  <input disabled value="owner/repo" className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
-                </div>
-                <div className="w-1/3">
-                  <label className="block text-sm font-medium mb-1">Default Branch</label>
-                  <input disabled value="main" className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm" />
-                </div>
-              </div>
-              <div className="text-xs text-muted-foreground flex justify-between mt-4">
-                <span>Status: Not linked</span>
+              <div className="w-1/3">
+                <label className="block text-sm font-medium mb-1">Default Branch</label>
+                <input
+                  value={githubBranch}
+                  onChange={e => setGithubBranch(e.target.value)}
+                  className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm"
+                  placeholder="main"
+                />
               </div>
             </div>
-          )}
+            <p className="text-[10px] text-muted-foreground">
+               Ensure the repository belongs to an account or organization that has authorized the RAIL Platform.
+            </p>
         </CardContent>
         <CardFooter className="border-t border-border bg-muted/20 px-6 py-4 flex gap-3">
-          {!project.github ? (
-            <Button variant="outline" className="opacity-50 pointer-events-none">Link to GitHub</Button>
-          ) : (
-            <Button
-              onClick={async () => {
-                const files = [
-                  ...(apiConfigs || []).map((c) => ({
-                    path: `configs/apis/${c.slug}.yaml`,
-                    content: c.content,
-                  })),
-                  ...(pipelineConfig ? [{
-                    path: `configs/pipelines/${pipelineConfig.slug}.yaml`,
-                    content: pipelineConfig.content,
-                  }] : []),
-                  ...(ontologyConfig ? [{
-                    path: `configs/ontology/${ontologyConfig.slug}.yaml`,
-                    content: ontologyConfig.content,
-                  }] : []),
-                ].filter(Boolean);
-
-                if (files.length === 0) {
-                  alert("No files to publish.");
-                  return;
-                }
-
-                if (!confirm(`Are you sure you want to publish ${files.length} file(s) to GitHub?\n\nFiles:\n${files.map(f => f.path).join("\n")}`)) return;
-
-                try {
-                  const { github } = await import("@/lib/api");
-                  const res = await github.publish({
-                    project_slug: project.slug,
-                    files,
-                    commit_message: "chore: sync configs from RAIL platform",
-                  });
-                  alert(`Successfully published ${res.published} file(s) to GitHub.`);
-                } catch (err: any) {
-                  console.error(err);
-                  alert(`Failed to publish to GitHub: ${err.message || err}`);
-                }
-              }}
-            >
-              Publish to GitHub
+          <Button onClick={handleSaveGeneral} disabled={saving}>
+             {saving ? "Saving..." : "Save Repository Config"}
+          </Button>
+          {project.github && (
+            <Button variant="outline" asChild className="h-9">
+               <a href={`/${projectSlug}/github`}>Go to Sync</a>
             </Button>
           )}
         </CardFooter>

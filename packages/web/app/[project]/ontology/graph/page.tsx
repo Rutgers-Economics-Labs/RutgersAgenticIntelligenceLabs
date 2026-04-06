@@ -1,7 +1,12 @@
 "use client";
-import { useState, useEffect, useRef, useCallback, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense, use } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
-import { ontology, type GraphData } from "@/lib/api";
+import { ontology, type GraphData, isSyncRequiredError, jobs } from "@/lib/api";
+import { useArtifactLink } from "@/components/ontology/useArtifactLink";
+import { Activity, Link2, Loader2, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 
 const PRESET_COLORS: Record<string, string> = {
   State: "#F5A623", County: "#4A9EDD", Municipality: "#50C878",
@@ -23,8 +28,9 @@ function getNodeColor(group: string) {
 }
 
 function GraphClient({ projectSlug }: { projectSlug: string }) {
-
-
+  const convexProject = useQuery(api.projects.get, { slug: projectSlug });
+  const { linking, linkArtifacts } = useArtifactLink(projectSlug);
+  const autoGraphLoaded = useRef(false);
 
   const [availableTypes, setAvailableTypes] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
@@ -43,6 +49,10 @@ function GraphClient({ projectSlug }: { projectSlug: string }) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     import("react-force-graph-2d").then((m) => setFG(() => (m as any).default));
   }, []);
+
+  useEffect(() => {
+    autoGraphLoaded.current = false;
+  }, [projectSlug]);
 
   // Fetch dynamically available classes
   useEffect(() => {
@@ -67,8 +77,47 @@ function GraphClient({ projectSlug }: { projectSlug: string }) {
             .catch(() => {});
         }
       })
-      .catch(() => setError("Could not load ontology classes. Is the API running?"));
+      .catch((e) => {
+        if (isSyncRequiredError(e)) {
+           setError("SYNC_REQUIRED");
+        } else {
+           setError("Could not load ontology classes. Is the API running?");
+        }
+      });
   }, [projectSlug]);
+
+  const [isRunning, setIsRunning] = useState(false);
+
+  async function handleLinkArtifacts() {
+    try {
+      await linkArtifacts((cls) => {
+        const sortedRes = [...cls].sort((a, b) => b.instanceCount - a.instanceCount);
+        const tList = sortedRes.map((c) => c.name);
+        setAvailableTypes(tList);
+        setTypes(tList.slice(0, 5));
+        setError("");
+      });
+    } catch {
+      /* toast in hook */
+    }
+  }
+
+  async function handleInitialSync() {
+    const pipelineSlug = convexProject?.pipelineConfigSlug;
+    if (!pipelineSlug) {
+      toast.error("No pipeline is configured for this project (Settings / Pipelines).");
+      return;
+    }
+    try {
+      setIsRunning(true);
+      await jobs.trigger(pipelineSlug, projectSlug);
+      toast.success("Pipeline job queued");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to trigger pipeline");
+    } finally {
+      setIsRunning(false);
+    }
+  }
 
   const loadGraph = useCallback(async () => {
     if (types.length === 0 && availableTypes.length > 0) {
@@ -90,8 +139,13 @@ function GraphClient({ projectSlug }: { projectSlug: string }) {
     }
   }, [types, stateFips, projectSlug, availableTypes]);
 
-  // Removed automatic useEffect to allow manual control
-  // useEffect(() => { loadGraph(); }, [loadGraph]);
+  // After classes load, fetch the graph once (user can still change types and click Update)
+  useEffect(() => {
+    if (error === "SYNC_REQUIRED" || availableTypes.length === 0 || types.length === 0) return;
+    if (autoGraphLoaded.current) return;
+    autoGraphLoaded.current = true;
+    void loadGraph();
+  }, [availableTypes.length, types.length, error, loadGraph]);
 
   const toggleType = (t: string) => {
     setTypes((prev) => prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t]);
@@ -99,7 +153,7 @@ function GraphClient({ projectSlug }: { projectSlug: string }) {
   };
 
   return (
-    <div className="flex gap-6 h-[calc(100vh-4rem)]">
+    <div className="flex gap-10 h-full w-full max-w-7xl mx-auto p-10 pb-20">
       {/* Controls */}
       <div className="w-52 shrink-0 flex flex-col gap-4 overflow-y-auto pr-2 pb-10">
         <h2 className="text-lg font-semibold">Graph Explorer</h2>
@@ -167,7 +221,38 @@ function GraphClient({ projectSlug }: { projectSlug: string }) {
 
       {/* Graph canvas */}
       <div className="flex-1 rounded-lg overflow-hidden border border-[--border] bg-[#0d1117] relative">
-        {error && (
+        {error === "SYNC_REQUIRED" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center z-20 p-8 text-center bg-[#0d1117] bg-opacity-95">
+             <div className="w-16 h-16 rounded-full bg-amber-500/10 flex items-center justify-center mb-6 text-amber-500">
+                <RefreshCw size={32} className="animate-spin-slow" />
+             </div>
+             <h3 className="text-xl font-bold text-white mb-3 uppercase tracking-tight">API can’t open ontology files</h3>
+             <p className="text-sm text-slate-400 mb-4 max-w-md leading-relaxed">
+               Hydration may have finished, but this project isn’t linked to artifact paths in Convex yet (HTTP 428).
+               If you already ran a successful job on <strong className="text-slate-200">this machine</strong>, link paths from that job first.
+             </p>
+             <div className="flex flex-col sm:flex-row gap-3">
+               <button
+                 type="button"
+                 onClick={() => void handleLinkArtifacts()}
+                 disabled={linking}
+                 className="px-8 py-3 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold shadow-lg shadow-emerald-600/20 transition-all flex items-center justify-center gap-2"
+               >
+                 {linking ? <Loader2 size={18} className="animate-spin" /> : <Link2 size={18} />}
+                 Link latest hydration job
+               </button>
+               <button
+                 type="button"
+                 onClick={handleInitialSync}
+                 disabled={isRunning || !convexProject?.pipelineConfigSlug}
+                 className="px-8 py-3 rounded-full bg-amber-600 hover:bg-amber-500 text-white text-sm font-bold shadow-lg shadow-amber-600/20 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+               >
+                 {isRunning ? <Loader2 size={18} className="animate-spin" /> : <Activity size={18} />}
+                 Run pipeline again
+               </button>
+             </div>
+          </div>
+        ) : error && (
           <div className="absolute inset-0 flex items-center justify-center z-10 p-4 text-center">
              <div className="p-4 rounded bg-red-900/30 border border-red-700 text-red-300 text-sm max-w-md">{error}</div>
           </div>
@@ -198,7 +283,7 @@ function GraphClient({ projectSlug }: { projectSlug: string }) {
             linkDirectionalArrowLength={4}
             linkDirectionalArrowRelPos={1}
             onNodeClick={(n: { id: string }) => {
-              window.location.href = `/explorer/${encodeURIComponent(n.id)}${projectSlug ? `?projectSlug=${projectSlug}` : ""}`;
+              window.location.href = `/explorer/${encodeURIComponent(n.id)}${projectSlug ? `?projectSlug=${encodeURIComponent(projectSlug)}` : ""}`;
             }}
           />
         )}
@@ -208,10 +293,11 @@ function GraphClient({ projectSlug }: { projectSlug: string }) {
   );
 }
 
-export default async function GraphPage({ params }: { params: { project: string } }) {
+export default function GraphPage({ params }: { params: Promise<{ project: string }> }) {
+  const { project } = use(params);
   return (
     <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading graph...</div>}>
-      <GraphClient projectSlug={(await params).project} />
+      <GraphClient projectSlug={project} />
     </Suspense>
   );
 }

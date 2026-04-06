@@ -65,7 +65,7 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
   };
 
   return (
-    <div className="flex h-full gap-6 max-w-7xl mx-auto w-full pb-10">
+    <div className="flex h-full gap-6 max-w-7xl mx-auto w-full p-10 pb-20">
       {/* Left Panel: Active Data Sources */}
       <div className="flex-1 flex flex-col min-w-0 border-r border-border pr-6">
         <div className="flex justify-between items-center mb-6">

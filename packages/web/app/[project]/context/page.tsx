@@ -1,5 +1,5 @@
 "use client";
-import { Suspense } from "react";
+import { Suspense, use } from "react";
 import { useState, useRef } from "react";
 
 import { useQuery, useMutation } from "convex/react";
@@ -302,10 +302,11 @@ function ContextPageInner({ projectSlug }: { projectSlug: string }) {
 }
 
 
-export default async function ContextPage({ params }: { params: Promise<{ project: string }> }) {
+export default function ContextPage({ params }: { params: Promise<{ project: string }> }) {
+  const { project } = use(params);
   return (
     <Suspense fallback={<div className="p-8 text-[--muted-foreground]">Loading context...</div>}>
-      <ContextPageInner projectSlug={(await params).project} />
+      <ContextPageInner projectSlug={project} />
     </Suspense>
   );
 }

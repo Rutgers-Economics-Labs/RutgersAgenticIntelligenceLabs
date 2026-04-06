@@ -39,6 +39,26 @@ class ConvexClient:
     def _headers(self):
         return {"Authorization": f"Convex {self.deploy_key}"}
 
+    @staticmethod
+    def _unwrap_response(data: dict, *, fn_path: str, is_query: bool):
+        """
+        Convex HTTP returns 200 with either:
+          { "status": "success", "value": ... }
+          { "status": "error", "errorMessage": "..." }
+        The old code used .get("value", data), so error payloads were returned whole
+        and treated as truthy — breaking callers that do `if not project` after getById(slug).
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("status") == "error":
+            msg = data.get("errorMessage", str(data))
+            if is_query:
+                return None
+            raise RuntimeError(f"Convex mutation {fn_path} failed: {msg}")
+        if "value" in data:
+            return data["value"]
+        return data
+
     async def mutation(self, fn_path: str, args: dict):
         """Call a Convex mutation, e.g. mutation('jobs:create', {...})"""
         self._require_backend_convex()
@@ -51,7 +71,7 @@ class ConvexClient:
                     timeout=30,
                 )
                 resp.raise_for_status()
-                return resp.json().get("value", resp.json())
+                return self._unwrap_response(resp.json(), fn_path=fn_path, is_query=False)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (401, 403):
                     print(f"⚠️  [convex] Mutation failed ({e.response.status_code}): Unauthorized. Check CONVEX_DEPLOY_KEY.")
@@ -70,7 +90,7 @@ class ConvexClient:
                     timeout=30,
                 )
                 resp.raise_for_status()
-                return resp.json().get("value", resp.json())
+                return self._unwrap_response(resp.json(), fn_path=fn_path, is_query=True)
             except httpx.HTTPStatusError as e:
                 if e.response.status_code in (401, 403):
                     print(f"⚠️  [convex] Query failed ({e.response.status_code}): Unauthorized. Falling back to empty result.")

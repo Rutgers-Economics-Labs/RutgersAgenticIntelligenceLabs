@@ -1,9 +1,13 @@
 "use client";
 
-import { useEffect, useState, useRef, Suspense } from "react";
+import { useEffect, useState, useRef, Suspense, use } from "react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
-import { sql, SqlResult } from "@/lib/api";
-import { Play, Sparkles, Table2, ChevronDown, Loader2 } from "lucide-react";
+import { sql, SqlResult, isSyncRequiredError, jobs } from "@/lib/api";
+import { useArtifactLink } from "@/components/ontology/useArtifactLink";
+import { Play, Sparkles, Table2, ChevronDown, Loader2, Activity, Link2 } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 const EXAMPLE_QUERIES = [
@@ -14,8 +18,8 @@ const EXAMPLE_QUERIES = [
 ];
 
 function SqlPageInner({ projectSlug }: { projectSlug: string }) {
-
-
+  const convexProject = useQuery(api.projects.get, { slug: projectSlug });
+  const { linking, linkArtifacts } = useArtifactLink(projectSlug);
 
   const [query, setQuery] = useState('SELECT * FROM "State" LIMIT 20');
   const [nlQuestion, setNlQuestion] = useState("");
@@ -28,8 +32,42 @@ function SqlPageInner({ projectSlug }: { projectSlug: string }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    sql.schema(projectSlug).then(setSchema).catch(() => {});
+    sql.schema(projectSlug).then(setSchema).catch((e) => {
+      if (isSyncRequiredError(e)) {
+         setError("SYNC_REQUIRED");
+      }
+    });
   }, [projectSlug]);
+
+  const [isRunning, setIsRunning] = useState(false);
+
+  async function handleLinkArtifacts() {
+    try {
+      await linkArtifacts();
+      const s = await sql.schema(projectSlug);
+      setSchema(s);
+      setError(null);
+    } catch {
+      /* toast in hook */
+    }
+  }
+
+  async function handleInitialSync() {
+    const pipelineSlug = convexProject?.pipelineConfigSlug;
+    if (!pipelineSlug) {
+      toast.error("No pipeline configured for this project.");
+      return;
+    }
+    try {
+      setIsRunning(true);
+      await jobs.trigger(pipelineSlug, projectSlug);
+      toast.success("Pipeline job queued");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Failed to trigger pipeline");
+    } finally {
+      setIsRunning(false);
+    }
+  }
 
   async function runQuery() {
     if (!query.trim() || loading) return;
@@ -64,7 +102,7 @@ function SqlPageInner({ projectSlug }: { projectSlug: string }) {
   const tables = Object.keys(schema);
 
   return (
-    <div className="flex flex-col h-screen bg-[--background]">
+    <div className="flex flex-col h-full w-full max-w-7xl mx-auto p-10 pb-20 gap-8">
       {/* Header */}
       <header className="px-5 py-3 border-b border-[--border] bg-[--card] shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -167,7 +205,35 @@ function SqlPageInner({ projectSlug }: { projectSlug: string }) {
 
         {/* Results */}
         <div className="flex-1 overflow-auto rounded-lg border border-[--border] bg-[--card]">
-          {error && (
+          {error === "SYNC_REQUIRED" ? (
+            <div className="flex flex-col items-center justify-center h-full p-8 text-center max-w-md mx-auto gap-3">
+               <div className="w-12 h-12 rounded-full bg-amber-500/10 flex items-center justify-center text-amber-500">
+                  <Activity size={24} className="animate-pulse" />
+               </div>
+               <h3 className="text-sm font-bold text-[--foreground] uppercase tracking-tight">Ontology not linked</h3>
+               <p className="text-xs text-[--muted-foreground]">
+                 Link the latest successful hydration job so DuckDB/SQL can open this project’s data.
+               </p>
+               <button
+                 type="button"
+                 onClick={() => void handleLinkArtifacts()}
+                 disabled={linking}
+                 className="w-full py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition-all flex items-center justify-center gap-2"
+               >
+                 {linking ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+                 Link latest hydration job
+               </button>
+               <button
+                 type="button"
+                 onClick={handleInitialSync}
+                 disabled={isRunning || !convexProject?.pipelineConfigSlug}
+                 className="w-full py-2.5 rounded-lg border border-[--border] text-[--foreground] text-xs font-medium hover:bg-[--muted] transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+               >
+                 {isRunning ? <Loader2 size={14} className="animate-spin" /> : <Activity size={14} />}
+                 Run pipeline again
+               </button>
+            </div>
+          ) : error && (
             <div className="p-4 text-sm text-red-400 bg-red-900/10">
               <p className="font-medium mb-1">Error</p>
               <pre className="text-xs whitespace-pre-wrap">{error}</pre>
@@ -239,10 +305,11 @@ function SqlPageInner({ projectSlug }: { projectSlug: string }) {
   );
 }
 
-export default async function SqlPage({ params }: { params: { project: string } }) {
+export default function SqlPage({ params }: { params: Promise<{ project: string }> }) {
+  const { project } = use(params);
   return (
     <Suspense fallback={<div className="p-8 text-sm text-[--muted-foreground]">Loading SQL…</div>}>
-      <SqlPageInner projectSlug={params.project} />
+      <SqlPageInner projectSlug={project} />
     </Suspense>
   );
 }

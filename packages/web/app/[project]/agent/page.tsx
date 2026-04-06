@@ -93,36 +93,43 @@ function WorkspacePageInner({ projectSlug }: { projectSlug: string }) {
   };
 
   return (
-    <div className="flex -m-8 h-screen overflow-hidden bg-[--background]">
+    <div className="flex h-full w-full bg-[--background] overflow-hidden transition-all duration-500">
       <SessionList
         projectSlug={projectSlug}
         activeSessionId={activeSessionId}
         onSelect={handleSelectSession}
         onNew={handleNewSession}
       />
-      <div className="flex flex-1 flex-col min-w-0">
-        <header className="flex items-center justify-between px-5 py-3 border-b border-[--border] bg-[--card] shrink-0">
-          <div className="flex items-center gap-2">
-            <Sparkles size={16} className="text-[--primary]" />
-            <span className="text-sm font-semibold text-[--foreground]">AI Research Workspace</span>
+      <div className="flex flex-1 flex-col min-w-0 bg-transparent">
+        <header className="h-16 flex items-center justify-between px-8 border-b border-[--border] bg-[--background]/40 shadow-sm backdrop-blur-md shrink-0 relative z-20">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 rounded-2xl bg-[--primary]/10 flex items-center justify-center text-[--primary] border border-[--primary]/20 shadow-inner">
+               <Sparkles size={20} />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-black uppercase tracking-widest text-[--foreground]">AI Research Assistant</span>
+              <span className="text-[10px] text-[--muted-foreground] font-bold uppercase tracking-tighter opacity-60">Session {activeSessionId ? "Active" : "Ready"}</span>
+            </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="relative">
+            <div className="relative group">
+              <div className="absolute inset-y-0 right-0 flex items-center pr-2.5 pointer-events-none text-[--muted-foreground] group-hover:text-[--primary] transition-colors">
+                 <ChevronDown size={14} />
+              </div>
               <select
                 value={selectedModel}
                 onChange={e => setSelectedModel(e.target.value)}
-                className="appearance-none bg-[--muted] border border-[--border] rounded-md px-3 py-1.5 text-xs text-[--foreground] pr-7 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[--primary]"
+                className="appearance-none bg-[--card]/40 border border-[--border] rounded-xl pl-4 pr-10 py-2.5 text-[11px] font-black uppercase tracking-wider text-[--foreground] hover:bg-[--muted]/60 hover:border-[--primary]/40 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-[--primary]/20"
               >
                 {models.map(m => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
+                  <option key={m.id} value={m.id} className="bg-[--background] font-sans lowercase tracking-normal">{m.label}</option>
                 ))}
               </select>
-              <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-[--muted-foreground] pointer-events-none" />
             </div>
           </div>
         </header>
 
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex flex-1 flex-col overflow-hidden relative">
           <AgentChat
             key={activeSessionId || "new"}
             projectSlug={projectSlug}

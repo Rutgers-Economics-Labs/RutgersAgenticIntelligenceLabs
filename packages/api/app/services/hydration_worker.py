@@ -399,6 +399,15 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             try:
                 job_doc = await convex.query("jobs:get", {"jobId": job_id})
                 project_id = job_doc.get("projectId") if job_doc else None
+                if not project_id and job_doc:
+                    slug = job_doc.get("projectSlug")
+                    if slug:
+                        try:
+                            proj = await convex.query("projects:get", {"slug": slug})
+                            if proj:
+                                project_id = proj["_id"]
+                        except Exception:
+                            project_id = None
             except Exception:
                 project_id = None
 
@@ -409,12 +418,14 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                 embeddings_path = str(Path(db_key).parent / "embeddings.db") if "/" in db_key else str(
                     settings.engine_root / "ontology" / "embeddings.db"
                 )
+                now_ms = int(time.time() * 1000)
                 await convex.mutation(
                     "projects:updateById",
                     {
                         "projectId": project_id,
                         "status": "hydrated",
                         "lastJobId": job_id,
+                        "lastHydratedAt": now_ms,
                         "activeOntologyDbPath": db_key,
                         "activeOntologyOwlPath": owl_key,
                         "activeOntologyDuckdbPath": duckdb_path,
@@ -492,13 +503,17 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
 
 
 async def _log(job_id: str, level: str, message: str, seq: int, step: Union[str, None] = None):
-    text = f"[job {job_id[:8]}…] {message}"
+    jid = (job_id or "unknown")[:8]
+    text = f"[job {jid}…] {message}"
     if level == "error":
         logger.error("%s", text)
     elif level == "warn":
         logger.warning("%s", text)
     else:
         logger.info("%s", text)
+    if not job_id:
+        logger.warning("Skipping Convex appendLog: job_id is missing (seq=%s)", seq)
+        return
     try:
         await convex.mutation("jobs:appendLog", {
             "jobId": job_id,

@@ -1,5 +1,6 @@
 import asyncio
 import time
+import platform
 from typing import Union
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -10,6 +11,14 @@ from app.services.execution_manager import execution_manager
 from app.services.pipeline_validate import ensure_pipeline_ready, PipelineValidationFailed
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+def _job_id_from_mutation_result(result: object) -> str | None:
+    """Convex returns ``{ \"jobId\": \"...\" }``; tolerate alternate keys or missing value."""
+    if not isinstance(result, dict):
+        return None
+    jid = result.get("jobId") or result.get("id")
+    return str(jid) if jid else None
 
 
 class TriggerJobRequest(BaseModel):
@@ -51,12 +60,18 @@ async def _trigger_job(pipeline_slug: str, project_id: str | None = None) -> dic
         "triggeredBy": "agent",
         "createdAt": int(time.time() * 1000),
         "stepResults": [],
+        "machine": platform.node(),
     }
     if project_id:
-        mutation_args["projectId"] = project_id
+        mutation_args["projectSlug"] = project_id
 
     result = await convex.mutation("jobs:create", mutation_args)
-    job_id = result["jobId"]
+    job_id = _job_id_from_mutation_result(result)
+    if not job_id:
+        raise ValueError(
+            f"Convex jobs:create did not return a jobId (got {result!r}). "
+            "Deploy the latest Convex functions (packages/web/convex/jobs.ts) so create returns {{ jobId }}."
+        )
 
     asyncio.create_task(
         hydration_worker.run(job_id, pipeline["content"], api_configs, onto_configs)
@@ -130,12 +145,22 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
     result = await convex.mutation("jobs:create", {
         "pipelineConfigId": pipeline["_id"],
         "pipelineSlug": req.pipeline_slug,
+        "projectSlug": req.project_id,
         "status": "queued",
         "triggeredBy": "api",
         "createdAt": int(time.time() * 1000),
         "stepResults": [],
+        "machine": platform.node(),
     })
-    job_id = result.get("jobId") if isinstance(result, dict) else f"local_job_{int(time.time())}"
+    job_id = _job_id_from_mutation_result(result)
+    if not job_id:
+        raise HTTPException(
+            500,
+            detail=(
+                f"Convex jobs:create did not return a jobId (got {result!r}). "
+                "Deploy the latest Convex functions from packages/web/convex (especially jobs:create)."
+            ),
+        )
 
     background_tasks.add_task(
         hydration_worker.run,
@@ -149,7 +174,16 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
 
 
 @router.get("")
-async def list_jobs(status: Union[str, None] = None, limit: int = 50):
+async def list_jobs(
+    project_id: Union[str, None] = None, 
+    status: Union[str, None] = None, 
+    limit: int = 50
+):
+    """List jobs, optionally filtered by project or status."""
+    if project_id:
+        # The Convex query expects 'projectSlug'
+        return await convex.query("jobs:listByProject", {"projectSlug": project_id, "limit": limit})
+    
     return await convex.query("jobs:list", {"status": status, "limit": limit})
 
 

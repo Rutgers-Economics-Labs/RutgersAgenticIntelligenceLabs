@@ -68,10 +68,10 @@ export default function Root() {
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
             {[
-              { label: "Explorer", href: `/explorer?projectId=${currentProject._id}` },
-              { label: "Graph", href: `/graph?projectId=${currentProject._id}` },
-              { label: "SQL", href: `/sql?projectId=${currentProject._id}` },
-              { label: "Analysis", href: `/analysis?projectId=${currentProject._id}` },
+              { label: "Explorer", href: `/${currentProject.slug}/explorer` },
+              { label: "Graph", href: `/${currentProject.slug}/ontology/graph` },
+              { label: "SQL", href: `/${currentProject.slug}/sql` },
+              { label: "Analysis", href: `/${currentProject.slug}/analysis` },
             ].map((x) => (
               <Link
                 key={x.href}
@@ -129,7 +129,10 @@ export default function Root() {
         <div className="rounded-xl border border-[--border] p-5">
           <div className="flex items-center justify-between gap-3 mb-4">
             <h2 className="text-sm font-semibold">Activity</h2>
-            <Link href="/jobs" className="text-xs text-[--primary] hover:underline">
+            <Link
+              href={currentProject ? `/${currentProject.slug}/jobs` : "/projects"}
+              className="text-xs text-[--primary] hover:underline"
+            >
               View jobs →
             </Link>
           </div>

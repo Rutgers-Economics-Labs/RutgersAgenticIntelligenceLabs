@@ -6,6 +6,7 @@ import {
   Network, Database, GitBranch, BarChart2,
   Activity, Settings, Layers, FolderOpen, Sun, Moon,
   BotMessageSquare, Table2, Library, MessageCircleQuestion, BookOpen, ShieldCheck, LayoutDashboard,
+  Github, Send, GitPullRequest, Globe
 } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import { useQuery } from "convex/react";
@@ -251,7 +252,10 @@ function SidebarContent() {
         ))}
       </nav>
       <div className="px-4 py-3 border-t border-[--border] flex items-center justify-between">
-        <p className="text-[10px] text-[--muted-foreground]">Rutgers Agentic Intelligence Labs</p>
+        <div className="flex flex-col">
+          <p className="text-[11px] font-bold text-[--foreground]/80 tracking-tight">RAIL</p>
+          <p className="text-[8px] text-[--muted-foreground] uppercase tracking-[0.1em] font-medium">v1.2.0-stable</p>
+        </div>
         <button
           onClick={toggle}
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -291,27 +295,34 @@ const PROJECT_NAV_GROUPS = [
     ],
   },
   {
-    title: "Data",
+    title: "Data & Pipelines",
     items: [
-      { href: "/sources", label: "Sources", icon: Database },
+      { href: "/sources", label: "Data Sources", icon: Database },
       { href: "/pipelines", label: "Pipelines", icon: GitBranch },
-      { href: "/sql", label: "SQL", icon: Table2 },
+      { href: "/sql", label: "SQL Explorer", icon: Table2 },
     ],
   },
   {
-    title: "Research",
+    title: "Research Agent",
     items: [
+      { href: "/agent", label: "AI Workspace", icon: BotMessageSquare },
       { href: "/questions", label: "Questions", icon: MessageCircleQuestion },
-      { href: "/agent", label: "Agent", icon: BotMessageSquare },
       { href: "/analysis", label: "Analysis", icon: BarChart2 },
     ],
   },
   {
-    title: "Ops",
+    title: "Project Ops",
     items: [
-      { href: "/jobs", label: "Jobs", icon: Activity },
-      { href: "/quality", label: "Quality", icon: ShieldCheck },
-      { href: "/context", label: "Context", icon: BookOpen },
+      { href: "/jobs", label: "Job History", icon: Activity },
+      { href: "/quality", label: "Data Quality", icon: ShieldCheck },
+      { href: "/context", label: "Knowledge Base", icon: BookOpen },
+    ],
+  },
+  {
+    title: "Integrations",
+    items: [
+      { href: "/github", label: "GitHub Sync", icon: Github },
+      { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
 ];
@@ -321,7 +332,6 @@ const SHARED_NAV_GROUPS = [
     title: "Platform",
     items: [
       { href: "/registry", label: "Registry", icon: Library },
-      { href: "/settings", label: "Settings", icon: Settings },
     ],
   },
 ];
@@ -329,51 +339,69 @@ const SHARED_NAV_GROUPS = [
 export function ProjectSidebarContent({ projectSlug }: { projectSlug: string }) {
   const pathname = usePathname();
   const { theme, toggle } = useTheme();
+  
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const projects = useQuery(api.projects.list, {}) || [];
+  const project = projects.find(p => p.slug === projectSlug);
 
   return (
-    <aside className="w-56 shrink-0 flex flex-col border-r border-[--border] bg-[--card] h-[calc(100vh-3rem)] sticky top-12">
-      <nav className="flex-1 py-3 overflow-y-auto">
-        <div className="mb-3">
+    <aside className="w-64 shrink-0 flex flex-col border-r border-[--border] bg-[--card]/50 backdrop-blur-md h-[calc(100vh-3rem)] sticky top-12 z-40 transition-all duration-300 group/sidebar">
+      <nav className="flex-1 py-4 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:display-none px-3">
+        <div className="mb-6 px-1">
           <Link
             href="/projects"
-            className={cn(
-              "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
-            )}
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5 transition-all group/back"
           >
-            <div className="flex items-center gap-3">
-              <FolderOpen size={15} />
-              All Projects
-            </div>
+            <FolderOpen size={16} className="group-hover/back:-translate-x-0.5 transition-transform" />
+            <span className="font-medium">Switch Project</span>
           </Link>
+          
+          {mounted && project && (
+            <div className="mt-4 px-3 py-3 rounded-xl bg-gradient-to-br from-[--primary]/5 to-[--accent]/5 border border-[--primary]/10">
+              <p className="text-[10px] text-[--muted-foreground] uppercase tracking-wider font-bold mb-1 opacity-70">Active Project</p>
+              <h2 className="text-sm font-bold text-[--foreground] truncate">{project.name}</h2>
+              <div className="mt-2 flex items-center gap-2">
+                <div className={cn("w-1.5 h-1.5 rounded-full", 
+                  project.status === "hydrated" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : 
+                  project.status === "ready" ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "bg-slate-500"
+                )} />
+                <span className="text-[10px] text-[--muted-foreground] capitalize">{project.status}</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {PROJECT_NAV_GROUPS.map((group) => (
-          <div key={group.title} className="mb-3 last:mb-0">
+          <div key={group.title} className="mb-5 last:mb-0">
             {group.title !== "Overview" && (
-              <p className="px-4 py-1 text-[10px] text-[--muted-foreground] uppercase tracking-wide font-medium">
+              <p className="px-4 py-1 text-[10px] text-[--muted-foreground] uppercase tracking-[0.1em] font-bold opacity-50 mb-1">
                 {group.title}
               </p>
             )}
-            <div className="mt-1">
+            <div className="space-y-0.5">
               {group.items.map(({ href, label, icon: Icon }) => {
                 const fullHref = `/${projectSlug}${href}`;
-                const active = href === "" ? pathname === `/${projectSlug}` : pathname.startsWith(fullHref);
+                const active = href === "" ? pathname === `/${projectSlug}` || pathname === `/${projectSlug}/overview` : pathname.startsWith(fullHref);
 
                 return (
                   <Link
                     key={href}
                     href={fullHref}
                     className={cn(
-                      "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group",
+                      "flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-all duration-200 relative group/item",
                       active
-                        ? "bg-[--accent]/20 text-[--primary] font-medium"
+                        ? "bg-[--primary]/10 text-[--primary] font-semibold"
                         : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
                     )}
                   >
-                    <div className="flex items-center gap-3">
-                      <Icon size={15} />
-                      {label}
-                    </div>
+                    {active && <div className="absolute left-0 w-1 h-4 bg-[--primary] rounded-full -translate-x-3" />}
+                    <Icon size={18} className={cn("transition-transform group-hover/item:scale-110", active ? "text-[--primary]" : "opacity-70 group-hover/item:opacity-100")} />
+                    <span className="truncate">{label}</span>
                   </Link>
                 );
               })}
@@ -381,11 +409,14 @@ export function ProjectSidebarContent({ projectSlug }: { projectSlug: string }) 
           </div>
         ))}
 
-        <div className="my-3 border-t border-[--border]" />
+        <div className="my-6 border-t border-[--border]/50" />
 
         {SHARED_NAV_GROUPS.map((group) => (
           <div key={group.title} className="mb-3 last:mb-0">
-            <div className="mt-1">
+             <p className="px-4 py-1 text-[10px] text-[--muted-foreground] uppercase tracking-[0.1em] font-bold opacity-50 mb-1">
+                {group.title}
+              </p>
+            <div className="space-y-0.5">
               {group.items.map(({ href, label, icon: Icon }) => {
                 const active = pathname.startsWith(href);
                 return (
@@ -393,16 +424,14 @@ export function ProjectSidebarContent({ projectSlug }: { projectSlug: string }) 
                     key={href}
                     href={href}
                     className={cn(
-                      "flex items-center justify-between px-4 py-2.5 text-sm transition-colors group",
+                      "flex items-center gap-3 px-3 py-2 text-sm rounded-lg transition-all duration-200 group/item",
                       active
-                        ? "bg-[--accent]/20 text-[--primary] font-medium"
+                        ? "bg-[--accent]/20 text-[--primary] font-semibold"
                         : "text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/5"
                     )}
                   >
-                    <div className="flex items-center gap-3">
-                      <Icon size={15} />
-                      {label}
-                    </div>
+                    <Icon size={18} className={cn("transition-transform group-hover/item:scale-110", active ? "text-[--primary]" : "opacity-70 group-hover/item:opacity-100")} />
+                    <span className="truncate">{label}</span>
                   </Link>
                 );
               })}
@@ -411,14 +440,17 @@ export function ProjectSidebarContent({ projectSlug }: { projectSlug: string }) 
         ))}
 
       </nav>
-      <div className="px-4 py-3 border-t border-[--border] flex items-center justify-between">
-        <p className="text-[10px] text-[--muted-foreground]">Rutgers Agentic Intelligence Labs</p>
+      <div className="px-5 py-4 border-t border-[--border]/50 bg-black/10 backdrop-blur-sm flex items-center justify-between">
+        <div className="flex flex-col">
+          <p className="text-[11px] font-bold text-[--foreground] tracking-tight">RAIL</p>
+          <p className="text-[8px] text-[--muted-foreground] font-medium uppercase tracking-[0.1em]">v1.2.0-stable</p>
+        </div>
         <button
           onClick={toggle}
           title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
-          className="p-1.5 rounded text-[--muted-foreground] hover:text-[--foreground] hover:bg-[--muted] transition-colors"
+          className="p-2 rounded-lg text-[--muted-foreground] hover:text-[--foreground] hover:bg-white/10 transition-all active:scale-95"
         >
-          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+          {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
         </button>
       </div>
     </aside>

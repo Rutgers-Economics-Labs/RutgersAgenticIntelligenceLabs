@@ -196,7 +196,7 @@ async def save_snapshot(req: SnapshotRequest):
         "createdAt": now,
     }
     if req.project_id:
-        payload["projectId"] = req.project_id
+        payload["projectSlug"] = req.project_id
 
     snapshot_id = await convex.mutation("quality:saveSnapshot", payload)
     return {"snapshotId": snapshot_id, "tableCount": len(counts), "createdAt": now}
@@ -207,14 +207,15 @@ async def get_diff(project_id: str | None = None):
     """Compare the two most recent snapshots and return changes."""
     params: dict = {}
     if project_id:
-        params["projectId"] = project_id
+        # The Convex query expects 'projectSlug'
+        params["projectSlug"] = project_id
 
     snapshots = await convex.query("quality:listSnapshots", {**params, "limit": 2})
-    if not snapshots or len(snapshots) < 2:
+    if not snapshots or not isinstance(snapshots, list) or len(snapshots) < 2:
         return {
             "hasDiff": False,
             "message": "Need at least 2 snapshots to compare. Take a snapshot before and after hydration.",
-            "snapshots": len(snapshots) if snapshots else 0,
+            "snapshots": len(snapshots) if snapshots and isinstance(snapshots, list) else 0,
         }
 
     newer, older = snapshots[0], snapshots[1]

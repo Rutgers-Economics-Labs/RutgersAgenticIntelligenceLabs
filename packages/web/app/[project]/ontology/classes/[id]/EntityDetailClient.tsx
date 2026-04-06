@@ -79,7 +79,7 @@ export default function EntityDetailClient({
     return (
       <div>
         <Link
-          href={`/explorer${projectSlug ? `?projectSlug=${projectSlug}` : ""}`}
+          href={`/explorer${projectSlug ? `?projectSlug=${encodeURIComponent(projectSlug)}` : ""}`}
           className="text-sm text-[--primary] hover:underline mb-4 inline-block"
         >
           ← Back to Explorer
@@ -96,7 +96,7 @@ export default function EntityDetailClient({
   return (
     <div className="max-w-5xl">
       <Link
-        href={`/explorer${projectSlug ? `?projectSlug=${projectSlug}` : ""}`}
+        href={`/explorer${projectSlug ? `?projectSlug=${encodeURIComponent(projectSlug)}` : ""}`}
         className="text-sm text-[--primary] hover:underline mb-4 inline-block"
       >
         ← Back to Explorer
@@ -172,7 +172,7 @@ export default function EntityDetailClient({
                         <td className="px-4 py-2.5">
                           <Link
                             href={`/explorer/${encodeURIComponent(rel.targetId)}${
-                              projectSlug ? `?projectSlug=${projectSlug}` : ""
+                              projectSlug ? `?projectSlug=${encodeURIComponent(projectSlug)}` : ""
                             }`}
                             className="text-[--primary] hover:underline text-sm"
                           >
@@ -221,7 +221,7 @@ export default function EntityDetailClient({
                 onNodeClick={(n: { id: string }) => {
                   if (n.id !== id) {
                     window.location.href = `/explorer/${encodeURIComponent(n.id)}${
-                      projectSlug ? `?projectSlug=${projectSlug}` : ""
+                      projectSlug ? `?projectSlug=${encodeURIComponent(projectSlug)}` : ""
                     }`;
                   }
                 }}

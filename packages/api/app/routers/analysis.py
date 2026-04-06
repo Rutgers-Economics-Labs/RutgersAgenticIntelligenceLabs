@@ -1,4 +1,5 @@
 import asyncio
+import sys
 import time
 from pathlib import Path
 
@@ -62,7 +63,8 @@ class RunCodeRequest(BaseModel):
 
 @router.post("/run-code")
 async def run_code_analysis(
-    req: RunCodeRequest, 
+    req: RunCodeRequest,
+    project_id: str | None = Query(None, alias="projectId"),
     project_slug: str | None = Query(None, alias="projectSlug"),
     workspace_id: str | None = Query(None, alias="workspaceId"),
     cell_id: str | None = Query(None, alias="cellId"),
@@ -83,26 +85,32 @@ async def run_code_analysis(
         )
     from app.services import subprocess_code_runner
 
-    # 1. Create Job record
-    result = await convex.mutation("executions:create", {
-        "projectSlug": project_slug,
-        "workspaceId": workspace_id,
-        "cellId": cell_id,
-        "hydrationId": hydration_id,
+    # 1. Create Job record (Convex schema: projectId, not projectSlug)
+    create_args: dict = {
         "type": "code",
         "input": req.code,
-        "createdAt": int(time.time() * 1000)
-    })
+        "createdAt": int(time.time() * 1000),
+    }
+    if project_id:
+        create_args["projectId"] = project_id
+    if workspace_id:
+        create_args["workspaceId"] = workspace_id
+    if cell_id:
+        create_args["cellId"] = cell_id
+    if hydration_id:
+        create_args["hydrationId"] = hydration_id
+    result = await convex.mutation("executions:create", create_args)
     job_id = result["jobId"]
 
-    # 2. Resolve hydration path
+    # 2. Resolve hydration path (project_id from UI is Convex Id; projectSlug also works)
     duck = None
     if hydration_id:
         # TODO: Resolve specific hydration path
         pass
-        
-    if not duck and project_slug:
-        art = await project_artifacts_service.resolve(project_slug)
+
+    project_ref = project_id or project_slug
+    if not duck and project_ref:
+        art = await project_artifacts_service.resolve(project_ref)
         duck = art.duckdb_path
 
     if not sql_service.is_ready(duck):
@@ -141,7 +149,7 @@ async def run_plugin(
     try:
         if project_slug:
             art = await project_artifacts_service.resolve(project_slug)
-            ontology_service.ensure_loaded(art.db_path, project_slug=project_slug)
+            ontology_service.ensure_loaded(art.db_path, project_id=project_slug)
         from app.services.ontology_service import _require_onto
 
         onto = _require_onto(project_slug)

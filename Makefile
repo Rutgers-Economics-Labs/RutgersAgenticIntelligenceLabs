@@ -97,7 +97,7 @@ install: install-api install-web install-engine
 install-api:
 	@echo "→ Installing FastAPI deps…"
 	$(PYTHON) -m pip install fastapi "uvicorn[standard]" httpx "pydantic>=2.7" \
-	  pydantic-settings pyyaml owlready2 "pandas>=2.2" requests openpyxl beautifulsoup4 lxml duckdb aioboto3 litellm matplotlib numpy pdfplumber scikit-learn statsmodels respx pytest-asyncio python-multipart playwright
+	  pydantic-settings pyyaml owlready2 "pandas>=2.2" requests openpyxl beautifulsoup4 lxml duckdb aioboto3 litellm matplotlib numpy pdfplumber scikit-learn statsmodels respx pytest-asyncio python-multipart playwright croniter PyJWT
 
 install-web:
 	@echo "→ Installing Next.js deps…"
