@@ -102,8 +102,10 @@ export const list = query({
 export const listByProject = query({
   args: { projectSlug: v.string(), limit: v.optional(v.number()) },
   handler: async (ctx, { projectSlug, limit }) => {
+    const project = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", projectSlug)).first();
+    if (!project) return [];
     return ctx.db.query("hydrationJobs")
-      .withIndex("by_project", (q) => q.eq("projectSlug", projectSlug))
+      .withIndex("by_project", (q) => q.eq("projectId", project._id))
       .order("desc")
       .take(limit ?? 50);
   },
