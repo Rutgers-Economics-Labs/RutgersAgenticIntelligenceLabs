@@ -2,6 +2,22 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  scheduledPipelines: defineTable({
+    projectSlug: v.string(),
+    pipelineSlug: v.string(),
+    cron: v.optional(v.string()),         // resolved cron e.g. "0 * * * *"
+    frequency: v.optional(v.string()),    // human shorthand "1h", "daily"
+    windowEndsAt: v.optional(v.number()), // ms timestamp, null = indefinite
+    enabled: v.boolean(),
+    status: v.string(),                   // "active" | "paused" | "completed" | "error"
+    lastRunAt: v.optional(v.number()),
+    lastJobId: v.optional(v.string()),
+    nextRunAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_project", ["projectSlug"])
+    .index("by_status", ["status"]),
+
   connectorTemplates: defineTable({
     slug: v.string(),
     name: v.string(),
