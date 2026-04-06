@@ -48,21 +48,34 @@ def validate(config_type: ConfigType, content: str) -> list[str]:
     return errors
 
 
+ALLOWED_TOP_LEVEL_API_FIELDS = {
+    "name", "type", "url", "path", "params", "headers", "response_format",
+    "response_path", "fields", "foreach", "cache_ttl", "extends", "fields_append",
+    "description", "version", "tags", "slug", "isPublic", "cache", "drop_na", "storage_key", "javascript", "extraction_mode", "pages"
+}
+
 def _validate_api(spec: dict) -> list[str]:
     errors = []
-    if "name" not in spec:
+
+    for key in spec.keys():
+        if key not in ALLOWED_TOP_LEVEL_API_FIELDS:
+            errors.append(f"Unknown field: {key}")
+
+    is_extends = "extends" in spec
+
+    if "name" not in spec and not is_extends:
         errors.append("Missing required field: name")
-    if "type" not in spec:
+    if "type" not in spec and not is_extends:
         errors.append("Missing required field: type")
-    elif spec["type"] not in ("api", "csv", "excel", "uploaded", "scrape", "pdf", "docx"):
+    elif "type" in spec and spec["type"] not in ("api", "csv", "excel", "uploaded", "scrape", "pdf", "docx"):
         errors.append(f"Invalid type '{spec['type']}': must be api, csv, excel, uploaded, scrape, pdf, or docx")
 
     if spec.get("type") == "api":
-        if "url" not in spec:
+        if "url" not in spec and not is_extends:
             errors.append("Missing required field: url (required for type: api)")
-        if "response_format" not in spec:
+        if "response_format" not in spec and not is_extends:
             errors.append("Missing required field: response_format (required for type: api)")
-        elif spec["response_format"] not in ("json", "census_array"):
+        elif "response_format" in spec and spec["response_format"] not in ("json", "census_array"):
             errors.append(f"Invalid response_format '{spec['response_format']}': must be json or census_array")
         foreach = spec.get("foreach")
         if foreach:
@@ -71,23 +84,23 @@ def _validate_api(spec: dict) -> list[str]:
             if "field" not in foreach:
                 errors.append("foreach.field is required")
 
-    if spec.get("type") in ("csv", "excel"):
+    if spec.get("type") in ("csv", "excel") and not is_extends:
         if "path" not in spec:
             errors.append(f"Missing required field: path (required for type: {spec['type']})")
 
-    if spec.get("type") == "uploaded":
+    if spec.get("type") == "uploaded" and not is_extends:
         has_path = "path" in spec
         has_storage_key = "storage_key" in spec
         if sum(bool(x) for x in (has_path, has_storage_key)) != 1:
             errors.append("type: uploaded requires exactly one of path or storage_key")
 
     if spec.get("type") == "scrape":
-        if "url" not in spec:
+        if "url" not in spec and not is_extends:
             errors.append("Missing required field: url (required for type: scrape)")
         if "javascript" in spec and not isinstance(spec["javascript"], bool):
             errors.append("javascript must be a boolean for type: scrape")
 
-    if spec.get("type") in ("pdf", "docx"):
+    if spec.get("type") in ("pdf", "docx") and not is_extends:
         has_path = "path" in spec
         has_url = "url" in spec
         has_storage_key = "storage_key" in spec

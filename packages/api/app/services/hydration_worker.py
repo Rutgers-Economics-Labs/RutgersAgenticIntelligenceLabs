@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.services.convex_client import convex
 from app.services.storage_service import storage
 from app.services.yaml_service import parse as parse_config_yaml, validate_pipeline_runnable
+from app.services import connector_service
 
 logger = logging.getLogger("rail.hydration")
 
@@ -171,6 +172,16 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             pipeline_dir.mkdir(parents=True)
 
             await emit("info", f"[setup] Workspace: {tmpdir}")
+
+            # Resolve connectors via extends
+            for slug, content in list(api_configs.items()):
+                parsed = yaml.safe_load(content)
+                if "extends" in parsed:
+                    try:
+                        content = await connector_service.resolve(content, parsed["extends"])
+                        api_configs[slug] = content
+                    except ValueError as e:
+                        await _log(job_id, "warn", f"[warning] {e} — using config as-is", seq=seq_holder[0])
 
             # Write API configs and resolve storage keys
             for slug, content in api_configs.items():
