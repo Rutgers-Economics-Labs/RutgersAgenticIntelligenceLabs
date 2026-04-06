@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+# Private keys and accidental uploads
+rutgers-agentic-intelligence-labs.2026-04-05.private-key.pem
+uploaded_key
+
 # Distribution / packaging
 .Python
 build/
