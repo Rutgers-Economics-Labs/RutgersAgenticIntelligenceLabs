@@ -1,0 +1,43 @@
+import httpx
+from typing import Any
+
+class CloudClient:
+    def __init__(self, base_url: str, api_key: str = ""):
+        self.base_url = base_url.rstrip("/")
+        self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+
+    def get(self, path: str, **params) -> Any:
+        with httpx.Client() as client:
+            r = client.get(f"{self.base_url}{path}", params=params, headers=self.headers)
+            r.raise_for_status()
+            return r.json()
+
+    def post(self, path: str, data: dict) -> Any:
+        with httpx.Client() as client:
+            r = client.post(f"{self.base_url}{path}", json=data, headers=self.headers)
+            r.raise_for_status()
+            return r.json()
+
+    def hydrate(self, pipeline_slug: str) -> dict:
+        return self.post("/jobs", {"pipeline_slug": pipeline_slug})
+
+    def query_sql(self, sql: str) -> dict:
+        return self.post("/sql", {"query": sql})
+
+    def get_classes(self) -> list[dict]:
+        return self.get("/ontology/classes")
+
+    def get_instances(self, class_name: str, limit: int = 100) -> dict:
+        return self.get(f"/ontology/classes/{class_name}/instances", limit=limit)
+
+    def search_entities(self, q: str) -> list[dict]:
+        return self.get("/ontology/search", q=q)
+
+    def get_series(self, series_id: str) -> list[dict]:
+        return self.get(f"/ontology/series/{series_id}/data")
+
+    def run_analysis(self, plugin_slug: str, config: dict = {}) -> dict:
+        return self.post(f"/analysis/plugins/{plugin_slug}/run", {"config": config})
+
+    def execute_python(self, code: str, timeout: int = 60) -> dict:
+        return self.post("/execute", {"code": code, "timeout": timeout})
