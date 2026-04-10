@@ -13,7 +13,10 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
   const project = useQuery(api.projects.get, { slug: projectSlug });
 
   const ontologyConfigSlug = project?.ontologyConfigSlug;
-  const ontologyConfig = useQuery(api.configs.getOntology, ontologyConfigSlug ? { slug: ontologyConfigSlug } : "skip");
+  const ontologyConfig = useQuery(
+    api.configs.getOntology,
+    ontologyConfigSlug ? { slug: ontologyConfigSlug } : "skip",
+  );
 
   // Fetch the engine kernel YAML
   const { data: kernelData } = useSWR("/api/v1/ontology-kernel", fetcher);
@@ -23,17 +26,31 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
   // The spec says: "Merged" tab shows what the engine actually sees — kernel + project merged.
   // Assuming `/api/v1/ontology/schema?project=slug` returns the full compiled schema.
   // If not, we'll construct it in frontend. For now, try fetching it or just falling back to concatenation.
-  const { data: mergedData } = useSWR(`/api/v1/ontology/schema?project=${projectSlug}`, fetcher);
+  const { data: mergedData } = useSWR(
+    `/api/v1/ontology/schema?project=${projectSlug}`,
+    fetcher,
+  );
 
-  const kernelYaml = kernelData?.yaml || kernelData?.content || "# Kernel YAML not found or loading...";
-  const projectYaml = ontologyConfig?.content || "# Project ontology not configured yet.";
+  const kernelYaml =
+    kernelData?.yaml ||
+    kernelData?.content ||
+    "# Kernel YAML not found or loading...";
+  const projectYaml =
+    ontologyConfig?.content || "# Project ontology not configured yet.";
 
   // If no dedicated merged endpoint exists, we append them for display purposes.
   // Ideally, the backend `get_compiled_ontology` output is best.
-  const mergedYaml = mergedData?.yaml || mergedData?.content || `${kernelYaml}\n\n# --- Project Extension ---\n\n${projectYaml}`;
+  const mergedYaml =
+    mergedData?.yaml ||
+    mergedData?.content ||
+    `${kernelYaml}\n\n# --- Project Extension ---\n\n${projectYaml}`;
 
   if (!project) {
-    return <div className="flex h-full items-center justify-center"><div className="animate-pulse">Loading schema...</div></div>;
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="animate-pulse">Loading schema...</div>
+      </div>
+    );
   }
 
   return (
@@ -42,7 +59,8 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Ontology Schema</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Read-only view of the merged ontology configuration driving this project.
+            Read-only view of the merged ontology configuration driving this
+            project.
           </p>
         </div>
       </div>
@@ -51,14 +69,23 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
         <Tabs defaultValue="merged" className="flex flex-col h-full">
           <div className="px-4 py-2 border-b border-border bg-muted/20 flex items-center justify-between">
             <TabsList className="h-8">
-              <TabsTrigger value="merged" className="text-xs">Merged</TabsTrigger>
-              <TabsTrigger value="project" className="text-xs">Project Extension</TabsTrigger>
-              <TabsTrigger value="kernel" className="text-xs">Kernel</TabsTrigger>
+              <TabsTrigger value="merged" className="text-xs">
+                Merged
+              </TabsTrigger>
+              <TabsTrigger value="project" className="text-xs">
+                Project Extension
+              </TabsTrigger>
+              <TabsTrigger value="kernel" className="text-xs">
+                Kernel
+              </TabsTrigger>
             </TabsList>
           </div>
 
           <div className="flex-1 relative">
-            <TabsContent value="merged" className="absolute inset-0 m-0 border-0">
+            <TabsContent
+              value="merged"
+              className="absolute inset-0 m-0 border-0"
+            >
               <Editor
                 language="yaml"
                 theme="vs-dark"
@@ -75,7 +102,10 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
               />
             </TabsContent>
 
-            <TabsContent value="project" className="absolute inset-0 m-0 border-0">
+            <TabsContent
+              value="project"
+              className="absolute inset-0 m-0 border-0"
+            >
               <Editor
                 language="yaml"
                 theme="vs-dark"
@@ -92,7 +122,10 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
               />
             </TabsContent>
 
-            <TabsContent value="kernel" className="absolute inset-0 m-0 border-0">
+            <TabsContent
+              value="kernel"
+              className="absolute inset-0 m-0 border-0"
+            >
               <Editor
                 language="yaml"
                 theme="vs-dark"
@@ -117,11 +150,21 @@ function SchemaContent({ projectSlug }: { projectSlug: string }) {
 
 import { Suspense } from "react";
 
-export default function OntologySchemaPage({ params }: { params: Promise<{ project: string }> }) {
+export default function OntologySchemaPage({
+  params,
+}: {
+  params: Promise<{ project: string }>;
+}) {
   const { project: projectSlug } = use(params);
 
   return (
-    <Suspense fallback={<div className="flex h-full items-center justify-center"><div className="animate-pulse">Loading schema...</div></div>}>
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center">
+          <div className="animate-pulse">Loading schema...</div>
+        </div>
+      }
+    >
       <SchemaContent projectSlug={projectSlug} />
     </Suspense>
   );

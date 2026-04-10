@@ -121,3 +121,34 @@ async def get_series_data(series_id: str, project_id: str | None = Query(None, a
         art = await project_artifacts_service.resolve(project_id)
         ontology_service.ensure_loaded(art.db_path, project_id=project_id)
     return await ontology_service._run(project_id, ontology_service.get_series_data, series_id)
+
+@router.get("/schema")
+async def get_merged_schema(project: str = Query(..., min_length=1)):
+    # This acts as a mock/stub for the frontend merged schema request
+    # Since we can't easily reproduce full merge from convex directly here without convex client and engine
+    # we'll return a stub for the frontend viewer to handle or return error for now so we know it hits.
+
+    # Let's fetch the ontology config and kernel and return it.
+    from app.services.convex_client import convex
+    import os
+    import yaml
+
+    project_doc = await convex.query("projects:getBySlug", {"slug": project})
+    if not project_doc:
+        raise HTTPException(404, "Project not found")
+
+    project_onto = "# Project ontology not configured"
+    if project_doc.get("ontologyConfigSlug"):
+        onto_doc = await convex.query("configs:getOntology", {"slug": project_doc["ontologyConfigSlug"]})
+        if onto_doc:
+            project_onto = onto_doc.get("content", project_onto)
+
+    kernel_path = os.path.join(os.path.dirname(__file__), "../../../engine/ontology/kernel.yaml")
+    kernel_onto = "# Kernel not found"
+    if os.path.exists(kernel_path):
+        with open(kernel_path, "r") as f:
+            kernel_onto = f.read()
+
+    return {
+        "yaml": f"{kernel_onto}\n\n# --- Project Extension ---\n\n{project_onto}"
+    }

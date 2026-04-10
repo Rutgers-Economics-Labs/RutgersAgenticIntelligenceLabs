@@ -27,10 +27,16 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
   const [newSlug, setNewSlug] = useState("");
 
   if (!project || templates === undefined || apiConfigs === undefined) {
-    return <div className="flex h-full items-center justify-center"><div className="animate-pulse">Loading sources...</div></div>;
+    return (
+      <div className="flex h-full items-center justify-center">
+        <div className="animate-pulse">Loading sources...</div>
+      </div>
+    );
   }
 
-  const activeSources = apiConfigs.filter(c => project.apiConfigSlugs.includes(c.slug));
+  const activeSources = apiConfigs.filter((c) =>
+    project.apiConfigSlugs.includes(c.slug),
+  );
 
   const handleAddSource = async () => {
     if (!selectedTemplate || !newName || !newSlug) return;
@@ -83,7 +89,8 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
               <Database className="w-8 h-8 text-muted-foreground mb-3" />
               <p className="text-sm font-medium">No active sources</p>
               <p className="text-xs text-muted-foreground mt-1 mb-4 max-w-[250px]">
-                Add a data source from the connector gallery to start ingesting data.
+                Add a data source from the connector gallery to start ingesting
+                data.
               </p>
             </div>
           ) : (
@@ -92,17 +99,29 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
                 <CardHeader className="py-4">
                   <div className="flex justify-between items-start">
                     <div>
-                      <CardTitle className="text-base font-semibold">{source.name}</CardTitle>
-                      <p className="text-xs font-mono text-muted-foreground mt-1">{source.slug}</p>
+                      <CardTitle className="text-base font-semibold">
+                        {source.name}
+                      </CardTitle>
+                      <p className="text-xs font-mono text-muted-foreground mt-1">
+                        {source.slug}
+                      </p>
                     </div>
-                    <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20">
+                    <Badge
+                      variant="outline"
+                      className="bg-primary/10 text-primary border-primary/20"
+                    >
                       Active
                     </Badge>
                   </div>
                 </CardHeader>
                 <CardContent className="py-0 pb-4">
                   <div className="flex justify-between items-center text-xs text-muted-foreground">
-                    <span>Added {formatDistanceToNow(source.createdAt, { addSuffix: true })}</span>
+                    <span>
+                      Added{" "}
+                      {formatDistanceToNow(source.createdAt, {
+                        addSuffix: true,
+                      })}
+                    </span>
                     <Button variant="ghost" size="sm" className="h-7 text-xs">
                       Configure <ChevronRight className="w-3 h-3 ml-1" />
                     </Button>
@@ -118,7 +137,9 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
       <div className="w-[400px] shrink-0 flex flex-col">
         <div className="mb-4">
           <h2 className="text-lg font-bold">Connector Gallery</h2>
-          <p className="text-xs text-muted-foreground mt-1">Available templates to add to your project.</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Available templates to add to your project.
+          </p>
         </div>
 
         <div className="relative mb-4">
@@ -144,9 +165,13 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
                 <div className="flex justify-between items-start">
                   <div className="flex-1">
                     <h3 className="text-sm font-semibold">{tpl.name}</h3>
-                    <p className="text-xs text-muted-foreground line-clamp-2 mt-1">{tpl.description}</p>
+                    <p className="text-xs text-muted-foreground line-clamp-2 mt-1">
+                      {tpl.description}
+                    </p>
                   </div>
-                  <Badge variant="secondary" className="ml-2 text-[10px]">{tpl.version}</Badge>
+                  <Badge variant="secondary" className="ml-2 text-[10px]">
+                    {tpl.version}
+                  </Badge>
                 </div>
               </CardContent>
             </Card>
@@ -157,28 +182,44 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
       {/* Add Source Modal Overlay (when a template is selected for addition) */}
       {selectedTemplate && (
         <>
-          <div className="fixed inset-0 bg-black/50 z-40" onClick={() => setSelectedTemplate(null)} />
+          <div
+            className="fixed inset-0 bg-black/50 z-40"
+            onClick={() => setSelectedTemplate(null)}
+          />
           <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] bg-background border border-border rounded-lg shadow-2xl z-50 overflow-hidden flex flex-col">
             <div className="px-5 py-4 border-b border-border">
-              <h2 className="text-lg font-semibold">Add Source: {selectedTemplate.name}</h2>
-              <p className="text-xs text-muted-foreground mt-1">Configure your instance of this connector.</p>
+              <h2 className="text-lg font-semibold">
+                Add Source: {selectedTemplate.name}
+              </h2>
+              <p className="text-xs text-muted-foreground mt-1">
+                Configure your instance of this connector.
+              </p>
             </div>
 
             <div className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Source Name</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  Source Name
+                </label>
                 <input
                   value={newName}
                   onChange={(e) => {
                     setNewName(e.target.value);
-                    setNewSlug(`${project.slug}-${e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`);
+                    setNewSlug(
+                      `${project.slug}-${e.target.value
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")
+                        .replace(/^-|-$/g, "")}`,
+                    );
                   }}
                   className="w-full h-9 bg-background border border-border rounded-md px-3 text-sm outline-none focus:border-primary transition-colors"
                   placeholder="My Data Source"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Source Slug</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  Source Slug
+                </label>
                 <input
                   value={newSlug}
                   onChange={(e) => setNewSlug(e.target.value)}
@@ -186,34 +227,55 @@ function SourcesContent({ projectSlug }: { projectSlug: string }) {
                 />
               </div>
               <div>
-                 <label className="block text-xs font-medium text-muted-foreground mb-1">Overrides (YAML parameters)</label>
-                 <div className="p-3 bg-muted rounded-md border border-border text-xs font-mono text-muted-foreground">
-                    extends: {selectedTemplate.slug}<br/>
-                    params:<br/>
-                    &nbsp;&nbsp;# Will be editable after creation
-                 </div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">
+                  Overrides (YAML parameters)
+                </label>
+                <div className="p-3 bg-muted rounded-md border border-border text-xs font-mono text-muted-foreground">
+                  extends: {selectedTemplate.slug}
+                  <br />
+                  params:
+                  <br />
+                  &nbsp;&nbsp;# Will be editable after creation
+                </div>
               </div>
             </div>
 
             <div className="px-5 py-4 border-t border-border bg-muted/30 flex justify-end gap-3">
-              <Button variant="outline" onClick={() => setSelectedTemplate(null)}>Cancel</Button>
-              <Button onClick={handleAddSource} disabled={saving || !newName || !newSlug}>
+              <Button
+                variant="outline"
+                onClick={() => setSelectedTemplate(null)}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleAddSource}
+                disabled={saving || !newName || !newSlug}
+              >
                 {saving ? "Adding..." : "Add Source"}
               </Button>
             </div>
           </div>
         </>
       )}
-
     </div>
   );
 }
 
-export default function ProjectSourcesPage({ params }: { params: Promise<{ project: string }> }) {
+export default function ProjectSourcesPage({
+  params,
+}: {
+  params: Promise<{ project: string }>;
+}) {
   const { project: projectSlug } = use(params);
 
   return (
-    <Suspense fallback={<div className="flex h-full items-center justify-center"><div className="animate-pulse">Loading sources...</div></div>}>
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center">
+          <div className="animate-pulse">Loading sources...</div>
+        </div>
+      }
+    >
       <SourcesContent projectSlug={projectSlug} />
     </Suspense>
   );

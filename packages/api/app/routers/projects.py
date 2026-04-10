@@ -102,3 +102,22 @@ async def get_project_context(slug: str):
             context["pipelines"].append({"slug": pipeline["slug"], "name": pipeline["name"]})
 
     return context
+
+@router.delete("/{slug}")
+async def delete_project(slug: str):
+    await convex.mutation("projects:remove", {"slug": slug})
+    return {"status": "success"}
+
+class UpdateProjectRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    agentModel: str | None = None
+
+@router.put("/{slug}")
+async def update_project(slug: str, data: UpdateProjectRequest):
+    update_data = data.model_dump(exclude_unset=True)
+    update_data["slug"] = slug
+
+    # We update via convex mutation
+    await convex.mutation("projects:update", update_data)
+    return await convex.query("projects:getBySlug", {"slug": slug})
