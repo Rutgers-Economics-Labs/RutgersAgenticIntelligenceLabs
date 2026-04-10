@@ -47,13 +47,15 @@ def main():
         return
 
     # Skip completed work orders
-    skip_list = ["WO-0.1", "WO-0.2", "WO-0.3", "WO-1.1", "WO-1.2", "WO-2.1", "WO-2.2"]
+    skip_list = [
+        "WO-0", "WO-1", "WO-2", "WO-3", "WO-4", "WO-5", "WO-6"
+    ]
     files = [f for f in files if not any(s in f for s in skip_list)]
 
     print(f"Found {len(files)} remaining work orders to process.")
 
-    # Use the branch created by Jules for the previous work order (WO-2.2) as our new baseline
-    starting_branch = "project-scoped-routes-11462404618152258496"
+    # Use the architectural baseline for the Layered Agent Platform
+    starting_branch = "feat/layered-agentic-architecture"
 
     resume_id = os.environ.get("RESUME_SESSION_ID")
 

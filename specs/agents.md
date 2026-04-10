@@ -19,11 +19,19 @@ There is also a **Q&A interface** (`/api/v1/questions`) for single-shot question
 
 ---
 
-## Research Agent
+## Research Agentic Runtime
 
-Each project has a **domain agent** — an AI agent scoped to that project's ontology, data sources, pipelines, and action catalog. The agent is the primary interface for research workflows: it can discover data, build pipelines, hydrate the ontology, run analysis, and produce reports entirely autonomously.
+Instead of a single monolithic "Research Agent," RAIL uses a **Role-Based Agentic Runtime**. Each research query triggers an orchestration sequence where specialized sub-agents perform targeted reasoning steps. This "divide and conquer" approach ensures that expensive LLM reasoning is only applied where needed, while data computation remains deterministic.
 
-Domain agents come before a platform-wide agent. Each agent is an expert in its domain because it only sees its project's data and a tight, deterministic context snapshot. A platform-wide routing agent is a future concern.
+### The Five Specialized Roles
+
+| Role | Purpose | Input | Output |
+|------|---------|-------|--------|
+| **Planner** | Strategy & Decomposition | Raw Question | Execution Plan + Context Manifest |
+| **Coverage** | Data Verification | Context Manifest | Source Status (Available / Missing) |
+| **Onboarding** | Gap Bridging | Missing Data Spec | New YAML Configs / Connector Proposals |
+| **Analysis** | Fact Extraction | Context Manifest | SQL Results / Python Artifacts |
+| **Explanation** | Synthesis & Reporting | Raw Evidence | High-level Insights & Citations |
 
 ---
 
@@ -69,42 +77,24 @@ If `allowed_actions` is absent, all actions are permitted. Actions not in the li
 
 ---
 
-## Context Snapshot
+## Context Assembly Pipeline
 
-Before every conversation turn, the agent service assembles a **context snapshot** from the project's current ontology state. This snapshot is injected into the system prompt. It is deterministic, fast to assemble, and never stale (always reflects the current DuckDB and Convex state).
+Before any analysis occurs, the **Planner** and **Coverage** agents cooperate to produce a **Structured Context Bundle**. This is a deterministic manifest that limits the agent's "reach" to only the data relevant to the current question, preventing "context stuffing" and halluncinations.
 
-```python
-# agent_service.py — context assembly
-context = {
-    "project": {
-        "name": "NJ Economic Analysis",
-        "slug": "nj-economics",
-        "status": "hydrated",
-        "last_hydrated": "2024-01-15T08:00:00Z"
-    },
-    "ontology": {
-        "classes": [
-            {"name": "State", "instance_count": 50},
-            {"name": "County", "instance_count": 3142},
-            {"name": "LaborIndicator", "instance_count": 48600},
-            {"name": "HousingIndicator", "instance_count": 12300},
-        ],
-        "schema_ddl": "CREATE TABLE State (...); CREATE TABLE County (...); ..."
-    },
-    "data_sources": [
-        {"slug": "nj_unemployment", "connector": "fred-observations", "last_fetched": "..."},
-        {"slug": "census_counties", "connector": "census-tigerweb-counties", "last_fetched": "..."},
-    ],
-    "pipelines": [
-        {"slug": "nj-hydration", "status": "success", "last_run": "2024-01-15T08:00:00Z"}
-    ],
-    "analysis_plugins": [
-        {"slug": "unemployment_trends", "description": "..."},
-    ]
+```json
+{
+  "manifest_id": "ctx_2024_01_15_01",
+  "ontology_refs": ["LaborIndicator", "County", "State"],
+  "entity_filters": {"state": "NJ", "years": [2010, 2024]},
+  "serving_artifacts": {
+    "duckdb": "sha256:a1b2c3d4...",
+    "ontology": "sha256:e5f6g7h8..."
+  },
+  "constraints": ["read_only", "no_pii"]
 }
 ```
 
-The context snapshot is serialized into the system prompt header, before the user's message. The LLM sees a precise, structured picture of what it has access to.
+The Context Assembly Pipeline ensures that the **Analysis Agent** is "locked in" to this bundle before it can call `run_sql` or `execute_python`.
 
 ---
 
