@@ -322,4 +322,13 @@ export default defineSchema({
   })
     .index("by_project", ["projectId", "createdAt"])
     .index("by_created", ["createdAt"]),
+
+  artifactRevs: defineTable({
+    rev: v.string(),
+    projectId: v.string(),
+    s3_path: v.string(),
+    timestamp: v.number(),
+  })
+    .index("by_rev", ["rev"])
+    .index("by_project", ["projectId", "timestamp"]),
 });

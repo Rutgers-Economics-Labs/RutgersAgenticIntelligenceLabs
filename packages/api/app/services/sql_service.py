@@ -42,14 +42,15 @@ def is_ready(path: str | Path | None = None) -> bool:
 # ---------------------------------------------------------------------------
 
 def _connect(*, read_only: bool = True, path: str | Path | None = None) -> duckdb.DuckDBPyConnection:
-    p = Path(path) if path is not None else _duckdb_path
+    p = Path(path) if path is not None else None
     if p is None or not p.exists():
         raise RuntimeError("No DuckDB database loaded. Run a hydration pipeline first.")
     return duckdb.connect(str(p), read_only=read_only)
 
 
-def run_query(sql: str, *, duckdb_path: str | Path | None = None, job_id: str | None = None) -> dict:
+def run_query(sql: str, *, duckdb_path: str | Path | None = None, job_id: str | None = None, artifact_rev: str | None = None) -> dict:
     """Execute SQL and return {columns, rows, rowCount}."""
+    # artifact_rev handling is abstracted via project_artifacts_service
     con = _connect(path=duckdb_path)
     if job_id:
         # Mark as running
@@ -84,21 +85,21 @@ def run_query(sql: str, *, duckdb_path: str | Path | None = None, job_id: str | 
         con.close()
 
 
-def list_tables(*, duckdb_path: str | Path | None = None) -> list[str]:
+def list_tables(*, duckdb_path: str | Path | None = None, artifact_rev: str | None = None) -> list[str]:
     if not is_ready(duckdb_path):
         return []
-    con = duckdb.connect(str(Path(duckdb_path) if duckdb_path is not None else _duckdb_path), read_only=True)
+    con = duckdb.connect(str(Path(duckdb_path)), read_only=True)
     try:
         return [r[0] for r in con.execute("SHOW TABLES").fetchall()]
     finally:
         con.close()
 
 
-def get_schema(*, duckdb_path: str | Path | None = None) -> dict:
+def get_schema(*, duckdb_path: str | Path | None = None, artifact_rev: str | None = None) -> dict:
     """Return {table_name: [{name, type}, ...]} for all tables."""
     if not is_ready(duckdb_path):
         return {}
-    con = duckdb.connect(str(Path(duckdb_path) if duckdb_path is not None else _duckdb_path), read_only=True)
+    con = duckdb.connect(str(Path(duckdb_path)), read_only=True)
     try:
         tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
         schema: dict[str, list[dict]] = {}
@@ -110,7 +111,7 @@ def get_schema(*, duckdb_path: str | Path | None = None) -> dict:
         con.close()
 
 
-def get_schema_ddl(*, duckdb_path: str | Path | None = None) -> str:
+def get_schema_ddl(*, duckdb_path: str | Path | None = None, artifact_rev: str | None = None) -> str:
     """Return CREATE TABLE statements as a string — useful for LLM prompts."""
     schema = get_schema(duckdb_path=duckdb_path)
     lines = []
@@ -129,6 +130,7 @@ async def translate_to_sql(
     model: str | None = None,
     *,
     duckdb_path: str | Path | None = None,
+    artifact_rev: str | None = None,
 ) -> dict:
     """
     Use the LLM to translate a natural-language question into SQL.

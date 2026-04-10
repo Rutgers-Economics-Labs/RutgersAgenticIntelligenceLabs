@@ -19,6 +19,7 @@ from app.services.convex_client import convex
 from app.services.storage_service import storage
 from app.services.yaml_service import parse as parse_config_yaml, validate_pipeline_runnable
 from app.services import connector_service
+from app.services.artifact_registry import artifact_registry
 
 logger = logging.getLogger("rail.hydration")
 
@@ -381,19 +382,6 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                     f"(see log lines above for Python traceback or engine output)"
                 )
 
-            # Upload artifacts
-            db_key  = await storage.upload(job_id, "onto.db",  output_db)
-            owl_key = await storage.upload(job_id, "populated_ontology.owl", output_owl)
-
-            await emit("info", f"[job] Done — quadstore: {db_key}")
-
-            await _update_job(job_id, {
-                "status": "success",
-                "finishedAt": int(time.time() * 1000),
-                "outputDbPath": db_key,
-                "outputOwlPath": owl_key,
-            })
-
             # Persist "active ontology" onto the owning project (if any)
             project_id = None
             try:
@@ -411,14 +399,65 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             except Exception:
                 project_id = None
 
+            # We need to build duckdb and embeddings before uploading them
+
+            # 1. Warm caches and load ontology
+            from app.services import ontology_service
+            try:
+                # Load from local output db directly for generating secondary artifacts
+                ontology_service.load(output_db, project_id=project_id)
+            except Exception as e:
+                await emit("warn", f"[job] Ontology cache warm-up failed (non-fatal): {e}")
+
+            # 2. Export to DuckDB for SQL queries
+            output_duckdb = str(tmpdir / "onto.duckdb")
+            try:
+                await ontology_service.export_to_duckdb(project_id, output_duckdb)
+                await emit("info", f"[job] DuckDB export ready: {output_duckdb}")
+            except Exception as e:
+                await emit("warn", f"[job] DuckDB export failed (non-fatal): {e}")
+
+            # 3. Build semantic index
+            output_embeddings = str(tmpdir / "embeddings.db")
+            try:
+                from app.services import embedding_service
+                await embedding_service.build_index(output_db, project_id=project_id)
+                await emit("info", "[job] Semantic index ready")
+            except Exception as e:
+                await emit("warn", f"[job] Embedding index failed (non-fatal): {e}")
+
+            # 4. Upload all artifacts
+            db_key  = await storage.upload(job_id, "onto.db",  output_db)
+            owl_key = await storage.upload(job_id, "populated_ontology.owl", output_owl)
+
+            duck_key = None
+            if Path(output_duckdb).exists():
+                duck_key = await storage.upload(job_id, "onto.duckdb", output_duckdb)
+
+            emb_key = None
+            if Path(output_embeddings).exists():
+                emb_key = await storage.upload(job_id, "embeddings.db", output_embeddings)
+
+            await emit("info", f"[job] Done — quadstore: {db_key}")
+
+            await _update_job(job_id, {
+                "status": "success",
+                "finishedAt": int(time.time() * 1000),
+                "outputDbPath": db_key,
+                "outputOwlPath": owl_key,
+            })
+
             if project_id:
-                duckdb_path = str(Path(db_key).parent / "onto.duckdb") if "/" in db_key else str(
-                    settings.engine_root / "ontology" / "onto.duckdb"
-                )
-                embeddings_path = str(Path(db_key).parent / "embeddings.db") if "/" in db_key else str(
-                    settings.engine_root / "ontology" / "embeddings.db"
-                )
                 now_ms = int(time.time() * 1000)
+
+                # Register artifact revision
+                rev = await artifact_registry.register_rev(
+                    job_id=job_id,
+                    project_id=project_id,
+                    s3_path=db_key
+                )
+                await emit("info", f"[job] Registered artifact revision: {rev}")
+
                 await convex.mutation(
                     "projects:updateById",
                     {
@@ -428,37 +467,12 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                         "lastHydratedAt": now_ms,
                         "activeOntologyDbPath": db_key,
                         "activeOntologyOwlPath": owl_key,
-                        "activeOntologyDuckdbPath": duckdb_path,
-                        "activeOntologyEmbeddingsPath": embeddings_path,
+                        "activeOntologyDuckdbPath": duck_key,
+                        "activeOntologyEmbeddingsPath": emb_key,
                     },
                 )
                 await emit("info", f"[job] Project updated: active ontology set (projectId={project_id})")
 
-            # Warm caches and build derived artifacts for project-specific querying
-            from app.services import ontology_service
-
-            try:
-                ontology_service.load(db_key, project_id=project_id)
-            except Exception as e:
-                await emit("warn", f"[job] Ontology cache warm-up failed (non-fatal): {e}")
-
-            # Export to DuckDB for SQL queries
-            try:
-                duckdb_path = str(Path(db_key).parent / "onto.duckdb") if "/" in db_key else str(
-                    settings.engine_root / "ontology" / "onto.duckdb"
-                )
-                await ontology_service.export_to_duckdb(project_id, duckdb_path)
-                await emit("info", f"[job] DuckDB export ready: {duckdb_path}")
-            except Exception as e:
-                await emit("warn", f"[job] DuckDB export failed (non-fatal): {e}")
-
-            try:
-                from app.services import embedding_service
-
-                await embedding_service.build_index(db_key, project_id=project_id)
-                await emit("info", "[job] Semantic index ready")
-            except Exception as e:
-                await emit("warn", f"[job] Embedding index failed (non-fatal): {e}")
 
     except asyncio.CancelledError:
         # Uvicorn --reload, Ctrl+C, or process exit cancels background tasks — not an engine bug.

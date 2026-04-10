@@ -109,6 +109,8 @@ async def run_code_analysis(
         pass
 
     project_ref = project_id or project_slug
+    # artifact_rev is not explicitly added as parameter here to analysis route, but we could add it if needed.
+    # The requirement is for ontology_service and sql_service to resolve data sources via artifact_rev.
     if not duck and project_ref:
         art = await project_artifacts_service.resolve(project_ref)
         duck = art.duckdb_path
@@ -145,10 +147,11 @@ async def run_plugin(
     slug: str,
     req: RunRequest,
     project_slug: str | None = Query(None, alias="projectSlug"),
+    artifact_rev: str | None = Query(None, alias="artifactRev"),
 ):
     try:
         if project_slug:
-            art = await project_artifacts_service.resolve(project_slug)
+            art = await project_artifacts_service.resolve(project_slug, artifact_rev)
             ontology_service.ensure_loaded(art.db_path, project_id=project_slug)
         from app.services.ontology_service import _require_onto
 
