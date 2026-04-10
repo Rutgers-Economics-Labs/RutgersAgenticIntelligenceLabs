@@ -773,6 +773,7 @@ async def run_chat(
     history: list[dict],
     model: str | None = None,
     project_slug: str | None = None,
+    bundle_id: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """
     Run the agent for one user message.
@@ -785,6 +786,7 @@ async def run_chat(
       {"type": "done",         "new_messages": list[dict]}
     """
     from app.services import llm_service
+    from app.services import context_service
 
     context_snapshot = None
     if project_slug:
@@ -798,6 +800,17 @@ async def run_chat(
         system_prompt = SYSTEM_PROMPT + context_block
     else:
         system_prompt = SYSTEM_PROMPT
+
+    if bundle_id:
+        bundle = context_service.get_bundle(bundle_id)
+        if bundle:
+            bundle_block = (
+                f"\n\n## Structured Context Bundle\n"
+                f"**Entities**: {json.dumps(bundle.entities)}\n"
+                f"**Documents**: {json.dumps(bundle.document_ids)}\n"
+                f"**Relevant Schema DDL**:\n```sql\n{bundle.ontology_ddl}\n```\n"
+            )
+            system_prompt += bundle_block
 
     messages = [{"role": "system", "content": system_prompt}]
     messages.extend(history)
