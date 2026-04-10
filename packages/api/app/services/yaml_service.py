@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 
-ConfigType = Literal["api", "ontology", "pipeline"]
+ConfigType = Literal["api", "ontology", "pipeline", "coverage"]
 
 
 def parse(content: str) -> dict:
@@ -44,6 +44,8 @@ def validate(config_type: ConfigType, content: str) -> list[str]:
                 logger.warning(w)
     elif config_type == "pipeline":
         errors.extend(_validate_pipeline(spec))
+    elif config_type == "coverage":
+        errors.extend(_validate_coverage(spec))
 
     return errors
 
@@ -149,6 +151,34 @@ def _validate_ontology(spec: dict) -> tuple[list[str], list[str]]:
         if "range" in prop and prop["range"] not in ("str", "int", "float", "bool"):
             errors.append(f"data_properties[{i}]: invalid range '{prop['range']}'")
     return errors, warnings
+
+
+ALLOWED_TOP_LEVEL_COVERAGE_FIELDS = {
+    "project",
+    "overrides"
+}
+
+def _validate_coverage(spec: dict) -> list[str]:
+    errors = []
+
+    for key in spec.keys():
+        if key not in ALLOWED_TOP_LEVEL_COVERAGE_FIELDS:
+            errors.append(f"Unknown field: {key}")
+
+    if "overrides" not in spec:
+        errors.append("Missing required field: overrides")
+    elif not isinstance(spec["overrides"], list):
+        errors.append("Field 'overrides' must be a list")
+    else:
+        for i, override in enumerate(spec["overrides"]):
+            if "class" not in override:
+                errors.append(f"overrides[{i}]: missing required field 'class'")
+            if "status" not in override:
+                errors.append(f"overrides[{i}]: missing required field 'status'")
+            elif override["status"] not in ("sparse", "verified"):
+                errors.append(f"overrides[{i}]: invalid status '{override['status']}': must be sparse or verified")
+
+    return errors
 
 
 PIPELINE_ALLOWED_MODES = {"full", "incremental"}

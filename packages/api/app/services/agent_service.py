@@ -48,6 +48,44 @@ ALL_TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "get_project_coverage",
+            "description": "Scans the project DuckDB schema and returns a map of classes and their density (row counts, non-null property percentage). Use this to see what data is currently available in the project.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_data_availability",
+            "description": "Cross-references requested data with both the current project DuckDB and the global data source registry. Determines if new data sources need to be onboarded.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ontology_classes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of ontology classes to check availability for."
+                    },
+                    "time_range": {
+                        "type": "string",
+                        "description": "Optional time range (e.g. '2022').",
+                    }
+                },
+                "required": ["ontology_classes"],
+                "additionalProperties": False,
+            },
+            "strict": True,
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "discover_sources",
             "description": "Search the shared connector template registry for data sources relevant to a topic. Use this to find what data providers are available before creating a new API config.",
             "parameters": {
@@ -326,6 +364,8 @@ PROJECT_AGENT_DATA_TOOLS: list[dict] = [
         "get_sql_schema",
         "describe_database",
         "execute_python",
+        "get_project_coverage",
+        "check_data_availability",
     )
 ]
 
@@ -599,6 +639,17 @@ async def _execute_tool(
         if not duck:
             return {"error": "No hydrated DuckDB for this project. Run hydration first."}
         return sql_service.get_schema(duckdb_path=duck)
+
+    elif name == "get_project_coverage":
+        from app.services import coverage_service
+        return await coverage_service.get_project_coverage(project_id=project_id)
+
+    elif name == "check_data_availability":
+        from app.services import coverage_service
+        classes = args.get("ontology_classes", [])
+        time_range = args.get("time_range")
+        res = await coverage_service.check_data_availability(classes, time_range, project_id=project_id)
+        return res
 
     elif name == "describe_database":
         from app.services import sql_service

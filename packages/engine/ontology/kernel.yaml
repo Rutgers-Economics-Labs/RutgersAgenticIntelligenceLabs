@@ -4,6 +4,10 @@ data_properties:
     domain: [Thing]
     range: str
     functional: true
+  - name: hasCoverageStatus
+    domain: [Thing]
+    range: str
+    functional: true
   - name: hasSource
     domain: [Thing]
     range: str
