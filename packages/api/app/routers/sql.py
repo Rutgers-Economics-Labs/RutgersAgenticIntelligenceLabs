@@ -24,6 +24,7 @@ async def run_sql(
     workspace_id: str | None = Query(None, alias="workspaceId"),
     cell_id: str | None = Query(None, alias="cellId"),
     hydration_id: str | None = Query(None, alias="hydrationId"),
+    artifact_rev: str | None = Query(None, alias="artifactRev"),
 ):
     """Execute a SQL query against the DuckDB knowledge graph export."""
     job_id = None
@@ -48,7 +49,7 @@ async def run_sql(
             pass
             
         if not duck and project_id:
-            art = await project_artifacts_service.resolve(project_id)
+            art = await project_artifacts_service.resolve(project_id, artifact_rev)
             duck = art.duckdb_path
             
         # 3. Execute
@@ -84,12 +85,12 @@ async def run_sql(
 
 
 @router.post("/translate")
-async def translate_sql(req: NlSqlRequest, project_id: str | None = Query(None, alias="projectId")):
+async def translate_sql(req: NlSqlRequest, project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     """Translate a natural-language question to SQL, then execute it."""
     try:
         duck = None
         if project_id:
-            art = await project_artifacts_service.resolve(project_id)
+            art = await project_artifacts_service.resolve(project_id, artifact_rev)
             duck = art.duckdb_path
         translated = await sql_service.translate_to_sql(req.question, model=req.model, duckdb_path=duck)
         result = sql_service.run_query(translated["sql"], duckdb_path=duck)
@@ -101,20 +102,20 @@ async def translate_sql(req: NlSqlRequest, project_id: str | None = Query(None, 
 
 
 @router.get("/schema")
-async def get_schema(project_id: str | None = Query(None, alias="projectId")):
+async def get_schema(project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     """Return DuckDB schema: {table: [{name, type}]}."""
     duck = None
     if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+        art = await project_artifacts_service.resolve(project_id, artifact_rev)
         duck = art.duckdb_path
     return sql_service.get_schema(duckdb_path=duck)
 
 
 @router.get("/tables")
-async def list_tables(project_id: str | None = Query(None, alias="projectId")):
+async def list_tables(project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     """List available DuckDB table names."""
     duck = None
     if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+        art = await project_artifacts_service.resolve(project_id, artifact_rev)
         duck = art.duckdb_path
     return sql_service.list_tables(duckdb_path=duck)

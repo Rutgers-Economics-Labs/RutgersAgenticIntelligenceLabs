@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.services.convex_client import convex
 from app.services.storage_service import storage
 from app.services import ontology_service
+from app.services.artifact_registry import artifact_registry
 
 
 @dataclass(frozen=True)
@@ -119,7 +120,29 @@ async def find_latest_success_job_with_outputs(project: dict) -> dict | None:
     return None
 
 
-async def resolve(project_id: str) -> ProjectArtifacts:
+async def resolve(project_id: str, artifact_rev: str | None = None) -> ProjectArtifacts:
+    if artifact_rev:
+        rev_data = await artifact_registry.get_rev(artifact_rev)
+        if rev_data:
+            # If we requested a specific artifact rev, use its s3_path as db_key
+            db_key = rev_data["s3_path"]
+            project_id = rev_data["projectId"]
+
+            db_path = await _materialize(db_key, filename="onto.db", project_id=project_id)
+            # Default owl_key to none or sibling
+            parent = Path(db_path).parent
+            owl_path = str(parent / "populated_ontology.owl") if Path(parent / "populated_ontology.owl").exists() else None
+            duck_default = str(parent / "onto.duckdb")
+            emb_default = str(parent / "embeddings.db")
+
+            return ProjectArtifacts(
+                project_id=project_id,
+                db_path=db_path,
+                owl_path=owl_path,
+                duckdb_path=duck_default,
+                embeddings_path=emb_default,
+            )
+
     # 1. Try resolving by Internal ID first
     project = await convex.query("projects:getById", {"projectId": project_id})
     

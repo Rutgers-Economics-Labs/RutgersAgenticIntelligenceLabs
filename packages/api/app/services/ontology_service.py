@@ -72,8 +72,9 @@ def _get_executor(st: _ProjectOntology):
     return st.executor
 
 
-def load(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
+def load(db_path: Union[str, Path], *, project_id: str | None = None, artifact_rev: str | None = None) -> None:
     """Load (or reload) the quadstore for project_id from db_path. Thread-safe."""
+    # artifact_rev handling is abstracted via project_artifacts_service which callers like routers will use
     db_path = str(Path(db_path).resolve())
     st = _get_state(project_id, db_path)
     with st.lock:
@@ -115,7 +116,7 @@ def _load_locked(st: _ProjectOntology, db_path: str) -> None:
     )
 
 
-def ensure_loaded(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
+def ensure_loaded(db_path: Union[str, Path], *, project_id: str | None = None, artifact_rev: str | None = None) -> None:
     db_path = str(Path(db_path).resolve())
     st = _get_state(project_id, db_path)
     
@@ -149,7 +150,7 @@ async def _run(project_id: str | None, fn, *args, **kwargs):
     return await loop.run_in_executor(_get_executor(st), lambda: fn(project_id, *args, **kwargs))
 
 
-async def ensure_loaded_async(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
+async def ensure_loaded_async(db_path: Union[str, Path], *, project_id: str | None = None, artifact_rev: str | None = None) -> None:
     """
     Load the quadstore on the project's ontology thread.
 

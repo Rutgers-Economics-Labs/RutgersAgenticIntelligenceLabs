@@ -10,6 +10,7 @@
 
 import type * as agent from "../agent.js";
 import type * as analysis from "../analysis.js";
+import type * as artifacts from "../artifacts.js";
 import type * as configs from "../configs.js";
 import type * as connectors from "../connectors.js";
 import type * as context from "../context.js";
@@ -33,6 +34,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   agent: typeof agent;
   analysis: typeof analysis;
+  artifacts: typeof artifacts;
   configs: typeof configs;
   connectors: typeof connectors;
   context: typeof context;

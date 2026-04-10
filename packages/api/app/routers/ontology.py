@@ -7,9 +7,9 @@ router = APIRouter(prefix="/ontology", tags=["ontology"])
 
 
 @router.get("/classes")
-async def list_classes(project_id: str | None = Query(None, alias="projectId")):
+async def list_classes(project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+        art = await project_artifacts_service.resolve(project_id, artifact_rev)
         return await ontology_service._run_with_ensure(
             project_id, art.db_path, ontology_service.list_classes
         )
@@ -23,10 +23,11 @@ async def list_instances(
     limit: int = Query(50, ge=1, le=200),
     search: str = Query(""),
     project_id: str | None = Query(None, alias="projectId"),
+    artifact_rev: str | None = Query(None, alias="artifactRev"),
 ):
     try:
         if project_id:
-            art = await project_artifacts_service.resolve(project_id)
+            art = await project_artifacts_service.resolve(project_id, artifact_rev)
             return await ontology_service._run_with_ensure(
                 project_id,
                 art.db_path,
@@ -44,10 +45,10 @@ async def list_instances(
 
 
 @router.get("/entities/{uri}")
-async def get_entity(uri: str, project_id: str | None = Query(None, alias="projectId")):
+async def get_entity(uri: str, project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     try:
         if project_id:
-            art = await project_artifacts_service.resolve(project_id)
+            art = await project_artifacts_service.resolve(project_id, artifact_rev)
             return await ontology_service._run_with_ensure(
                 project_id, art.db_path, ontology_service.get_entity, uri
             )
@@ -60,10 +61,10 @@ async def get_entity(uri: str, project_id: str | None = Query(None, alias="proje
 
 
 @router.get("/entities/{uri}/graph")
-async def get_entity_graph(uri: str, project_id: str | None = Query(None, alias="projectId")):
+async def get_entity_graph(uri: str, project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     try:
         if project_id:
-            art = await project_artifacts_service.resolve(project_id)
+            art = await project_artifacts_service.resolve(project_id, artifact_rev)
             return await ontology_service._run_with_ensure(
                 project_id, art.db_path, ontology_service.get_entity_graph, uri
             )
@@ -81,10 +82,11 @@ async def get_full_graph(
     state_fips: Union[str, None] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     project_id: str | None = Query(None, alias="projectId"),
+    artifact_rev: str | None = Query(None, alias="artifactRev"),
 ):
     type_list = [t.strip() for t in types.split(",") if t.strip()]
     if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+        art = await project_artifacts_service.resolve(project_id, artifact_rev)
         return await ontology_service._run_with_ensure(
             project_id,
             art.db_path,
@@ -103,10 +105,11 @@ async def search_entities(
     q: str = Query(..., min_length=1),
     types: Union[str, None] = Query(None),
     project_id: str | None = Query(None, alias="projectId"),
+    artifact_rev: str | None = Query(None, alias="artifactRev"),
 ):
     type_list = [t.strip() for t in types.split(",")] if types else None
     if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+        art = await project_artifacts_service.resolve(project_id, artifact_rev)
         return await ontology_service._run_with_ensure(
             project_id, art.db_path, ontology_service.search_entities, q, type_list
         )
@@ -119,11 +122,12 @@ async def semantic_search_entities(
     types: Union[str, None] = Query(None),
     limit: int = Query(20, ge=1, le=100),
     project_id: str | None = Query(None, alias="projectId"),
+    artifact_rev: str | None = Query(None, alias="artifactRev"),
 ):
     type_list = [t.strip() for t in types.split(",")] if types else None
     try:
         if project_id:
-            art = await project_artifacts_service.resolve(project_id)
+            art = await project_artifacts_service.resolve(project_id, artifact_rev)
             await ontology_service.ensure_loaded_async(art.db_path, project_id=project_id)
         return await embedding_service.search(q, top_k=limit, types=type_list, project_id=project_id)
     except RuntimeError as e:
@@ -131,9 +135,9 @@ async def semantic_search_entities(
 
 
 @router.get("/series")
-async def list_series(project_id: str | None = Query(None, alias="projectId")):
+async def list_series(project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+        art = await project_artifacts_service.resolve(project_id, artifact_rev)
         return await ontology_service._run_with_ensure(
             project_id, art.db_path, ontology_service.list_series
         )
@@ -141,9 +145,9 @@ async def list_series(project_id: str | None = Query(None, alias="projectId")):
 
 
 @router.get("/series/{series_id}/data")
-async def get_series_data(series_id: str, project_id: str | None = Query(None, alias="projectId")):
+async def get_series_data(series_id: str, project_id: str | None = Query(None, alias="projectId"), artifact_rev: str | None = Query(None, alias="artifactRev")):
     if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+        art = await project_artifacts_service.resolve(project_id, artifact_rev)
         return await ontology_service._run_with_ensure(
             project_id, art.db_path, ontology_service.get_series_data, series_id
         )
