@@ -10,7 +10,7 @@ import { ContextSnapshot } from "@/components/agent/ContextSnapshot";
 import { AgentChat, Message } from "@/components/agent/AgentChat";
 import { ChevronDown, Sparkles } from "lucide-react";
 
-function WorkspacePageInner({ projectSlug }: { projectSlug: string }) {
+export function WorkspacePageInner({ projectSlug }: { projectSlug: string }) {
   const searchParams = useSearchParams();
   const router = useRouter();
 

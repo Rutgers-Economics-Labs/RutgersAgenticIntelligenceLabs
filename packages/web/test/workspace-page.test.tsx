@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import WorkspacePage from "@/app/(dashboard)/workspace/page";
+import { WorkspacePageInner } from "@/app/[project]/agent/page";
 
 const useQueryMock = vi.fn();
 const useMutationMock = vi.fn();
@@ -15,6 +15,7 @@ const deleteSessionMock = vi.fn();
 let sessionParamValue: string | null = null;
 let sessionsData: Array<Record<string, unknown>> = [];
 let currentSessionData: Record<string, unknown> | null | undefined = undefined;
+const projectsContextMock = vi.fn();
 
 async function* streamEvents(events: unknown[]) {
   for (const event of events) {
@@ -35,7 +36,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/convex/_generated/api", () => ({
   api: {
     agent: {
-      listSessions: "agent.listSessions",
+      listByProject: "agent.listByProject",
       getSession: "agent.getSession",
       createSession: "agent.createSession",
       appendMessages: "agent.appendMessages",
@@ -53,16 +54,19 @@ vi.mock("@/lib/api", () => ({
   sql: {
     schema: (...args: unknown[]) => sqlSchemaMock(...args),
   },
+  projects: {
+    context: (...args: unknown[]) => projectsContextMock(...args),
+  },
 }));
 
-describe("WorkspacePage", () => {
+describe("AgentPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionParamValue = null;
     sessionsData = [];
     currentSessionData = undefined;
     useQueryMock.mockImplementation((query: string, args: unknown) => {
-      if (query === "agent.listSessions") return sessionsData;
+      if (query === "agent.listByProject") return sessionsData;
       if (query === "agent.getSession" && args === "skip") return undefined;
       if (query === "agent.getSession") return currentSessionData;
       return undefined;
@@ -84,6 +88,12 @@ describe("WorkspacePage", () => {
         { name: "hasPopulation", type: "BIGINT" },
       ],
     });
+    projectsContextMock.mockResolvedValue({
+      project: { name: "Demo Project", status: "hydrated", agentAllowedActions: null },
+      ontology: { classes: [{ name: "State", instance_count: 1 }] },
+      data_sources: [{ slug: "fred-unemployment", name: "FRED Unemployment" }],
+      pipelines: [{ slug: "demo-pipeline", name: "Demo Pipeline" }],
+    });
     chatMock.mockReturnValue(streamEvents([]));
     createSessionMock.mockResolvedValue({ sessionId: "session_1" });
     appendMessagesMock.mockResolvedValue({});
@@ -92,17 +102,17 @@ describe("WorkspacePage", () => {
   });
 
   it("inserts a schema-aware prompt when a template is selected", async () => {
-    render(<WorkspacePage />);
+    render(<WorkspacePageInner projectSlug="demo-project" />);
 
     await waitFor(() => {
-      expect(sqlSchemaMock).toHaveBeenCalled();
+      expect(sqlSchemaMock).toHaveBeenCalledWith("demo-project");
     });
 
-    fireEvent.click(screen.getByText("Templates"));
+    fireEvent.click(screen.getByText("Research Templates"));
     fireEvent.click(screen.getByText("Difference-in-differences"));
 
-    const textarea = screen.getByPlaceholderText(
-      "Ask a research question… (Enter to send, Shift+Enter for newline)"
+    const textarea = await screen.findByPlaceholderText(
+      "Ask a research question..."
     ) as HTMLTextAreaElement;
 
     await waitFor(() => {
@@ -130,7 +140,7 @@ describe("WorkspacePage", () => {
       ],
     };
 
-    render(<WorkspacePage />);
+    render(<WorkspacePageInner projectSlug="demo-project" />);
 
     expect(await screen.findByText("Summarize the data")).toBeInTheDocument();
     expect(screen.getByText("Here is the saved summary.")).toBeInTheDocument();
@@ -151,27 +161,25 @@ describe("WorkspacePage", () => {
       ])
     );
 
-    render(<WorkspacePage />);
+    render(<WorkspacePageInner projectSlug="demo-project" />);
 
-    const textarea = screen.getByPlaceholderText(
-      "Ask a research question… (Enter to send, Shift+Enter for newline)"
+    const textarea = await screen.findByPlaceholderText(
+      "Ask a research question..."
     );
 
     fireEvent.change(textarea, { target: { value: "How many rows are there?" } });
-    fireEvent.keyDown(textarea, { key: "Enter", code: "Enter" });
-
-    expect(await screen.findByText("How many rows are there?")).toBeInTheDocument();
-    expect(await screen.findByText("There are 2 rows in the sample.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => {
       expect(createSessionMock).toHaveBeenCalledWith({
         title: "How many rows are there?",
         model: "test-model",
+        projectSlug: "demo-project",
       });
     });
 
-    expect(chatMock).toHaveBeenCalledWith("How many rows are there?", [], "test-model");
-    expect(pushMock).toHaveBeenCalledWith("/workspace?session=session_1");
+    expect(chatMock).toHaveBeenCalledWith("How many rows are there?", [], "test-model", "demo-project");
+    expect(pushMock).toHaveBeenCalledWith("/demo-project/agent?session=session_1");
 
     await waitFor(() => {
       expect(appendMessagesMock).toHaveBeenCalledWith({

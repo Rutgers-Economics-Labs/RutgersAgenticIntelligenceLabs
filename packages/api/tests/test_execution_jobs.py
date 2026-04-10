@@ -3,12 +3,14 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add app to path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from app.services.subprocess_code_runner import run_user_code
-from app.services.convex_client import convex
 
+@pytest.mark.asyncio
 async def test_code_streaming():
     print("Starting code streaming test...")
     # This assumes a mock job_id or a valid one if we want to check Convex

@@ -465,6 +465,7 @@ export function AgentChat({
               />
               <button
                 onClick={sendMessage}
+                aria-label="Send message"
                 disabled={loading || !input.trim()}
                 className={cn(
                   "shrink-0 flex items-center justify-center w-12 h-12 rounded-[22px] transition-all duration-300 relative overflow-hidden",
