@@ -1,4 +1,6 @@
-# Knowledge Base (Context Documents)
+# Context & Knowledge Management
+
+RAIL manages context at two levels: the **Unstructured Knowledge Base** (documents) and the **Structured Context Layer** (ontology-derived data slices). The **Context Assembly Pipeline** orchestrates both to provide agents with a precise operational context for every query.
 
 The **knowledge base** is a per-project document store that agents can search before resorting to web queries or admitting a knowledge gap. It holds research papers, regulatory filings, policy documents, reports, and compiled analysis notes.
 
@@ -132,9 +134,43 @@ The knowledge base page at `/context` (project-scoped) provides a document manag
 
 ---
 
+## The Context Layer & Assembly Pipeline
+
+The **Context Layer** is the "operational slice" of the platform. Unlike the full serving layer (DuckDB), it contains only the entities, relationships, and metadata relevant to the current user query.
+
+### The Assembly Pipeline Flow
+
+1.  **Request**: User asks a natural language question.
+2.  **Planner (Role)**: Analyzes the question and produces a **Manifest** of required ontology classes, identifiers, and time ranges.
+3.  **Coverage (Role)**: Correlates the Manifest with the **Metadata Layer** to determine if the data exists in the Serving Layer.
+4.  **Assembler (Service)**: Gathers the matching SQL views from DuckDB and document fragments from the Knowledge Base.
+5.  **Bundle**: Produces a **`StructuredContextBundle`** (a signed manifest and data slice).
+
+### Structured Context Bundle Schema
+
+The bundle is a JSON object injected into the agent's work session:
+
+```json
+{
+  "project_status": {
+    "hydrated": true,
+    "last_sync": "2024-01-15T08:00:00Z"
+  },
+  "ontology_slice": {
+    "classes": ["County", "UnemploymentRate"],
+    "ddl": "CREATE VIEW county_context AS SELECT ...",
+    "relationships": ["measuredFor"]
+  },
+  "knowledge_fragments": [
+    {"doc_id": "policy_2022", "snippet": "..."}
+  ],
+  "serving_artifact_hash": "sha256:77d..."
+}
+```
+
 ## Design Constraints
 
 - **No vector database.** Search is keyword-based using substring matching. This is intentional for v1 — adding embedding search is a planned improvement using `embedding_service.py`.
-- **Text only.** Images, tables, and figures in PDFs are ignored — only text paragraphs are extracted.
+- **Context Locking.** Agents cannot access data outside the structured bundle. This prevents leakage and "hallucination-by-overexposure."
 - **100k char cap.** Long documents are truncated. For very long documents (book-length reports), users should upload specific chapters or sections.
 - **No versioning.** Documents are replaced by deleting and re-uploading. Versioning is not planned.

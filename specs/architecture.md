@@ -1,6 +1,18 @@
 # Platform Architecture
 
-RAIL is a **Data OS** — a platform where ontologies are the type system, connectors are the drivers, pipelines are the processes, and agents are programs that run against a structured knowledge graph. Projects are isolated research domains, each backed by a GitHub repository and owning their own ontology and data. A shared registry of connector templates and ontology modules makes the ecosystem composable without forcing a global schema.
+RAIL is a **Semantic Data OS** — a platform where ontologies are the type system, connectors are the drivers, and agents are programs that run against a structured knowledge graph. The platform follows a **5-Layer Architecture** that decouples semantic meaning from high-throughput analytic serving.
+
+## The 5-Layer Platform Model
+
+| Layer | Component | Purpose |
+|-------|-----------|---------|
+| **1. Semantic Layer** | Ontology (OWL/YAML) | Defines the "type system" and relationships of the domain. |
+| **2. Metadata Layer** | Coverage Service | Tracks data availability, lineage, freshness, and source gaps. |
+| **3. Serving Layer** | DuckDB / Registry | Fast, immutable analytic stores versioned by artifact hashes. |
+| **4. Context Layer** | Context Graph | Assembles the "operational slice" (sub-graph) needed for a specific query. |
+| **5. Agent Layer** | Role-Based Runtime | Specialized agents (Planner, Coverage, etc.) that operate on the context. |
+
+Projects are isolated research domains, each backed by a GitHub repository. A shared registry of connector templates and ontology modules makes the ecosystem composable without forcing a global schema.
 
 ## Monorepo Layout
 
@@ -239,13 +251,9 @@ All env vars live in `.env` (repo root); the Makefile `-include .env; export` fo
 
 **Kernel properties injected at hydration time.** The hydration worker prepends the kernel ontology module to the pipeline's ontology config before writing to tmpdir. Projects never need to declare kernel properties explicitly.
 
-**owlready2 single-thread executor.** owlready2's SQLite backend is not thread-safe. `ontology_service` uses `ThreadPoolExecutor(max_workers=1)` so all OWL reads share one thread.
+**Domain agents as Role-Based Runtimes.** Instead of a single "Assistant" prompt, research queries are handled by a sequence of specialized roles (Planner, Coverage, Onboarding, Analysis, Explanation). This ensures that reasoning is constrained to the minimum necessary context.
 
-**DuckDB as SQL mirror.** After every hydration, `ontology_service.export_to_duckdb()` writes each OWL class to a DuckDB table. This file is used for all SQL queries and injected into the Python code execution sandbox.
-
-**Ontology hot-swap.** When a hydration job completes, `hydration_worker` calls `ontology_service.load(new_db_path)`, replacing the in-memory World without a server restart.
-
-**Domain agents before platform agent.** Each project has its own agent scoped to its ontology, data, and action catalog. Context assembly is tight and deterministic. A platform-wide routing agent is a future concern.
+**Artifact Versioning (Content Addressable).** The platform is migrating away from local file paths (`onto.db`). Every hydration produces an immutable, hash-addressed artifact manifest. Services resolve data by version, enabling horizontal scaling without split-brain state.
 
 **Provider-agnostic LLM.** `llm_service` wraps LiteLLM so any model string works: `claude-sonnet-4-6`, `gemini/gemini-2.0-flash`, `openrouter/meta-llama/llama-3.1-70b-instruct`, etc.
 
