@@ -234,6 +234,7 @@ export default function ProjectsPage() {
                 <div className="flex items-center justify-end gap-2">
                    <button 
                      onClick={() => { setForkingProject({ id: p._id, name: p.name }); setForkName(`${p.name} (fork)`); }}
+                     aria-label={`Fork ${p.name}`}
                      className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-muted-foreground hover:text-[--primary] hover:bg-[--primary]/10 transition-all"
                      title="Fork Project"
                    >
@@ -241,6 +242,7 @@ export default function ProjectsPage() {
                    </button>
                    <button 
                      onClick={() => handleDelete(p.slug)}
+                     aria-label={`Delete ${p.name}`}
                      className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-all"
                      title="Delete Project"
                    >

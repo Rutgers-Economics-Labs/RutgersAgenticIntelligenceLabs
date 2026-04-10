@@ -4,6 +4,12 @@ RAIL platform client supporting both cloud and local modes.
 
 ## Usage Examples
 
+For local repo usage without publishing the package, run Python from the repo root and install the client in editable mode first:
+
+```bash
+pip install -e packages/rail-py
+```
+
 ```python
 import rail
 

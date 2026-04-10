@@ -60,12 +60,12 @@ describe("ProjectsPage", () => {
   it("opens the fork modal and submits a fork request", async () => {
     render(<ProjectsPage />);
 
-    fireEvent.click(screen.getByText("Fork"));
+    fireEvent.click(screen.getByRole("button", { name: "Fork Baseline Project" }));
     await screen.findByRole("heading", { name: "Fork Project" });
 
     const input = screen.getByDisplayValue("Baseline Project (fork)");
     fireEvent.change(input, { target: { value: "Baseline Project Copy" } });
-    fireEvent.click(screen.getByRole("button", { name: "Fork Project" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm Fork" }));
 
     await waitFor(() => {
       expect(forkProjectMock).toHaveBeenCalledWith({
