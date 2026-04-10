@@ -630,6 +630,7 @@ async def _run_project_chat(
     max_turns = 15
     for _turn in range(max_turns):
         role_def = ROLES.get(current_role, ROLES["planner"])
+        yield {"type": "role_change", "agentRole": current_role}
 
         system_prompt = role_def["SYSTEM_PROMPT"] + "\n\n" + PROJECT_SYSTEM_PROMPT
 

@@ -18,6 +18,7 @@ import { toast } from "sonner";
 type MessageRole = "user" | "assistant";
 
 interface ToolCallBlock {
+  agentRole?: string;
   id: string;
   name: string;
   args: Record<string, unknown>;
@@ -25,6 +26,7 @@ interface ToolCallBlock {
 }
 
 export interface Message {
+  agentRole?: string;
   id: string;
   role: MessageRole;
   content: string;
@@ -49,9 +51,13 @@ function uid() {
   return Math.random().toString(36).slice(2, 10);
 }
 
-function ToolCallCard({ tc }: { tc: ToolCallBlock }) {
+function ToolCallCard({ tc, isExpertMode = false }: { tc: ToolCallBlock; isExpertMode?: boolean }) {
   const [open, setOpen] = useState(false);
   const label = TOOL_LABELS[tc.name] ?? tc.name;
+
+  if (!isExpertMode) {
+    return null;
+  }
 
   return (
     <div className="my-1 rounded border border-[--border] bg-[--muted]/40 text-xs">
@@ -61,7 +67,10 @@ function ToolCallCard({ tc }: { tc: ToolCallBlock }) {
       >
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <Code2 size={12} className="text-[--primary]" />
-        <span className="font-medium text-[--primary]">{label}</span>
+        <span className="font-medium text-[--primary]">
+          {tc.agentRole && <span className="text-[--muted-foreground] uppercase tracking-wider text-[10px] mr-2">[{tc.agentRole}]</span>}
+          {label}
+        </span>
         {tc.result !== undefined && !open && (
           <span className="ml-auto text-[10px] text-green-400/70">done</span>
         )}
@@ -86,7 +95,7 @@ function ToolCallCard({ tc }: { tc: ToolCallBlock }) {
   );
 }
 
-function MessageBubble({ msg }: { msg: Message }) {
+function MessageBubble({ msg, isExpertMode }: { msg: Message; isExpertMode?: boolean }) {
   const isUser = msg.role === "user";
 
   return (
@@ -101,8 +110,13 @@ function MessageBubble({ msg }: { msg: Message }) {
         {msg.toolCalls && msg.toolCalls.length > 0 && (
           <div className="space-y-2 w-full min-w-[320px]">
             {msg.toolCalls.map(tc => (
-              <ToolCallCard key={tc.id} tc={tc} />
+              <ToolCallCard key={tc.id} tc={tc} isExpertMode={isExpertMode} />
             ))}
+          </div>
+        )}
+        {msg.agentRole && (
+          <div className="text-xs font-semibold text-[--primary] uppercase tracking-wider mb-2">
+            {msg.agentRole} is thinking...
           </div>
         )}
         {/* Text content */}
@@ -275,6 +289,12 @@ export function AgentChat({
           onMessages(prev => prev.map(m =>
             m.id === asstId ? { ...m, content: m.content + event.content } : m
           ));
+        } else if (event.type === "role_change") {
+          onMessages(prev => prev.map(m =>
+            m.id === asstId
+              ? { ...m, agentRole: event.agentRole }
+              : m
+          ));
         } else if (event.type === "tool_call") {
           const tc: ToolCallBlock = { id: event.id, name: event.name, args: event.args };
           pendingToolCalls[event.id] = tc;
@@ -371,6 +391,7 @@ export function AgentChat({
   }, {});
 
   const isEmpty = messages.length === 0;
+  const [isExpertMode, setIsExpertMode] = useState(false);
 
   return (
     <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -393,12 +414,23 @@ export function AgentChat({
            </div>
         )}
         {messages.map(msg => (
-          <MessageBubble key={msg.id} msg={msg} />
+          <MessageBubble key={msg.id} msg={msg} isExpertMode={isExpertMode} />
         ))}
         <div ref={bottomRef} />
       </div>
 
       {/* Input area */}
+      <div className="flex justify-end px-4 py-2">
+        <label className="flex items-center gap-2 text-xs text-[--muted-foreground] cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isExpertMode}
+            onChange={(e) => setIsExpertMode(e.target.checked)}
+            className="rounded border-[--border] bg-[--background] text-[--primary] focus:ring-[--primary]"
+          />
+          Expert Mode
+        </label>
+      </div>
       <div className="shrink-0 px-6 pb-6 relative">
         <div className="max-w-4xl mx-auto">
           {isEmpty && (

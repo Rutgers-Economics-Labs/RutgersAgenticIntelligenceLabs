@@ -190,7 +190,7 @@ function OverviewContent({ projectSlug }: { projectSlug: string }) {
                 </p>
                 {activeJob ? (
                   <p className="opacity-70 text-xs">
-                    Sync currently in progress on node <code className="bg-amber-500/10 px-1 rounded font-mono">{activeJob.machine || "unknown"}</code>. Features will unlock once complete.
+                    Sync currently in progress on node <code className="bg-amber-500/10 px-1 rounded font-mono">{(activeJob as any).machine || "unknown"}</code>. Features will unlock once complete.
                   </p>
                 ) : project.status === "hydrated" ? (
                   <p className="opacity-70 text-xs">
@@ -210,11 +210,11 @@ function OverviewContent({ projectSlug }: { projectSlug: string }) {
         </Card>
       )}
 
-      {lastJob && (lastJob.status === "success" || lastJob.status === "completed") && (
+      {lastJob && ((lastJob.status as string) === "success" || lastJob.status === "completed") && (
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 w-fit">
            <CheckCircle2 size={12} className="text-emerald-500" />
            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-tight">
-             Last synced on <span className="underline">{lastJob.machine || "unknown"}</span> ({formatDistanceToNow(lastJob.createdAt, { addSuffix: true })})
+             Last synced on <span className="underline">{(lastJob as any).machine || "unknown"}</span> ({formatDistanceToNow(lastJob.createdAt, { addSuffix: true })})
            </span>
         </div>
       )}

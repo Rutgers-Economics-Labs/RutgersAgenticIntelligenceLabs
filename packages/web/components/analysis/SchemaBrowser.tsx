@@ -10,7 +10,7 @@ interface SchemaBrowserProps {
 }
 
 export function SchemaBrowser({ projectId, onSelect }: SchemaBrowserProps) {
-  const [schema, setSchema] = useState<Record<string, { name: string; type: string }[]>>({});
+  const [schema, setSchema] = useState<Record<string, { columns: { name: string; type: string; density?: number }[]; row_count?: number }>>({});
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
@@ -83,7 +83,10 @@ export function SchemaBrowser({ projectId, onSelect }: SchemaBrowserProps) {
           </div>
         ) : (
           <div className="space-y-1.5">
-            {filteredTables.map(([tableName, columns]) => (
+            {filteredTables.map(([tableName, tableData]) => {
+              const columns = tableData.columns || [];
+              const rowCount = tableData.row_count || 0;
+              return (
               <div key={tableName} className="space-y-1 animate-in fade-in slide-in-from-left-2 duration-300">
                 <button
                   onClick={() => toggle(tableName)}
@@ -105,8 +108,11 @@ export function SchemaBrowser({ projectId, onSelect }: SchemaBrowserProps) {
                     expanded[tableName] ? "text-[--primary]" : "text-blue-400/60 group-hover:text-blue-400"
                   )} />
                   <span className="font-bold text-[13px] truncate">{tableName}</span>
-                  <span className="ml-auto text-[10px] font-mono tabular-nums opacity-0 group-hover:opacity-40 transition-opacity">
-                    {columns.length}
+                  <span className={cn(
+                    "ml-auto text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded",
+                    rowCount > 0 ? "bg-green-500/10 text-green-500" : "opacity-0 group-hover:opacity-40 transition-opacity bg-[--muted]/50"
+                  )}>
+                    {rowCount > 0 ? `${rowCount} rows` : `${columns.length} cols`}
                   </span>
                 </button>
 
@@ -124,15 +130,23 @@ export function SchemaBrowser({ projectId, onSelect }: SchemaBrowserProps) {
                             {col.name}
                           </span>
                         </div>
-                        <span className="text-[9px] font-black text-[--muted-foreground]/20 uppercase tracking-tighter shrink-0 border border-[--border] px-1.5 rounded bg-[--muted]/5">
-                          {col.type}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          {col.density !== undefined && rowCount > 0 && (
+                            <div className="w-16 h-1.5 bg-[--muted] rounded-full overflow-hidden" title={`Density: ${(col.density * 100).toFixed(1)}%`}>
+                              <div className={cn("h-full", col.density > 0.8 ? "bg-green-500" : col.density > 0.3 ? "bg-yellow-500" : "bg-red-500")} style={{ width: `${col.density * 100}%` }} />
+                            </div>
+                          )}
+                          <span className="text-[9px] font-black text-[--muted-foreground]/20 uppercase tracking-tighter shrink-0 border border-[--border] px-1.5 rounded bg-[--muted]/5">
+                            {col.type}
+                          </span>
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
               </div>
-            ))}
+            )}
+            )}
           </div>
         )}
       </div>
