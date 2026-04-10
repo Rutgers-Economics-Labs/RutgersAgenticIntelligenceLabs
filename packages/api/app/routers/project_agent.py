@@ -614,23 +614,44 @@ async def _run_project_chat(
     history: list[dict],
     model: str | None,
 ) -> AsyncGenerator[dict, None]:
-    messages = [{"role": "system", "content": PROJECT_SYSTEM_PROMPT}]
-    messages.extend(history)
+    messages = list(history)
     messages.append({"role": "user", "content": user_message})
 
     new_messages: list[dict] = [{"role": "user", "content": user_message}]
 
-    max_turns = 8
+    current_role = "planner"
+
+    def _filter_tools(tools: list[dict], role_allowed: list[str]) -> list[dict]:
+        role_set = set(role_allowed)
+        if "delegate" not in role_set:
+            role_set.add("delegate")
+        return [t for t in tools if t["function"]["name"] in role_set]
+
+    max_turns = 15
     for _turn in range(max_turns):
+        role_def = ROLES.get(current_role, ROLES["planner"])
+
+        system_prompt = role_def["SYSTEM_PROMPT"] + "\n\n" + PROJECT_SYSTEM_PROMPT
+
+        if messages and messages[0]["role"] == "system":
+            messages[0]["content"] = system_prompt
+        else:
+            messages.insert(0, {"role": "system", "content": system_prompt})
+
+        filtered_tools = _filter_tools(PROJECT_TOOLS_MERGED, role_def["allowed_tools"])
+
         assistant_text = ""
         turn_tool_calls: list[dict] = []
+        delegated_role = None
 
-        async for event in llm_service.stream_agent(messages, PROJECT_TOOLS_MERGED, model=model):
+        async for event in llm_service.stream_agent(messages, filtered_tools, model=model):
             if event["type"] == "text_delta":
                 assistant_text += event["content"]
+                event["agentRole"] = current_role
                 yield event
             elif event["type"] == "tool_call":
                 turn_tool_calls.append(event)
+                event["agentRole"] = current_role
                 yield event
             elif event["type"] == "_turn_end":
                 raw_tool_calls = event.get("raw_tool_calls", [])
@@ -645,28 +666,14 @@ async def _run_project_chat(
                         for tc in raw_tool_calls
                     ]
                 messages.append(assistant_msg)
+
+                ui_msg = dict(assistant_msg)
+                ui_msg["agentRole"] = current_role
                 if assistant_text:
-                    new_messages.append({"role": "assistant", "content": assistant_text})
+                    new_messages.append(ui_msg)
 
                 if not event["has_tool_calls"]:
                     yield {"type": "done", "new_messages": new_messages}
-                    return
-
-                for tc_event in turn_tool_calls:
-                    try:
-                        result = await _execute_project_tool(tc_event["name"], tc_event["args"], project_id)
-                    except Exception as exc:
-                        result = {"error": str(exc)}
-                    yield {"type": "tool_result", "id": tc_event["id"], "name": tc_event["name"], "result": result}
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_event["id"],
-                        "content": json.dumps(result),
-                    })
-                turn_tool_calls = []
-
-    yield {"type": "done", "new_messages": new_messages}
-
 
 # ---------------------------------------------------------------------------
 # HTTP endpoint
