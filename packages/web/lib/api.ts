@@ -307,7 +307,7 @@ export const sql = {
   schema: (projectId?: string) => {
     const params = new URLSearchParams();
     withProject(params, projectId);
-    return req<Record<string, { name: string; type: string }[]>>(`/sql/schema${params.size ? `?${params}` : ""}`);
+    return req<Record<string, { columns: { name: string; type: string; density?: number }[]; row_count?: number }>>(`/sql/schema${params.size ? `?${params}` : ""}`);
   },
   tables: (projectId?: string) => {
     const params = new URLSearchParams();
@@ -431,8 +431,9 @@ export const storage = {
 // ── Agent ─────────────────────────────────────────────────────────────────────
 
 export type AgentEvent =
-  | { type: "text_delta";   content: string }
-  | { type: "tool_call";    id: string; name: string; args: Record<string, unknown> }
+  | { type: "text_delta";   content: string; agentRole?: string }
+  | { type: "role_change"; agentRole: string }
+  | { type: "tool_call";    id: string; name: string; args: Record<string, unknown>; agentRole?: string }
   | { type: "tool_result";  id: string; name: string; result: unknown }
   | { type: "done";         new_messages: { role: string; content: string }[] }
   | { type: "error";        message: string }
@@ -492,8 +493,9 @@ export const agent = {
 // ── Questions ─────────────────────────────────────────────────────────────────
 
 export type QuestionEvent =
-  | { type: "text_delta";   content: string }
-  | { type: "tool_call";    id: string; name: string; args: Record<string, unknown> }
+  | { type: "text_delta";   content: string; agentRole?: string }
+  | { type: "role_change"; agentRole: string }
+  | { type: "tool_call";    id: string; name: string; args: Record<string, unknown>; agentRole?: string }
   | { type: "tool_result";  id: string; name: string; result: unknown }
   | { type: "done" }
   | { type: "error";        message: string };

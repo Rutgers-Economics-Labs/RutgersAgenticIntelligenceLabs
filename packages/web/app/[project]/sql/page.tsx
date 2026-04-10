@@ -27,7 +27,7 @@ function SqlPageInner({ projectSlug }: { projectSlug: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [translating, setTranslating] = useState(false);
-  const [schema, setSchema] = useState<Record<string, { name: string; type: string }[]>>({});
+  const [schema, setSchema] = useState<Record<string, { columns: { name: string; type: string; density?: number }[]; row_count?: number }>>({});
   const [schemaOpen, setSchemaOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -129,10 +129,10 @@ function SqlPageInner({ projectSlug }: { projectSlug: string }) {
               <div key={t} className="text-xs">
                 <p className="font-medium text-[--primary] mb-1">{t}</p>
                 <ul className="space-y-0.5 text-[--muted-foreground]">
-                  {schema[t].slice(0, 8).map(c => (
+                  {(schema[t]?.columns || []).slice(0, 8).map(c => (
                     <li key={c.name}>{c.name} <span className="opacity-50">{c.type}</span></li>
                   ))}
-                  {schema[t].length > 8 && <li className="opacity-50">+{schema[t].length - 8} more</li>}
+                  {(schema[t]?.columns || []).length > 8 && <li className="opacity-50">+{(schema[t]?.columns || []).length - 8} more</li>}
                 </ul>
               </div>
             ))}

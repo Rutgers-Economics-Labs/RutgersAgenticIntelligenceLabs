@@ -34,7 +34,8 @@ export function WorkspacePageInner({ projectSlug }: { projectSlug: string }) {
 
     sql.schema(projectSlug)
       .then((schema) => {
-        const tables = Object.entries(schema).map(([table, columns]) => {
+        const tables = Object.entries(schema).map(([table, tableData]) => {
+          const columns = tableData.columns || [];
           const cols = columns.map((column) => `${column.name}`).join(", ");
           return `${table}(${cols})`;
         });
