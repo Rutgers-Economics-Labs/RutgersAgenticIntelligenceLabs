@@ -1,4 +1,4 @@
-.PHONY: help install install-api install-web install-engine \
+.PHONY: help install install-api install-web install-engine install-agent-tools \
         dev api web \
         hydrate hydrate-pipeline hydrate-academic \
         kill kill-api kill-web \
@@ -54,6 +54,7 @@ help:
 	@echo "    make install-api      Install FastAPI service deps"
 	@echo "    make install-web      Install Next.js deps"
 	@echo "    make install-engine   Install Streamlit/engine deps"
+	@echo "    make install-agent-tools Install CLI tools used by agents (mgrep + Gemini CLI)"
 	@echo ""
 	@echo "  Development"
 	@echo "    make dev              API + Web in one terminal (Ctrl+C / SIGHUP stops both)"
@@ -92,7 +93,7 @@ help:
 # Install
 # ─────────────────────────────────────────────────────────────────────────────
 
-install: install-api install-web install-engine
+install: install-api install-web install-engine install-agent-tools
 
 install-api:
 	@echo "→ Installing FastAPI deps…"
@@ -106,6 +107,12 @@ install-web:
 install-engine:
 	@echo "→ Installing engine deps…"
 	$(PYTHON) -m pip install owlready2 pandas streamlit pyvis requests openpyxl rdflib pyyaml beautifulsoup4 lxml duckdb aioboto3 litellm matplotlib numpy pdfplumber scikit-learn statsmodels python-multipart playwright
+
+install-agent-tools:
+	@echo "→ Installing agent CLI tools…"
+	npm install -g @mixedbread/mgrep @google/gemini-cli
+	@echo "  Installed mgrep and Gemini CLI."
+	@echo "  Note: Gemini CLI still requires authentication or API credentials on each machine."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Development servers
