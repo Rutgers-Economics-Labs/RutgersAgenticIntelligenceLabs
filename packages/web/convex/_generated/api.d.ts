@@ -9,19 +9,29 @@
  */
 
 import type * as agent from "../agent.js";
+import type * as agentSecretPolicies from "../agentSecretPolicies.js";
 import type * as analysis from "../analysis.js";
+import type * as approvals from "../approvals.js";
 import type * as configs from "../configs.js";
 import type * as connectors from "../connectors.js";
 import type * as context from "../context.js";
+import type * as devices from "../devices.js";
 import type * as executions from "../executions.js";
+import type * as hydrationArtifacts from "../hydrationArtifacts.js";
 import type * as jobs from "../jobs.js";
 import type * as ontologyTemplates from "../ontologyTemplates.js";
+import type * as plannerMessages from "../plannerMessages.js";
 import type * as projectChats from "../projectChats.js";
+import type * as projectSecrets from "../projectSecrets.js";
 import type * as projects from "../projects.js";
 import type * as quality from "../quality.js";
 import type * as questionSessions from "../questionSessions.js";
 import type * as registry from "../registry.js";
+import type * as runnerEvents from "../runnerEvents.js";
 import type * as schedules from "../schedules.js";
+import type * as taskBoards from "../taskBoards.js";
+import type * as taskEvents from "../taskEvents.js";
+import type * as tasks from "../tasks.js";
 import type * as workspaces from "../workspaces.js";
 
 import type {
@@ -32,19 +42,29 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agent: typeof agent;
+  agentSecretPolicies: typeof agentSecretPolicies;
   analysis: typeof analysis;
+  approvals: typeof approvals;
   configs: typeof configs;
   connectors: typeof connectors;
   context: typeof context;
+  devices: typeof devices;
   executions: typeof executions;
+  hydrationArtifacts: typeof hydrationArtifacts;
   jobs: typeof jobs;
   ontologyTemplates: typeof ontologyTemplates;
+  plannerMessages: typeof plannerMessages;
   projectChats: typeof projectChats;
+  projectSecrets: typeof projectSecrets;
   projects: typeof projects;
   quality: typeof quality;
   questionSessions: typeof questionSessions;
   registry: typeof registry;
+  runnerEvents: typeof runnerEvents;
   schedules: typeof schedules;
+  taskBoards: typeof taskBoards;
+  taskEvents: typeof taskEvents;
+  tasks: typeof tasks;
   workspaces: typeof workspaces;
 }>;
 

@@ -22,7 +22,7 @@ export const create = mutation({
     if (args.projectId) {
       project = await ctx.db.get(args.projectId);
     } else if (args.projectSlug) {
-      project = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", args.projectSlug)).first();
+      project = await ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", args.projectSlug!)).first();
     }
     if (!project) throw new Error("Project not found");
     const { projectSlug: _ps, projectId: _pid, ...rest } = args;
