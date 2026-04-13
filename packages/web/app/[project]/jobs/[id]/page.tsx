@@ -9,9 +9,7 @@ import { AlertCircle, ArrowRight, Link2, Loader2, Square } from "lucide-react";
 import { toast } from "sonner";
 import { ToolResult } from "@/components/jobs/ToolResult";
 import { countPipelineStepsFromSpec, hydrationStepProgress } from "@/lib/pipeline-steps";
-import { projects } from "@/lib/api";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+import { projects, API_BASE } from "@/lib/api";
 
 const STATUS_COLORS: Record<string, string> = {
   queued: "#8b949e",

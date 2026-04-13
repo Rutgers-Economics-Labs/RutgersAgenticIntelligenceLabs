@@ -21,6 +21,7 @@ from app.services.convex_client import convex
 from app.services.storage_service import storage
 from app.services import ontology_service
 from app.services.artifact_registry import artifact_registry
+import platform
 
 
 @dataclass(frozen=True)
@@ -33,7 +34,9 @@ class ProjectArtifacts:
 
 
 def _local_cache_dir(project_id: str) -> Path:
-    base = Path("/tmp/rail_project_artifacts") / project_id
+    # Use a path within the repo root to avoid /tmp cleanup issues and permission problems
+    repo_root = Path(__file__).resolve().parents[4]
+    base = repo_root / "cache" / "project_artifacts" / project_id
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -48,8 +51,7 @@ async def _materialize(storage_key_or_path: str, *, filename: str, project_id: s
         p = Path(storage_key_or_path)
         if not p.is_absolute():
             # Assume relative to repo root if not absolute
-            repo_root = Path(__file__).resolve().parents[1] # app/services
-            repo_root = repo_root.parents[2] # RutgersAgenticIntelligenceLabs
+            repo_root = Path(__file__).resolve().parents[4]
             p = repo_root / p
         
         p = p.resolve() # Handle symlinks and .. to ensure a canonical string for state mapping
@@ -79,28 +81,38 @@ def _job_has_stored_outputs(job: dict) -> bool:
 
 
 async def find_latest_success_job_with_outputs(project: dict) -> dict | None:
-    """
-    Find a hydration job that finished successfully and has outputDbPath.
-
-    Primary path: jobs indexed by projectId (listByProject).
-    Fallback: recent jobs where projectSlug matches but projectId was missing on insert,
-    or where projectId matches after a backfill.
-    """
     slug = project.get("slug")
     project_internal_id = project.get("_id")
+    current_node = platform.node()
 
+    # Priority 1: Jobs on THIS node that were successful
+    if slug:
+        try:
+            jobs_list = await convex.query(
+                "jobs:listByProject",
+                {"projectSlug": slug, "limit": 100},
+            )
+            if jobs_list:
+                node_jobs = [j for j in jobs_list if j.get("machine") == current_node and _job_has_stored_outputs(j)]
+                if node_jobs:
+                    # Return the most recent one on this node
+                    return node_jobs[0]
+        except Exception:
+            pass
+
+    # Priority 2: Any successful job (global)
     if slug:
         try:
             jobs_list = await convex.query(
                 "jobs:listByProject",
                 {"projectSlug": slug, "limit": 50},
             )
+            if jobs_list:
+                for j in jobs_list:
+                    if _job_has_stored_outputs(j):
+                        return j
         except Exception:
             jobs_list = None
-        if jobs_list:
-            for j in jobs_list:
-                if _job_has_stored_outputs(j):
-                    return j
 
     try:
         recent = await convex.query("jobs:list", {"limit": 200})
@@ -109,6 +121,7 @@ async def find_latest_success_job_with_outputs(project: dict) -> dict | None:
     if not recent:
         return None
 
+    # Check recent globally
     for j in recent:
         if not _job_has_stored_outputs(j):
             continue
@@ -168,12 +181,27 @@ async def resolve(project_id: str, artifact_rev: str | None = None) -> ProjectAr
                 owl_key = job.get("outputOwlPath") or owl_key
 
     # If project was never patched (e.g. worker skipped project update) but jobs exist with outputs,
-    # use the latest successful hydration job (including jobs only linked via projectSlug).
-    if not db_key:
+    # use the latest successful hydration job (prioritizing the current node if available).
+    import platform
+    current_node = platform.node()
+    
+    # If the active artifact on the project doesn't exist locally (and we are in local mode), 
+    # check if we have a node-specific success that might be better than a remote one.
+    local_missing = False
+    if db_key and settings.storage_backend == "local":
+        check_p = Path(db_key)
+        if not check_p.is_absolute():
+            check_p = Path(__file__).resolve().parents[4] / check_p
+        if not check_p.exists():
+            local_missing = True
+
+    if not db_key or local_missing:
         j = await find_latest_success_job_with_outputs(project)
         if j:
             db_key = j["outputDbPath"]
             owl_key = j.get("outputOwlPath") or owl_key
+            duck_key = j.get("outputDuckdbPath") or duck_key
+            emb_key = j.get("outputEmbeddingsPath") or emb_key
 
     if not db_key:
         raise HydrationRequiredError(

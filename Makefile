@@ -24,8 +24,8 @@ API_DIR  := $(ROOT_DIR)packages/api
 WEB_DIR  := $(ROOT_DIR)packages/web
 ENG_DIR  := $(ROOT_DIR)packages/engine
 
-API_PORT := 8000
-WEB_PORT := 3000
+API_PORT ?= 8000
+WEB_PORT ?= 3000
 PIPELINE           := configs/pipelines/nj_hydration.yaml
 ACADEMIC_PIPELINE  := configs/pipelines/academic_hydration.yaml
 
@@ -139,6 +139,32 @@ dev: kill
 	cleanup; \
 	exit $$st'
 
+dev-stable: kill
+	@echo "→ API :$(API_PORT) + Web :$(WEB_PORT) (Webpack Mode) — output below; Ctrl+C or close this terminal to stop both."
+	@bash -c '\
+	cleanup() { \
+	  kill -TERM $$API_PID $$WEB_PID 2>/dev/null; \
+	  sleep 0.45; \
+	  kill -KILL $$API_PID $$WEB_PID 2>/dev/null; \
+	  pkill -KILL -f "[u]vicorn app.main:app --port $(API_PORT)" 2>/dev/null || true; \
+	  pkill -KILL -f "[n]ext dev --port $(WEB_PORT)" 2>/dev/null || true; \
+	  wait $$API_PID $$WEB_PID 2>/dev/null || true; \
+	}; \
+	trap '\''cleanup; exit 0'\'' INT TERM HUP; \
+	API_PID=; WEB_PID=; \
+	cd "$(API_DIR)" && $(api_env) $(PYTHON) -m uvicorn app.main:app --port $(API_PORT) --reload & \
+	API_PID=$$!; \
+	cd "$(WEB_DIR)" && npm run dev -- --port $(WEB_PORT) --no-turbo & \
+	WEB_PID=$$!; \
+	echo ""; \
+	echo "  API      → http://localhost:$(API_PORT)"; \
+	echo "  API docs → http://localhost:$(API_PORT)/docs"; \
+	echo "  Web      → http://localhost:$(WEB_PORT)"; \
+	echo ""; \
+	wait; st=$$?; \
+	cleanup; \
+	exit $$st'
+
 api:
 	@echo "→ Starting FastAPI on :$(API_PORT)…"
 	cd $(API_DIR) && $(api_env) \
@@ -236,3 +262,8 @@ clean: kill
 	rm -f $(ENG_DIR)/ontology/populated_ontology.owl
 	rm -f $(ENG_DIR)/graph.html $(ENG_DIR)/graph_full.html
 	@echo "  Clean complete."
+
+clean-web:
+	@echo "Cleaning web cache..."
+	rm -rf packages/web/.next
+	rm -rf packages/web/.turbopack

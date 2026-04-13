@@ -1,12 +1,3 @@
-import sys
-from pathlib import Path
-
-ROOT = Path(__file__).resolve().parent
-RAIL_PY_ROOT = ROOT / "packages" / "rail-py"
-
-if str(RAIL_PY_ROOT) not in sys.path:
-    sys.path.insert(0, str(RAIL_PY_ROOT))
-
 import rail
 from rail.ontology import OntologyView
 from rail.agent import AgentClient

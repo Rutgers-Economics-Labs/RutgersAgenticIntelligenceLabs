@@ -17,8 +17,9 @@ API_URL = "https://jules.googleapis.com/v1alpha"
 SOURCE = "sources/github/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs"
 WORK_ORDERS_DIR = "state/work-orders"
 
-def get_pr_branch(pr_url):
-    """Uses GitHub CLI to fetch the branch name of a given PR URL."""
+def get_pr_branch(pr_url, session_id=None):
+    """Uses GitHub CLI to fetch the branch name, or falls back to git ls-remote + session_id."""
+    # 1. Try gh CLI
     try:
         res = subprocess.run(
             ["gh", "pr", "view", pr_url, "--json", "headRefName"], 
@@ -28,11 +29,28 @@ def get_pr_branch(pr_url):
         )
         data = json.loads(res.stdout)
         return data.get("headRefName")
-    except Exception as e:
-        print(f"Error fetching PR info using gh CLI: {e}")
-        if isinstance(e, subprocess.CalledProcessError):
-            print(f"CLI Error Output: {e.stderr}")
-        return None
+    except Exception:
+        pass
+
+    # 2. Fallback: Search origin for a branch containing the session_id
+    if session_id:
+        try:
+            res = subprocess.run(
+                ["git", "ls-remote", "--heads", "origin"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            for line in res.stdout.splitlines():
+                if session_id in line:
+                    # Line format: <hash>\trefs/heads/<branch_name>
+                    parts = line.split("refs/heads/")
+                    if len(parts) > 1:
+                        return parts[1].strip()
+        except Exception as e:
+            print(f"Fallback branch detection failed: {e}")
+
+    return None
 
 def main():
     headers = {
@@ -48,14 +66,15 @@ def main():
 
     # Skip completed work orders
     skip_list = [
-        "WO-0", "WO-1", "WO-2", "WO-3", "WO-4", "WO-5", "WO-6"
+        "WO-0", "WO-1", "WO-2", "WO-3", "WO-4", "WO-5", "WO-6",
+        "WO-7.1"
     ]
     files = [f for f in files if not any(s in f for s in skip_list)]
 
     print(f"Found {len(files)} remaining work orders to process.")
 
-    # Use the architectural baseline for the Layered Agent Platform
-    starting_branch = "feat/layered-agentic-architecture"
+    # Baseline on the successful completion of WO-7.1
+    starting_branch = "feature/coverage-gap-map-16800542750154885237"
 
     resume_id = os.environ.get("RESUME_SESSION_ID")
 
@@ -168,7 +187,7 @@ def main():
             print("Extracting branch name from PR...")
             
             # 4. Grab branch name from the PR so the next agent builds off it
-            branch_name = get_pr_branch(pr_url)
+            branch_name = get_pr_branch(pr_url, session_id=session_id)
             
             if branch_name:
                 starting_branch = branch_name

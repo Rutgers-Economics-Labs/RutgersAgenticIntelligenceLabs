@@ -5,28 +5,22 @@ import os
 import yaml
 from pathlib import Path
 
-def test_cloud_acceptance(httpx_mock):
+def test_cloud_acceptance(respx_mock):
     # Mock the API endpoints
     base_url = "http://localhost:8000/api/v1"
 
     # query
-    httpx_mock.add_response(
-        url=f"{base_url}/sql",
-        method="POST",
+    respx_mock.post(f"{base_url}/sql").respond(
         json={"columns": ["count"], "rows": [[10]]}
     )
 
     # classes
-    httpx_mock.add_response(
-        url=f"{base_url}/ontology/classes",
-        method="GET",
+    respx_mock.get(f"{base_url}/ontology/classes").respond(
         json=[{"name": "County", "instance_count": 10}]
     )
 
     # execute
-    httpx_mock.add_response(
-        url=f"{base_url}/execute",
-        method="POST",
+    respx_mock.post(f"{base_url}/execute").respond(
         json={"stdout": "hello", "stderr": "", "dataframes": {}, "figures": [], "error": None}
     )
 

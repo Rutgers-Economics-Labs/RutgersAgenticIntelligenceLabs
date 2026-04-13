@@ -80,15 +80,12 @@ app = FastAPI(
 )
 
 _cors_kw: dict = {
-    "allow_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    "allow_origins": settings.api_cors_origins,
+    "allow_origin_regex": settings.api_cors_origin_regex if settings.api_cors_origin_regex else None,
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],
 }
-# Removed regex temporarily to avoid conflict with generic origin allow
 app.add_middleware(CORSMiddleware, **_cors_kw)
 
 app.include_router(configs.router,  prefix="/api/v1")

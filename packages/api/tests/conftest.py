@@ -21,11 +21,11 @@ if str(ENGINE_ROOT) not in sys.path:
 
 # Override settings before importing the app
 import os
-os.environ.setdefault("CONVEX_URL", "https://colorless-elephant-150.convex.cloud")
-os.environ.setdefault("CONVEX_DEPLOY_KEY", "test-key")
-os.environ.setdefault("ENGINE_ROOT", str(ENGINE_ROOT))
-os.environ.setdefault("RAIL_ANALYSIS_DIR", str(ENGINE_ROOT / "analysis"))
-os.environ.setdefault("RAIL_TRANSFORM_DIR", str(ENGINE_ROOT / "transforms"))
+os.environ["CONVEX_URL"] = "https://colorless-elephant-150.convex.cloud"
+os.environ["CONVEX_DEPLOY_KEY"] = "test-key"
+os.environ["ENGINE_ROOT"] = str(ENGINE_ROOT.resolve())
+os.environ["RAIL_ANALYSIS_DIR"] = str((ENGINE_ROOT / "analysis").resolve())
+os.environ["RAIL_TRANSFORM_DIR"] = str((ENGINE_ROOT / "transforms").resolve())
 
 
 CONVEX_URL = os.environ["CONVEX_URL"]

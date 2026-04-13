@@ -477,7 +477,7 @@ async def _execute_tool(
         import httpx
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8000/api/v1/github/publish",
+                f"http://localhost:{settings.rail_api_port}/api/v1/github/publish",
                 json={
                     "project_slug": project_slug,
                     "files": args["files"],

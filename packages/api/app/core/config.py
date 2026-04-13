@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     github_app_id: str = Field(default="", validation_alias="GITHUB_APP_ID")
     github_app_private_key: str = Field(default="", validation_alias="GITHUB_APP_PRIVATE_KEY")
     github_webhook_secret: str = Field(default="", validation_alias="GITHUB_WEBHOOK_SECRET")
+    rail_api_port: int = Field(default=8000, validation_alias="RAIL_API_PORT")
 
     # Server
     # In production set API_CORS_ORIGINS="https://your-app.vercel.app,https://custom-domain.com"
