@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 class Project:
     def __init__(self, slug: str, backend):
         self.slug = slug

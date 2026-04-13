@@ -1,6 +1,7 @@
 from rail.project import Project
 from rail.client import CloudClient
 from rail.local import LocalEngine
+from rail.manifest import RailManifest, load_manifest, parse_manifest_content
 from rail.exceptions import RailError
 
 def connect(
@@ -21,5 +22,5 @@ def local(
 ) -> Project:
     """Load a RAIL project from a local repo directory (local mode)."""
     engine = LocalEngine(project_path=path, engine_path=engine_path)
-    slug = engine.read_rail_yaml()["slug"]
+    slug = engine.read_rail_yaml().project.slug
     return Project(slug=slug, backend=engine)

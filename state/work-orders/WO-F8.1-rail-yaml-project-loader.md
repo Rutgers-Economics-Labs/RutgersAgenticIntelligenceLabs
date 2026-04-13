@@ -1,6 +1,6 @@
 # WO-F8.1 — `rail.yaml` Project Loader
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-rail-yaml.md`  
 **Depends on:** WO-F1.1  
 **Blocks:** WO-F8.2, WO-F7.3  
@@ -14,4 +14,3 @@ Teach the backend and frontend-supporting services to load project structure fro
 - manifest loader
 - path resolver
 - project root contract checks
-

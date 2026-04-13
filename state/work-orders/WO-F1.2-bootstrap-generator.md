@@ -1,6 +1,6 @@
 # WO-F1.2 — Bootstrap Generator
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-bootstrap.md`, `specs/future-repo-contract.md`  
 **Depends on:** WO-F1.1  
 **Blocks:** WO-F1.3  
@@ -14,4 +14,3 @@ Create the project bootstrap generator that creates the new repo contract and st
 - CLI or API bootstrap flow
 - folder generation
 - starter `research_plan/` files
-

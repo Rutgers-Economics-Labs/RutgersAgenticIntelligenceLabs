@@ -1,6 +1,6 @@
 # WO-F5.2 — Hydration Artifact Registry
 
-**Status:** pending  
+**Status:** in_progress  
 **Spec:** `specs/future-hydration-artifacts.md`  
 **Depends on:** WO-F5.1, WO-F3.1  
 **Blocks:** WO-F5.3, WO-F8.2  
@@ -14,4 +14,3 @@ Implement storage for device-local hydration artifacts keyed by project, commit,
 - `hydration_artifacts` storage
 - artifact registration flow
 - artifact validity metadata
-

@@ -1,10 +1,12 @@
 import sys
 from pathlib import Path
-import yaml
+
+from rail.manifest import RailManifest, load_manifest
 
 class LocalEngine:
     def __init__(self, project_path: str, engine_path: str | None = None):
         self.project_path = Path(project_path).resolve()
+        self._manifest: RailManifest | None = None
 
         # Find engine — either explicit or by traversing up to monorepo
         if engine_path:
@@ -17,15 +19,23 @@ class LocalEngine:
         if self.engine_path:
             sys.path.insert(0, str(self.engine_path))
 
-    def read_rail_yaml(self) -> dict:
-        rail_yaml = self.project_path / "rail.yaml"
-        if not rail_yaml.exists():
-            raise FileNotFoundError(f"rail.yaml not found in {self.project_path}")
-        return yaml.safe_load(rail_yaml.read_text())
+    def read_rail_yaml(self) -> RailManifest:
+        self._manifest = load_manifest(self.project_path)
+        return self._manifest
+
+    @property
+    def manifest(self) -> RailManifest:
+        if self._manifest is None:
+            self._manifest = self.read_rail_yaml()
+        return self._manifest
 
     def hydrate(self, pipeline_slug: str) -> dict:
         from engine.pipeline_runner import run_pipeline
-        pipeline_path = self.project_path / f"configs/pipelines/{pipeline_slug}.yaml"
+        pipelines_dir = self.project_path / self.manifest.hydration.pipelines_dir
+        pipeline_name = pipeline_slug or self.manifest.hydration.default_pipeline
+        if not pipeline_name:
+            raise ValueError("pipeline_slug is required when rail.yaml does not define hydration.default_pipeline")
+        pipeline_path = pipelines_dir / f"{pipeline_name}.yaml"
         return run_pipeline(str(pipeline_path))
 
     def query_sql(self, sql: str) -> dict:

@@ -82,3 +82,10 @@ New machines should install agent CLI tools with:
 
 This installs `mgrep` and the Gemini CLI through the Makefile.
 
+## Status Notes
+
+- `completed` means the slice is already implemented locally and should not be sent to Jules again.
+- `in_progress` means there is meaningful local work underway and it should be reviewed/committed before handing dependent work to a runner.
+- `pending` means the slice is still open and can be considered for Jules once its dependencies are satisfied.
+
+See `state/work-orders/QUEUE.md` for the current execution waves and `state/work-orders/JULES-RUNBOOK.md` for the runner flow.

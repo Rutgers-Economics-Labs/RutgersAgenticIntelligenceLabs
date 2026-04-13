@@ -141,6 +141,9 @@ export default defineSchema({
     name: v.string(),
     slug: v.string(),
     description: v.optional(v.string()),
+    gitRepoUrl: v.optional(v.string()),
+    localRepoPath: v.optional(v.string()),
+    manifestPath: v.optional(v.string()),
     approach: v.union(v.literal("data-first"), v.literal("ontology-first")),
     ontologyConfigSlug: v.optional(v.string()),
     apiConfigSlugs: v.array(v.string()),
@@ -322,4 +325,138 @@ export default defineSchema({
   })
     .index("by_project", ["projectId", "createdAt"])
     .index("by_created", ["createdAt"]),
+
+  plannerMessages: defineTable({
+    projectId: v.id("projects"),
+    sessionId: v.optional(v.string()),
+    threadId: v.string(),
+    role: v.union(v.literal("user"), v.literal("assistant"), v.literal("system")),
+    content: v.string(),
+    messageType: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_project_thread", ["projectId", "threadId", "createdAt"])
+    .index("by_project", ["projectId", "createdAt"]),
+
+  taskBoards: defineTable({
+    projectId: v.id("projects"),
+    sessionId: v.optional(v.string()),
+    title: v.string(),
+    status: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId", "updatedAt"]),
+
+  tasks: defineTable({
+    boardId: v.id("taskBoards"),
+    projectId: v.id("projects"),
+    sessionId: v.optional(v.string()),
+    title: v.string(),
+    description: v.string(),
+    status: v.string(),
+    priority: v.optional(v.string()),
+    agentRole: v.string(),
+    runner: v.optional(v.string()),
+    repoPaths: v.array(v.string()),
+    acceptanceCriteria: v.array(v.string()),
+    dependsOnTaskIds: v.array(v.id("tasks")),
+    approvalState: v.optional(v.string()),
+    gitSnapshotPath: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_board", ["boardId", "updatedAt"])
+    .index("by_project", ["projectId", "updatedAt"])
+    .index("by_status", ["status"]),
+
+  taskEvents: defineTable({
+    taskId: v.id("tasks"),
+    eventType: v.string(),
+    payload: v.any(),
+    createdAt: v.number(),
+  })
+    .index("by_task", ["taskId", "createdAt"]),
+
+  approvals: defineTable({
+    projectId: v.id("projects"),
+    taskId: v.optional(v.id("tasks")),
+    agentSessionId: v.optional(v.id("agentSessions")),
+    approvalType: v.string(),
+    status: v.string(),
+    requestedByRole: v.string(),
+    grantedByUserId: v.optional(v.string()),
+    requestedAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_project", ["projectId", "requestedAt"])
+    .index("by_status", ["status"]),
+
+  projectSecrets: defineTable({
+    projectId: v.id("projects"),
+    keyName: v.string(),
+    encryptedValue: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId", "updatedAt"])
+    .index("by_project_key", ["projectId", "keyName"]),
+
+  agentSecretPolicies: defineTable({
+    projectId: v.id("projects"),
+    agentRole: v.string(),
+    allowedSecretNames: v.array(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_project", ["projectId", "updatedAt"])
+    .index("by_project_role", ["projectId", "agentRole"]),
+
+  runnerEvents: defineTable({
+    agentSessionId: v.id("agentSessions"),
+    eventType: v.string(),
+    normalizedPayload: v.any(),
+    rawPayload: v.optional(v.any()),
+    debugVisibility: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_session", ["agentSessionId", "createdAt"]),
+
+  devices: defineTable({
+    deviceId: v.string(),
+    label: v.optional(v.string()),
+    hostname: v.optional(v.string()),
+    platform: v.optional(v.string()),
+    createdAt: v.number(),
+    lastSeenAt: v.number(),
+  }).index("by_device_id", ["deviceId"]),
+
+  hydrationArtifacts: defineTable({
+    projectId: v.id("projects"),
+    deviceId: v.string(),
+    commitSha: v.string(),
+    manifestFingerprint: v.string(),
+    pipelineSlug: v.string(),
+    hydrationMode: v.string(),
+    ontologyArtifactPath: v.optional(v.string()),
+    duckdbArtifactPath: v.optional(v.string()),
+    status: v.string(),
+    createdAt: v.number(),
+    lastValidatedAt: v.optional(v.number()),
+  })
+    .index("by_project", ["projectId", "createdAt"])
+    .index("by_device", ["deviceId", "createdAt"])
+    .index("by_project_device_pipeline", ["projectId", "deviceId", "pipelineSlug"]),
+
+  artifactIndex: defineTable({
+    projectId: v.id("projects"),
+    path: v.string(),
+    artifactType: v.string(),
+    title: v.optional(v.string()),
+    description: v.optional(v.string()),
+    commitSha: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_project", ["projectId", "createdAt"])
+    .index("by_project_path", ["projectId", "path"]),
 });

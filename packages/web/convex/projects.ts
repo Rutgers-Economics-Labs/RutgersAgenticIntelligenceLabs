@@ -12,6 +12,12 @@ export const get = query({
     ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", slug)).first(),
 });
 
+export const getBySlug = query({
+  args: { slug: v.string() },
+  handler: async (ctx, { slug }) =>
+    ctx.db.query("projects").withIndex("by_slug", (q) => q.eq("slug", slug)).first(),
+});
+
 export const getById = query({
   args: { projectId: v.id("projects") },
   handler: async (ctx, { projectId }) => ctx.db.get(projectId),
@@ -32,12 +38,16 @@ export const create = mutation({
     name: v.string(),
     slug: v.string(),
     description: v.optional(v.string()),
+    gitRepoUrl: v.optional(v.string()),
+    localRepoPath: v.optional(v.string()),
+    manifestPath: v.optional(v.string()),
     approach: v.union(v.literal("data-first"), v.literal("ontology-first")),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
     return ctx.db.insert("projects", {
       ...args,
+      manifestPath: args.manifestPath ?? "rail.yaml",
       apiConfigSlugs: [],
       status: "draft",
       createdAt: now,
@@ -51,6 +61,9 @@ export const update = mutation({
     slug: v.string(),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
+    gitRepoUrl: v.optional(v.string()),
+    localRepoPath: v.optional(v.string()),
+    manifestPath: v.optional(v.string()),
     ontologyConfigSlug: v.optional(v.string()),
     apiConfigSlugs: v.optional(v.array(v.string())),
     pipelineConfigSlug: v.optional(v.string()),
@@ -82,6 +95,9 @@ export const updateById = mutation({
     projectId: v.id("projects"),
     name: v.optional(v.string()),
     description: v.optional(v.string()),
+    gitRepoUrl: v.optional(v.string()),
+    localRepoPath: v.optional(v.string()),
+    manifestPath: v.optional(v.string()),
     ontologyConfigSlug: v.optional(v.string()),
     apiConfigSlugs: v.optional(v.array(v.string())),
     pipelineConfigSlug: v.optional(v.string()),

@@ -1,6 +1,6 @@
 # WO-F3.1 — Convex Schema Reset
 
-**Status:** pending  
+**Status:** in_progress  
 **Spec:** `specs/future-database.md`  
 **Depends on:** WO-F1.1  
 **Blocks:** WO-F3.2, WO-F3.3, WO-F3.4, WO-F3.5, WO-F7.1  
@@ -14,4 +14,3 @@ Reset the Convex schema around the future operational model and remove legacy ta
 - reset plan
 - new base schema
 - obsolete schema removal
-
