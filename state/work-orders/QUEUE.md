@@ -9,7 +9,11 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 - `WO-F1.1` Manifest schema
 - `WO-F1.2` Bootstrap generator
 - `WO-F1.3` Starter project templates
+- `WO-F2.1` Agent YAML schema
+- `WO-F2.2` Prompt and checklist loader
+- `WO-F2.3` Role policy resolver
 - `WO-F8.1` `rail.yaml` project loader
+- `WO-F8.3` Verification hooks
 
 ### In progress locally
 
@@ -23,9 +27,6 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 
 ### Pending
 
-- `WO-F2.1` Agent YAML schema
-- `WO-F2.2` Prompt and checklist loader
-- `WO-F2.3` Role policy resolver
 - `WO-F3.3` Task board and approvals tables
 - `WO-F3.4` Runner events and sessions tables
 - `WO-F3.5` Project secrets and policy tables
@@ -39,7 +40,6 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 - `WO-F7.3` Repo browser plane
 - `WO-F7.4` Artifacts and timeline plane
 - `WO-F7.5` Settings and sessions surfaces
-- `WO-F8.3` Verification hooks
 - `WO-F9.1` Artifact indexing
 - `WO-F9.2` Report and PDF rendering
 - `WO-F9.3` Dashboard rendering

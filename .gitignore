@@ -229,3 +229,4 @@ packages/engine/ontology/*.db
 packages/engine/ontology/*.duckdb
 graph.html
 graph_full.html
+state/work-orders/.jules-runner-state.json

@@ -39,6 +39,12 @@ DRY_RUN = os.environ.get("DRY_RUN", "0") == "1"
 IGNORE_DEPENDENCIES = os.environ.get("IGNORE_DEPENDENCIES", "0") == "1"
 POLL_INTERVAL_SECONDS = int(os.environ.get("POLL_INTERVAL_SECONDS", "15"))
 MAX_ORDERS = int(os.environ["MAX_ORDERS"]) if os.environ.get("MAX_ORDERS") else None
+STATE_FILE = Path(
+    os.environ.get(
+        "JULES_RUNNER_STATE_FILE",
+        os.path.join(WORK_ORDERS_DIR, ".jules-runner-state.json"),
+    )
+)
 
 
 @dataclass
@@ -49,6 +55,33 @@ class WorkOrder:
     status: str
     depends_on: list[str]
     raw_content: str
+
+
+def load_runner_state() -> dict:
+    if not STATE_FILE.exists():
+        return {
+            "starting_branch": None,
+            "completed_work_order_ids": [],
+            "active_session": None,
+            "session_history": [],
+        }
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except Exception as exc:
+        print(f"Warning: could not read runner state from {STATE_FILE}: {exc}")
+        return {
+            "starting_branch": None,
+            "completed_work_order_ids": [],
+            "active_session": None,
+            "session_history": [],
+        }
+
+
+def save_runner_state(state: dict) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = STATE_FILE.with_suffix(f"{STATE_FILE.suffix}.tmp")
+    temp_file.write_text(json.dumps(state, indent=2, sort_keys=True))
+    temp_file.replace(STATE_FILE)
 
 
 def parse_bool_prompt(message: str, default: bool = False) -> bool:
@@ -130,16 +163,26 @@ def get_pr_branch(pr_url: str) -> str | None:
         return None
 
 
-def partition_work_orders(work_orders: list[WorkOrder]) -> tuple[dict[str, WorkOrder], list[WorkOrder]]:
+def partition_work_orders(
+    work_orders: list[WorkOrder],
+    cached_completed_ids: set[str] | None = None,
+    active_work_order_id: str | None = None,
+) -> tuple[dict[str, WorkOrder], list[WorkOrder]]:
     by_id = {work_order.work_order_id: work_order for work_order in work_orders}
-    completed = {
-        work_order.work_order_id: work_order
+    completed_ids = {
+        work_order.work_order_id
         for work_order in work_orders
         if work_order.status == "completed"
     }
+    if cached_completed_ids:
+        completed_ids.update(cached_completed_ids)
 
     ready: list[WorkOrder] = []
     for work_order in work_orders:
+        if active_work_order_id and work_order.work_order_id == active_work_order_id:
+            continue
+        if work_order.work_order_id in completed_ids:
+            continue
         if WORK_ORDER_IDS and work_order.work_order_id not in WORK_ORDER_IDS:
             continue
         if work_order.status not in STATUS_ALLOWLIST:
@@ -148,7 +191,7 @@ def partition_work_orders(work_orders: list[WorkOrder]) -> tuple[dict[str, WorkO
         unmet = [
             dependency
             for dependency in work_order.depends_on
-            if dependency not in completed
+            if dependency not in completed_ids
         ]
         if unmet and not IGNORE_DEPENDENCIES:
             continue
@@ -160,7 +203,12 @@ def partition_work_orders(work_orders: list[WorkOrder]) -> tuple[dict[str, WorkO
     return by_id, ready
 
 
-def print_queue_summary(work_orders: list[WorkOrder], ready_queue: list[WorkOrder]) -> None:
+def print_queue_summary(
+    work_orders: list[WorkOrder],
+    ready_queue: list[WorkOrder],
+    cached_completed_ids: set[str] | None = None,
+    active_session: dict | None = None,
+) -> None:
     print(f"Found {len(work_orders)} future work orders in {WORK_ORDERS_DIR}.")
     status_counts: dict[str, int] = {}
     for work_order in work_orders:
@@ -169,6 +217,14 @@ def print_queue_summary(work_orders: list[WorkOrder], ready_queue: list[WorkOrde
     print("Status summary:")
     for status in sorted(status_counts):
         print(f"  - {status}: {status_counts[status]}")
+
+    if cached_completed_ids:
+        print(f"Cached completed work orders: {len(cached_completed_ids)}")
+    if active_session:
+        print(
+            "Active cached session: "
+            f"{active_session.get('work_order_id')} ({active_session.get('session_id')})"
+        )
 
     if not ready_queue:
         print("No ready work orders matched the current filters.")
@@ -288,91 +344,184 @@ def main() -> None:
         "X-Goog-Api-Key": API_KEY,
         "Content-Type": "application/json",
     }
+    state = load_runner_state()
+    if os.environ.get("RESET_RUNNER_STATE") == "1":
+        state = {
+            "starting_branch": None,
+            "completed_work_order_ids": [],
+            "active_session": None,
+            "session_history": [],
+        }
+        save_runner_state(state)
+        print(f"Reset runner state at {STATE_FILE}.")
 
-    work_orders = list_work_orders()
-    if not work_orders:
-        print(f"No future work orders found in {WORK_ORDERS_DIR}.")
-        return
-
-    _, ready_queue = partition_work_orders(work_orders)
-    print_queue_summary(work_orders, ready_queue)
-
-    if DRY_RUN:
-        print("DRY_RUN=1, exiting without creating Jules sessions.")
-        return
-
-    if not ready_queue:
-        print("Nothing ready to run.")
-        return
-
-    starting_branch = git_current_branch()
+    starting_branch = os.environ.get("STARTING_BRANCH") or state.get("starting_branch") or git_current_branch()
+    state["starting_branch"] = starting_branch
+    save_runner_state(state)
     print(f"Initial starting branch: {starting_branch}")
+    print(f"Runner state file: {STATE_FILE}")
 
     resume_id = os.environ.get("RESUME_SESSION_ID")
 
-    for work_order in ready_queue:
-        print(f"\n{'=' * 60}")
-        print(f"Processing {work_order.work_order_id}")
-        print(f"Base branch: {starting_branch}")
-        print(f"{'=' * 60}")
+    try:
+        while True:
+            work_orders = list_work_orders()
+            if not work_orders:
+                print(f"No future work orders found in {WORK_ORDERS_DIR}.")
+                return
 
-        if not AUTO_APPROVE:
-            approved = parse_bool_prompt(
-                f"Create a Jules session for {work_order.work_order_id}?",
-                default=False,
-            )
-            if not approved:
-                print("Stopping before creating the next session.")
-                break
+            cached_completed_ids = set(state.get("completed_work_order_ids", []))
+            active_session = state.get("active_session")
+            active_work_order_id = active_session.get("work_order_id") if active_session else None
 
-        session_id = None
-        session_name = None
-
-        if resume_id:
-            session_id = resume_id
-            print(f"Resuming existing session: {session_id}")
-            try:
-                response = requests.get(f"{API_URL}/sessions/{session_id}", headers=headers)
-                response.raise_for_status()
-                session = response.json()
-                session_name = session["name"]
-                resume_id = None
-            except Exception as exc:
-                print(f"Failed to resume session {session_id}: {exc}")
-                break
-        else:
-            print("Creating Jules session...")
-            try:
-                session = create_session(
-                    headers=headers,
-                    prompt=build_prompt(work_order),
-                    title=work_order.title,
-                    starting_branch=starting_branch,
+            if (
+                active_session
+                and active_work_order_id in cached_completed_ids
+                and not resume_id
+            ):
+                print(
+                    "Clearing stale active session cache for already-completed work order: "
+                    f"{active_work_order_id} ({active_session.get('session_id')})"
                 )
-                session_id = session["id"]
-                session_name = session["name"]
-                print(f"Session created successfully: {session_id}")
-            except Exception as exc:
-                print(f"Failed to create session: {exc}")
+                state["active_session"] = None
+                save_runner_state(state)
+                active_session = None
+                active_work_order_id = None
+
+            by_id, ready_queue = partition_work_orders(
+                work_orders,
+                cached_completed_ids=cached_completed_ids,
+                active_work_order_id=active_work_order_id,
+            )
+            print_queue_summary(
+                work_orders,
+                ready_queue,
+                cached_completed_ids=cached_completed_ids,
+                active_session=active_session,
+            )
+
+            if DRY_RUN:
+                print("DRY_RUN=1, exiting without creating Jules sessions.")
+                return
+
+            if active_session:
+                work_order = by_id.get(active_session["work_order_id"])
+                if not work_order:
+                    print(
+                        "Cached active session references a work order that no longer exists. "
+                        "Clearing active session cache."
+                    )
+                    state["active_session"] = None
+                    save_runner_state(state)
+                    continue
+            else:
+                if not ready_queue:
+                    print("No ready work orders remain. Runner is finished.")
+                    break
+                work_order = ready_queue[0]
+
+            print(f"\n{'=' * 60}")
+            print(f"Processing {work_order.work_order_id}")
+            print(f"Base branch: {starting_branch}")
+            print(f"{'=' * 60}")
+
+            session_id = None
+            session_name = None
+
+            if resume_id or active_session:
+                session_id = resume_id or active_session["session_id"]
+                print(f"Resuming existing session: {session_id}")
+                try:
+                    response = requests.get(f"{API_URL}/sessions/{session_id}", headers=headers)
+                    response.raise_for_status()
+                    session = response.json()
+                    session_name = session["name"]
+                    state["active_session"] = {
+                        "work_order_id": work_order.work_order_id,
+                        "session_id": session_id,
+                        "session_name": session_name,
+                        "title": work_order.title,
+                        "starting_branch": starting_branch,
+                        "resumed_at": int(time.time()),
+                    }
+                    save_runner_state(state)
+                    resume_id = None
+                except Exception as exc:
+                    print(f"Failed to resume session {session_id}: {exc}")
+                    break
+            else:
+                if not AUTO_APPROVE:
+                    approved = parse_bool_prompt(
+                        f"Create a Jules session for {work_order.work_order_id}?",
+                        default=False,
+                    )
+                    if not approved:
+                        print("Stopping before creating the next session.")
+                        break
+
+                print("Creating Jules session...")
+                try:
+                    session = create_session(
+                        headers=headers,
+                        prompt=build_prompt(work_order),
+                        title=work_order.title,
+                        starting_branch=starting_branch,
+                    )
+                    session_id = session["id"]
+                    session_name = session["name"]
+                    state["active_session"] = {
+                        "work_order_id": work_order.work_order_id,
+                        "session_id": session_id,
+                        "session_name": session_name,
+                        "title": work_order.title,
+                        "starting_branch": starting_branch,
+                        "created_at": int(time.time()),
+                    }
+                    save_runner_state(state)
+                    print(f"Session created successfully: {session_id}")
+                except Exception as exc:
+                    print(f"Failed to create session: {exc}")
+                    break
+
+            pr_url = poll_session(headers, session_id, session_name)
+            if not pr_url:
+                print("Session finished without a PR or was interrupted. Stopping chain.")
                 break
 
-        pr_url = poll_session(headers, session_id, session_name)
-        if not pr_url:
-            print("Session finished without a PR or was interrupted. Stopping chain.")
-            break
+            print(f"Session complete. PR created: {pr_url}")
+            print("Extracting branch name from PR...")
 
-        print(f"Session complete. PR created: {pr_url}")
-        print("Extracting branch name from PR...")
+            branch_name = get_pr_branch(pr_url)
+            if not branch_name:
+                print("Could not determine PR branch. Aborting to avoid conflicts.")
+                break
 
-        branch_name = get_pr_branch(pr_url)
-        if not branch_name:
-            print("Could not determine PR branch. Aborting to avoid conflicts.")
-            break
+            starting_branch = branch_name
+            state["starting_branch"] = starting_branch
+            completed_work_order_ids = set(state.get("completed_work_order_ids", []))
+            completed_work_order_ids.add(work_order.work_order_id)
+            state["completed_work_order_ids"] = sorted(completed_work_order_ids)
+            state.setdefault("session_history", []).append(
+                {
+                    "work_order_id": work_order.work_order_id,
+                    "session_id": session_id,
+                    "session_name": session_name,
+                    "pull_request_url": pr_url,
+                    "result_branch": branch_name,
+                    "completed_at": int(time.time()),
+                }
+            )
+            state["active_session"] = None
+            save_runner_state(state)
 
-        starting_branch = branch_name
-        print(f"Next work order will build off branch: '{starting_branch}'")
-        print("Sleeping briefly before starting the next work order...")
-        time.sleep(10)
+            print(f"Next work order will build off branch: '{starting_branch}'")
+            print("Sleeping briefly before starting the next work order...")
+            time.sleep(10)
+
+    except KeyboardInterrupt:
+        save_runner_state(state)
+        print("\nInterrupted. Runner state was saved for resume.")
+        return
 
     print("\nJules queue processing finished.")
 

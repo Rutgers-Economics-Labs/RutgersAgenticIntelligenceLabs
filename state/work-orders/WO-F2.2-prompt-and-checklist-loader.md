@@ -1,6 +1,6 @@
 # WO-F2.2 — Prompt And Checklist Loader
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-agent-files.md`  
 **Depends on:** WO-F2.1, WO-F1.3  
 **Blocks:** WO-F4.1  
@@ -14,4 +14,3 @@ Load prompt and checklist references from role YAML files and expose them to the
 - prompt reference resolver
 - checklist loader
 - missing-file validation
-
