@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 
-ConfigType = Literal["api", "ontology", "pipeline"]
+ConfigType = Literal["api", "ontology", "pipeline", "agent"]
 
 
 def parse(content: str) -> dict:
@@ -44,8 +44,79 @@ def validate(config_type: ConfigType, content: str) -> list[str]:
                 logger.warning(w)
     elif config_type == "pipeline":
         errors.extend(_validate_pipeline(spec))
+    elif config_type == "agent":
+        errors.extend(_validate_agent(spec))
 
     return errors
+
+
+def validate_agent_runnable(content: str, project_root: Path) -> list[str]:
+    """
+    Validate that an agent config is structurally sound and that its referenced
+    prompt/checklist files exist and use allowed repo-relative paths.
+    """
+    errors: list[str] = []
+    errors.extend(validate("agent", content))
+    if errors:
+        return errors
+
+    try:
+        spec = parse(content)
+    except ValueError as e:
+        return [str(e)]
+
+    role = spec.get("role")
+
+    # Check that paths are repo-relative
+    permissions = spec.get("permissions") or {}
+    all_paths = (
+        (permissions.get("read") or []) +
+        (permissions.get("write") or []) +
+        (permissions.get("deny") or [])
+    )
+    for p in all_paths:
+        if str(p).startswith("/") or ".." in str(p):
+            errors.append(f"Configured path '{p}' is not strictly repo-relative")
+
+    prompts = spec.get("prompts", {})
+    system_path = prompts.get("system")
+    checklist_path = prompts.get("checklist")
+
+    for name, p in [("system", system_path), ("checklist", checklist_path)]:
+        if p:
+            if str(p).startswith("/") or ".." in str(p):
+                errors.append(f"Prompt path '{p}' is not strictly repo-relative")
+            else:
+                full_path = project_root / str(p)
+                if not full_path.is_file():
+                    errors.append(f"Referenced {name} prompt file does not exist: {p}")
+
+    return errors
+
+
+def load_agent_prompts(content: str, project_root: Path) -> tuple[str, str]:
+    """
+    Given a valid agent yaml config, loads and returns the system prompt and checklist contents.
+    Returns (system_prompt_text, checklist_text).
+    """
+    spec = parse(content)
+    prompts = spec.get("prompts", {})
+
+    sys_val = prompts.get("system")
+    chk_val = prompts.get("checklist")
+
+    system_text = ""
+    checklist_text = ""
+
+    if sys_val:
+        system_path = project_root / str(sys_val)
+        system_text = system_path.read_text(encoding="utf-8") if system_path.is_file() else ""
+
+    if chk_val:
+        checklist_path = project_root / str(chk_val)
+        checklist_text = checklist_path.read_text(encoding="utf-8") if checklist_path.is_file() else ""
+
+    return system_text, checklist_text
 
 
 ALLOWED_TOP_LEVEL_API_FIELDS = {
@@ -153,6 +224,59 @@ def _validate_ontology(spec: dict) -> tuple[list[str], list[str]]:
 
 PIPELINE_ALLOWED_MODES = {"full", "incremental"}
 ALLOWED_TOP_LEVEL_PIPELINE_FIELDS = {"ontology", "steps", "hydration_mode", "schedule", "post_hydration_transforms", "output_owl", "db", "duckdb"}
+
+def _validate_agent(spec: dict) -> list[str]:
+    errors = []
+
+    if not isinstance(spec, dict):
+        return ["Agent config must be an object"]
+
+    if "role" not in spec:
+        errors.append("Missing required field: role")
+
+    # validate threading
+    threading = spec.get("threading", {})
+    if not isinstance(threading, dict):
+        errors.append("threading must be an object")
+    else:
+        mode = threading.get("mode")
+        if mode and mode not in ("project_scoped", "task_scoped"):
+            errors.append(f"Invalid threading.mode '{mode}': must be project_scoped or task_scoped")
+
+    # validate permissions
+    permissions = spec.get("permissions", {})
+    if not isinstance(permissions, dict):
+        errors.append("permissions must be an object")
+    else:
+        writes = set(permissions.get("write") or [])
+        denies = set(permissions.get("deny") or [])
+        overlap = writes.intersection(denies)
+        if overlap:
+            errors.append(f"Paths cannot be both allowed writes and denied: {sorted(overlap)}")
+
+    # validate prompts
+    prompts = spec.get("prompts")
+    if not prompts:
+        errors.append("Missing required field: prompts")
+    elif not isinstance(prompts, dict):
+        errors.append("prompts must be an object")
+    else:
+        if not prompts.get("system"):
+            errors.append("Missing required field: prompts.system")
+        if not prompts.get("checklist"):
+            errors.append("Missing required field: prompts.checklist")
+
+    # validate completion for write roles
+    has_writes = bool(spec.get("permissions", {}).get("write", []))
+    if has_writes:
+        completion = spec.get("completion", {})
+        if not isinstance(completion, dict):
+            errors.append("completion must be an object for write-capable roles")
+        elif not completion.get("requires"):
+            errors.append("Write-capable roles must have non-empty completion requirements")
+
+    return errors
+
 
 def _validate_pipeline(spec: dict) -> list[str]:
     errors = []
