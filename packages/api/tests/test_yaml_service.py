@@ -13,7 +13,7 @@ if API_ROOT not in sys.path:
 
 from pathlib import Path
 
-from app.services.yaml_service import validate, parse, validate_pipeline_runnable
+from app.services.yaml_service import validate, parse, validate_pipeline_runnable, validate_agent_runnable
 
 ENGINE_ROOT = Path(__file__).resolve().parents[2] / "engine"
 CORE_ONTOLOGY_YAML = (ENGINE_ROOT / "configs" / "ontology" / "core.yaml").read_text(encoding="utf-8")
@@ -331,3 +331,102 @@ steps:
         transform_dir=ENGINE_ROOT / "transforms",
     )
     assert any("missing_slug" in e for e in errs)
+
+
+# ── validate agent ────────────────────────────────────────────────────────────
+
+VALID_AGENT_YAML = """
+role: data
+label: "Data Agent"
+purpose: "Create and validate ontology-backed ingestion."
+
+runner:
+  default: jules
+  approval_required: true
+  max_retries: 3
+  timeout_minutes: 20
+
+threading:
+  mode: task_scoped
+
+permissions:
+  read:
+    - ".ontology"
+    - "topics"
+  write:
+    - ".ontology/sources"
+  deny:
+    - "agents"
+
+secrets:
+  allow:
+    - "FRED_API_KEY"
+
+tools:
+  allow:
+    - "read_repo"
+
+prompts:
+  system: "agents/prompts/data.md"
+  checklist: "agents/checklists/data.md"
+
+completion:
+  requires:
+    - "yaml_valid"
+"""
+
+def test_validate_agent_valid():
+    errors = validate("agent", VALID_AGENT_YAML)
+    assert errors == []
+
+def test_validate_agent_missing_required_fields():
+    yaml = VALID_AGENT_YAML.replace("role: data\n", "")
+    errors = validate("agent", yaml)
+    assert any("Missing required field: role" in e for e in errors)
+
+def test_validate_agent_path_must_be_repo_relative():
+    yaml = VALID_AGENT_YAML.replace('- ".ontology"', '- "/.ontology"')
+    errors = validate("agent", yaml)
+    assert any("must be repo-relative" in e for e in errors)
+
+    yaml2 = VALID_AGENT_YAML.replace('- ".ontology"', '- "../.ontology"')
+    errors = validate("agent", yaml2)
+    assert any("must be repo-relative" in e for e in errors)
+
+def test_validate_agent_deny_vs_write_conflict():
+    yaml = VALID_AGENT_YAML.replace('- ".ontology/sources"', '- "agents"')
+    errors = validate("agent", yaml)
+    assert any("conflicts with permissions.deny" in e for e in errors)
+
+    yaml2 = VALID_AGENT_YAML.replace('- ".ontology/sources"', '- "agents/something"')
+    errors = validate("agent", yaml2)
+    assert any("conflicts with permissions.deny" in e for e in errors)
+
+def test_validate_agent_completion_requires_for_write_capable():
+    yaml = VALID_AGENT_YAML.replace("    - \"yaml_valid\"\n", "")
+    errors = validate("agent", yaml)
+    assert any("completion.requires cannot be empty for write-capable roles" in e for e in errors)
+
+def test_validate_agent_runnable_role_matches_file_name():
+    errors = validate_agent_runnable(VALID_AGENT_YAML, file_name="coding.yaml")
+    assert any("does not match file name" in e for e in errors)
+
+    errors_ok = validate_agent_runnable(VALID_AGENT_YAML, file_name="data.yaml")
+    assert errors_ok == []
+
+def test_validate_agent_runnable_prompts_exist(tmp_path):
+    repo_root = tmp_path
+    agents_dir = repo_root / "agents" / "prompts"
+    agents_dir.mkdir(parents=True)
+    checklists_dir = repo_root / "agents" / "checklists"
+    checklists_dir.mkdir(parents=True)
+
+    errors = validate_agent_runnable(VALID_AGENT_YAML, file_name="data.yaml", repo_root=repo_root)
+    assert any("does not exist" in e for e in errors)
+    assert any("agents/prompts/data.md" in e for e in errors)
+
+    (repo_root / "agents/prompts/data.md").write_text("prompt")
+    (repo_root / "agents/checklists/data.md").write_text("checklist")
+
+    errors_ok = validate_agent_runnable(VALID_AGENT_YAML, file_name="data.yaml", repo_root=repo_root)
+    assert errors_ok == []

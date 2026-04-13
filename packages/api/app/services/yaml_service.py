@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 
-ConfigType = Literal["api", "ontology", "pipeline"]
+ConfigType = Literal["api", "ontology", "pipeline", "agent"]
 
 
 def parse(content: str) -> dict:
@@ -44,6 +44,8 @@ def validate(config_type: ConfigType, content: str) -> list[str]:
                 logger.warning(w)
     elif config_type == "pipeline":
         errors.extend(_validate_pipeline(spec))
+    elif config_type == "agent":
+        errors.extend(_validate_agent(spec))
 
     return errors
 
@@ -382,5 +384,102 @@ def validate_pipeline_runnable(
             msg = _check_transform_resolvable(spec, transform_dir)
             if msg:
                 errors.append(f"post_hydration_transforms[{k}]: {msg}")
+
+    return errors
+
+
+ALLOWED_TOP_LEVEL_AGENT_FIELDS = {"role", "label", "purpose", "runner", "threading", "permissions", "secrets", "tools", "prompts", "completion"}
+
+def _validate_agent(spec: dict) -> list[str]:
+    errors = []
+
+    for key in spec.keys():
+        if key not in ALLOWED_TOP_LEVEL_AGENT_FIELDS:
+            errors.append(f"Unknown field: {key}")
+
+    for req in ALLOWED_TOP_LEVEL_AGENT_FIELDS:
+        if req not in spec:
+            errors.append(f"Missing required field: {req}")
+
+    def is_repo_relative(path_str: str) -> bool:
+        return not (path_str.startswith("/") or path_str.startswith("..") or "/../" in path_str)
+
+    perms = spec.get("permissions", {})
+    if isinstance(perms, dict):
+        for perm_type in ["read", "write", "deny"]:
+            paths = perms.get(perm_type, [])
+            if not isinstance(paths, list):
+                errors.append(f"permissions.{perm_type} must be a list, got {type(paths)}")
+            else:
+                for p in paths:
+                    if not isinstance(p, str):
+                        errors.append(f"permissions.{perm_type} path must be a string, got {type(p)}")
+                    elif not is_repo_relative(p):
+                        errors.append(f"permissions.{perm_type} path '{p}' must be repo-relative")
+
+        write_paths = perms.get("write", [])
+        deny_paths = perms.get("deny", [])
+        if isinstance(write_paths, list) and isinstance(deny_paths, list):
+            for wp in write_paths:
+                for dp in deny_paths:
+                    if not isinstance(wp, str) or not isinstance(dp, str):
+                        continue
+                    if wp == dp or wp.startswith(dp + "/"):
+                        errors.append(f"permissions.write path '{wp}' conflicts with permissions.deny path '{dp}'")
+
+    prompts = spec.get("prompts", {})
+    if isinstance(prompts, dict):
+        for p_type in ["system", "checklist", "style_guide"]:
+            p_val = prompts.get(p_type)
+            if p_val:
+                if not isinstance(p_val, str):
+                    errors.append(f"prompts.{p_type} must be a string")
+                elif not is_repo_relative(p_val):
+                    errors.append(f"prompts.{p_type} path '{p_val}' must be repo-relative")
+
+    completion = spec.get("completion", {})
+    if isinstance(perms, dict) and isinstance(completion, dict):
+        write_paths = perms.get("write", [])
+        if write_paths and isinstance(write_paths, list):
+            reqs = completion.get("requires", [])
+            if not reqs:
+                errors.append("completion.requires cannot be empty for write-capable roles")
+
+    return errors
+
+def validate_agent_runnable(
+    agent_content: str,
+    file_name: str,
+    repo_root: Path | None = None
+) -> list[str]:
+    """
+    Validation that requires file context:
+    - role file exists for every declared role (role matches file_name)
+    - prompt and checklist files exist on disk (if repo_root is given)
+    """
+    errors: list[str] = []
+    errors.extend(validate("agent", agent_content))
+    if errors:
+        return errors
+
+    try:
+        spec = parse(agent_content)
+    except ValueError as e:
+        return [str(e)]
+
+    role = spec.get("role", "")
+    expected_file_name = f"{role}.yaml"
+    if file_name != expected_file_name:
+        errors.append(f"Role '{role}' does not match file name '{file_name}'")
+
+    if repo_root is not None:
+        prompts = spec.get("prompts", {})
+        if isinstance(prompts, dict):
+            for p_type in ["system", "checklist", "style_guide"]:
+                p_val = prompts.get(p_type)
+                if p_val and isinstance(p_val, str):
+                    full_path = repo_root / p_val
+                    if not full_path.is_file():
+                        errors.append(f"prompts.{p_type} file '{p_val}' does not exist")
 
     return errors
