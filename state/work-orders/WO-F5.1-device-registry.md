@@ -1,6 +1,6 @@
 # WO-F5.1 — Device Registry
 
-**Status:** in_progress  
+**Status:** completed  
 **Spec:** `specs/future-hydration-artifacts.md`  
 **Depends on:** WO-F3.1  
 **Blocks:** WO-F5.2, WO-F7.5  

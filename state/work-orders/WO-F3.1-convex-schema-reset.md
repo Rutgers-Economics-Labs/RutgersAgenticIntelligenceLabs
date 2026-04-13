@@ -1,6 +1,6 @@
 # WO-F3.1 — Convex Schema Reset
 
-**Status:** in_progress  
+**Status:** completed  
 **Spec:** `specs/future-database.md`  
 **Depends on:** WO-F1.1  
 **Blocks:** WO-F3.2, WO-F3.3, WO-F3.4, WO-F3.5, WO-F7.1  

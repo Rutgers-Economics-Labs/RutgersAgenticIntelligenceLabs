@@ -1,6 +1,6 @@
 # WO-F6.1 — Long-Lived Planner Thread
 
-**Status:** in_progress  
+**Status:** completed  
 **Spec:** `specs/future-agents.md`, `specs/future-database.md`  
 **Depends on:** WO-F3.2, WO-F2.3  
 **Blocks:** WO-F6.2, WO-F7.2  

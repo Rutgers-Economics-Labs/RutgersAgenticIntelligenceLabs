@@ -23,6 +23,17 @@ export const listByProject = query({
   },
 });
 
+export const listByProjectId = query({
+  args: { projectId: v.id("projects"), limit: v.optional(v.number()) },
+  handler: async (ctx, { projectId, limit = 20 }) => {
+    return await ctx.db
+      .query("agentSessions")
+      .withIndex("by_project_id", (q) => q.eq("projectId", projectId))
+      .order("desc")
+      .take(limit);
+  },
+});
+
 export const getSession = query({
   args: { sessionId: v.id("agentSessions") },
   handler: async (ctx, { sessionId }) => {
@@ -35,13 +46,30 @@ export const createSession = mutation({
     title: v.string(),
     model: v.string(),
     projectSlug: v.optional(v.string()),
+    projectId: v.optional(v.id("projects")),
+    taskId: v.optional(v.id("tasks")),
+    role: v.optional(v.string()),
+    runner: v.optional(v.string()),
+    externalSessionId: v.optional(v.string()),
+    status: v.optional(v.string()),
+    estimatedCostUsd: v.optional(v.number()),
+    actualCostUsd: v.optional(v.number()),
   },
-  handler: async (ctx, { title, model, projectSlug }) => {
+  handler: async (ctx, args) => {
     const now = Date.now();
     const sessionId = await ctx.db.insert("agentSessions", {
-      title,
-      model,
-      projectSlug,
+      title: args.title,
+      model: args.model,
+      projectSlug: args.projectSlug,
+      projectId: args.projectId,
+      taskId: args.taskId,
+      role: args.role,
+      runner: args.runner,
+      externalSessionId: args.externalSessionId,
+      status: args.status,
+      estimatedCostUsd: args.estimatedCostUsd,
+      actualCostUsd: args.actualCostUsd,
+      startedAt: now,
       messages: [],
       createdAt: now,
       updatedAt: now,
@@ -74,6 +102,21 @@ export const updateTitle = mutation({
   args: { sessionId: v.id("agentSessions"), title: v.string() },
   handler: async (ctx, { sessionId, title }) => {
     await ctx.db.patch(sessionId, { title, updatedAt: Date.now() });
+  },
+});
+
+export const updateSessionState = mutation({
+  args: {
+    sessionId: v.id("agentSessions"),
+    status: v.optional(v.string()),
+    externalSessionId: v.optional(v.string()),
+    estimatedCostUsd: v.optional(v.number()),
+    actualCostUsd: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+  },
+  handler: async (ctx, { sessionId, ...fields }) => {
+    const patch = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
+    await ctx.db.patch(sessionId, { ...patch, updatedAt: Date.now() });
   },
 });
 

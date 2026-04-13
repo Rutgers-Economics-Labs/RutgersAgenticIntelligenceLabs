@@ -11,6 +11,12 @@ from app.services.convex_client import convex
 from app.services import ontology_service, sql_service
 from app.services.project_artifacts_service import find_latest_success_job_with_outputs
 from app.services import planner_service
+from app.services.device_service import get_device_metadata
+from app.services.hydration_registry_service import (
+    get_hydration_status as get_project_hydration_status,
+    register_hydration_artifact,
+)
+from app.services.secret_service import decrypt_secret_value, encrypt_secret_value, mask_secret_value
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -74,6 +80,44 @@ class PlannerTaskUpdateRequest(BaseModel):
     repoPaths: list[str] | None = None
     acceptanceCriteria: list[str] | None = None
     approvalState: str | None = None
+
+
+class DeviceHeartbeatRequest(BaseModel):
+    label: str | None = None
+    hostname: str | None = None
+    platform: str | None = None
+
+
+class RegisterHydrationArtifactRequest(BaseModel):
+    pipelineSlug: str | None = None
+    hydrationMode: str = "full"
+    ontologyArtifactPath: str | None = None
+    duckdbArtifactPath: str | None = None
+    status: str = "valid"
+
+
+class ProjectSecretUpsertRequest(BaseModel):
+    keyName: str
+    plaintextValue: str
+
+
+class AgentSecretPolicyUpsertRequest(BaseModel):
+    agentRole: str
+    allowedSecretNames: list[str]
+
+
+class ApprovalCreateRequest(BaseModel):
+    taskId: str | None = None
+    agentSessionId: str | None = None
+    approvalType: str
+    status: str = "pending"
+    requestedByRole: str
+    grantedByUserId: str | None = None
+
+
+class ApprovalResolveRequest(BaseModel):
+    status: str
+    grantedByUserId: str | None = None
 
 
 @router.post("/")
@@ -307,6 +351,38 @@ async def get_planner_thread(slug: str):
     }
 
 
+@router.get("/{slug}/planner/home")
+async def get_planner_home(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    thread_id = await planner_service.ensure_planner_thread(project["_id"])
+    messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id, limit=50)
+    board = await planner_service.ensure_main_board(project["_id"])
+    tasks = await planner_service.list_tasks(board["_id"])
+    project_root = planner_service.project_root_from_record(project)
+    research_plan_root = project_root / "research_plan" if project_root else None
+
+    return {
+        "project": {
+            "id": project["_id"],
+            "name": project["name"],
+            "slug": project["slug"],
+            "status": project.get("status"),
+            "localRepoPath": project.get("localRepoPath"),
+            "manifestPath": project.get("manifestPath") or "rail.yaml",
+        },
+        "planner": {
+            "threadId": thread_id,
+            "messages": list(reversed(messages)),
+            "board": board,
+            "tasks": tasks,
+            "files": {
+                "currentPlan": str((research_plan_root / "current_plan.md").relative_to(project_root)) if research_plan_root and (research_plan_root / "current_plan.md").exists() else None,
+                "taskBoard": str((research_plan_root / "task_board.md").relative_to(project_root)) if research_plan_root and (research_plan_root / "task_board.md").exists() else None,
+            },
+        },
+    }
+
+
 @router.post("/{slug}/planner/messages")
 async def append_planner_message(slug: str, data: PlannerMessageRequest):
     project = await planner_service.get_project_by_slug(slug)
@@ -365,3 +441,145 @@ async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRe
         if str(task["_id"]) == task_id:
             return task
     return {"ok": True}
+
+
+@router.post("/{slug}/devices/heartbeat")
+async def heartbeat_project_device(slug: str, data: DeviceHeartbeatRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    metadata = get_device_metadata()
+    payload = {
+        "deviceId": metadata["deviceId"],
+        "label": data.label or metadata["label"],
+        "hostname": data.hostname or metadata["hostname"],
+        "platform": data.platform or metadata["platform"],
+    }
+    device_row_id = await convex.mutation("devices:heartbeat", payload)
+    return {"projectId": project["_id"], "device": {**payload, "rowId": device_row_id}}
+
+
+@router.get("/{slug}/hydration/status")
+async def get_hydration_status(slug: str, pipelineSlug: str | None = Query(None), hydrationMode: str = Query("full")):
+    project = await planner_service.get_project_by_slug(slug)
+    if not project.get("localRepoPath"):
+        raise HTTPException(400, "Project does not have a localRepoPath configured")
+    return await get_project_hydration_status(
+        project=project,
+        pipeline_slug=pipelineSlug,
+        hydration_mode=hydrationMode,
+    )
+
+
+@router.post("/{slug}/hydration/artifacts/register")
+async def register_project_hydration_artifact(slug: str, data: RegisterHydrationArtifactRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    if not project.get("localRepoPath"):
+        raise HTTPException(400, "Project does not have a localRepoPath configured")
+    artifact_id = await register_hydration_artifact(
+        project=project,
+        pipeline_slug=data.pipelineSlug or "default",
+        hydration_mode=data.hydrationMode,
+        ontology_artifact_path=data.ontologyArtifactPath,
+        duckdb_artifact_path=data.duckdbArtifactPath,
+        status=data.status,
+    )
+    return {"artifactId": artifact_id}
+
+
+@router.get("/{slug}/settings/secrets")
+async def list_project_secrets(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    secrets = await convex.query("projectSecrets:listByProject", {"projectId": project["_id"]}) or []
+    policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
+
+    masked = []
+    for item in secrets:
+        try:
+            decrypted = decrypt_secret_value(item["encryptedValue"])
+            masked_value = mask_secret_value(decrypted)
+        except Exception:
+            masked_value = "***"
+        masked.append(
+            {
+                "id": item["_id"],
+                "keyName": item["keyName"],
+                "maskedValue": masked_value,
+                "updatedAt": item.get("updatedAt"),
+            }
+        )
+
+    return {"secrets": masked, "policies": policies}
+
+
+@router.post("/{slug}/settings/secrets")
+async def upsert_project_secret(slug: str, data: ProjectSecretUpsertRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    encrypted = encrypt_secret_value(data.plaintextValue)
+    secret_id = await convex.mutation(
+        "projectSecrets:upsert",
+        {
+            "projectId": project["_id"],
+            "keyName": data.keyName,
+            "encryptedValue": encrypted,
+        },
+    )
+    return {"secretId": secret_id, "keyName": data.keyName}
+
+
+@router.get("/{slug}/settings/agent-secret-policies")
+async def list_agent_secret_policies(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
+    return {"policies": policies}
+
+
+@router.post("/{slug}/settings/agent-secret-policies")
+async def upsert_agent_secret_policy(slug: str, data: AgentSecretPolicyUpsertRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    policy_id = await convex.mutation(
+        "agentSecretPolicies:upsert",
+        {
+            "projectId": project["_id"],
+            "agentRole": data.agentRole,
+            "allowedSecretNames": data.allowedSecretNames,
+        },
+    )
+    return {"policyId": policy_id, "agentRole": data.agentRole}
+
+
+@router.get("/{slug}/approvals")
+async def list_project_approvals(slug: str, limit: int = Query(100)):
+    project = await planner_service.get_project_by_slug(slug)
+    approvals = await convex.query("approvals:listByProject", {"projectId": project["_id"], "limit": limit}) or []
+    return {"approvals": approvals}
+
+
+@router.post("/{slug}/approvals")
+async def create_project_approval(slug: str, data: ApprovalCreateRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    approval_id = await convex.mutation(
+        "approvals:create",
+        {
+            "projectId": project["_id"],
+            "taskId": data.taskId,
+            "agentSessionId": data.agentSessionId,
+            "approvalType": data.approvalType,
+            "status": data.status,
+            "requestedByRole": data.requestedByRole,
+            "grantedByUserId": data.grantedByUserId,
+        },
+    )
+    return {"approvalId": approval_id}
+
+
+@router.post("/{slug}/approvals/{approval_id}/resolve")
+async def resolve_project_approval(slug: str, approval_id: str, data: ApprovalResolveRequest):
+    _project = await planner_service.get_project_by_slug(slug)
+    await convex.mutation(
+        "approvals:resolve",
+        {
+            "approvalId": approval_id,
+            "status": data.status,
+            "grantedByUserId": data.grantedByUserId,
+        },
+    )
+    return {"approvalId": approval_id, "status": data.status}

@@ -30,6 +30,7 @@ The current queue assumes:
 - `WO-F3.3` Task board and approvals tables
 - `WO-F3.4` Runner events and session tables
 - `WO-F3.5` Project secrets and policy tables
+- `WO-F3.6` Future API surface cleanup
 
 ### Runners
 
@@ -56,12 +57,19 @@ The current queue assumes:
 - `WO-F7.3` Repo browser plane
 - `WO-F7.4` Artifacts and timeline plane
 - `WO-F7.5` Settings and sessions surfaces
+- `WO-F7.6` Legacy UI quarantine
 
 ### Kernel Adaptation
 
 - `WO-F8.1` `rail.yaml` project loader
 - `WO-F8.2` `.ontology` hydration alignment
 - `WO-F8.3` Verification hooks
+- `WO-F8.4` Verification enforcement wiring
+
+## Current Unlocks
+
+- The completed foundation work should now unlock the next queue wave around `WO-F3.3`, `WO-F3.4`, `WO-F3.5`, `WO-F6.3`, and `WO-F7.1`.
+- `.ontology` hydration alignment remains active work under `WO-F8.2`.
 
 ### Artifacts
 

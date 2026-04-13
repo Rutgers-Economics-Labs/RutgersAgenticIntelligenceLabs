@@ -8,6 +8,24 @@ export const listByProject = query({
   },
 });
 
+export const listByProjectDevicePipeline = query({
+  args: {
+    projectId: v.id("projects"),
+    deviceId: v.string(),
+    pipelineSlug: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, { projectId, deviceId, pipelineSlug, limit = 50 }) => {
+    return ctx.db
+      .query("hydrationArtifacts")
+      .withIndex("by_project_device_pipeline", (q) =>
+        q.eq("projectId", projectId).eq("deviceId", deviceId).eq("pipelineSlug", pipelineSlug),
+      )
+      .order("desc")
+      .take(limit);
+  },
+});
+
 export const register = mutation({
   args: {
     projectId: v.id("projects"),
@@ -23,5 +41,17 @@ export const register = mutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     return ctx.db.insert("hydrationArtifacts", { ...args, createdAt: now, lastValidatedAt: now });
+  },
+});
+
+export const markValidated = mutation({
+  args: {
+    artifactId: v.id("hydrationArtifacts"),
+    status: v.optional(v.string()),
+  },
+  handler: async (ctx, { artifactId, status }) => {
+    const patch: Record<string, unknown> = { lastValidatedAt: Date.now() };
+    if (status !== undefined) patch.status = status;
+    await ctx.db.patch(artifactId, patch);
   },
 });

@@ -1,6 +1,6 @@
 # WO-F3.2 — Projects And Planner Thread Tables
 
-**Status:** in_progress  
+**Status:** completed  
 **Spec:** `specs/future-database.md`  
 **Depends on:** WO-F3.1  
 **Blocks:** WO-F6.1, WO-F7.1  

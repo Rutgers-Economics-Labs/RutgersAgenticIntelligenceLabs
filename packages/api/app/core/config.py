@@ -110,5 +110,8 @@ class Settings(BaseSettings):
     )
     execute_docker_image: str = Field(default="", validation_alias="RAIL_EXECUTE_DOCKER_IMAGE")
 
+    # Project secret encryption
+    secret_encryption_key: str = Field(default="", validation_alias="RAIL_SECRET_FERNET_KEY")
+
 
 settings = Settings()

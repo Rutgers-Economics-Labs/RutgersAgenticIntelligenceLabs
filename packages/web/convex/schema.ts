@@ -213,9 +213,19 @@ export default defineSchema({
 
   // AI agent sessions — stores conversation history
   agentSessions: defineTable({
+    projectId: v.optional(v.id("projects")),
+    taskId: v.optional(v.id("tasks")),
     projectSlug: v.optional(v.string()),
     title: v.string(),
     model: v.string(),
+    role: v.optional(v.string()),
+    runner: v.optional(v.string()),
+    externalSessionId: v.optional(v.string()),
+    status: v.optional(v.string()),
+    estimatedCostUsd: v.optional(v.number()),
+    actualCostUsd: v.optional(v.number()),
+    startedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
     messages: v.array(v.object({
       role: v.union(v.literal("user"), v.literal("assistant"), v.literal("tool")),
       content: v.optional(v.string()),
@@ -226,7 +236,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_created", ["createdAt"])
-    .index("by_project", ["projectSlug", "createdAt"]),
+    .index("by_project", ["projectSlug", "createdAt"])
+    .index("by_project_id", ["projectId", "createdAt"]),
 
   // Project assistant chat sessions
   projectChats: defineTable({
