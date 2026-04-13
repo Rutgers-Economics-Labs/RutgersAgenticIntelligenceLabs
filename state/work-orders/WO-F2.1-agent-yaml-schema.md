@@ -1,6 +1,6 @@
 # WO-F2.1 — Agent YAML Schema
 
-**Status:** pending  
+**Status:** completed
 **Spec:** `specs/future-agent-files.md`  
 **Depends on:** WO-F1.1  
 **Blocks:** WO-F2.2, WO-F2.3  
