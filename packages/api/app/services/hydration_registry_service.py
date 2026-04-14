@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from rail.manifest import load_manifest
+from rail.manifest import load_manifest, parse_manifest_content
 
 from app.services.convex_client import convex
 from app.services.device_service import get_device_id
@@ -38,7 +38,8 @@ def get_manifest_fingerprint(project_root: Path, manifest_path: str = "rail.yaml
 
 
 def resolve_pipeline_slug(project_root: Path, manifest_path: str = "rail.yaml") -> str:
-    manifest = load_manifest(project_root / manifest_path)
+    content = (project_root / manifest_path).read_text(encoding="utf-8")
+    manifest = parse_manifest_content(content)
     return manifest.hydration.default_pipeline or "default"
 
 

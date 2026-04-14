@@ -21,11 +21,12 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 - `WO-F6.1` Long-lived planner thread
 - `WO-F6.2` Git-mirrored planner files
 - `WO-F8.1` `rail.yaml` project loader
+- `WO-F8.2` `.ontology` hydration alignment
 - `WO-F8.3` Verification hooks
 
 ### In progress locally
 
-- `WO-F8.2` `.ontology` hydration alignment
+_(none)_
 
 ### Pending
 

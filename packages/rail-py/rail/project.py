@@ -51,9 +51,9 @@ class Project:
     def ontology(self) -> "OntologyView":
         """Access the owlready2 ontology directly (local mode or local onto.db path)."""
         from rail.ontology import OntologyView
-        if hasattr(self._backend, "project_path"):
-            # Local mode
-            db_path = str(self._backend.project_path / "ontology/onto.db")
+        if hasattr(self._backend, "artifact_db_path"):
+            # Local mode — use manifest-driven .ontology/ path
+            db_path = str(self._backend.artifact_db_path)
         else:
             raise RuntimeError("ontology() requires local mode or a local onto.db path")
         return OntologyView(db_path)
