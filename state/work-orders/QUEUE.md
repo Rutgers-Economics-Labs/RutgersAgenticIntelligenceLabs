@@ -23,14 +23,13 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 - `WO-F8.1` `rail.yaml` project loader
 - `WO-F8.2` `.ontology` hydration alignment
 - `WO-F8.3` Verification hooks
+- `WO-F3.3` Task board and approvals tables
 
 ### In progress locally
 
 _(none)_
 
 ### Pending
-
-- `WO-F3.3` Task board and approvals tables
 - `WO-F3.5` Project secrets and policy tables
 - `WO-F3.6` Future API surface cleanup
 - `WO-F4.1` Runner abstraction

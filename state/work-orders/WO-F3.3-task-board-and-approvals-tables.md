@@ -1,6 +1,6 @@
 # WO-F3.3 — Task Board And Approvals Tables
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-database.md`, `specs/future-planner-files.md`  
 **Depends on:** WO-F3.1  
 **Blocks:** WO-F6.2, WO-F6.3, WO-F7.2  

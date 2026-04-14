@@ -1,6 +1,22 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
+export const get = query({
+  args: { taskId: v.id("tasks") },
+  handler: async (ctx, { taskId }) => ctx.db.get(taskId),
+});
+
+export const listByProject = query({
+  args: { projectId: v.id("projects"), limit: v.optional(v.number()) },
+  handler: async (ctx, { projectId, limit = 200 }) => {
+    return ctx.db
+      .query("tasks")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .order("desc")
+      .take(limit);
+  },
+});
+
 export const listByBoard = query({
   args: { boardId: v.id("taskBoards") },
   handler: async (ctx, { boardId }) => {
