@@ -89,6 +89,17 @@ class Settings(BaseSettings):
     github_app_private_key: str = Field(default="", validation_alias="GITHUB_APP_PRIVATE_KEY")
     github_webhook_secret: str = Field(default="", validation_alias="GITHUB_WEBHOOK_SECRET")
 
+    # Jules runner
+    jules_api_key: str = Field(default="", validation_alias="JULES_API_KEY")
+    jules_api_url: str = Field(
+        default="https://jules.googleapis.com/v1alpha",
+        validation_alias="JULES_API_URL",
+    )
+    jules_source: str = Field(
+        default="sources/github/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs",
+        validation_alias="JULES_SOURCE",
+    )
+
     # Server
     # In production set API_CORS_ORIGINS="https://your-app.vercel.app,https://custom-domain.com"
     # Include 127.0.0.1: browsers treat localhost vs 127.0.0.1 as different origins for CORS.

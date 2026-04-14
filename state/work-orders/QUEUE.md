@@ -25,15 +25,14 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 - `WO-F8.3` Verification hooks
 - `WO-F3.3` Task board and approvals tables
 - `WO-F3.5` Project secrets and policy tables
+- `WO-F4.1` Runner abstraction
 
 ### In progress locally
 
 _(none)_
 
 ### Pending
-- `WO-F3.5` Project secrets and policy tables
 - `WO-F3.6` Future API surface cleanup
-- `WO-F4.1` Runner abstraction
 - `WO-F4.2` Jules session lifecycle
 - `WO-F4.3` Jules approvals and question relay
 - `WO-F6.3` Planner task board sync
