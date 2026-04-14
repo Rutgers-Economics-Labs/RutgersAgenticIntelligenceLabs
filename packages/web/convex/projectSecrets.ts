@@ -27,3 +27,14 @@ export const upsert = mutation({
     return ctx.db.insert("projectSecrets", { ...args, createdAt: now, updatedAt: now });
   },
 });
+
+export const deleteByKey = mutation({
+  args: { projectId: v.id("projects"), keyName: v.string() },
+  handler: async (ctx, { projectId, keyName }) => {
+    const existing = await ctx.db
+      .query("projectSecrets")
+      .withIndex("by_project_key", (q) => q.eq("projectId", projectId).eq("keyName", keyName))
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});

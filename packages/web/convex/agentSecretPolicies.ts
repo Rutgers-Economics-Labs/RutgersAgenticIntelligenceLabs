@@ -8,6 +8,15 @@ export const listByProject = query({
   },
 });
 
+export const getByRole = query({
+  args: { projectId: v.id("projects"), agentRole: v.string() },
+  handler: async (ctx, { projectId, agentRole }) =>
+    ctx.db
+      .query("agentSecretPolicies")
+      .withIndex("by_project_role", (q) => q.eq("projectId", projectId).eq("agentRole", agentRole))
+      .first(),
+});
+
 export const upsert = mutation({
   args: {
     projectId: v.id("projects"),
@@ -25,5 +34,16 @@ export const upsert = mutation({
       return existing._id;
     }
     return ctx.db.insert("agentSecretPolicies", { ...args, createdAt: now, updatedAt: now });
+  },
+});
+
+export const deleteByRole = mutation({
+  args: { projectId: v.id("projects"), agentRole: v.string() },
+  handler: async (ctx, { projectId, agentRole }) => {
+    const existing = await ctx.db
+      .query("agentSecretPolicies")
+      .withIndex("by_project_role", (q) => q.eq("projectId", projectId).eq("agentRole", agentRole))
+      .first();
+    if (existing) await ctx.db.delete(existing._id);
   },
 });

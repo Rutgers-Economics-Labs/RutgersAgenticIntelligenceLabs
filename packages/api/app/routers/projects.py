@@ -546,6 +546,40 @@ async def upsert_agent_secret_policy(slug: str, data: AgentSecretPolicyUpsertReq
     return {"policyId": policy_id, "agentRole": data.agentRole}
 
 
+@router.delete("/{slug}/settings/secrets/{key_name}")
+async def delete_project_secret(slug: str, key_name: str):
+    project = await planner_service.get_project_by_slug(slug)
+    await convex.mutation(
+        "projectSecrets:deleteByKey",
+        {"projectId": project["_id"], "keyName": key_name},
+    )
+    return {"deleted": True, "keyName": key_name}
+
+
+@router.delete("/{slug}/settings/agent-secret-policies/{agent_role}")
+async def delete_agent_secret_policy(slug: str, agent_role: str):
+    project = await planner_service.get_project_by_slug(slug)
+    await convex.mutation(
+        "agentSecretPolicies:deleteByRole",
+        {"projectId": project["_id"], "agentRole": agent_role},
+    )
+    return {"deleted": True, "agentRole": agent_role}
+
+
+@router.get("/{slug}/secrets/resolve")
+async def resolve_secrets_for_agent(slug: str, agentRole: str = Query(...)):
+    """Return decrypted secrets the given agent role is allowed to access.
+
+    This endpoint is intended for runner/orchestrator use at task start time.
+    It enforces the agent secret policy — only secrets in the role's allowlist
+    are returned, and only if they exist in the project's secret store.
+    """
+    project = await planner_service.get_project_by_slug(slug)
+    from app.services.secret_service import resolve_secrets_for_role
+    secrets = await resolve_secrets_for_role(project["_id"], agentRole)
+    return {"agentRole": agentRole, "secrets": secrets}
+
+
 @router.get("/{slug}/approvals")
 async def list_project_approvals(slug: str, limit: int = Query(100)):
     project = await planner_service.get_project_by_slug(slug)

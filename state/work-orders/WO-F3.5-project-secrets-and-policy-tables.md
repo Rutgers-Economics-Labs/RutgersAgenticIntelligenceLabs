@@ -1,6 +1,6 @@
 # WO-F3.5 — Project Secrets And Policy Tables
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-database.md`, `specs/future-agent-files.md`  
 **Depends on:** WO-F3.1  
 **Blocks:** WO-F4.2, WO-F7.5  
