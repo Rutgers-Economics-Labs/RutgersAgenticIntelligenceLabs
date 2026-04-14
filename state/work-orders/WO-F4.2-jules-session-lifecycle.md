@@ -1,6 +1,6 @@
 # WO-F4.2 — Jules Session Lifecycle
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-runners.md`  
 **Depends on:** WO-F4.1, WO-F3.5  
 **Blocks:** WO-F4.3, WO-F7.5  

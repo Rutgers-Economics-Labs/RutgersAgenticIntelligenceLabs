@@ -2,7 +2,7 @@ import time
 import yaml
 from pathlib import Path
 
-from fastapi import APIRouter, Body, HTTPException, Query
+from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
 from rail.bootstrap import bootstrap_future_project
 from rail.manifest import load_manifest
@@ -118,6 +118,18 @@ class ApprovalCreateRequest(BaseModel):
 class ApprovalResolveRequest(BaseModel):
     status: str
     grantedByUserId: str | None = None
+
+
+class ProjectRunnerSessionCreateRequest(BaseModel):
+    taskId: str | None = None
+    role: str
+    taskDescription: str
+    repoUrl: str | None = None
+    branch: str = "main"
+    allowedPaths: list[str] = []
+    acceptanceCriteria: list[str] = []
+    runnerName: str = "jules"
+    agentRoleForSecrets: str | None = None
 
 
 @router.post("/")
@@ -617,3 +629,86 @@ async def resolve_project_approval(slug: str, approval_id: str, data: ApprovalRe
         },
     )
     return {"approvalId": approval_id, "status": data.status}
+
+
+# --- Project-Scoped Runner Sessions ---
+
+@router.post("/{slug}/runner/sessions")
+async def create_project_runner_session(
+    slug: str,
+    data: ProjectRunnerSessionCreateRequest,
+    background_tasks: BackgroundTasks,
+):
+    project = await planner_service.get_project_by_slug(slug)
+    from app.runners import session_lifecycle
+
+    repo_url = data.repoUrl or project.get("gitRepoUrl")
+    if not repo_url:
+        raise HTTPException(status_code=400, detail="Project has no gitRepoUrl and none provided")
+
+    result = await session_lifecycle.create_runner_session(
+        project_id=project["_id"],
+        project_slug=project["slug"],
+        task_id=data.taskId,
+        runner_name=data.runnerName,
+        role=data.role,
+        task_description=data.taskDescription,
+        repo_url=repo_url,
+        branch=data.branch,
+        allowed_paths=data.allowedPaths,
+        acceptance_criteria=data.acceptanceCriteria,
+        agent_role_for_secrets=data.agentRoleForSecrets,
+    )
+
+    # Start polling in background
+    background_tasks.add_task(
+        session_lifecycle.poll_session_until_done,
+        result["convex_session_id"],
+        project_id=project["_id"],
+    )
+
+    return result
+
+
+@router.get("/{slug}/runner/sessions")
+async def list_project_runner_sessions(slug: str, limit: int = Query(20)):
+    project = await planner_service.get_project_by_slug(slug)
+    sessions = await convex.query("agent:listByProjectId", {"projectId": project["_id"], "limit": limit}) or []
+    return {"sessions": sessions}
+
+
+@router.get("/{slug}/runner/sessions/{session_id}")
+async def get_project_runner_session(slug: str, session_id: str, sync: bool = Query(True)):
+    project = await planner_service.get_project_by_slug(slug)
+    from app.runners import session_lifecycle
+    return await session_lifecycle.get_runner_session(
+        session_id,
+        sync_from_runner=sync,
+        project_id=project["_id"],
+    )
+
+
+@router.post("/{slug}/runner/sessions/{session_id}/cancel")
+async def cancel_project_runner_session(slug: str, session_id: str):
+    project = await planner_service.get_project_by_slug(slug)
+    from app.runners import session_lifecycle
+    return await session_lifecycle.cancel_runner_session(
+        session_id,
+        project_id=project["_id"],
+    )
+
+
+@router.post("/{slug}/runner/sessions/{session_id}/poll")
+async def trigger_project_runner_session_poll(
+    slug: str,
+    session_id: str,
+    background_tasks: BackgroundTasks,
+):
+    project = await planner_service.get_project_by_slug(slug)
+    from app.runners import session_lifecycle
+    background_tasks.add_task(
+        session_lifecycle.poll_session_until_done,
+        session_id,
+        project_id=project["_id"],
+    )
+    return {"ok": True, "message": "Polling started in background"}
