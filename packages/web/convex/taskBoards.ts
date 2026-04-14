@@ -37,3 +37,29 @@ export const update = mutation({
     await ctx.db.patch(boardId, { ...patch, updatedAt: Date.now() });
   },
 });
+
+/**
+ * Return the board record and all its tasks grouped by status.
+ * Used by the Python planner to render research_plan/task_board.md.
+ */
+export const getBoardSummary = query({
+  args: { boardId: v.id("taskBoards") },
+  handler: async (ctx, { boardId }) => {
+    const board = await ctx.db.get(boardId);
+    if (!board) return null;
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_board", (q) => q.eq("boardId", boardId))
+      .order("desc")
+      .collect();
+
+    const byStatus: Record<string, typeof tasks> = {};
+    for (const task of tasks) {
+      const s = task.status;
+      if (!byStatus[s]) byStatus[s] = [];
+      byStatus[s].push(task);
+    }
+
+    return { board, tasks, byStatus };
+  },
+});

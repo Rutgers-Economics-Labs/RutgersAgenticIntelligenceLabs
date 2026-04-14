@@ -1,6 +1,18 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
+// Task event types that are considered "sync triggers" (kept in sync with planner_sync.py).
+const SYNC_TRIGGER_EVENTS = new Set([
+  "created",
+  "moved_to_ready",
+  "approval_requested",
+  "approval_granted",
+  "runner_started",
+  "blocked",
+  "verification_passed",
+  "done",
+]);
+
 export const get = query({
   args: { taskId: v.id("tasks") },
   handler: async (ctx, { taskId }) => ctx.db.get(taskId),
@@ -63,5 +75,38 @@ export const update = mutation({
   handler: async (ctx, { taskId, ...fields }) => {
     const patch = Object.fromEntries(Object.entries(fields).filter(([, v]) => v !== undefined));
     await ctx.db.patch(taskId, { ...patch, updatedAt: Date.now() });
+  },
+});
+
+/**
+ * Atomic task state transition: updates status, records a task event, and
+ * signals whether the caller should trigger a Git planner file mirror.
+ *
+ * Returns { task, shouldSync } so the Python planner can decide whether to
+ * call PlannerSync.sync_on_transition() after this mutation completes.
+ */
+export const transition = mutation({
+  args: {
+    taskId: v.id("tasks"),
+    newStatus: v.string(),
+    eventType: v.string(),
+    eventPayload: v.optional(v.any()),
+    gitSnapshotPath: v.optional(v.string()),
+  },
+  handler: async (ctx, { taskId, newStatus, eventType, eventPayload, gitSnapshotPath }) => {
+    const now = Date.now();
+    const patch: Record<string, unknown> = { status: newStatus, updatedAt: now };
+    if (gitSnapshotPath !== undefined) patch.gitSnapshotPath = gitSnapshotPath;
+    await ctx.db.patch(taskId, patch);
+
+    await ctx.db.insert("taskEvents", {
+      taskId,
+      eventType,
+      payload: eventPayload ?? {},
+      createdAt: now,
+    });
+
+    const task = await ctx.db.get(taskId);
+    return { task, shouldSync: SYNC_TRIGGER_EVENTS.has(eventType) };
   },
 });
