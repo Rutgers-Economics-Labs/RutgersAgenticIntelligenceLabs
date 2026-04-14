@@ -1,80 +1,509 @@
-import pytest
-from pathlib import Path
-from app.services.verification import verify_config, verify_path_policy, verify_execution, verify_artifact
-from app.services.policy_resolver import RuntimePolicy, PathPolicy, SecretPolicy, ToolPolicy, CompletionPolicy
-
-def test_verify_config():
-    res = verify_config("api", "invalid yaml [")
-    assert res.passed is False
-    assert len(res.errors) > 0
-
-    valid_api = """
-name: test
-type: api
-url: http://test.com
-description: a test api
-response_format: json
 """
-    res = verify_config("api", valid_api)
-    assert res.passed is True
-    assert len(res.errors) == 0
+Tests for rail.verification — WO-F8.4
 
-def test_verify_path_policy():
-    policy = RuntimePolicy(
-        paths=PathPolicy(write=[".ontology/sources", "artifacts"], deny=["agents"]),
-        secrets=SecretPolicy(),
-        tools=ToolPolicy(),
-        completion=CompletionPolicy()
-    )
+Covers all six deterministic verification hooks:
+  - CheckResult / VerificationResult data types
+  - ConfigVerificationHook
+  - PathPolicyVerificationHook
+  - HydrationVerificationHook
+  - ExecutionVerificationHook
+  - ArtifactVerificationHook
+  - HealthVerificationHook
+  - Internal helpers: _infer_file_type, _path_under
+"""
+from __future__ import annotations
 
-    # Valid write
-    res = verify_path_policy([".ontology/sources/source1.yaml"], policy)
-    assert res.passed is True
+import pytest
+from pathlib import Path, PurePosixPath
 
-    # Invalid write (outside allowed)
-    res = verify_path_policy(["specs/something.md"], policy)
-    assert res.passed is False
-    assert "Path modified outside allowed write locations: specs/something.md" in res.errors
+import yaml
 
-    # Invalid write (denied location)
-    res = verify_path_policy(["agents/data.yaml"], policy)
-    assert res.passed is False
-    assert "Path modified in denied location: agents/data.yaml" in res.errors
+from rail.verification import (
+    CheckResult,
+    VerificationResult,
+    ConfigVerificationHook,
+    PathPolicyVerificationHook,
+    HydrationVerificationHook,
+    ExecutionVerificationHook,
+    ArtifactVerificationHook,
+    HealthVerificationHook,
+    _infer_file_type,
+    _path_under,
+)
 
-def test_verify_execution(tmp_path):
-    policy = RuntimePolicy(
-        paths=PathPolicy(write=["outputs"]),
-        secrets=SecretPolicy(),
-        tools=ToolPolicy(),
-        completion=CompletionPolicy()
-    )
 
-    (tmp_path / "outputs").mkdir()
-    (tmp_path / "outputs/result.txt").write_text("done")
+# ---------------------------------------------------------------------------
+# Data types
+# ---------------------------------------------------------------------------
 
-    # Missing output
-    res = verify_execution("script.py", ["outputs/missing.txt"], tmp_path, policy)
-    assert res.passed is False
-    assert "Expected output file not found: outputs/missing.txt" in res.errors
+class TestCheckResult:
+    def test_passed_check(self):
+        c = CheckResult("parse_succeeds", True)
+        assert c.passed is True
+        assert c.name == "parse_succeeds"
 
-    # Good output
-    res = verify_execution("script.py", ["outputs/result.txt"], tmp_path, policy)
-    assert res.passed is True
+    def test_failed_check_with_message(self):
+        c = CheckResult("field_version", False, "missing required field: 'version'")
+        assert c.passed is False
+        assert "version" in c.message
 
-def test_verify_artifact(tmp_path):
-    policy = RuntimePolicy(
-        paths=PathPolicy(write=["artifacts"]),
-        secrets=SecretPolicy(),
-        tools=ToolPolicy(),
-        completion=CompletionPolicy()
-    )
 
-    (tmp_path / "artifacts").mkdir()
-    (tmp_path / "artifacts/data.json").write_text("{}")
+class TestVerificationResult:
+    def test_bool_true_when_passed(self):
+        vr = VerificationResult("hook", True)
+        assert bool(vr) is True
 
-    res = verify_artifact(["artifacts/data.json"], tmp_path, policy)
-    assert res.passed is True
+    def test_bool_false_when_failed(self):
+        vr = VerificationResult("hook", False)
+        assert bool(vr) is False
 
-    res = verify_artifact(["artifacts/missing.json"], tmp_path, policy)
-    assert res.passed is False
-    assert "Required artifact file not found: artifacts/missing.json" in res.errors
+    def test_failures_returns_only_failed_checks(self):
+        vr = VerificationResult("hook", False, [
+            CheckResult("ok", True),
+            CheckResult("bad", False, "oops"),
+        ])
+        failures = vr.failures
+        assert len(failures) == 1
+        assert failures[0].name == "bad"
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+class TestInferFileType:
+    def test_rail_yaml(self):
+        assert _infer_file_type(Path("rail.yaml")) == "rail.yaml"
+
+    def test_agents_dir(self):
+        assert _infer_file_type(Path("agents/worker.yaml")) == "agent"
+
+    def test_sources_dir(self):
+        assert _infer_file_type(Path("sources/bls.yaml")) == "source"
+
+    def test_pipelines_dir(self):
+        assert _infer_file_type(Path("pipelines/unemployment.yaml")) == "pipeline"
+
+    def test_unknown(self):
+        assert _infer_file_type(Path("foo.yaml")) == "generic"
+
+
+class TestPathUnder:
+    def test_exact_root_match(self):
+        assert _path_under(PurePosixPath("artifacts"), PurePosixPath("artifacts")) is True
+
+    def test_child_path(self):
+        assert _path_under(PurePosixPath("artifacts/report.md"), PurePosixPath("artifacts")) is True
+
+    def test_sibling_not_under(self):
+        assert _path_under(PurePosixPath("research_plan/x.md"), PurePosixPath("artifacts")) is False
+
+    def test_nested_child(self):
+        assert _path_under(PurePosixPath("a/b/c/d.txt"), PurePosixPath("a/b")) is True
+
+
+# ---------------------------------------------------------------------------
+# ConfigVerificationHook
+# ---------------------------------------------------------------------------
+
+class TestConfigVerificationHook:
+    hook = ConfigVerificationHook()
+
+    def test_valid_rail_yaml_passes(self, tmp_path):
+        config = {
+            "version": "1",
+            "project": "my-project",
+            "paths": {"data": "data/", "artifacts": "artifacts/"},
+            "hydration": {"schedule": "weekly"},
+            "agents": [{"role": "planner"}],
+        }
+        p = tmp_path / "rail.yaml"
+        p.write_text(yaml.dump(config))
+        result = self.hook.run({"file_path": str(p), "file_type": "rail.yaml"})
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_missing_required_field_fails(self, tmp_path):
+        config = {"version": "1"}  # missing project, paths, hydration, agents
+        p = tmp_path / "rail.yaml"
+        p.write_text(yaml.dump(config))
+        result = self.hook.run({"file_path": str(p), "file_type": "rail.yaml"})
+        assert not result.passed
+        failure_names = [c.name for c in result.failures]
+        assert "field_project" in failure_names
+
+    def test_invalid_yaml_fails(self, tmp_path):
+        p = tmp_path / "bad.yaml"
+        p.write_text(": invalid: yaml: [\n")
+        result = self.hook.run({"file_path": str(p), "file_type": "rail.yaml"})
+        assert not result.passed
+        assert any(c.name == "parse_succeeds" for c in result.failures)
+
+    def test_absolute_path_in_paths_fails(self, tmp_path):
+        config = {
+            "version": "1",
+            "project": "x",
+            "paths": {"data": "/absolute/path"},
+            "hydration": {},
+            "agents": [],
+        }
+        p = tmp_path / "rail.yaml"
+        p.write_text(yaml.dump(config))
+        result = self.hook.run({
+            "file_path": str(p),
+            "file_type": "rail.yaml",
+            "repo_root": str(tmp_path),
+        })
+        assert not result.passed
+        assert any("path_relative_data" in c.name for c in result.failures)
+
+    def test_agent_yaml_required_fields(self, tmp_path):
+        agent = {
+            "role": "data",
+            "label": "Data Agent",
+            "purpose": "Ingest data",
+            "runner": "jules",
+            "permissions": {"write": ["artifacts/"]},
+            "completion": {"criteria": []},
+        }
+        p = tmp_path / "agents" / "data_agent.yaml"
+        p.parent.mkdir(parents=True)
+        p.write_text(yaml.dump(agent))
+        result = self.hook.run({"file_path": str(p), "file_type": "agent"})
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_non_mapping_root_fails(self, tmp_path):
+        p = tmp_path / "bad.yaml"
+        p.write_text("- foo\n- bar\n")
+        result = self.hook.run({"file_path": str(p)})
+        assert not result.passed
+        assert any(c.name == "is_mapping" for c in result.failures)
+
+
+# ---------------------------------------------------------------------------
+# PathPolicyVerificationHook
+# ---------------------------------------------------------------------------
+
+class TestPathPolicyVerificationHook:
+    hook = PathPolicyVerificationHook()
+
+    def test_all_paths_in_allowed_roots_passes(self):
+        result = self.hook.run({
+            "modified_paths": ["artifacts/report.md", "research_plan/x.md"],
+            "allowed_write_roots": ["artifacts", "research_plan"],
+            "denied_paths": [],
+        })
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_path_outside_allowed_roots_fails(self):
+        result = self.hook.run({
+            "modified_paths": ["packages/api/secret.py"],
+            "allowed_write_roots": ["artifacts"],
+            "denied_paths": [],
+        })
+        assert not result.passed
+
+    def test_denied_path_fails(self):
+        result = self.hook.run({
+            "modified_paths": ["packages/api/config.py"],
+            "allowed_write_roots": ["packages"],
+            "denied_paths": ["packages/api"],
+        })
+        assert not result.passed
+        assert any("denied" in c.message for c in result.failures)
+
+    def test_empty_modified_paths_passes(self):
+        result = self.hook.run({
+            "modified_paths": [],
+            "allowed_write_roots": ["artifacts"],
+            "denied_paths": [],
+        })
+        assert result.passed
+
+    def test_no_allowed_roots_fails_on_any_write(self):
+        result = self.hook.run({
+            "modified_paths": ["foo.md"],
+            "allowed_write_roots": [],
+            "denied_paths": [],
+        })
+        assert not result.passed
+
+
+# ---------------------------------------------------------------------------
+# HydrationVerificationHook
+# ---------------------------------------------------------------------------
+
+class TestHydrationVerificationHook:
+    hook = HydrationVerificationHook()
+
+    def test_all_passing_context(self, tmp_path):
+        artifact = tmp_path / "output.db"
+        artifact.write_text("data")
+        result = self.hook.run({
+            "yaml_valid": True,
+            "dry_run_passed": True,
+            "expected_artifact_paths": [str(artifact)],
+        })
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_yaml_invalid_fails(self, tmp_path):
+        result = self.hook.run({
+            "yaml_valid": False,
+            "dry_run_passed": True,
+            "expected_artifact_paths": [],
+        })
+        assert not result.passed
+        assert any(c.name == "yaml_valid" for c in result.failures)
+
+    def test_dry_run_failed_fails(self):
+        result = self.hook.run({
+            "yaml_valid": True,
+            "dry_run_passed": False,
+            "expected_artifact_paths": [],
+        })
+        assert not result.passed
+        assert any(c.name == "dry_run_passed" for c in result.failures)
+
+    def test_missing_artifact_fails(self, tmp_path):
+        result = self.hook.run({
+            "yaml_valid": True,
+            "dry_run_passed": True,
+            "expected_artifact_paths": [str(tmp_path / "missing.db")],
+        })
+        assert not result.passed
+
+    def test_no_expected_artifacts_passes_if_yaml_and_dry_run_ok(self):
+        result = self.hook.run({
+            "yaml_valid": True,
+            "dry_run_passed": True,
+            "expected_artifact_paths": [],
+        })
+        assert result.passed
+
+
+# ---------------------------------------------------------------------------
+# ExecutionVerificationHook
+# ---------------------------------------------------------------------------
+
+class TestExecutionVerificationHook:
+    hook = ExecutionVerificationHook()
+
+    def test_success_with_output_in_allowed_root(self, tmp_path):
+        output = tmp_path / "artifacts" / "result.csv"
+        output.parent.mkdir()
+        output.write_text("a,b\n1,2\n")
+        result = self.hook.run({
+            "execution_succeeded": True,
+            "expected_output_paths": [str(output)],
+            "allowed_write_roots": [str(tmp_path / "artifacts")],
+        })
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_execution_failed_fails(self, tmp_path):
+        result = self.hook.run({
+            "execution_succeeded": False,
+            "expected_output_paths": [],
+            "allowed_write_roots": [],
+        })
+        assert not result.passed
+        assert any(c.name == "execution_succeeded" for c in result.failures)
+
+    def test_missing_output_fails(self, tmp_path):
+        result = self.hook.run({
+            "execution_succeeded": True,
+            "expected_output_paths": [str(tmp_path / "missing.csv")],
+            "allowed_write_roots": [],
+        })
+        assert not result.passed
+
+    def test_no_expected_outputs_with_failed_execution_fails(self):
+        """With no outputs and failed execution, hook fails on execution_succeeded."""
+        result = self.hook.run({
+            "execution_succeeded": False,
+            "expected_output_paths": [],
+            "allowed_write_roots": [],
+        })
+        assert not result.passed
+        assert any(c.name == "execution_succeeded" for c in result.failures)
+
+    def test_empty_outputs_with_success_still_passes(self):
+        """If execution succeeded and no output paths are declared, hook passes.
+        The no_outputs_declared guard is a safety net for truly empty check lists."""
+        result = self.hook.run({
+            "execution_succeeded": True,
+            "expected_output_paths": [],
+            "allowed_write_roots": [],
+        })
+        # execution_succeeded check passes, no further output checks → hook passes
+        assert result.passed
+
+    def test_output_outside_allowed_root_fails(self, tmp_path):
+        output = tmp_path / "secret.py"
+        output.write_text("code")
+        result = self.hook.run({
+            "execution_succeeded": True,
+            "expected_output_paths": [str(output)],
+            "allowed_write_roots": [str(tmp_path / "artifacts")],
+        })
+        assert not result.passed
+        assert any("outside declared write roots" in c.message for c in result.failures)
+
+
+# ---------------------------------------------------------------------------
+# ArtifactVerificationHook
+# ---------------------------------------------------------------------------
+
+class TestArtifactVerificationHook:
+    hook = ArtifactVerificationHook()
+
+    def test_existing_renderable_artifact_passes(self, tmp_path):
+        art = tmp_path / "artifacts" / "report.md"
+        art.parent.mkdir()
+        art.write_text("# Report")
+        result = self.hook.run({
+            "artifact_paths": [str(art)],
+            "allowed_write_roots": [str(tmp_path / "artifacts")],
+            "manifest_updated": True,
+        })
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_missing_artifact_fails(self, tmp_path):
+        result = self.hook.run({
+            "artifact_paths": [str(tmp_path / "missing.md")],
+            "allowed_write_roots": [],
+            "manifest_updated": True,
+        })
+        assert not result.passed
+
+    def test_unrenderable_format_fails(self, tmp_path):
+        art = tmp_path / "data.bin"
+        art.write_bytes(b"\x00\x01\x02")
+        result = self.hook.run({
+            "artifact_paths": [str(art)],
+            "allowed_write_roots": [],
+            "manifest_updated": True,
+        })
+        assert not result.passed
+        assert any("unrecognised artifact format" in c.message for c in result.failures)
+
+    def test_manifest_not_updated_fails(self, tmp_path):
+        art = tmp_path / "report.md"
+        art.write_text("# x")
+        result = self.hook.run({
+            "artifact_paths": [str(art)],
+            "allowed_write_roots": [],
+            "manifest_updated": False,
+        })
+        assert not result.passed
+        assert any(c.name == "manifest_updated" for c in result.failures)
+
+    def test_no_artifacts_with_manifest_updated_passes(self):
+        """When artifact_paths is empty but manifest_updated=True, hook passes.
+        The no_artifacts_declared guard fires only if the checks list were truly empty."""
+        result = self.hook.run({
+            "artifact_paths": [],
+            "allowed_write_roots": [],
+            "manifest_updated": True,
+        })
+        # manifest_updated check passes; no artifact checks run → hook passes
+        assert result.passed
+
+    def test_no_artifacts_with_manifest_not_updated_fails(self):
+        """When artifact_paths is empty and manifest not updated, hook fails."""
+        result = self.hook.run({
+            "artifact_paths": [],
+            "allowed_write_roots": [],
+            "manifest_updated": False,
+        })
+        assert not result.passed
+        assert any(c.name == "manifest_updated" for c in result.failures)
+
+    def test_renderable_formats(self, tmp_path):
+        for suffix in [".md", ".html", ".pdf", ".png", ".jpg", ".svg", ".json", ".csv"]:
+            art = tmp_path / f"file{suffix}"
+            art.write_bytes(b"data")
+            result = self.hook.run({
+                "artifact_paths": [str(art)],
+                "allowed_write_roots": [],
+                "manifest_updated": True,
+            })
+            renderable_checks = [c for c in result.checks if "renderable" in c.name]
+            assert renderable_checks[0].passed, f"Expected {suffix} to be renderable"
+
+
+# ---------------------------------------------------------------------------
+# HealthVerificationHook
+# ---------------------------------------------------------------------------
+
+class TestHealthVerificationHook:
+    hook = HealthVerificationHook()
+
+    def test_all_checks_present_passes(self, tmp_path):
+        report = tmp_path / "verification_report.md"
+        report.write_text("# Report")
+        cleanup = tmp_path / "cleanup.log"
+        cleanup.write_text("cleaned")
+        result = self.hook.run({
+            "verification_report_path": str(report),
+            "cleanup_log_path": str(cleanup),
+            "skill_review_recorded": True,
+            "disallowed_write_paths": [],
+        })
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_missing_verification_report_fails(self, tmp_path):
+        cleanup = tmp_path / "cleanup.log"
+        cleanup.write_text("cleaned")
+        result = self.hook.run({
+            "verification_report_path": str(tmp_path / "missing.md"),
+            "cleanup_log_path": str(cleanup),
+            "skill_review_recorded": True,
+            "disallowed_write_paths": [],
+        })
+        assert not result.passed
+        assert any(c.name == "verification_report_exists" for c in result.failures)
+
+    def test_missing_cleanup_log_fails(self, tmp_path):
+        report = tmp_path / "report.md"
+        report.write_text("x")
+        result = self.hook.run({
+            "verification_report_path": str(report),
+            "cleanup_log_path": str(tmp_path / "missing.log"),
+            "skill_review_recorded": True,
+            "disallowed_write_paths": [],
+        })
+        assert not result.passed
+
+    def test_skill_review_not_recorded_fails(self, tmp_path):
+        report = tmp_path / "r.md"
+        report.write_text("x")
+        cleanup = tmp_path / "c.log"
+        cleanup.write_text("x")
+        result = self.hook.run({
+            "verification_report_path": str(report),
+            "cleanup_log_path": str(cleanup),
+            "skill_review_recorded": False,
+            "disallowed_write_paths": [],
+        })
+        assert not result.passed
+        assert any(c.name == "skill_review_recorded" for c in result.failures)
+
+    def test_disallowed_write_path_fails(self, tmp_path):
+        report = tmp_path / "r.md"
+        report.write_text("x")
+        cleanup = tmp_path / "c.log"
+        cleanup.write_text("x")
+        result = self.hook.run({
+            "verification_report_path": str(report),
+            "cleanup_log_path": str(cleanup),
+            "skill_review_recorded": True,
+            "disallowed_write_paths": ["packages/api/secret.py"],
+        })
+        assert not result.passed
+        assert any("disallowed path" in c.message for c in result.failures)
+
+    def test_no_paths_provided_fails(self):
+        result = self.hook.run({
+            "skill_review_recorded": True,
+            "disallowed_write_paths": [],
+        })
+        assert not result.passed

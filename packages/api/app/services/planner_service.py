@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +20,7 @@ TASK_STATUSES = [
 
 
 async def get_project_by_slug(slug: str) -> dict:
-    project = await convex.query("projects:get", {"slug": slug})
+    project = await convex.query("projects:getBySlug", {"slug": slug})
     if not project:
         raise ValueError(f"Project '{slug}' not found")
     return project
@@ -143,59 +142,36 @@ async def create_task(
     raise RuntimeError("Failed to create planner task")
 
 
+_STATUS_EVENT_MAP: dict[str, str] = {
+    "ready": "moved_to_ready",
+    "awaiting_approval": "approval_requested",
+    "running": "runner_started",
+    "blocked": "blocked",
+    "review": "verification_passed",
+    "done": "done",
+    "cancelled": "cancelled",
+}
+
+
 async def update_task(task_id: str, **fields) -> None:
     patch = {k: v for k, v in fields.items() if v is not None}
-    await convex.mutation("tasks:update", {"taskId": task_id, **patch})
-    if "status" in patch:
+    new_status = patch.pop("status", None)
+
+    if new_status:
+        # Use atomic transition mutation: updates status + appends event in one call.
+        event_type = _STATUS_EVENT_MAP.get(new_status, "status_changed")
         await convex.mutation(
-            "taskEvents:append",
+            "tasks:transition",
             {
                 "taskId": task_id,
-                "eventType": "status_changed",
-                "payload": {"status": patch["status"]},
+                "newStatus": new_status,
+                "eventType": event_type,
+                "eventPayload": {"status": new_status},
             },
         )
 
-
-def _task_slug(task: dict) -> str:
-    slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in task["title"])
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug.strip("-") or "task"
-
-
-def _task_file_markdown(task: dict) -> str:
-    deps = "\n".join(f"  - {dep}" for dep in task.get("dependsOnTaskIds", [])) or "  []"
-    criteria = "\n".join(f"  - {item}" for item in task.get("acceptanceCriteria", [])) or "  []"
-    files = "\n".join(f"  - {item}" for item in task.get("repoPaths", [])) or "  []"
-    latest = task.get("status", "unknown")
-    return (
-        f"---\n"
-        f"title: {task['title']}\n"
-        f"status: {task.get('status', 'backlog')}\n"
-        f"assigned_role: {task.get('agentRole', '')}\n"
-        f"dependencies:\n{deps}\n"
-        f"acceptance_criteria:\n{criteria}\n"
-        f"related_files:\n{files}\n"
-        f"latest_run_summary: \"{latest}\"\n"
-        f"---\n\n"
-        f"## Description\n\n{task.get('description', '').strip() or 'No description provided.'}\n"
-    )
-
-
-def _task_board_markdown(tasks: list[dict]) -> str:
-    grouped: dict[str, list[str]] = defaultdict(list)
-    for task in tasks:
-        grouped[task.get("status", "backlog")].append(f"- {task['title']}")
-
-    sections: list[str] = ["# Task Board", ""]
-    for status in TASK_STATUSES:
-        sections.append(f"## {status.replace('_', ' ').title()}")
-        sections.append("")
-        lines = grouped.get(status) or ["None."]
-        sections.extend(lines)
-        sections.append("")
-    return "\n".join(sections).rstrip() + "\n"
+    if patch:
+        await convex.mutation("tasks:update", {"taskId": task_id, **patch})
 
 
 def _current_plan_markdown(project: dict, tasks: list[dict]) -> str:
@@ -223,22 +199,25 @@ async def sync_planner_files(project: dict, board: dict | None = None) -> None:
     if root is None:
         return
 
+    from rail.planner_sync import PlannerSync
+    syncer = PlannerSync(root)
+
     board = board or await ensure_main_board(project["_id"])
     tasks = await list_tasks(board["_id"])
     plan_root = root / "research_plan"
-    tasks_root = plan_root / "tasks"
-    tasks_root.mkdir(parents=True, exist_ok=True)
 
+    # current_plan.md — not managed by PlannerSync
     _write_file(plan_root / "current_plan.md", _current_plan_markdown(project, tasks))
-    _write_file(plan_root / "task_board.md", _task_board_markdown(tasks))
+
+    # task_board.md and per-task files — delegate to PlannerSync
+    syncer.mirror_board(board, tasks)
 
     for task in tasks:
-        task_path = tasks_root / f"{_task_slug(task)}.md"
-        _write_file(task_path, _task_file_markdown(task))
+        rel_path = syncer.mirror_task(task)
         await convex.mutation(
             "tasks:update",
             {
                 "taskId": task["_id"],
-                "gitSnapshotPath": str(task_path.relative_to(root)),
+                "gitSnapshotPath": rel_path,
             },
         )
