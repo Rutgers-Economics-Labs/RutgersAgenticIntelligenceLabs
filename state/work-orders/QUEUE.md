@@ -14,6 +14,7 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 - `WO-F2.3` Role policy resolver
 - `WO-F3.1` Convex schema reset
 - `WO-F3.2` Projects and planner-thread tables
+- `WO-F3.4` Runner events and sessions tables
 - `WO-F5.1` Device registry
 - `WO-F5.2` Hydration artifact registry
 - `WO-F5.3` Hydration reuse and stale detection
@@ -29,7 +30,6 @@ This file is the current execution queue for the future-spec rebuild. It exists 
 ### Pending
 
 - `WO-F3.3` Task board and approvals tables
-- `WO-F3.4` Runner events and sessions tables
 - `WO-F3.5` Project secrets and policy tables
 - `WO-F3.6` Future API surface cleanup
 - `WO-F4.1` Runner abstraction
