@@ -12,6 +12,17 @@ export const listByProjectThread = query({
   },
 });
 
+export const listLatestByProject = query({
+  args: { projectId: v.id("projects"), limit: v.optional(v.number()) },
+  handler: async (ctx, { projectId, limit = 200 }) => {
+    return ctx.db
+      .query("plannerMessages")
+      .withIndex("by_project", (q) => q.eq("projectId", projectId))
+      .order("desc")
+      .take(limit);
+  },
+});
+
 export const append = mutation({
   args: {
     projectId: v.id("projects"),

@@ -33,6 +33,7 @@
     "react-dom": "19.2.3",
     "react-force-graph-2d": "^1.29.1",
     "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.10.0",
     "recharts": "^3.8.0",
     "rehype-katex": "^7.0.1",
     "remark-math": "^6.0.0",

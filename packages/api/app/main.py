@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.services.convex_client import ConvexBackendConfigurationError
 from app.services.project_artifacts_service import HydrationRequiredError
 from app.services.scheduler_service import scheduler
-from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, questions, context, quality, connectors, projects, ontology_templates, github, schedules, runners
+from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, questions, context, quality, connectors, projects, ontology_templates, github, schedules, runners, repo
 
 
 @asynccontextmanager
@@ -110,6 +110,7 @@ app.include_router(projects.router,       prefix="/api/v1")
 app.include_router(github.router,         prefix="/api/v1")
 app.include_router(schedules.router,      prefix="/api/v1")
 app.include_router(runners.router,        prefix="/api/v1")
+app.include_router(repo.router,           prefix="/api/v1")
 
 
 @app.exception_handler(ConvexBackendConfigurationError)

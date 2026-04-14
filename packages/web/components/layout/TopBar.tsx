@@ -50,9 +50,20 @@ export function TopBar({ projectSlug }: { projectSlug?: string }) {
       </div>
 
       {/* Right */}
-      <div className="flex items-center w-[250px] justify-end gap-2">
+      <div className="flex items-center w-auto justify-end gap-1">
+        <div className="flex items-center gap-1 mr-2">
+          <Button variant="ghost" size="sm" className="h-8 text-[10px] uppercase font-bold tracking-wider text-muted-foreground hover:text-foreground" asChild>
+            <Link href="/registry">Registry</Link>
+          </Button>
+          <Button variant="ghost" size="sm" className="h-8 text-[10px] uppercase font-bold tracking-wider text-muted-foreground hover:text-foreground" asChild>
+            <Link href="/tools">Tools</Link>
+          </Button>
+        </div>
+
+        <div className="h-4 w-[1px] bg-[--border] mx-1" />
+
         {projectSlug ? (
-          <>
+          <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" asChild>
               <Link href={`/${projectSlug}/github`} title="GitHub Sync">
                 <Github size={16} />
@@ -63,7 +74,7 @@ export function TopBar({ projectSlug }: { projectSlug?: string }) {
                 <Settings size={16} />
               </Link>
             </Button>
-          </>
+          </div>
         ) : (
           <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" asChild>
              <Link href="/registry" title="Config Registry">
@@ -72,7 +83,7 @@ export function TopBar({ projectSlug }: { projectSlug?: string }) {
           </Button>
         )}
         <div className="h-4 w-[1px] bg-[--border] mx-1" />
-        <Button variant="outline" size="sm" asChild className="h-8 text-[10px] uppercase font-bold tracking-wider border-[--border] bg-transparent hover:bg-white/5">
+        <Button variant="outline" size="sm" asChild className="h-8 text-[10px] uppercase font-bold tracking-wider border-[--border] bg-transparent hover:bg-white/5 px-3">
           <Link href="/projects">
             All Projects
           </Link>
