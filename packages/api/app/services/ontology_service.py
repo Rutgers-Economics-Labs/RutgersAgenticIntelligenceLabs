@@ -117,6 +117,11 @@ def _load_locked(st: _ProjectOntology, db_path: str) -> None:
 
 def ensure_loaded(db_path: Union[str, Path], *, project_id: str | None = None) -> None:
     db_path = str(Path(db_path).resolve())
+    if not Path(db_path).exists():
+        raise FileNotFoundError(
+            f"Ontology artifact not found at {db_path}. "
+            "The /tmp/ files may have been cleaned up — re-run hydration to regenerate them."
+        )
     st = _get_state(project_id, db_path)
     
     # Update pathological mapping if we just discovered this PID uses this shared path:

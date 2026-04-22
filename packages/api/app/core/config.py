@@ -8,20 +8,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 def _settings_env_files() -> tuple[Path, ...] | None:
     """Load env in order; later files override earlier.
 
-    Web `.env.local` is loaded first, then repo root `.env`, then `packages/api/.env`.
-    Later files override the same variable name. A blank `CONVEX_DEPLOY_KEY=` in
-    `.env.local` cannot wipe a real key from the root `.env`.
-    `CONVEX_URL` and `NEXT_PUBLIC_CONVEX_URL` are separate settings fields so an empty
-    `CONVEX_URL=` in root does not erase a valid `NEXT_PUBLIC_CONVEX_URL` from the web env.
+    Repo root `.env` is loaded first, then `packages/api/.env`.
+    Later files override the same variable name.
     """
     _core = Path(__file__).resolve().parent
     api_root = _core.parents[1]  # packages/api
     repo_root = _core.parents[3]  # repo root (parent of packages/)
-    packages_dir = _core.parents[2]
     files: list[Path] = []
-    web_local = packages_dir / "web" / ".env.local"
-    if web_local.is_file():
-        files.append(web_local)
     root_env = repo_root / ".env"
     if root_env.is_file():
         files.append(root_env)
@@ -38,9 +31,8 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Convex — keep CONVEX_URL and NEXT_PUBLIC_CONVEX_URL as separate env keys so a blank
-    # `CONVEX_URL=` in root `.env` does not wipe a valid NEXT_PUBLIC_* from `web/.env.local`
-    # (both previously mapped to one field; later files won and produced an empty URL → httpx 500).
+    # Keep CONVEX_URL and NEXT_PUBLIC_CONVEX_URL separate so server-side and future
+    # client-side consumers can evolve independently.
     convex_url_env: str = Field(default="", validation_alias="CONVEX_URL")
     next_public_convex_url: str = Field(
         default="",
@@ -99,6 +91,9 @@ class Settings(BaseSettings):
         default="sources/github/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs",
         validation_alias="JULES_SOURCE",
     )
+    claude_code_command: str = Field(default="claude", validation_alias="CLAUDE_CODE_COMMAND")
+    gemini_cli_command: str = Field(default="gemini", validation_alias="GEMINI_CLI_COMMAND")
+    cursor_cli_command: str = Field(default="cursor-agent", validation_alias="CURSOR_CLI_COMMAND")
 
     # Server
     # In production set API_CORS_ORIGINS="https://your-app.vercel.app,https://custom-domain.com"

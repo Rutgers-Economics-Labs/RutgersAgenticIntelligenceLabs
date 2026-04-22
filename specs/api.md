@@ -1,6 +1,6 @@
 # FastAPI Service
 
-The FastAPI service (`packages/api/`) is the HTTP bridge between the Next.js frontend and the Python engine. It runs on port 8000.
+The FastAPI service (`packages/api/`) is the HTTP bridge between orchestration clients and the Python engine. It runs on port 8000.
 
 ## Entry Point
 
@@ -15,7 +15,7 @@ On startup (`lifespan`):
 
 ## Configuration — `app/core/config.py`
 
-`Settings` is a `pydantic_settings.BaseSettings` that reads from env vars and, in order (later overrides earlier): `packages/web/.env.local`, repo root `.env`, `packages/api/.env`. Put `CONVEX_DEPLOY_KEY` in root or `packages/api/.env` so it overrides any placeholder in `.env.local`.
+`Settings` is a `pydantic_settings.BaseSettings` that reads from env vars and, in order (later overrides earlier): repo root `.env`, then `packages/api/.env`.
 
 | Field | Type | Default | Source env var |
 |-------|------|---------|---------------|

@@ -1,5 +1,6 @@
 import time
 import yaml
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks
@@ -10,11 +11,31 @@ from rail.manifest import load_manifest
 from app.services.convex_client import convex
 from app.services import ontology_service, sql_service
 from app.services.project_artifacts_service import find_latest_success_job_with_outputs
-from app.services import planner_service
+from app.services import planner_runtime, planner_service
 from app.services.device_service import get_device_metadata
 from app.services.hydration_registry_service import (
     get_hydration_status as get_project_hydration_status,
     register_hydration_artifact,
+)
+from app.services.repo_contract_service import infer_github_repo, render_rail_manifest
+from app.services.brief_project_service import (
+    READY,
+    DRAFT,
+    MISSING,
+    build_preview,
+    default_repo_target,
+    render_repo_files,
+    slugify,
+    write_repo_files,
+)
+from app.services.safe_publish_service import (
+    MANIFEST_BACKED_FIELDS,
+    publish_manifest,
+    publish_config_files,
+    record_publish_failure,
+    record_publish_success,
+    rollback_project_update,
+    should_auto_publish,
 )
 from app.services.secret_service import decrypt_secret_value, encrypt_secret_value, mask_secret_value
 
@@ -55,6 +76,12 @@ class PlannerMessageRequest(BaseModel):
     content: str
     messageType: str = "chat"
     sessionId: str | None = None
+
+
+class PlannerChatRequest(BaseModel):
+    message: str
+    model: str | None = None
+    history: list[dict] = []
 
 
 class PlannerTaskRequest(BaseModel):
@@ -120,6 +147,33 @@ class ApprovalResolveRequest(BaseModel):
     grantedByUserId: str | None = None
 
 
+class ProjectMetadataSyncRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    gitRepoUrl: str | None = None
+    manifestPath: str | None = None
+    defaultBranch: str | None = None
+    githubSyncMode: str | None = None
+    ontologyConfigSlug: str | None = None
+    apiConfigSlugs: list[str] | None = None
+    pipelineConfigSlug: str | None = None
+    agentModel: str | None = None
+
+
+class ResearchBriefInput(BaseModel):
+    brief: str
+    model: str | None = None
+
+
+class CreateProjectFromBriefRequest(BaseModel):
+    brief: str
+    targetDir: str | None = None
+    gitRepoUrl: str | None = None
+    defaultBranch: str = "main"
+    model: str | None = None
+    githubSyncMode: str | None = None
+
+
 class ProjectRunnerSessionCreateRequest(BaseModel):
     taskId: str | None = None
     role: str
@@ -130,6 +184,14 @@ class ProjectRunnerSessionCreateRequest(BaseModel):
     acceptanceCriteria: list[str] = []
     runnerName: str = "jules"
     agentRoleForSecrets: str | None = None
+
+
+def _git_init(path: Path) -> None:
+    if (path / ".git").exists():
+        return
+    result = subprocess.run(["git", "init", str(path)], capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError(f"git init failed: {result.stderr or result.stdout}")
 
 
 @router.post("/")
@@ -204,6 +266,154 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
     )
     await planner_service.sync_planner_files(project, board)
     return await convex.query("projects:getById", {"projectId": project_id})
+
+
+@router.post("/from-brief/preview")
+async def preview_project_from_brief(data: ResearchBriefInput):
+    if not data.brief.strip():
+        raise HTTPException(400, "Brief is required")
+    return await build_preview(data.brief, model=data.model)
+
+
+@router.post("/from-brief/create")
+async def create_project_from_brief(data: CreateProjectFromBriefRequest):
+    if not data.brief.strip():
+        raise HTTPException(400, "Brief is required")
+
+    preview = await build_preview(data.brief, model=data.model)
+    project_meta = preview["project"]
+    slug = project_meta["slug"]
+    existing = await convex.query("projects:getBySlug", {"slug": slug})
+    if existing:
+        raise HTTPException(409, f"Project '{slug}' already exists")
+
+    repo_root = Path(data.targetDir).expanduser().resolve() if data.targetDir else default_repo_target(Path(__file__).resolve().parents[4], slug)
+    repo_root.parent.mkdir(parents=True, exist_ok=True)
+    bootstrap_future_project(repo_root, name=project_meta["name"], slug=slug, default_branch=data.defaultBranch)
+    write_repo_files(repo_root, preview["repoFiles"])
+    _git_init(repo_root)
+
+    git_repo = infer_github_repo(data.gitRepoUrl) if data.gitRepoUrl else None
+    project_id = await convex.mutation(
+        "projects:create",
+        {
+            "name": project_meta["name"],
+            "slug": slug,
+            "description": project_meta["description"],
+            "approach": project_meta.get("approach", "ontology-first"),
+            "gitRepoUrl": data.gitRepoUrl,
+            "localRepoPath": str(repo_root),
+            "manifestPath": "rail.yaml",
+        },
+    )
+
+    ontology = preview["ontology"]
+    pipeline = preview["pipeline"]
+    ready_or_draft_sources = [source for source in preview["sourceCandidates"] if source["readiness"] in {READY, DRAFT}]
+    created_source_slugs: list[str] = []
+    for source in ready_or_draft_sources:
+        parsed_source = yaml.safe_load(source["content"]) or {}
+        await convex.mutation(
+            "configs:createApi",
+            {
+                "name": source["name"],
+                "slug": source["slug"],
+                "content": source["content"],
+                "parsedSpec": parsed_source,
+                "sourceType": parsed_source.get("type", "api"),
+                "isPublic": False,
+                "tags": [],
+            },
+        )
+        created_source_slugs.append(source["slug"])
+
+    await convex.mutation(
+        "configs:createOntology",
+        {
+            "name": ontology["name"],
+            "slug": ontology["slug"],
+            "content": ontology["content"],
+            "parsedSpec": ontology["parsedSpec"],
+            "ontologyUri": ontology["parsedSpec"]["uri"],
+            "isPublic": False,
+        },
+    )
+    await convex.mutation(
+        "configs:createPipeline",
+        {
+            "name": pipeline["name"],
+            "slug": pipeline["slug"],
+            "content": pipeline["content"],
+            "parsedSpec": pipeline["parsedSpec"],
+            "referencedApiSlugs": pipeline["referencedApiSlugs"],
+            "isPublic": False,
+            "tags": [],
+        },
+    )
+
+    source_counts = preview["readiness"]
+    status = "ready_for_hydration_review" if source_counts.get(DRAFT, 0) == 0 and source_counts.get(MISSING, 0) == 0 and created_source_slugs else "draft"
+    await convex.mutation(
+        "projects:updateById",
+        {
+            "projectId": project_id,
+            "ontologyConfigSlug": ontology["slug"],
+            "apiConfigSlugs": created_source_slugs,
+            "pipelineConfigSlug": pipeline["slug"],
+            "defaultBranch": data.defaultBranch,
+            "github": git_repo,
+            "githubSyncMode": data.githubSyncMode or "manual",
+            "status": status,
+            "creationStatus": "from_brief",
+            "briefHash": preview["briefHash"],
+            "researchGraphSummary": {
+                "title": preview["researchGraph"]["title"],
+                "objective": preview["researchGraph"]["objective"],
+                "methods": preview["researchGraph"]["methods"],
+                "deliverables": preview["researchGraph"]["deliverables"],
+            },
+            "sourceReadinessCounts": source_counts,
+        },
+    )
+
+    project = await convex.query("projects:getById", {"projectId": project_id})
+    rail_path = repo_root / "rail.yaml"
+    existing_rail = rail_path.read_text(encoding="utf-8") if rail_path.exists() else None
+    rail_path.write_text(render_rail_manifest(project, existing_rail), encoding="utf-8")
+    await planner_service.ensure_planner_thread(project_id)
+    board = await planner_service.ensure_main_board(project_id)
+    await planner_service.append_planner_message(
+        project_id=project_id,
+        role="system",
+        content="Project created from a brief. Review the generated research graph, source readiness, and hydration plan before running hydration.",
+        message_type="system",
+    )
+    await planner_service.sync_planner_files(project, board)
+
+    publish_results: list[dict] = []
+    if project and await should_auto_publish(project):
+        try:
+            publish_results.append(await publish_manifest(project))
+            await record_publish_success(project_id, publish_results[-1])
+            publish_results.append(await publish_config_files(project, "ontologies", ontology["slug"], ontology["content"], action="create"))
+            await record_publish_success(project_id, publish_results[-1])
+            publish_results.append(await publish_config_files(project, "pipelines", pipeline["slug"], pipeline["content"], action="create"))
+            await record_publish_success(project_id, publish_results[-1])
+            for source in ready_or_draft_sources:
+                result = await publish_config_files(project, "apis", source["slug"], source["content"], action="create")
+                publish_results.append(result)
+                await record_publish_success(project_id, result)
+        except Exception as exc:
+            await record_publish_failure(project_id, str(exc))
+
+    updated = await convex.query("projects:getById", {"projectId": project_id})
+    return {
+        "project": updated,
+        "preview": preview,
+        "publish": publish_results,
+        "hydrationReady": status == "ready_for_hydration_review",
+        "nextAction": "Review draft sources if needed, then approve hydration separately.",
+    }
 
 
 @router.post("/{slug}/register-artifacts")
@@ -299,6 +509,52 @@ async def register_artifacts_from_job(
         "activeOntologyDbPath": db_key,
         "activeOntologyDuckdbPath": duckdb_path,
     }
+
+
+@router.post("/{slug}/clear-hydration")
+async def clear_hydration(slug: str):
+    """
+    Clear the active ontology artifact paths and reset the project status to 'ready'.
+    The artifact files on disk are NOT deleted — only the Convex project record is patched.
+    """
+    project = await convex.query("projects:getBySlug", {"slug": slug})
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    await convex.mutation("projects:clearHydration", {"projectId": project["_id"]})
+    return {"ok": True, "slug": slug, "status": "ready"}
+
+
+@router.post("/{slug}/sync-metadata")
+async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
+    project = await convex.query("projects:getBySlug", {"slug": slug})
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    patch = {k: v for k, v in data.model_dump().items() if v is not None}
+    if "gitRepoUrl" in patch:
+        inferred_repo = infer_github_repo(patch["gitRepoUrl"])
+        if inferred_repo:
+            patch["github"] = inferred_repo
+
+    await convex.mutation("projects:updateById", {
+        "projectId": project["_id"],
+        **patch,
+    })
+    updated = await convex.query("projects:getById", {"projectId": project["_id"]})
+
+    publish_result = None
+    should_publish_manifest = any(field in patch for field in MANIFEST_BACKED_FIELDS)
+    if should_publish_manifest and updated and await should_auto_publish(updated):
+        try:
+            publish_result = await publish_manifest(updated)
+            await record_publish_success(updated["_id"], publish_result)
+        except Exception as exc:
+            await rollback_project_update(project["_id"], project)
+            await record_publish_failure(project["_id"], str(exc))
+            raise HTTPException(502, f"Project update rolled back because GitHub publish failed: {exc}")
+
+    return {"project": updated, "publish": publish_result}
 
 
 @router.get("/{slug}/context")
@@ -409,6 +665,18 @@ async def append_planner_message(slug: str, data: PlannerMessageRequest):
     )
     messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id)
     return {"threadId": thread_id, "messages": list(reversed(messages))}
+
+
+@router.post("/{slug}/planner/chat")
+async def planner_chat(slug: str, data: PlannerChatRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    return await planner_runtime.run_planner_turn(
+        project=project,
+        user_message=data.message,
+        history=data.history,
+        model=data.model,
+        persist=True,
+    )
 
 
 @router.get("/{slug}/planner/board")
@@ -655,6 +923,7 @@ async def create_project_runner_session(
         task_description=data.taskDescription,
         repo_url=repo_url,
         branch=data.branch,
+        local_repo_path=project.get("localRepoPath"),
         allowed_paths=data.allowedPaths,
         acceptance_criteria=data.acceptanceCriteria,
         agent_role_for_secrets=data.agentRoleForSecrets,

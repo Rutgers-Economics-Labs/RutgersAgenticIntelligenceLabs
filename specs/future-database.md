@@ -24,6 +24,9 @@ The database stores operational state that Git should not own directly:
 - approvals
 - cost and timing metadata
 
+The database should stay intentionally thin.
+Its purpose is to help the planner operate the system, not to duplicate the repository.
+
 ## Scope Rules
 
 The database should stay lightweight.
@@ -65,6 +68,8 @@ Notes:
 
 - `manifest_path` should usually be `rail.yaml`
 - project structure details should be read from the manifest, not duplicated heavily in DB
+- the Git repo URL and default branch are the main durable project pointers stored by the platform
+- the UI should render from the latest commit on `default_branch`
 
 ### `project_secrets`
 
@@ -85,13 +90,14 @@ Suggested fields:
 
 Purpose:
 
-- deferred until after V1
-- shared secret scope for future multi-project or multi-user deployments
+- store encrypted organization-scoped secrets
+- provide reusable defaults for multiple projects
 
-Status:
+Notes:
 
-- not required in V1
-- should not block the initial implementation
+- V1 may implement organization scope in a minimal form
+- project secrets override organization secrets with the same key
+- runners resolve secrets through policy, not by exposing every available secret
 
 ### `agent_secret_policies`
 
@@ -110,8 +116,9 @@ Suggested fields:
 
 Notes:
 
-- V1 policies should resolve only against `project_secrets`
-- a later version may extend these policies with organization defaults
+- V1 policies should resolve against both `organization_secrets` and `project_secrets`
+- project values override organization values when names overlap
+- policies should be enforced per role before a runner session starts
 
 ### `task_boards`
 
@@ -202,6 +209,7 @@ Suggested fields:
 - `status`
 - `estimated_cost_usd`
 - `actual_cost_usd`
+- `question_count`
 - `started_at`
 - `ended_at`
 - `created_at`
@@ -237,6 +245,8 @@ Event examples:
 - `progress`
 - `completed`
 - `failed`
+- `waiting_for_planner`
+- `waiting_for_human`
 
 Notes:
 
@@ -258,9 +268,11 @@ Suggested fields:
 - `approval_type`
 - `status`
 - `requested_by_role`
+- `resolved_by_role`
 - `granted_by_user_id`
 - `requested_at`
 - `resolved_at`
+- `resolution_note`
 
 Approval examples:
 
@@ -268,6 +280,14 @@ Approval examples:
 - `approve_runner_plan`
 - `publish_changes`
 - `promote_skill`
+
+## Design Constraints
+
+- the DB must be sufficient to resume operational state after process restart
+- the DB must remain small enough to inspect and reason about directly
+- a project must still be understandable from Git even if the DB is unavailable
+- secret values must never be mirrored into Git snapshots
+- the database must never become the only place where planner intent or worker outputs exist
 
 ### `planner_messages`
 

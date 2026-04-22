@@ -25,7 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
-from app.services import llm_service
+from app.services import llm_service, planner_runtime
 from app.services.agent_service import PROJECT_AGENT_DATA_TOOLS, _execute_tool
 
 router = APIRouter(prefix="/project-agent", tags=["project-agent"])
@@ -676,13 +676,20 @@ async def _run_project_chat(
 async def project_chat(req: ProjectChatRequest):
     async def event_stream():
         try:
-            async for event in _run_project_chat(
-                req.project_id,
-                req.message,
-                req.history,
-                req.model,
-            ):
-                yield f"data: {json.dumps(event)}\n\n"
+            project = await convex.query("projects:getById", {"projectId": req.project_id})
+            if not project:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Project not found'})}\n\n"
+                return
+            result = await planner_runtime.run_planner_turn(
+                project=project,
+                user_message=req.message,
+                history=req.history,
+                model=req.model,
+                persist=True,
+            )
+            if result.get("assistantMessage"):
+                yield f"data: {json.dumps({'type': 'text_delta', 'content': result['assistantMessage']})}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'new_messages': [{'role': 'assistant', 'content': result.get('assistantMessage', '')}]})}\n\n"
         except Exception as exc:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
 
@@ -726,20 +733,17 @@ async def run_agent_task(req: AgentTaskRequest):
                 "startedAt": int(time.time() * 1000),
             })
 
-            transcript: list[str] = []
-            async for event in _run_project_chat(
-                req.project_id,
-                req.goal,
+            project = await convex.query("projects:getById", {"projectId": req.project_id})
+            if not project:
+                raise RuntimeError("Project not found")
+            result = await planner_runtime.run_planner_turn(
+                project=project,
+                user_message=req.goal,
                 history=[],
                 model=req.model,
-            ):
-                if event.get("type") == "text_delta":
-                    transcript.append(event["content"])
-                elif event.get("type") == "tool_call":
-                    transcript.append(f"\n[tool: {event['name']}]\n")
-                elif event.get("type") == "tool_result":
-                    result_preview = json.dumps(event.get("result", {}), default=str)[:300]
-                    transcript.append(f"→ {result_preview}\n")
+                persist=True,
+            )
+            transcript = [result.get("assistantMessage", "")]
 
             await convex.mutation("executions:updateStatus", {
                 "jobId": job_id,

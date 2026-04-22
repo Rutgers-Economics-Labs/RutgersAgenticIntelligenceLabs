@@ -26,12 +26,16 @@ from app.runners.base import BaseRunner
 
 def _build_registry() -> dict[str, Type[BaseRunner]]:
     """Lazy-import adapters so the factory never hard-fails at import time."""
+    from app.runners.claude_code import ClaudeCodeRunner
+    from app.runners.cursor_cli import CursorCliRunner
+    from app.runners.gemini_cli import GeminiCliRunner
     from app.runners.jules import JulesRunner
 
     return {
         "jules": JulesRunner,
-        # Future adapters:
-        # "claude_code": ClaudeCodeRunner,
+        "claude_code": ClaudeCodeRunner,
+        "gemini_cli": GeminiCliRunner,
+        "cursor_cli": CursorCliRunner,
     }
 
 
@@ -56,9 +60,7 @@ class RunnerFactory:
             # Instantiation may fail (missing creds) — return metadata without it.
             description = getattr(cls, "description", property(lambda self: "")).fget(object.__new__(cls)) if isinstance(getattr(cls, "description", None), property) else ""
             result.append({"name": name, "description": description})
-        return [
-            {"name": "jules", "description": "Jules — Google's managed coding agent API (GitHub-native)"},
-        ]
+        return result
 
     @staticmethod
     def get(name: str) -> BaseRunner:
@@ -93,6 +95,13 @@ class RunnerFactory:
             api_url = getattr(settings, "jules_api_url", "https://jules.googleapis.com/v1alpha")
             jules_source = getattr(settings, "jules_source", "sources/github/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs")
             return cls(api_key=api_key, api_url=api_url, source=jules_source)
+
+        if name == "claude_code":
+            return cls(command=getattr(settings, "claude_code_command", "claude"))
+        if name == "gemini_cli":
+            return cls(command=getattr(settings, "gemini_cli_command", "gemini"))
+        if name == "cursor_cli":
+            return cls(command=getattr(settings, "cursor_cli_command", "cursor-agent"))
 
         # Generic fallback (future adapters that take no constructor args)
         return cls()  # type: ignore[call-arg]

@@ -515,14 +515,16 @@ async def _log(job_id: str, level: str, message: str, seq: int, step: Union[str,
         logger.warning("Skipping Convex appendLog: job_id is missing (seq=%s)", seq)
         return
     try:
-        await convex.mutation("jobs:appendLog", {
+        payload: dict = {
             "jobId": job_id,
             "seq": seq,
             "level": level,
             "message": message,
-            "stepName": step,
             "timestamp": int(time.time() * 1000),
-        })
+        }
+        if step is not None:
+            payload["stepName"] = step
+        await convex.mutation("jobs:appendLog", payload)
     except Exception:
         logger.exception(
             "[%s] Convex appendLog failed (seq=%s) — UI may show no logs; message was: %s",

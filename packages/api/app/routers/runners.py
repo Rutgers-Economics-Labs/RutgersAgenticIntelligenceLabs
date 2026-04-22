@@ -35,6 +35,7 @@ class CreateSessionRequest(BaseModel):
     role: str
     task_id: str
     repo_url: str
+    local_repo_path: str | None = None
     branch: str = "main"
     task_description: str
     allowed_paths: list[str] = []
@@ -106,6 +107,7 @@ async def create_session(
         role=data.role,
         task_id=data.task_id,
         repo_url=data.repo_url,
+        local_repo_path=data.local_repo_path,
         branch=data.branch,
         task_description=data.task_description,
         allowed_paths=data.allowed_paths,

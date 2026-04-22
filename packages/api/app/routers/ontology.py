@@ -6,14 +6,27 @@ from app.services import project_artifacts_service
 router = APIRouter(prefix="/ontology", tags=["ontology"])
 
 
+def _handle_artifact_error(e: Exception) -> None:
+    """Re-raise ontology load errors as appropriate HTTP exceptions."""
+    if isinstance(e, FileNotFoundError):
+        raise HTTPException(
+            status_code=428,
+            detail=f"Ontology artifacts missing from disk. Re-run hydration to regenerate them. ({e})",
+        )
+    raise e
+
+
 @router.get("/classes")
 async def list_classes(project_id: str | None = Query(None, alias="projectId")):
-    if project_id:
-        art = await project_artifacts_service.resolve(project_id)
-        return await ontology_service._run_with_ensure(
-            project_id, art.db_path, ontology_service.list_classes
-        )
-    return await ontology_service._run(project_id, ontology_service.list_classes)
+    try:
+        if project_id:
+            art = await project_artifacts_service.resolve(project_id)
+            return await ontology_service._run_with_ensure(
+                project_id, art.db_path, ontology_service.list_classes
+            )
+        return await ontology_service._run(project_id, ontology_service.list_classes)
+    except Exception as e:
+        _handle_artifact_error(e)
 
 
 @router.get("/classes/{class_name}/instances")

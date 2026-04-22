@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 
 HydrationMode = Literal["full", "incremental"]
-RunnerName = Literal["jules"]
+RunnerName = Literal["jules", "claude_code", "gemini_cli", "cursor_cli"]
 PlannerThreadMode = Literal["project"]
 IndexMode = Literal["filesystem"]
 HomeView = Literal["planner", "project_home", "artifacts"]
@@ -65,6 +65,7 @@ class HydrationSection(BaseModel):
     pipelines_dir: str
     transforms_dir: str | None = None
     default_pipeline: str | None = None
+    linked_sources: list[str] = Field(default_factory=list)
     hydration_mode: HydrationMode = "full"
 
     @field_validator("ontology_file", "sources_dir", "pipelines_dir", "transforms_dir")

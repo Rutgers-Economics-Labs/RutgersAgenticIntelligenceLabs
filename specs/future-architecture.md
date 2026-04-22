@@ -10,6 +10,32 @@ The guiding principle is:
 - run one worker agent at a time in V1
 - require human approval before write-capable agent execution
 
+## Keep, Remove, and Add
+
+### Keep
+
+- the YAML-backed ontology and hydration kernel
+- the Python package and SDK for hydration and ontology access
+- deterministic validation and verification primitives
+- repo-backed project state and file-based knowledge organization
+- project-local skills and role files
+
+### Remove or De-Emphasize
+
+- database-first storage of project content
+- mirrored platform state acting as the durable source of truth for specs, plans, ontology files, or artifacts
+- a generic multi-agent swarm in V1
+- frontend flows that prioritize forms and records over the repository tree
+- coupling the ontology kernel to a specific runner vendor
+
+### Add
+
+- a planner-first orchestration model with specialized worker roles
+- a Git-native repository contract rooted in `rail.yaml`
+- a planner-owned internal Kanban/task system with Git-visible mirrors in `research_plan/`
+- runner adapters that normalize vendor events into a shared planner control flow
+- health and auditing as a first-class role
+
 ## Product Thesis
 
 RAIL is a Git-native research and analysis platform for ontology-driven economic work.
@@ -76,6 +102,7 @@ Responsible for:
 - enforcing per-agent capabilities and secret allowlists
 
 V1 supports one active worker at a time. The first production runner is Jules.
+The planner remains the only role that talks directly to the human.
 
 ### 5. Presentation Layer
 
@@ -98,9 +125,10 @@ The first release uses a sequential planner-controlled workflow:
 5. Tasks are stored in the internal task board
 6. User approves the next execution step
 7. Exactly one worker agent runs
-8. Worker commits outputs into the repository contract
-9. Health and verification checks run
-10. Planner updates plan status and proposes the next task
+8. Worker questions and approval requests are relayed back to the planner
+9. Worker commits outputs into the repository contract
+10. Health and verification checks run
+11. Planner updates plan status and proposes the next task
 
 ## Approval Gates
 
@@ -134,12 +162,14 @@ Core task statuses:
 - `cancelled`
 
 The planner updates task state after every agent callback or verification event.
+The planner decides when a worker question can be answered from project context and when it must be escalated to the human.
 
 ## Key Architectural Rules
 
 - Git is the source of truth for project content
 - `.ontology/` is the source of truth for hydration inputs
 - `rail.yaml` is the source of truth for project structure and agent policy
+- the latest commit on the configured default branch is the source of truth for what the UI renders
 - the database stores operational state only
 - planner task state is mirrored into Git for visibility, but executed from DB state
 - agents may create knowledge under `topics/`, but they may not invent top-level contracts

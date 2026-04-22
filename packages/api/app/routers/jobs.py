@@ -70,7 +70,7 @@ async def _trigger_job(pipeline_slug: str, project_id: str | None = None) -> dic
     if not job_id:
         raise ValueError(
             f"Convex jobs:create did not return a jobId (got {result!r}). "
-            "Deploy the latest Convex functions (packages/web/convex/jobs.ts) so create returns {{ jobId }}."
+            "Deploy the latest backend job mutation so create returns { jobId }."
         )
 
     asyncio.create_task(
@@ -158,7 +158,7 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
             500,
             detail=(
                 f"Convex jobs:create did not return a jobId (got {result!r}). "
-                "Deploy the latest Convex functions from packages/web/convex (especially jobs:create)."
+                "Deploy the latest backend job mutation implementation (especially jobs:create)."
             ),
         )
 

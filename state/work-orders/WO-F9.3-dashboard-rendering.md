@@ -1,6 +1,6 @@
 # WO-F9.3 — Dashboard Rendering
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-artifacts.md`  
 **Depends on:** WO-F9.1, WO-F7.4, WO-F8.3  
 **Blocks:** none  

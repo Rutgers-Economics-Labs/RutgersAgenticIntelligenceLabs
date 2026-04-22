@@ -12,7 +12,7 @@ class ConvexBackendConfigurationError(RuntimeError):
 
 
 class ConvexClient:
-    """Reads URL/key from settings on each call so merged CONVEX_URL + NEXT_PUBLIC_* stays current."""
+    """Reads URL/key from settings on each call."""
 
     @property
     def base_url(self) -> str:
@@ -25,14 +25,12 @@ class ConvexClient:
     def _require_backend_convex(self) -> None:
         if not self.base_url or not self.base_url.startswith(("http://", "https://")):
             raise ConvexBackendConfigurationError(
-                "Convex URL is not configured. Set CONVEX_URL in packages/api/.env, or ensure "
-                "NEXT_PUBLIC_CONVEX_URL is set in packages/web/.env.local (same value as the Next app)."
+                "Convex URL is not configured. Set CONVEX_URL in the repo root `.env` or `packages/api/.env`."
             )
         if not self.deploy_key:
             raise ConvexBackendConfigurationError(
                 "CONVEX_DEPLOY_KEY is not set. Add it to the repo root `.env` or `packages/api/.env` "
-                "(Convex → Settings → Deploy keys). Server-only — never NEXT_PUBLIC_. "
-                "Remove any empty CONVEX_DEPLOY_KEY= line from `packages/web/.env.local`."
+                "(Convex → Settings → Deploy keys). Server-only — never NEXT_PUBLIC_."
             )
 
     @property

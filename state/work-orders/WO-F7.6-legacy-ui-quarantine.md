@@ -1,6 +1,6 @@
 # WO-F7.6 — Legacy UI Quarantine
 
-**Status:** pending  
+**Status:** completed  
 **Spec:** `specs/future-frontend.md`, `specs/future-frontend-routes.md`  
 **Depends on:** WO-F7.1  
 **Blocks:** WO-F9.1  

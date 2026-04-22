@@ -223,6 +223,7 @@ Optional fields:
 - `planner_thread_mode`
 - `default_planner_role`
 - `default_worker_roles`
+- `question_relay_mode`
 
 Notes:
 
@@ -239,6 +240,7 @@ agents:
   approval_required_for_write_runs: true
   planner_thread_mode: "project"
   default_planner_role: "planner"
+  question_relay_mode: "planner_first"
 ```
 
 ### `frontend`
@@ -257,6 +259,7 @@ Optional fields:
 - `show_repo_tree`
 - `show_task_board_snapshot`
 - `default_home_view`
+- `git_render_mode`
 
 Notes:
 
@@ -272,6 +275,7 @@ frontend:
   show_repo_tree: true
   show_task_board_snapshot: true
   default_home_view: "planner"
+  git_render_mode: "default_branch"
 ```
 
 ## Full Example
@@ -308,6 +312,7 @@ agents:
   approval_required_for_write_runs: true
   planner_thread_mode: "project"
   default_planner_role: "planner"
+  question_relay_mode: "planner_first"
 
 frontend:
   topic_index_mode: "filesystem"
@@ -315,6 +320,7 @@ frontend:
   show_repo_tree: true
   show_task_board_snapshot: true
   default_home_view: "planner"
+  git_render_mode: "default_branch"
 ```
 
 ## What Lives Outside `rail.yaml`
@@ -355,7 +361,8 @@ For V1, the platform should assume:
 
 - a single active worker at a time
 - a long-lived project-level planner thread
-- project-scoped secrets only
+- planner-first question relay
+- both organization and project secret scopes with per-role allowlists
 - Jules as the first supported runner
 
 The manifest should reflect these defaults without hardcoding every future platform option.

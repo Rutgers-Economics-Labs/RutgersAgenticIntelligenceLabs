@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from app.services import agent_service, llm_service
+from app.services import agent_service, llm_service, planner_runtime, planner_service
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -41,6 +41,19 @@ async def agent_chat(req: ChatRequest, project: str | None = Query(default=None)
     """
     async def event_stream():
         try:
+            if project:
+                project_record = await planner_service.get_project_by_slug(project)
+                result = await planner_runtime.run_planner_turn(
+                    project=project_record,
+                    user_message=req.message,
+                    history=req.history,
+                    model=req.model,
+                    persist=True,
+                )
+                if result.get("assistantMessage"):
+                    yield f"data: {json.dumps({'type': 'text_delta', 'content': result['assistantMessage']}, default=str)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'new_messages': [{'role': 'assistant', 'content': result.get('assistantMessage', '')}]}, default=str)}\n\n"
+                return
             async for event in agent_service.run_chat(
                 user_message=req.message,
                 history=req.history,

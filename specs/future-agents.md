@@ -23,6 +23,8 @@ Purpose:
 - create and sequence tasks in the task board
 - decide which worker should run next
 - relay worker questions back to the human when necessary
+- answer worker questions directly when the answer already exists in project context
+- own the single active execution slot in V1
 
 Key outputs:
 
@@ -39,6 +41,7 @@ Purpose:
 - read websites, papers, and documentation
 - synthesize findings into project knowledge
 - organize materials inside `topics/`
+- prepare reusable context for data, coding, artifact, and health work
 
 Key outputs:
 
@@ -105,6 +108,21 @@ Key outputs:
 - cleanup proposals
 - skill review outcomes
 
+## Planner and Worker Control Flow
+
+V1 uses a planner-controlled sequential workflow:
+
+1. the planner talks to the human and writes the active plan
+2. the planner creates or updates tasks in the internal board
+3. the planner selects exactly one worker task to run
+4. the user approves the run
+5. the worker executes inside its allowed repo paths and secret policy
+6. any worker questions are routed back to the planner
+7. the planner either answers from context or asks the human
+8. the worker completes and writes durable outputs into Git
+9. health and deterministic verification run
+10. the planner updates `research_plan/` and proposes the next step
+
 ## Planner-Owned Task Board
 
 The planner uses an internal task board stored in the database.
@@ -167,6 +185,8 @@ Examples:
 - YAML style conventions
 - artifact naming conventions
 
+These are baseline starter skills, not a shared mutable memory pool.
+
 These are copied into the project at setup time.
 
 ### Project Skills
@@ -185,6 +205,7 @@ These may encode:
 Project skills are only promoted into a broader shared pool after explicit review.
 
 The health agent can recommend promotion, but promotion should require human approval.
+The health agent should also be able to flag project-local skills as stale, overbroad, or unsafe before reuse.
 
 ## Project Bootstrap Command
 
@@ -216,3 +237,10 @@ Examples:
 - task acceptance checklist completion
 
 LLM review should support, not replace, these checks.
+
+## V1 Runner Notes
+
+- Jules is the first supported worker runner
+- Claude Code remains a future runner adapter
+- planner state should not depend on any single runner vendor
+- the system should normalize runner questions, approvals, progress, and completion into a shared planner-facing model

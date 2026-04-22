@@ -33,6 +33,7 @@ def bootstrap_future_project(
         ".ontology/transforms",
         "topics",
         "specs",
+        "research_plan/graph",
         "research_plan/tasks",
         "agents/prompts",
         "agents/checklists",
@@ -156,6 +157,7 @@ def bootstrap_future_project(
                 "approval_required": True,
                 "max_retries": 3,
                 "timeout_minutes": 20,
+                "bash_access": True,
             },
             "threading": {
                 "mode": "project_scoped" if role == "planner" else "task_scoped",
@@ -167,6 +169,9 @@ def bootstrap_future_project(
             },
             "secrets": {
                 "allow": secrets,
+            },
+            "skills": {
+                "allow_use": role == "planner",
             },
             "tools": {
                 "allow": tools,
@@ -204,35 +209,35 @@ def bootstrap_future_project(
             "read": [".ontology", "topics", "specs", "research_plan", "skills"],
             "write": ["topics", "artifacts"],
             "secrets": [],
-            "tools": ["read_repo", "write_repo", "web_research", "mgrep_search"],
+            "tools": ["read_repo", "write_repo", "web_research", "grepai_search"],
         },
         "data": {
             "purpose": "Author and validate ontology-backed ingestion configs.",
             "read": [".ontology", "topics", "specs", "research_plan", "skills"],
             "write": [".ontology/sources", ".ontology/pipelines", ".ontology/transforms", "topics"],
             "secrets": ["FRED_API_KEY"],
-            "tools": ["read_repo", "write_repo", "validate_yaml", "run_hydration_dry_run", "mgrep_search"],
+            "tools": ["read_repo", "write_repo", "validate_yaml", "run_hydration_dry_run", "grepai_search"],
         },
         "coding": {
             "purpose": "Write scripts that operate on hydrated ontology data and topic context.",
             "read": [".ontology", "topics", "specs", "research_plan", "skills", "artifacts"],
             "write": ["topics", "artifacts"],
             "secrets": [],
-            "tools": ["read_repo", "write_repo", "execute_python", "query_ontology", "mgrep_search"],
+            "tools": ["read_repo", "write_repo", "execute_python", "query_ontology", "grepai_search"],
         },
         "artifact": {
             "purpose": "Generate presentation-ready artifacts and dashboards.",
             "read": [".ontology", "topics", "specs", "research_plan", "artifacts"],
             "write": ["artifacts", "topics"],
             "secrets": [],
-            "tools": ["read_repo", "write_repo", "render_artifact", "mgrep_search"],
+            "tools": ["read_repo", "write_repo", "render_artifact", "grepai_search"],
         },
         "health": {
             "purpose": "Audit repo hygiene, cleanup generated debris, and verify outputs.",
             "read": [".ontology", "topics", "specs", "research_plan", "skills", "artifacts", "agents"],
             "write": ["research_plan", "skills"],
             "secrets": [],
-            "tools": ["read_repo", "write_repo", "verify_paths", "verify_outputs", "mgrep_search"],
+            "tools": ["read_repo", "write_repo", "verify_paths", "verify_outputs", "grepai_search"],
         },
     }
 

@@ -88,7 +88,7 @@ New machines should install agent CLI tools with:
 - `make install`
 - or `make install-agent-tools`
 
-This installs `mgrep` and the Gemini CLI through the Makefile.
+This installs `grepai` and the Gemini CLI through the Makefile.
 
 ## Status Notes
 

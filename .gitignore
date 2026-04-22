@@ -6,10 +6,6 @@ __pycache__/
 # C extensions
 *.so
 
-# Private keys and accidental uploads
-rutgers-agentic-intelligence-labs.2026-04-05.private-key.pem
-uploaded_key
-
 # Distribution / packaging
 .Python
 build/
@@ -20,8 +16,6 @@ eggs/
 .eggs/
 lib/
 lib64/
-!packages/web/lib/
-!packages/web/lib/**
 parts/
 sdist/
 var/
@@ -212,21 +206,8 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Jules/Bolt/Palette AI agent metadata
-.jules/
-.Jules/
-benchmark_optimization.py
-
-# Generated ontology outputs and API cache
-.DS_Store
+# RAIL Specifics
+packages/engine/cache/
 cache/
-ontology/onto.db
-ontology/onto.db-journal
-ontology/populated_ontology.owl
-packages/engine/ontology/onto.db-journal
-packages/engine/ontology/*.db-journal
-packages/engine/ontology/*.db
-packages/engine/ontology/*.duckdb
-graph.html
-graph_full.html
-state/work-orders/.jules-runner-state.json
+packages/web/
+.DS_Store

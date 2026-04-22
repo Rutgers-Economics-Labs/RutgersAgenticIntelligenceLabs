@@ -11,6 +11,7 @@ The frontend is split evenly across three persistent planes:
 - artifacts and run timeline
 
 The UI should feel like an agent command center rather than a form-based admin console.
+The frontend should prefer repository-backed rendering whenever durable project state is involved.
 
 ## Primary Layout
 
@@ -23,6 +24,7 @@ Responsibilities:
 - show blocker questions from worker sessions
 - show current plan summary
 - show current task and next proposed task
+- relay worker questions to the human only when the planner cannot answer them from existing context
 
 ### Center Plane: Repository
 
@@ -32,6 +34,7 @@ Responsibilities:
 - show `specs/`, `research_plan/`, `.ontology/`, `topics/`, `skills/`, and `agents/`
 - open files with syntax-aware viewers
 - show commit and diff context for current session outputs
+- keep the topic tree flexible and exploratory rather than schema-bound
 
 ### Right Plane: Artifacts and Timeline
 
@@ -42,9 +45,13 @@ Responsibilities:
 - show verification and health status
 - show completed task history and costs
 
+This plane should render repo-backed artifacts from `artifacts/` while also showing live runner status from the operational database.
+
 ## Loading Model
 
 The frontend should render project content primarily from the Git repository and the `rail.yaml` manifest.
+In hosted mode, the default read model should be the latest commit on the configured default branch.
+For GitHub-backed projects, this can be implemented with raw file fetches, tree APIs, or a lightweight repo content proxy.
 
 The database supplements the repo with operational data:
 
@@ -54,6 +61,8 @@ The database supplements the repo with operational data:
 - approvals
 - run costs
 - live runner events
+
+The database should not be treated as the primary renderer for plans, specs, topics, ontology files, or artifacts.
 
 ## Primary Screens
 
@@ -88,6 +97,8 @@ The frontend should render both:
 - the live operational board from the database
 - the Git-visible planner snapshot in `research_plan/`
 
+Task cards should deep-link to the exact repo paths assigned to the active worker.
+
 ### Ontology View
 
 Shows:
@@ -104,6 +115,9 @@ Shows:
 - navigable topic tree
 - notes, scripts, and outputs inside `topics/`
 - topic-local graphs of files and outputs when available
+
+The UI should not force a rigid schema within a topic subtree.
+It should simply understand conventions like `overview.md`, `scripts/`, `outputs/`, and nested subtopics when present.
 
 ### Artifact View
 
@@ -142,6 +156,7 @@ The platform should support a simple setup flow that:
 - creates an initial `research_plan/` document
 
 The setup flow should be available from the dashboard.
+It should also exist as a bootstrap command for local-first users.
 
 ## Database Surfaces Needed By Frontend
 
@@ -167,3 +182,4 @@ Preferred characteristics:
 - visible execution state without log overload
 - artifact-first presentation for final outputs
 - clean approval and blocker UX
+- equal emphasis on planner, repo, and artifact/timeline planes

@@ -67,12 +67,14 @@ async def resolve_jules_api_key(project_id: str | None, agent_role: str = "data"
     return global_key
 
 
-def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str) -> Any:
+def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | None = None) -> Any:
     """Instantiate a runner adapter using the resolved API key."""
     from app.core.config import settings
     from app.runners.jules import JulesRunner
 
     if runner_name == "jules":
+        if not api_key:
+            raise RuntimeError("Jules runner requires an API key")
         return JulesRunner(
             api_key=api_key,
             api_url=settings.jules_api_url,
@@ -170,6 +172,7 @@ async def create_runner_session(
     task_description: str,
     repo_url: str,
     branch: str = "main",
+    local_repo_path: str | None = None,
     allowed_paths: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
     agent_role_for_secrets: str | None = None,
@@ -192,8 +195,23 @@ async def create_runner_session(
     """
     secret_role = agent_role_for_secrets or role
 
+    if project_id:
+        existing_sessions = await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": 50}) or []
+        active_session = next(
+            (
+                item for item in existing_sessions
+                if item.get("role") not in {None, "planner"}
+                and item.get("status") in {"queued", "running", "awaiting_input", "awaiting_approval"}
+            ),
+            None,
+        )
+        if active_session:
+            raise RuntimeError(
+                f"Sequential execution enforced: worker session {active_session['_id']} is still active"
+            )
+
     # 1. Auth
-    api_key = await resolve_jules_api_key(project_id, secret_role)
+    api_key = await resolve_jules_api_key(project_id, secret_role) if runner_name == "jules" else None
     runner = resolve_runner_for_project(runner_name, api_key=api_key)
 
     # 2. Create Convex record (no external ID yet)
@@ -214,6 +232,7 @@ async def create_runner_session(
         task_id=task_id or convex_session_id,
         repo_url=repo_url,
         branch=branch,
+        local_repo_path=local_repo_path,
         task_description=task_description,
         allowed_paths=allowed_paths or [],
         acceptance_criteria=acceptance_criteria or [],
@@ -287,9 +306,13 @@ async def get_runner_session(
 
     if sync_from_runner and external_id:
         try:
-            api_key = await resolve_jules_api_key(
-                project_id or session.get("projectId"),
-                session.get("role") or "data",
+            api_key = (
+                await resolve_jules_api_key(
+                    project_id or session.get("projectId"),
+                    session.get("role") or "data",
+                )
+                if runner_name == "jules"
+                else None
             )
             runner = resolve_runner_for_project(runner_name, api_key=api_key)
             runner_info = await runner.get_session(external_id)
@@ -383,9 +406,13 @@ async def cancel_runner_session(
 
     if external_id:
         try:
-            api_key = await resolve_jules_api_key(
-                project_id or session.get("projectId"),
-                session.get("role") or "data",
+            api_key = (
+                await resolve_jules_api_key(
+                    project_id or session.get("projectId"),
+                    session.get("role") or "data",
+                )
+                if runner_name == "jules"
+                else None
             )
             runner = resolve_runner_for_project(runner_name, api_key=api_key)
             await runner.cancel(external_id)
@@ -432,9 +459,13 @@ async def ingest_session_events(
         return []
 
     runner_name = session.get("runner", "jules")
-    api_key = await resolve_jules_api_key(
-        project_id or session.get("projectId"),
-        session.get("role") or "data",
+    api_key = (
+        await resolve_jules_api_key(
+            project_id or session.get("projectId"),
+            session.get("role") or "data",
+        )
+        if runner_name == "jules"
+        else None
     )
     runner = resolve_runner_for_project(runner_name, api_key=api_key)
 

@@ -4,6 +4,11 @@ This document defines the canonical Git repository structure for a RAIL project.
 
 The contract is strict at the top level and flexible within topic workspaces.
 
+This is intentional:
+
+- top-level predictability gives the planner, frontend, and Python package a stable contract
+- topic-level flexibility allows agents to build their own knowledge, script, and output graph inside a project
+
 ## Top-Level Structure
 
 ```text
@@ -52,6 +57,8 @@ The planner and worker agents may create nested folders under `topics/` to organ
 - analysis outputs
 - intermediate datasets
 - visualizations
+
+They may also create topic-local conventions when useful, as long as those conventions remain inside the topic subtree and do not replace the required top-level contract.
 
 The platform must allow freedom inside each topic subtree as long as generated files remain inside `topics/` or `artifacts/`.
 
@@ -179,6 +186,8 @@ The dashboard should load project content from the repo using this contract:
 - read `artifacts/` for final user-facing deliverables
 - read `skills/` and `agents/` for project capabilities and configuration views
 
+In hosted mode, this should resolve against the latest commit on the configured default branch.
+
 ## Allowed Role Write Surfaces
 
 ### Planner
@@ -232,3 +241,4 @@ May modify:
 - project-local skills under review
 
 The health agent should not silently delete user-authored source material outside approved cleanup paths.
+It should prefer proposing cleanup and requiring approval for any destructive action outside ephemeral generated files.

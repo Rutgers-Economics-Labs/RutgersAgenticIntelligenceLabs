@@ -19,11 +19,16 @@ from typing import Any
 
 class RunnerEventType(str, Enum):
     SESSION_CREATED = "session_created"
+    STATUS_CHANGED = "status_changed"
     PLAN_PROPOSED = "plan_proposed"
     APPROVAL_REQUESTED = "approval_requested"
     QUESTION_ASKED = "question_asked"
     PROGRESS = "progress"
+    BASH_COMMAND_STARTED = "bash_command_started"
+    BASH_COMMAND_COMPLETED = "bash_command_completed"
     FILE_CHANGE_DETECTED = "file_change_detected"
+    VERIFICATION_STARTED = "verification_started"
+    VERIFICATION_COMPLETED = "verification_completed"
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
@@ -78,9 +83,11 @@ class TaskPayload:
     repo_url: str
     branch: str
     task_description: str
+    local_repo_path: str | None = None
     allowed_paths: list[str] = field(default_factory=list)
     allowed_secrets: dict[str, str] = field(default_factory=dict)
     acceptance_criteria: list[str] = field(default_factory=list)
+    bash_access: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,10 +96,12 @@ class TaskPayload:
             "task_id": self.task_id,
             "repo_url": self.repo_url,
             "branch": self.branch,
+            "local_repo_path": self.local_repo_path,
             "allowed_paths": self.allowed_paths,
             "allowed_secrets": list(self.allowed_secrets.keys()),
             "task_description": self.task_description,
             "acceptance_criteria": self.acceptance_criteria,
+            "bash_access": self.bash_access,
         }
 
 

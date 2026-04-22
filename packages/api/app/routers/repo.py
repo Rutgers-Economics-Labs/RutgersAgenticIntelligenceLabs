@@ -1,11 +1,12 @@
 from __future__ import annotations
-import os
+import subprocess
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
+from rail.bootstrap import bootstrap_future_project
 
 router = APIRouter(prefix="/projects", tags=["repo"])
 
@@ -47,6 +48,41 @@ def _build_tree(root: Path, current: Path, depth: int = 0, max_depth: int = 5) -
         node.children = children
     
     return node
+
+class RepoInitRequest(BaseModel):
+    targetDir: str
+
+
+@router.post("/{slug}/repo/init")
+async def init_repo(slug: str, data: RepoInitRequest):
+    """Initialize a RAIL repo scaffold for an existing project that has no localRepoPath."""
+    project = await convex.query("projects:getBySlug", {"slug": slug})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    target = Path(data.targetDir).expanduser().resolve()
+    target.mkdir(parents=True, exist_ok=True)
+
+    bootstrap_future_project(target, name=project["name"], slug=slug)
+
+    # git init if not already a git repo
+    git_dir = target / ".git"
+    if not git_dir.exists():
+        result = subprocess.run(
+            ["git", "init", str(target)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"git init failed: {result.stderr}")
+
+    await convex.mutation("projects:updateById", {
+        "projectId": project["_id"],
+        "localRepoPath": str(target),
+    })
+
+    return {"localRepoPath": str(target), "message": "Repository initialized successfully"}
+
 
 @router.get("/{slug}/repo/tree")
 async def get_repo_tree(

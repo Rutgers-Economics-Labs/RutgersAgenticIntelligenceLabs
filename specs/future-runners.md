@@ -14,6 +14,7 @@ Reasons:
 - it provides a cleaner first implementation target than assuming a generic Claude Code cloud REST surface
 
 Claude Code should remain a planned second runner with a separate adapter.
+The planner-facing orchestration model must not depend on Jules-specific event names or concepts.
 
 ## Runner Abstraction
 
@@ -53,7 +54,8 @@ Secrets should be allowlisted per agent role.
 5. Jules returns plan/progress/events
 6. If a plan approval is requested, the platform pauses for human confirmation
 7. If Jules asks a question, it is relayed to the planner
-8. On completion, the planner records session metadata and triggers verification
+8. The planner answers directly when possible or relays the question to the human when necessary
+9. On completion, the planner records session metadata and triggers verification
 
 ### Task Payload Shape
 
@@ -94,6 +96,7 @@ Current design assumptions:
 - support a transport based on CLI, remote session orchestration, or MCP
 
 This runner should use the same internal abstraction as Jules.
+The first Claude Code integration should be treated as a future managed adapter rather than assumed REST parity with Jules.
 
 ## Runner Event Model
 
@@ -108,6 +111,8 @@ All runner backends should normalize events into a common shape:
 - `completed`
 - `failed`
 - `cancelled`
+- `waiting_for_planner`
+- `waiting_for_human`
 
 The planner consumes these normalized events and updates task state.
 
@@ -121,6 +126,7 @@ Rules:
 - project secrets override organization secrets
 - every agent role has an explicit allowlist
 - secret values are never written into the repository
+- secret injection should be session-scoped and least-privilege
 
 ## Human-in-the-Loop
 
@@ -132,3 +138,9 @@ Write-capable runs must stop before execution until a human approves:
 
 Read-only validation runs may proceed without approval.
 
+## V1 Operating Constraints
+
+- one active worker session at a time per project
+- planner remains the single human-facing role
+- runner adapters may emit vendor-specific raw events, but the app should operate on normalized events
+- publishing or merging agent changes is a separate approval checkpoint from starting a run
