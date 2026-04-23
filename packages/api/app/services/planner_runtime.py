@@ -277,6 +277,7 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             acceptance_criteria=args.get("acceptance_criteria") or [],
             runner=role_config.policy.runner.default,
             approval_state="pending" if role_config.policy.runner.approval_required else "not_required",
+            project=project,
         )
         await planner_service.sync_planner_files(project, board)
         return {"task": task, "role": summarize_role_config(role_config)}
@@ -416,6 +417,7 @@ async def run_planner_turn(
             role="user",
             content=user_message,
             message_type="chat",
+            project=project,
         )
 
     assistant_text = ""
@@ -467,12 +469,13 @@ async def run_planner_turn(
             role="assistant",
             content=assistant_text,
             message_type="chat",
+            project=project,
         )
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     board = await planner_service.ensure_main_board(project["_id"])
     return {
         "threadId": thread_id,
         "assistantMessage": assistant_text,
-        "messages": list(reversed(await planner_service.list_planner_messages(project["_id"], thread_id=thread_id))),
+        "messages": list(reversed(await planner_service.list_planner_messages(project["_id"], thread_id=thread_id, project=project))),
         "tasks": await planner_service.list_tasks(board["_id"], project=project),
     }

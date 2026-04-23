@@ -1,3 +1,19 @@
+"""
+Planner Harness
+
+This module provides a simple, stateful wrapper (`PlannerHarness`) around the native
+planner loop. It acts as the primary interface for interacting with the planner agent,
+making it easy to invoke from a UI, CLI, or test environment without requiring full
+project or database setup.
+
+The planner stack works as follows:
+1. `PlannerHarness` maintains the conversation history and project context.
+2. `PlannerHarness.ask(user_message)` writes the user's message to local session files
+   (e.g., `research_plan/sessions/planner/planner/`).
+3. It delegates the core planning logic to `planner_runtime.run_planner_turn(...)`,
+   which loads the prompt from `agents/prompts/planner.md` and runs the LLM loop.
+4. The assistant's response is mirrored back to the local session files and returned.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -91,8 +91,10 @@ async def append_planner_message(
     message_type: str = "chat",
     session_id: str | None = None,
     thread_id: str = PLANNER_THREAD_ID,
+    project: dict | None = None,
 ) -> Any:
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    if project is None:
+        project = await convex.query("projects:getById", {"projectId": project_id})
     if not project:
         raise ValueError(f"Project '{project_id}' not found")
     root = _planner_session_root(project, thread_id)
@@ -109,8 +111,9 @@ async def append_planner_message(
     )
 
 
-async def list_planner_messages(project_id: str, thread_id: str = PLANNER_THREAD_ID, limit: int = 200) -> list[dict]:
-    project = await convex.query("projects:getById", {"projectId": project_id})
+async def list_planner_messages(project_id: str, thread_id: str = PLANNER_THREAD_ID, limit: int = 200, project: dict | None = None) -> list[dict]:
+    if project is None:
+        project = await convex.query("projects:getById", {"projectId": project_id})
     if not project:
         return []
     root = _planner_session_root(project, thread_id)
@@ -208,8 +211,10 @@ async def create_task(
     runner: str | None = None,
     approval_state: str | None = None,
     git_snapshot_path: str | None = None,
+    project: dict | None = None,
 ) -> dict:
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    if project is None:
+        project = await convex.query("projects:getById", {"projectId": project_id})
     if not project:
         raise ValueError(f"Project '{project_id}' not found")
     root = project_root_from_record(project)
