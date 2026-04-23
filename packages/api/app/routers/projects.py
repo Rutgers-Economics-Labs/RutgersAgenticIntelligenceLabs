@@ -192,6 +192,7 @@ class ProjectRunnerCommandRequest(BaseModel):
     commandType: str
     content: str | None = None
     payload: dict | None = None
+    idempotencyKey: str | None = None
 
 
 def _git_init(path: Path) -> None:
@@ -1003,6 +1004,7 @@ async def send_project_runner_session_command(slug: str, session_id: str, data: 
             command_type=data.commandType,
             content=data.content,
             payload=data.payload,
+            idempotency_key=data.idempotencyKey,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))

@@ -70,6 +70,24 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
 
 
 def append_event(root: str | Path, event_type: str, **payload: Any) -> dict[str, Any]:
+    """
+    Appends a normalized event to the session file.
+
+    Supported normalized event types include:
+    - `session_started`: Indicates the beginning of a runner session.
+    - `status_changed`: Reflects high-level status changes (e.g. running, blocked, done).
+    - `approval_requested`: The runner requires user approval.
+    - `question_asked`: The runner has a question for the user.
+    - `assistant_message`: General progress, output, or chat message from the runner.
+    - `tool_call`: A command, bash execution, or structured tool invocation.
+    - `tool_result`: The outcome of a tool execution.
+    - `file_change_detected`: Modifications observed in the local codebase.
+    - `verification_started`: Pre-commit/validation hook started.
+    - `verification_completed`: Pre-commit/validation hook concluded.
+    - `completed`: The runner has fully finished work successfully.
+    - `failed`: The runner encountered a fatal error.
+    - `cancelled`: The runner session was manually terminated.
+    """
     root = Path(root)
     state = read_state(root)
     next_id = int(state.get("last_event_id", 0)) + 1
@@ -87,6 +105,15 @@ def append_event(root: str | Path, event_type: str, **payload: Any) -> dict[str,
 
 def append_command(root: str | Path, command_type: str, **payload: Any) -> dict[str, Any]:
     root = Path(root)
+
+    # Check for idempotency
+    idempotency_key = payload.get("idempotency_key")
+    if idempotency_key:
+        existing = list_commands(root)
+        for cmd in existing:
+            if cmd.get("idempotency_key") == idempotency_key:
+                return cmd
+
     state = read_state(root)
     next_id = int(state.get("last_command_id", 0)) + 1
     command = {
@@ -106,13 +133,13 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
             continue
         try:
             payload = json.loads(line)
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, TypeError, ValueError):
             continue
         if isinstance(payload, dict):
             rows.append(payload)
@@ -137,9 +164,10 @@ def mark_command_processed(root: str | Path, command_id: int) -> None:
     changed = False
     for item in commands:
         if int(item.get("id", -1)) == int(command_id):
-            item["processed"] = True
-            item["processed_at"] = utc_now_iso()
-            changed = True
+            if not item.get("processed"):
+                item["processed"] = True
+                item["processed_at"] = utc_now_iso()
+                changed = True
     if not changed:
         return
     path = root / "commands.ndjson"

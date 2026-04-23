@@ -446,6 +446,7 @@ async def append_session_command(
     command_type: str,
     content: str | None = None,
     payload: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     session = await running_agent_service.get_running_agent(convex_session_id)
     if not session:
@@ -454,12 +455,22 @@ async def append_session_command(
     if not session_path:
         raise RuntimeError("Session has no sessionPath")
     root = Path(session_path)
+
+    append_payload = dict(payload or {})
+    if idempotency_key:
+        append_payload["idempotency_key"] = idempotency_key
+
     command = session_files.append_command(
         root,
         command_type,
         content=content,
-        payload=payload or {},
+        **append_payload,
     )
+
+    # If the command was already processed, skip re-executing runner actions
+    if command.get("processed"):
+        return command
+
     external_id = session.get("externalSessionId")
     if external_id:
         runner_name = session.get("runner", "jules")
