@@ -4,7 +4,7 @@ Run these sequentially. Only one worker should be active at a time.
 
 | Order | File | Role | Runner | Status |
 | --- | --- | --- | --- | --- |
-| 1 | `WO-01-simplify-planner-harness.md` | coding | jules | ready |
+| 1 | `WO-01-simplify-planner-harness.md` | coding | jules | running |
 | 2 | `WO-02-file-backed-session-supervisor.md` | coding | jules | ready |
 | 3 | `WO-03-repo-backed-planner-state.md` | coding | jules | ready |
 | 4 | `WO-04-minimal-runtime-db.md` | coding | jules | ready |
@@ -14,5 +14,6 @@ Run these sequentially. Only one worker should be active at a time.
 
 ## Current Focus
 
-Start with `WO-01-simplify-planner-harness.md`.
+Jules is running `WO-01-simplify-planner-harness.md`.
 
+Session: https://jules.google.com/session/13710073185016377453

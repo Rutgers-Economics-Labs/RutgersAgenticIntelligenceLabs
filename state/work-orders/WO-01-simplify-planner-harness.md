@@ -1,5 +1,9 @@
 # WO-01: Simplify Planner Harness
 
+**Status:** running
+**Runner:** jules
+**Session:** https://jules.google.com/session/13710073185016377453
+
 ## Goal
 
 Make the native planner harness the simple front door for the agent system.
@@ -27,4 +31,3 @@ The current harness exists in `packages/api/app/services/planner_harness.py`, bu
 
 - `python -m py_compile packages/api/app/services/planner_harness.py`
 - If dependencies are available, run the focused planner harness tests.
-
