@@ -12,6 +12,8 @@ from app.services.convex_client import convex
 from app.services import ontology_service, sql_service
 from app.services.project_artifacts_service import find_latest_success_job_with_outputs
 from app.services import planner_runtime, planner_service
+from app.services import running_agent_service
+from app.services import session_files
 from app.services.device_service import get_device_metadata
 from app.services.hydration_registry_service import (
     get_hydration_status as get_project_hydration_status,
@@ -184,6 +186,12 @@ class ProjectRunnerSessionCreateRequest(BaseModel):
     acceptanceCriteria: list[str] = []
     runnerName: str = "jules"
     agentRoleForSecrets: str | None = None
+
+
+class ProjectRunnerCommandRequest(BaseModel):
+    commandType: str
+    content: str | None = None
+    payload: dict | None = None
 
 
 def _git_init(path: Path) -> None:
@@ -625,7 +633,7 @@ async def get_planner_home(slug: str):
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id, limit=50)
     board = await planner_service.ensure_main_board(project["_id"])
-    tasks = await planner_service.list_tasks(board["_id"])
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
     project_root = planner_service.project_root_from_record(project)
     research_plan_root = project_root / "research_plan" if project_root else None
 
@@ -683,7 +691,7 @@ async def planner_chat(slug: str, data: PlannerChatRequest):
 async def get_planner_board(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     board = await planner_service.ensure_main_board(project["_id"])
-    tasks = await planner_service.list_tasks(board["_id"])
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
     return {"board": board, "tasks": tasks}
 
 
@@ -714,9 +722,9 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
 async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRequest):
     project = await planner_service.get_project_by_slug(slug)
     board = await planner_service.ensure_main_board(project["_id"])
-    await planner_service.update_task(task_id, **data.model_dump())
+    await planner_service.update_task(task_id, project=project, **data.model_dump())
     await planner_service.sync_planner_files(project, board)
-    tasks = await planner_service.list_tasks(board["_id"])
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
     for task in tasks:
         if str(task["_id"]) == task_id:
             return task
@@ -863,40 +871,37 @@ async def resolve_secrets_for_agent(slug: str, agentRole: str = Query(...)):
 @router.get("/{slug}/approvals")
 async def list_project_approvals(slug: str, limit: int = Query(100)):
     project = await planner_service.get_project_by_slug(slug)
-    approvals = await convex.query("approvals:listByProject", {"projectId": project["_id"], "limit": limit}) or []
-    return {"approvals": approvals}
+    approvals = await planner_service.list_approvals(project)
+    return {"approvals": approvals[:limit]}
 
 
 @router.post("/{slug}/approvals")
 async def create_project_approval(slug: str, data: ApprovalCreateRequest):
     project = await planner_service.get_project_by_slug(slug)
-    approval_id = await convex.mutation(
-        "approvals:create",
-        {
-            "projectId": project["_id"],
-            "taskId": data.taskId,
-            "agentSessionId": data.agentSessionId,
-            "approvalType": data.approvalType,
-            "status": data.status,
-            "requestedByRole": data.requestedByRole,
-            "grantedByUserId": data.grantedByUserId,
-        },
+    approval_id = await planner_service.create_approval(
+        project=project,
+        task_id=data.taskId,
+        agent_session_id=data.agentSessionId,
+        approval_type=data.approvalType,
+        status=data.status,
+        requested_by_role=data.requestedByRole,
+        granted_by_user_id=data.grantedByUserId,
     )
     return {"approvalId": approval_id}
 
 
 @router.post("/{slug}/approvals/{approval_id}/resolve")
 async def resolve_project_approval(slug: str, approval_id: str, data: ApprovalResolveRequest):
-    _project = await planner_service.get_project_by_slug(slug)
-    await convex.mutation(
-        "approvals:resolve",
-        {
-            "approvalId": approval_id,
-            "status": data.status,
-            "grantedByUserId": data.grantedByUserId,
-        },
+    project = await planner_service.get_project_by_slug(slug)
+    approval = await planner_service.resolve_approval(
+        project=project,
+        approval_id=approval_id,
+        status=data.status,
+        granted_by_user_id=data.grantedByUserId,
     )
-    return {"approvalId": approval_id, "status": data.status}
+    if approval is None:
+        raise HTTPException(status_code=404, detail="Approval not found")
+    return approval
 
 
 # --- Project-Scoped Runner Sessions ---
@@ -942,7 +947,11 @@ async def create_project_runner_session(
 @router.get("/{slug}/runner/sessions")
 async def list_project_runner_sessions(slug: str, limit: int = Query(20)):
     project = await planner_service.get_project_by_slug(slug)
-    sessions = await convex.query("agent:listByProjectId", {"projectId": project["_id"], "limit": limit}) or []
+    sessions = await running_agent_service.list_project_running_agents(
+        project["_id"],
+        active_only=False,
+        limit=limit,
+    )
     return {"sessions": sessions}
 
 
@@ -955,6 +964,49 @@ async def get_project_runner_session(slug: str, session_id: str, sync: bool = Qu
         sync_from_runner=sync,
         project_id=project["_id"],
     )
+
+
+@router.get("/{slug}/runner/sessions/{session_id}/files")
+async def get_project_runner_session_files(slug: str, session_id: str):
+    project = await planner_service.get_project_by_slug(slug)
+    session = await running_agent_service.get_running_agent(session_id)
+    if not session or session.get("projectId") != project["_id"]:
+        raise HTTPException(status_code=404, detail="Runner session not found")
+    session_path = session.get("sessionPath")
+    if not session_path:
+        raise HTTPException(status_code=404, detail="Session files not found")
+    root = Path(session_path)
+    if not root.exists():
+        raise HTTPException(status_code=404, detail="Session file directory does not exist")
+
+    return {
+        "sessionId": session_id,
+        "sessionPath": session_path,
+        "state": session_files.read_state(root),
+        "events": session_files.list_events(root),
+        "commands": session_files.list_commands(root),
+        "summary": (root / "summary.md").read_text(encoding="utf-8") if (root / "summary.md").exists() else "",
+    }
+
+
+@router.post("/{slug}/runner/sessions/{session_id}/commands")
+async def send_project_runner_session_command(slug: str, session_id: str, data: ProjectRunnerCommandRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    session = await running_agent_service.get_running_agent(session_id)
+    if not session or session.get("projectId") != project["_id"]:
+        raise HTTPException(status_code=404, detail="Runner session not found")
+    from app.runners import session_lifecycle
+
+    try:
+        command = await session_lifecycle.append_session_command(
+            session_id,
+            command_type=data.commandType,
+            content=data.content,
+            payload=data.payload,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "command": command}
 
 
 @router.post("/{slug}/runner/sessions/{session_id}/cancel")

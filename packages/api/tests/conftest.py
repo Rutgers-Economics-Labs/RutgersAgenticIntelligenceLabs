@@ -5,9 +5,17 @@ import sys
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 import httpx
-import respx
+
+try:
+    import pytest_asyncio
+except ModuleNotFoundError:  # pragma: no cover - local fallback for lightweight environments
+    pytest_asyncio = None
+
+try:
+    import respx
+except ModuleNotFoundError:  # pragma: no cover - local fallback for lightweight environments
+    respx = None
 
 # api package must come BEFORE engine on sys.path so Python picks up
 # packages/api/app/ (FastAPI) rather than packages/engine/app.py (Streamlit)
@@ -37,8 +45,11 @@ def convex_mock():
     Intercept all Convex HTTP API calls and return empty/minimal responses.
     Tests can override specific endpoints by calling respx_mock.route() inside the test.
     """
+    if respx is None:
+        yield None
+        return
+
     with respx.mock(base_url=CONVEX_URL, assert_all_called=False) as mock:
-        # Default: queries return empty list, mutations return {}
         mock.post("/api/query").mock(
             return_value=httpx.Response(200, json={"value": []})
         )
@@ -48,10 +59,19 @@ def convex_mock():
         yield mock
 
 
-@pytest_asyncio.fixture
-async def client(convex_mock):
-    """AsyncClient wired to the FastAPI app with Convex calls mocked."""
-    from app.main import app
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+if pytest_asyncio is not None:
+    @pytest_asyncio.fixture
+    async def client(convex_mock):
+        """AsyncClient wired to the FastAPI app with Convex calls mocked."""
+        from app.main import app
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c
+else:
+    @pytest.fixture
+    async def client(convex_mock):
+        """AsyncClient wired to the FastAPI app with Convex calls mocked."""
+        from app.main import app
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+            yield c

@@ -12,6 +12,7 @@ Public surface:
 """
 from app.runners.base import BaseRunner, RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.claude_code import ClaudeCodeRunner
+from app.runners.codex_cli import CodexCliRunner
 from app.runners.cursor_cli import CursorCliRunner
 from app.runners.gemini_cli import GeminiCliRunner
 from app.runners.jules import JulesRunner
@@ -24,6 +25,7 @@ __all__ = [
     "TaskPayload",
     "JulesRunner",
     "ClaudeCodeRunner",
+    "CodexCliRunner",
     "GeminiCliRunner",
     "CursorCliRunner",
     "RunnerFactory",

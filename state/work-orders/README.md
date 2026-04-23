@@ -1,99 +1,15 @@
-# Future Work Orders
+# Planner-First Work Orders
 
-This directory contains the granular work orders for the future architecture.
+This queue replaces the old DB-first/platform-first backlog.
 
-The current queue assumes:
+Durable project state belongs in Git and Markdown. The runtime database should only track projects, currently running agents, and encrypted secrets/policies. The planner is the only user-facing agent. Workers run one at a time and are controlled through file-backed sessions.
 
-- the frontend is a greenfield rebuild
-- the Convex schema can be reset aggressively
-- the ontology kernel is preserved and adapted rather than discarded
-- one worker agent runs at a time in V1
+## Rules For Workers
 
-## Dependency Outline
+- Do not restore the deleted legacy UI.
+- Do not create new durable task, approval, planner-message, or historical-session database tables.
+- Keep plans, approvals, tasks, blockers, and session summaries in repo files.
+- Keep live machine traffic in `session.ndjson`, `commands.ndjson`, and `state.json`.
+- Keep worker changes small enough for review.
+- Run the most relevant tests or compile checks before finishing.
 
-### Foundation
-
-- `WO-F1.1` Manifest schema
-- `WO-F1.2` Bootstrap generator
-- `WO-F1.3` Starter project templates
-
-### Agent Policy
-
-- `WO-F2.1` Agent YAML schema
-- `WO-F2.2` Prompt and checklist loader
-- `WO-F2.3` Role policy resolver
-
-### Database Reset
-
-- `WO-F3.1` Convex schema reset
-- `WO-F3.2` Project and planner-thread tables
-- `WO-F3.3` Task board and approvals tables
-- `WO-F3.4` Runner events and session tables
-- `WO-F3.5` Project secrets and policy tables
-- `WO-F3.6` Future API surface cleanup
-
-### Runners
-
-- `WO-F4.1` Runner abstraction
-- `WO-F4.2` Jules session lifecycle
-- `WO-F4.3` Jules approvals, questions, and event normalization
-
-### Hydration Artifacts
-
-- `WO-F5.1` Device registry
-- `WO-F5.2` Hydration artifact registry
-- `WO-F5.3` Artifact reuse and stale detection
-
-### Planner System
-
-- `WO-F6.1` Long-lived planner thread
-- `WO-F6.2` Git-mirrored planner files
-- `WO-F6.3` Planner task board sync
-
-### Frontend Reset
-
-- `WO-F7.1` Route reset and shell scaffold
-- `WO-F7.2` Planner plane
-- `WO-F7.3` Repo browser plane
-- `WO-F7.4` Artifacts and timeline plane
-- `WO-F7.5` Settings and sessions surfaces
-- `WO-F7.6` Legacy UI quarantine
-
-### Kernel Adaptation
-
-- `WO-F8.1` `rail.yaml` project loader
-- `WO-F8.2` `.ontology` hydration alignment
-- `WO-F8.3` Verification hooks
-- `WO-F8.4` Verification enforcement wiring
-
-## Current Unlocks
-
-- The completed foundation work should now unlock the next queue wave around `WO-F3.3`, `WO-F3.4`, `WO-F3.5`, `WO-F6.3`, and `WO-F7.1`.
-- `.ontology` hydration alignment remains active work under `WO-F8.2`.
-
-### Artifacts
-
-- `WO-F9.1` Artifact indexing
-- `WO-F9.2` Report and PDF rendering
-- `WO-F9.3` Dashboard rendering
-
-## Execution Principle
-
-Complete the foundation, policy, and operational schema work before serious frontend implementation.
-
-## Tooling
-
-New machines should install agent CLI tools with:
-
-- `make install`
-- or `make install-agent-tools`
-
-This installs `grepai` and the Gemini CLI through the Makefile.
-
-## Status Notes
-
-- `completed` means the slice is already implemented locally and should not be sent to Jules again.
-- `in_progress` means there is meaningful local work underway and it should be reviewed/committed before handing dependent work to a runner.
-- `pending` means the slice is still open and can be considered for Jules once its dependencies are satisfied.
-
-See `state/work-orders/QUEUE.md` for the current execution waves and `state/work-orders/JULES-RUNBOOK.md` for the runner flow.

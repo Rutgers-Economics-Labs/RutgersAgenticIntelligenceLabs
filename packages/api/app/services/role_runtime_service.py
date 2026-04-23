@@ -10,7 +10,7 @@ from app.services.policy_resolver import RuntimePolicy, resolve_role_policy
 from app.services.yaml_service import load_agent_prompts, parse
 
 
-SUPPORTED_RUNNERS = {"jules", "claude_code", "gemini_cli", "cursor_cli"}
+SUPPORTED_RUNNERS = {"jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
 
 
 @dataclass

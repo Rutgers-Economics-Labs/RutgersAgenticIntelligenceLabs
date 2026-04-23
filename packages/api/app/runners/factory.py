@@ -27,6 +27,7 @@ from app.runners.base import BaseRunner
 def _build_registry() -> dict[str, Type[BaseRunner]]:
     """Lazy-import adapters so the factory never hard-fails at import time."""
     from app.runners.claude_code import ClaudeCodeRunner
+    from app.runners.codex_cli import CodexCliRunner
     from app.runners.cursor_cli import CursorCliRunner
     from app.runners.gemini_cli import GeminiCliRunner
     from app.runners.jules import JulesRunner
@@ -34,6 +35,7 @@ def _build_registry() -> dict[str, Type[BaseRunner]]:
     return {
         "jules": JulesRunner,
         "claude_code": ClaudeCodeRunner,
+        "codex_cli": CodexCliRunner,
         "gemini_cli": GeminiCliRunner,
         "cursor_cli": CursorCliRunner,
     }
@@ -50,6 +52,8 @@ class RunnerFactory:
     from ``app.core.config.settings``.  Raises ``ValueError`` for unknown
     runner names; raises ``RuntimeError`` if required credentials are absent.
     """
+
+    _instances: dict[str, BaseRunner] = {}
 
     @staticmethod
     def list_runners() -> list[dict[str, str]]:
@@ -75,6 +79,10 @@ class RunnerFactory:
         """
         from app.core.config import settings
 
+        cached = RunnerFactory._instances.get(name)
+        if cached is not None:
+            return cached
+
         registry = _build_registry()
         cls = registry.get(name)
         if cls is None:
@@ -94,14 +102,28 @@ class RunnerFactory:
                 )
             api_url = getattr(settings, "jules_api_url", "https://jules.googleapis.com/v1alpha")
             jules_source = getattr(settings, "jules_source", "sources/github/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs")
-            return cls(api_key=api_key, api_url=api_url, source=jules_source)
+            instance = cls(api_key=api_key, api_url=api_url, source=jules_source)
+            RunnerFactory._instances[name] = instance
+            return instance
 
         if name == "claude_code":
-            return cls(command=getattr(settings, "claude_code_command", "claude"))
+            instance = cls(command=getattr(settings, "claude_code_command", "claude"))
+            RunnerFactory._instances[name] = instance
+            return instance
+        if name == "codex_cli":
+            instance = cls(command=getattr(settings, "codex_cli_command", "codex"))
+            RunnerFactory._instances[name] = instance
+            return instance
         if name == "gemini_cli":
-            return cls(command=getattr(settings, "gemini_cli_command", "gemini"))
+            instance = cls(command=getattr(settings, "gemini_cli_command", "gemini"))
+            RunnerFactory._instances[name] = instance
+            return instance
         if name == "cursor_cli":
-            return cls(command=getattr(settings, "cursor_cli_command", "cursor-agent"))
+            instance = cls(command=getattr(settings, "cursor_cli_command", "cursor-agent"))
+            RunnerFactory._instances[name] = instance
+            return instance
 
         # Generic fallback (future adapters that take no constructor args)
-        return cls()  # type: ignore[call-arg]
+        instance = cls()  # type: ignore[call-arg]
+        RunnerFactory._instances[name] = instance
+        return instance

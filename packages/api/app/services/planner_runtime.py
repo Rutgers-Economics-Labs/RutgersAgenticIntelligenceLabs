@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services import llm_service, planner_service
-from app.services.convex_client import convex
+from app.services import running_agent_service
 from app.services.role_runtime_service import (
     load_role_runtime_config,
     list_role_runtime_configs,
@@ -16,6 +16,30 @@ from app.services.role_runtime_service import (
 
 
 PLANNER_MAX_TURNS = 8
+DEFAULT_PLANNER_PROMPT_PATH = Path(__file__).resolve().parents[1] / "prompts" / "planner.md"
+PROJECT_PLANNER_PROMPT_PATH = Path("agents") / "prompts" / "planner.md"
+
+
+def _default_planner_prompt() -> str:
+    return DEFAULT_PLANNER_PROMPT_PATH.read_text(encoding="utf-8")
+
+
+def _ensure_project_planner_prompt(project: dict[str, Any]) -> Path | None:
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        return None
+    path = root / PROJECT_PLANNER_PROMPT_PATH
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_default_planner_prompt(), encoding="utf-8")
+    return path
+
+
+def _render_prompt_template(template: str, values: dict[str, str]) -> str:
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace("{{" + key + "}}", value)
+    return rendered
 
 
 def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[str, Any]], skills: list[dict[str, str]]) -> str:
@@ -24,28 +48,17 @@ def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[st
         for item in role_summaries
     ) or "- no role configs found"
     skill_lines = "\n".join(f"- {item['path']}" for item in skills) or "- no project skills found"
-    return f"""You are the planner for the RAIL project '{project['name']}' ({project['slug']}).
-
-You are the only user-facing agent. Your job is to:
-1. Understand the user's goal
-2. Decide whether to answer directly, create tasks, or launch a worker
-3. Preserve deep research capability using web/data/analysis tools
-4. Use project role configs as the source of truth for runner choice, path policy, and skill access
-
-Important operating rules:
-- Prefer orchestration first, but you MAY use bash and skill files directly when needed.
-- Keep one active worker run at a time.
-- Use the role's default runner first; only override when necessary and record the reason.
-- If a worker run requires approval, create/request the approval instead of bypassing it.
-- Preserve compatibility with older setup/debug/research workflows by using the existing project/data tools.
-- Be concise, concrete, and action-oriented.
-
-Available role configs:
-{role_lines}
-
-Available project skills:
-{skill_lines}
-"""
+    prompt_path = _ensure_project_planner_prompt(project)
+    template = prompt_path.read_text(encoding="utf-8") if prompt_path else _default_planner_prompt()
+    return _render_prompt_template(
+        template,
+        {
+            "project_name": str(project.get("name") or "Untitled Project"),
+            "project_slug": str(project.get("slug") or "unknown"),
+            "role_lines": role_lines,
+            "skill_lines": skill_lines,
+        },
+    )
 
 
 def _planner_tools() -> list[dict[str, Any]]:
@@ -248,7 +261,7 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
     board = await planner_service.ensure_main_board(project["_id"])
 
     if name == "list_tasks":
-        return {"tasks": await planner_service.list_tasks(board["_id"])}
+        return {"tasks": await planner_service.list_tasks(board["_id"], project=project)}
 
     if name == "create_task":
         role = args["agent_role"]
@@ -272,87 +285,74 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         task_id = args["task_id"]
         await planner_service.update_task(
             task_id,
+            project=project,
             status=args.get("status"),
             approval_state=args.get("approval_state"),
             runner=args.get("runner"),
         )
-        tasks = await planner_service.list_tasks(board["_id"])
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
         await planner_service.sync_planner_files(project, board)
         task = next((item for item in tasks if str(item["_id"]) == task_id), None)
         return {"task": task or {"_id": task_id}}
 
     if name == "request_task_approval":
         task_id = args["task_id"]
-        tasks = await planner_service.list_tasks(board["_id"])
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
         task = next((item for item in tasks if str(item["_id"]) == task_id), None)
         if not task:
             return {"error": f"Task not found: {task_id}"}
-        await planner_service.update_task(task_id, status="awaiting_approval", approval_state="pending")
-        approval_id = await convex.mutation(
-            "approvals:create",
-            {
-                "projectId": project["_id"],
-                "taskId": task["_id"],
-                "approvalType": "run_task",
-                "status": "pending",
-                "requestedByRole": "planner",
-            },
+        await planner_service.update_task(
+            task_id,
+            project=project,
+            status="awaiting_approval",
+            approval_state="pending",
+        )
+        approval_id = await planner_service.create_approval(
+            project=project,
+            task_id=task["_id"],
+            agent_session_id=None,
+            approval_type="run_task",
+            status="pending",
+            requested_by_role="planner",
         )
         await planner_service.sync_planner_files(project, board)
         return {"approvalId": approval_id, "taskId": task_id, "status": "awaiting_approval"}
 
     if name == "launch_task_runner":
         task_id = args["task_id"]
-        tasks = await planner_service.list_tasks(board["_id"])
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
         task = next((item for item in tasks if str(item["_id"]) == task_id), None)
         if not task:
             return {"error": f"Task not found: {task_id}"}
 
-        active_sessions = await convex.query("agent:listByProjectId", {"projectId": project["_id"], "limit": 50}) or []
-        active_worker = next(
-            (
-                item for item in active_sessions
-                if item.get("role") not in {None, "planner"}
-                and item.get("status") in {"queued", "running", "awaiting_input", "awaiting_approval"}
-            ),
-            None,
-        )
+        active_worker = await running_agent_service.find_active_worker(project["_id"])
         if active_worker:
             return {"error": "A worker session is already active", "activeSession": active_worker}
 
         role_config = load_role_runtime_config(project, task["agentRole"])
         selected_runner = args.get("runner") or task.get("runner") or role_config.policy.runner.default
         selected_runner = selected_runner if selected_runner else role_config.policy.runner.default
-        if selected_runner != role_config.policy.runner.default:
-            await convex.mutation(
-                "taskEvents:append",
-                {
-                    "taskId": task["_id"],
-                    "eventType": "runner_override",
-                    "payload": {
-                        "runner": selected_runner,
-                        "reason": args.get("runner_override_reason") or "planner_override",
-                        "defaultRunner": role_config.policy.runner.default,
-                    },
-                },
-            )
 
-        approvals = await convex.query("approvals:listByProject", {"projectId": project["_id"], "limit": 100}) or []
+        approvals = await planner_service.list_approvals(project)
         granted = any(
             item.get("taskId") == task["_id"] and item.get("status") == "granted"
             for item in approvals
         )
         if role_config.policy.runner.approval_required and not granted:
-            await planner_service.update_task(str(task["_id"]), status="awaiting_approval", approval_state="pending", runner=selected_runner)
-            approval_id = await convex.mutation(
-                "approvals:create",
-                {
-                    "projectId": project["_id"],
-                    "taskId": task["_id"],
-                    "approvalType": "run_task",
-                    "status": "pending",
-                    "requestedByRole": "planner",
-                },
+            await planner_service.update_task(
+                str(task["_id"]),
+                project=project,
+                status="awaiting_approval",
+                approval_state="pending",
+                runner=selected_runner,
+            )
+            approval_id = await planner_service.create_approval(
+                project=project,
+                task_id=task["_id"],
+                agent_session_id=None,
+                approval_type="run_task",
+                status="pending",
+                requested_by_role="planner",
             )
             await planner_service.sync_planner_files(project, board)
             return {"status": "awaiting_approval", "approvalId": approval_id, "taskId": task_id}
@@ -371,12 +371,23 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             acceptance_criteria=task.get("acceptanceCriteria") or [],
             agent_role_for_secrets=task["agentRole"],
         )
-        await planner_service.update_task(str(task["_id"]), status="running", runner=selected_runner, approval_state="granted")
+        await planner_service.update_task(
+            str(task["_id"]),
+            project=project,
+            status="running",
+            runner=selected_runner,
+            approval_state="granted",
+            latestRunSummary=f"Session {result['convex_session_id']} started with {selected_runner}",
+        )
         await planner_service.sync_planner_files(project, board)
         return result
 
     if name == "list_runner_sessions":
-        sessions = await convex.query("agent:listByProjectId", {"projectId": project["_id"], "limit": 50}) or []
+        sessions = await running_agent_service.list_project_running_agents(
+            project["_id"],
+            active_only=False,
+            limit=50,
+        )
         return {"sessions": sessions}
 
     return {"error": f"Unknown planner tool: {name}"}
@@ -463,5 +474,5 @@ async def run_planner_turn(
         "threadId": thread_id,
         "assistantMessage": assistant_text,
         "messages": list(reversed(await planner_service.list_planner_messages(project["_id"], thread_id=thread_id))),
-        "tasks": await planner_service.list_tasks(board["_id"]),
+        "tasks": await planner_service.list_tasks(board["_id"], project=project),
     }

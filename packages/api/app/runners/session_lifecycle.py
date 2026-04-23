@@ -1,56 +1,63 @@
 """
-Jules session lifecycle service.
+Runner session lifecycle service.
 
-Orchestrates the full create → poll → complete/cancel flow for Jules runner
-sessions, wiring together:
+This module provides the planner-owned runtime bridge for both API-backed and
+local CLI-backed workers. Durable session state is mirrored into repo files:
 
-  - Auth resolution (project secrets → global settings fallback)
-  - Convex ``agentSessions`` record management
-  - ``runnerEvents`` persistence
-  - Task board status transitions via ``planner_service``
+  - research_plan/sessions/<role>/<session-id>/session.ndjson
+  - research_plan/sessions/<role>/<session-id>/commands.ndjson
+  - research_plan/sessions/<role>/<session-id>/state.json
+  - research_plan/sessions/<role>/<session-id>/summary.md
 
-This is the layer the planner and the ``/projects/{slug}/runner/*`` router
-call; neither of them touches the Jules REST API directly.
-
-Usage::
-
-    from app.runners.session_lifecycle import (
-        create_runner_session,
-        poll_session_until_done,
-        cancel_runner_session,
-        ingest_session_events,
-        resolve_runner_for_project,
-    )
+The runtime DB remains a lightweight live-control plane through
+``running_agent_service``.
 """
 from __future__ import annotations
 
 import asyncio
 import time
+from pathlib import Path
 from typing import Any
 
 from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.factory import RunnerFactory
+from app.services import planner_service, running_agent_service, session_files
 from app.services.convex_client import convex
 
 
-# ---------------------------------------------------------------------------
-# Auth resolution
-# ---------------------------------------------------------------------------
+TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+STATUS_MAP = {
+    RunnerEventType.COMPLETED.value: "completed",
+    RunnerEventType.FAILED.value: "failed",
+    RunnerEventType.CANCELLED.value: "cancelled",
+    RunnerEventType.QUESTION_ASKED.value: "awaiting_input",
+    RunnerEventType.APPROVAL_REQUESTED.value: "awaiting_approval",
+}
+EVENT_TYPE_MAP = {
+    RunnerEventType.SESSION_CREATED.value: "session_started",
+    RunnerEventType.STATUS_CHANGED.value: "status_changed",
+    RunnerEventType.PLAN_PROPOSED.value: "status_changed",
+    RunnerEventType.APPROVAL_REQUESTED.value: "approval_requested",
+    RunnerEventType.QUESTION_ASKED.value: "question_asked",
+    RunnerEventType.PROGRESS.value: "assistant_message",
+    RunnerEventType.BASH_COMMAND_STARTED.value: "tool_call",
+    RunnerEventType.BASH_COMMAND_COMPLETED.value: "tool_result",
+    RunnerEventType.FILE_CHANGE_DETECTED.value: "file_change_detected",
+    RunnerEventType.VERIFICATION_STARTED.value: "verification_started",
+    RunnerEventType.VERIFICATION_COMPLETED.value: "verification_completed",
+    RunnerEventType.COMPLETED.value: "completed",
+    RunnerEventType.FAILED.value: "failed",
+    RunnerEventType.CANCELLED.value: "cancelled",
+}
+
 
 async def resolve_jules_api_key(project_id: str | None, agent_role: str = "data") -> str:
-    """Resolve the Jules API key for a project.
-
-    Priority:
-      1. Project secret ``JULES_API_KEY`` (if project_id provided and policy allows)
-      2. Global ``settings.jules_api_key``
-
-    Raises ``RuntimeError`` if no key is available.
-    """
     from app.core.config import settings
 
     if project_id:
         try:
             from app.services.secret_service import resolve_secrets_for_role
+
             secrets = await resolve_secrets_for_role(project_id, agent_role)
             project_key = secrets.get("JULES_API_KEY") or ""
             if project_key:
@@ -68,11 +75,10 @@ async def resolve_jules_api_key(project_id: str | None, agent_role: str = "data"
 
 
 def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | None = None) -> Any:
-    """Instantiate a runner adapter using the resolved API key."""
-    from app.core.config import settings
-    from app.runners.jules import JulesRunner
-
     if runner_name == "jules":
+        from app.core.config import settings
+        from app.runners.jules import JulesRunner
+
         if not api_key:
             raise RuntimeError("Jules runner requires an API key")
         return JulesRunner(
@@ -80,68 +86,32 @@ def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | Non
             api_url=settings.jules_api_url,
             source=settings.jules_source,
         )
-    # Future adapters fall back to factory (they may not need per-project auth)
+
     return RunnerFactory.get(runner_name)
 
 
-# ---------------------------------------------------------------------------
-# Convex helpers
-# ---------------------------------------------------------------------------
-
-async def _create_convex_session(
-    *,
-    project_id: str | None,
-    project_slug: str | None,
-    task_id: str | None,
-    runner: str,
-    role: str,
-    title: str,
-    external_session_id: str | None = None,
-) -> str:
-    """Create an ``agentSessions`` record and return its Convex ID."""
-    result = await convex.mutation(
-        "agent:createSession",
-        {
-            "title": title,
-            "model": f"runner:{runner}",
-            "projectSlug": project_slug,
-            "projectId": project_id,
-            "taskId": task_id,
-            "role": role,
-            "runner": runner,
-            "externalSessionId": external_session_id,
-            "status": "queued",
-        },
-    )
-    return result["sessionId"]
+def _project_root(project_record: dict[str, Any]) -> Path | None:
+    path = project_record.get("localRepoPath")
+    return Path(path).resolve() if path else None
 
 
-async def _update_convex_session(
-    convex_session_id: str,
-    *,
-    status: str | None = None,
-    external_session_id: str | None = None,
-    ended_at: int | None = None,
-) -> None:
-    patch: dict[str, Any] = {}
-    if status is not None:
-        patch["status"] = status
-    if external_session_id is not None:
-        patch["externalSessionId"] = external_session_id
-    if ended_at is not None:
-        patch["endedAt"] = ended_at
-    if patch:
-        await convex.mutation(
-            "agent:updateSessionState",
-            {"sessionId": convex_session_id, **patch},
-        )
+def _event_payload(event: RunnerEvent) -> dict[str, Any]:
+    payload = dict(event.normalized_payload or {})
+    if payload.get("line"):
+        payload.setdefault("content", payload.get("line"))
+    if payload.get("message"):
+        payload.setdefault("content", payload.get("message"))
+    if payload.get("prompt"):
+        payload.setdefault("content", payload.get("prompt"))
+    if payload.get("command"):
+        payload.setdefault("name", "bash")
+    payload["runner_event_type"] = event.event_type.value
+    payload["raw_payload"] = event.raw_payload or {}
+    payload["debug_visibility"] = event.debug_visibility
+    return payload
 
 
-async def _append_runner_event(
-    convex_session_id: str,
-    event: RunnerEvent,
-) -> None:
-    """Persist a single RunnerEvent in Convex ``runnerEvents``."""
+async def _append_runner_event(convex_session_id: str, event: RunnerEvent) -> None:
     try:
         await convex.mutation(
             "runnerEvents:append",
@@ -155,12 +125,21 @@ async def _append_runner_event(
             },
         )
     except Exception:
-        pass  # event persistence is best-effort
+        pass
 
 
-# ---------------------------------------------------------------------------
-# Public lifecycle API
-# ---------------------------------------------------------------------------
+def _sync_file_status(root: Path, status: str) -> None:
+    session_files.update_state(root, status=status)
+    session_files.refresh_summary(root)
+
+
+async def _load_project(project_id: str | None, project_slug: str | None) -> dict[str, Any] | None:
+    if project_id:
+        return await convex.query("projects:getById", {"projectId": project_id})
+    if project_slug:
+        return await convex.query("projects:getBySlug", {"slug": project_slug})
+    return None
+
 
 async def create_runner_session(
     *,
@@ -177,89 +156,93 @@ async def create_runner_session(
     acceptance_criteria: list[str] | None = None,
     agent_role_for_secrets: str | None = None,
 ) -> dict[str, Any]:
-    """Create a Jules runner session and record it in Convex.
-
-    Steps:
-    1. Resolve Jules API key (project secret → global fallback)
-    2. Create Convex ``agentSessions`` record (status: queued)
-    3. Call Jules API to create the session
-    4. Update Convex record with external session ID + running status
-    5. Persist ``session_created`` RunnerEvent
-    6. Return combined metadata
-
-    Returns a dict:
-      - ``convex_session_id``: Convex agentSessions _id
-      - ``external_session_id``: Jules session ID
-      - ``status``: initial Jules state
-      - ``url``: Jules session URL (if available)
-    """
     secret_role = agent_role_for_secrets or role
 
     if project_id:
-        existing_sessions = await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": 50}) or []
-        active_session = next(
-            (
-                item for item in existing_sessions
-                if item.get("role") not in {None, "planner"}
-                and item.get("status") in {"queued", "running", "awaiting_input", "awaiting_approval"}
-            ),
-            None,
-        )
-        if active_session:
+        active_worker = await running_agent_service.find_active_worker(project_id)
+        if active_worker:
             raise RuntimeError(
-                f"Sequential execution enforced: worker session {active_session['_id']} is still active"
+                f"Sequential execution enforced: worker session {active_worker['_id']} is still active"
             )
 
-    # 1. Auth
+    project = await _load_project(project_id, project_slug)
+    project_root = _project_root(project or {})
+    if project_root is None and local_repo_path:
+        project_root = Path(local_repo_path).resolve()
+    if project_root is None:
+        raise RuntimeError("Runner sessions require a local repo path")
+
     api_key = await resolve_jules_api_key(project_id, secret_role) if runner_name == "jules" else None
     runner = resolve_runner_for_project(runner_name, api_key=api_key)
 
-    # 2. Create Convex record (no external ID yet)
     title = f"[{role}] {task_description[:60]}"
-    convex_session_id = await _create_convex_session(
+    running_session_id = await running_agent_service.create_running_agent(
         project_id=project_id,
         project_slug=project_slug,
         task_id=task_id,
-        runner=runner_name,
+        runtime_kind=runner_name,
         role=role,
         title=title,
+        external_session_id=None,
+        session_path=None,
+        status="queued",
     )
-
-    # 3. Submit to Jules
-    payload = TaskPayload(
-        project_slug=project_slug or "unknown",
+    session_root = session_files.ensure_session_root(project_root, role, running_session_id)
+    session_files.append_event(
+        session_root,
+        "session_started",
+        content=task_description,
+        runner=runner_name,
         role=role,
-        task_id=task_id or convex_session_id,
+        task_id=task_id,
+        status="queued",
+    )
+    await running_agent_service.update_running_agent(running_session_id, sessionPath=str(session_root))
+
+    task_payload = TaskPayload(
+        project_slug=project_slug or (project.get("slug") if project else "unknown"),
+        role=role,
+        task_id=task_id or running_session_id,
         repo_url=repo_url,
         branch=branch,
-        local_repo_path=local_repo_path,
+        local_repo_path=str(project_root),
         task_description=task_description,
         allowed_paths=allowed_paths or [],
         acceptance_criteria=acceptance_criteria or [],
     )
     try:
-        result = await runner.create_session(payload)
-    except Exception as e:
-        # Mark Convex session as failed if Jules rejects it
-        await _update_convex_session(
-            convex_session_id,
+        result = await runner.create_session(task_payload)
+    except Exception as exc:
+        _sync_file_status(session_root, "failed")
+        session_files.append_event(
+            session_root,
+            "failed",
+            content=str(exc),
+            status="failed",
+        )
+        await running_agent_service.finalize_running_agent(
+            running_session_id,
             status="failed",
             ended_at=int(time.time() * 1000),
         )
-        raise RuntimeError(f"Jules session creation failed: {e}") from e
+        raise RuntimeError(f"Runner session creation failed: {exc}") from exc
 
     external_id = result["session_id"]
-
-    # 4. Update Convex with external ID + running status
-    await _update_convex_session(
-        convex_session_id,
+    await running_agent_service.update_running_agent(
+        running_session_id,
         status="running",
-        external_session_id=external_id,
+        externalSessionId=external_id,
     )
-
-    # 5. Persist session_created event
+    session_files.append_event(
+        session_root,
+        "status_changed",
+        content=f"Worker session started with {runner_name}",
+        runner=runner_name,
+        external_session_id=external_id,
+        status="running",
+    )
     await _append_runner_event(
-        convex_session_id,
+        running_session_id,
         RunnerEvent(
             event_type=RunnerEventType.SESSION_CREATED,
             session_id=external_id,
@@ -268,18 +251,19 @@ async def create_runner_session(
                 "role": role,
                 "task_id": task_id,
                 "url": result.get("url"),
-                "convex_session_id": convex_session_id,
+                "running_session_id": running_session_id,
             },
             raw_payload=result.get("raw", {}),
         ),
     )
 
     return {
-        "convex_session_id": convex_session_id,
+        "convex_session_id": running_session_id,
         "external_session_id": external_id,
         "status": result.get("status", "running"),
         "url": result.get("url"),
         "runner": runner_name,
+        "sessionPath": str(session_root),
     }
 
 
@@ -289,59 +273,43 @@ async def get_runner_session(
     sync_from_runner: bool = True,
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return the current state of a runner session.
-
-    If ``sync_from_runner`` is True, fetches the latest state from Jules and
-    updates the Convex record before returning.
-
-    Returns the Convex ``agentSessions`` record augmented with runner data.
-    """
-    session = await convex.query("agent:getSession", {"sessionId": convex_session_id})
+    session = await running_agent_service.get_running_agent(convex_session_id)
     if not session:
-        raise ValueError(f"Session {convex_session_id} not found in Convex")
+        raise ValueError(f"Session {convex_session_id} not found")
+
+    result: dict[str, Any] = dict(session)
+    session_path = session.get("sessionPath")
+    root = Path(session_path) if session_path else None
+    if root and root.exists():
+        result["fileState"] = session_files.read_state(root)
+        result["summaryPath"] = str(root / "summary.md")
 
     external_id = session.get("externalSessionId")
     runner_name = session.get("runner", "jules")
-    result: dict[str, Any] = dict(session)
-
     if sync_from_runner and external_id:
         try:
             api_key = (
-                await resolve_jules_api_key(
-                    project_id or session.get("projectId"),
-                    session.get("role") or "data",
-                )
+                await resolve_jules_api_key(project_id or session.get("projectId"), session.get("role") or "data")
                 if runner_name == "jules"
                 else None
             )
             runner = resolve_runner_for_project(runner_name, api_key=api_key)
             runner_info = await runner.get_session(external_id)
-
-            # Normalize Jules state to our session status
             normalized = runner_info.get("normalized_status", "")
-            status_map = {
-                RunnerEventType.COMPLETED.value: "completed",
-                RunnerEventType.FAILED.value: "failed",
-                RunnerEventType.CANCELLED.value: "cancelled",
-                RunnerEventType.QUESTION_ASKED.value: "awaiting_input",
-                RunnerEventType.APPROVAL_REQUESTED.value: "awaiting_approval",
-            }
-            new_status = status_map.get(normalized, "running")
-
-            is_terminal = new_status in {"completed", "failed", "cancelled"}
-            await _update_convex_session(
+            new_status = STATUS_MAP.get(normalized, runner_info.get("status", "running"))
+            is_terminal = new_status in TERMINAL_STATUSES
+            await running_agent_service.update_running_agent(
                 convex_session_id,
                 status=new_status,
-                ended_at=int(time.time() * 1000) if is_terminal else None,
+                endedAt=int(time.time() * 1000) if is_terminal else None,
             )
-
+            if root and root.exists():
+                _sync_file_status(root, new_status)
             result["runnerInfo"] = runner_info
             result["status"] = new_status
             result["pr_url"] = runner_info.get("pr_url")
-
-        except Exception as e:
-            result["syncError"] = str(e)
-
+        except Exception as exc:
+            result["syncError"] = str(exc)
     return result
 
 
@@ -352,19 +320,6 @@ async def poll_session_until_done(
     max_polls: int = 120,
     poll_interval_seconds: int = 15,
 ) -> dict[str, Any]:
-    """Poll a Jules session to completion, updating Convex status each cycle.
-
-    Blocks (async) until the session reaches a terminal state or ``max_polls``
-    is exhausted.  Each poll cycle:
-      1. Fetches session from Jules
-      2. Updates Convex status
-      3. Ingests new events into ``runnerEvents``
-
-    Returns the final ``get_runner_session`` result.
-    Raises ``TimeoutError`` if ``max_polls`` is exhausted.
-    """
-    terminal = {"completed", "failed", "cancelled"}
-
     for _ in range(max_polls):
         await asyncio.sleep(poll_interval_seconds)
         result = await get_runner_session(
@@ -372,18 +327,15 @@ async def poll_session_until_done(
             sync_from_runner=True,
             project_id=project_id,
         )
-        # Ingest events (best-effort)
         try:
             await ingest_session_events(convex_session_id, project_id=project_id)
         except Exception:
             pass
-
-        if result.get("status") in terminal:
+        if result.get("status") in TERMINAL_STATUSES:
             return result
 
     raise TimeoutError(
-        f"Session {convex_session_id} did not complete after "
-        f"{max_polls * poll_interval_seconds}s"
+        f"Session {convex_session_id} did not complete after {max_polls * poll_interval_seconds}s"
     )
 
 
@@ -392,25 +344,16 @@ async def cancel_runner_session(
     *,
     project_id: str | None = None,
 ) -> dict[str, Any]:
-    """Cancel a runner session.
-
-    Updates Convex status to ``cancelled`` and persists a CANCELLED event.
-    Jules has no remote cancel endpoint; the cancel is recorded locally.
-    """
-    session = await convex.query("agent:getSession", {"sessionId": convex_session_id})
+    session = await running_agent_service.get_running_agent(convex_session_id)
     if not session:
-        raise ValueError(f"Session {convex_session_id} not found in Convex")
+        raise ValueError(f"Session {convex_session_id} not found")
 
     external_id = session.get("externalSessionId")
     runner_name = session.get("runner", "jules")
-
     if external_id:
         try:
             api_key = (
-                await resolve_jules_api_key(
-                    project_id or session.get("projectId"),
-                    session.get("role") or "data",
-                )
+                await resolve_jules_api_key(project_id or session.get("projectId"), session.get("role") or "data")
                 if runner_name == "jules"
                 else None
             )
@@ -419,24 +362,23 @@ async def cancel_runner_session(
         except Exception:
             pass
 
-    now_ms = int(time.time() * 1000)
-    await _update_convex_session(
+    session_path = session.get("sessionPath")
+    if session_path:
+        root = Path(session_path)
+        if root.exists():
+            session_files.append_event(
+                root,
+                "cancelled",
+                content="Session cancelled by user.",
+                status="cancelled",
+            )
+            _sync_file_status(root, "cancelled")
+
+    await running_agent_service.finalize_running_agent(
         convex_session_id,
         status="cancelled",
-        ended_at=now_ms,
+        ended_at=int(time.time() * 1000),
     )
-
-    if external_id:
-        await _append_runner_event(
-            convex_session_id,
-            RunnerEvent(
-                event_type=RunnerEventType.CANCELLED,
-                session_id=external_id,
-                normalized_payload={"reason": "user_requested", "runner": runner_name},
-                raw_payload={},
-            ),
-        )
-
     return {"convex_session_id": convex_session_id, "status": "cancelled"}
 
 
@@ -445,14 +387,9 @@ async def ingest_session_events(
     *,
     project_id: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch all current events from the runner and persist them in Convex.
-
-    Normalizes vendor events and writes each into ``runnerEvents``.
-    Returns the list of ingested event summaries.
-    """
-    session = await convex.query("agent:getSession", {"sessionId": convex_session_id})
+    session = await running_agent_service.get_running_agent(convex_session_id)
     if not session:
-        raise ValueError(f"Session {convex_session_id} not found in Convex")
+        raise ValueError(f"Session {convex_session_id} not found")
 
     external_id = session.get("externalSessionId")
     if not external_id:
@@ -460,26 +397,86 @@ async def ingest_session_events(
 
     runner_name = session.get("runner", "jules")
     api_key = (
-        await resolve_jules_api_key(
-            project_id or session.get("projectId"),
-            session.get("role") or "data",
-        )
+        await resolve_jules_api_key(project_id or session.get("projectId"), session.get("role") or "data")
         if runner_name == "jules"
         else None
     )
     runner = resolve_runner_for_project(runner_name, api_key=api_key)
-
     events = await runner.list_events(external_id)
+    session_path = session.get("sessionPath")
+    root = Path(session_path) if session_path else None
+    existing_count = len(session_files.list_events(root)) if root and root.exists() else 0
+    new_events = events[existing_count:]
+
     ingested: list[dict[str, Any]] = []
-    for event in events:
+    for event in new_events:
         await _append_runner_event(convex_session_id, event)
+        if root and root.exists():
+            file_event_type = EVENT_TYPE_MAP.get(event.event_type.value, "status_changed")
+            payload = _event_payload(event)
+            status = STATUS_MAP.get(event.event_type.value)
+            if status:
+                payload["status"] = status
+            session_files.append_event(root, file_event_type, **payload)
+            if status:
+                _sync_file_status(root, status)
         await _relay_runner_event(convex_session_id, session, event)
-        ingested.append({
-            "event_type": event.event_type.value,
-            "debug_visibility": event.debug_visibility,
-        })
+        ingested.append(
+            {
+                "event_type": event.event_type.value,
+                "debug_visibility": event.debug_visibility,
+            }
+        )
+
+    if session_path and Path(session_path).exists():
+        state = session_files.read_state(session_path)
+        if state.get("status") in TERMINAL_STATUSES:
+            await running_agent_service.finalize_running_agent(
+                convex_session_id,
+                status=state["status"],
+                ended_at=int(time.time() * 1000),
+            )
 
     return ingested
+
+
+async def append_session_command(
+    convex_session_id: str,
+    *,
+    command_type: str,
+    content: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    session = await running_agent_service.get_running_agent(convex_session_id)
+    if not session:
+        raise ValueError(f"Session {convex_session_id} not found")
+    session_path = session.get("sessionPath")
+    if not session_path:
+        raise RuntimeError("Session has no sessionPath")
+    root = Path(session_path)
+    command = session_files.append_command(
+        root,
+        command_type,
+        content=content,
+        payload=payload or {},
+    )
+    external_id = session.get("externalSessionId")
+    if external_id:
+        runner_name = session.get("runner", "jules")
+        api_key = (
+            await resolve_jules_api_key(session.get("projectId"), session.get("role") or "data")
+            if runner_name == "jules"
+            else None
+        )
+        runner = resolve_runner_for_project(runner_name, api_key=api_key)
+        if command_type == "inject_message" and content:
+            await runner.send_message(external_id, content)
+        elif command_type == "approve":
+            await runner.approve(external_id, payload or {"message": content or "approved"})
+        elif command_type == "cancel":
+            await runner.cancel(external_id)
+        session_files.mark_command_processed(root, int(command["id"]))
+    return command
 
 
 async def _relay_runner_event(
@@ -487,16 +484,12 @@ async def _relay_runner_event(
     session_record: dict[str, Any],
     event: RunnerEvent,
 ) -> None:
-    """Relay interactive events (approvals, questions) to operational tables.
-
-    Detects:
-      - APPROVAL_REQUESTED -> creates an 'approvals' record
-      - QUESTION_ASKED     -> appends a planner message
-    """
     if event.event_type == RunnerEventType.APPROVAL_REQUESTED:
         await _relay_approval_requested(convex_session_id, session_record, event)
     elif event.event_type == RunnerEventType.QUESTION_ASKED:
         await _relay_question_asked(convex_session_id, session_record, event)
+    elif event.event_type in {RunnerEventType.COMPLETED, RunnerEventType.FAILED, RunnerEventType.CANCELLED}:
+        await _relay_terminal_status(session_record, event)
 
 
 async def _relay_approval_requested(
@@ -504,32 +497,28 @@ async def _relay_approval_requested(
     session_record: dict[str, Any],
     event: RunnerEvent,
 ) -> None:
-    """Register a new gate in the 'approvals' table if not already present."""
     project_id = session_record.get("projectId")
     if not project_id:
         return
+    project = await convex.query("projects:getById", {"projectId": project_id})
+    if not project:
+        return
 
-    # Basic idempotency: check if we already have a pending approval for this session
-    existing = await convex.query(
-        "approvals:listByProject",
-        {"projectId": project_id, "limit": 10},
-    ) or []
-    for appr in existing:
-        if (appr.get("agentSessionId") == convex_session_id and
-                appr.get("status") == "pending"):
+    existing = await planner_service.list_approvals(project)
+    for approval in existing:
+        if approval.get("agentSessionId") == convex_session_id and approval.get("status") == "pending":
             return
 
-    await convex.mutation(
-        "approvals:create",
-        {
-            "projectId": project_id,
-            "taskId": session_record.get("taskId"),
-            "agentSessionId": convex_session_id,
-            "approvalType": event.normalized_payload.get("activity_key") or "run_task",
-            "status": "pending",
-            "requestedByRole": session_record.get("role") or "agent",
-        },
+    await planner_service.create_approval(
+        project=project,
+        task_id=session_record.get("taskId"),
+        agent_session_id=convex_session_id,
+        approval_type=event.normalized_payload.get("activity_key") or "run_task",
+        status="pending",
+        requested_by_role=session_record.get("role") or "agent",
+        resolution_note=event.normalized_payload.get("prompt") or event.normalized_payload.get("message"),
     )
+    await planner_service.sync_planner_files(project)
 
 
 async def _relay_question_asked(
@@ -537,18 +526,46 @@ async def _relay_question_asked(
     session_record: dict[str, Any],
     event: RunnerEvent,
 ) -> None:
-    """Relay an agent question to the long-lived planner thread."""
     project_id = session_record.get("projectId")
     if not project_id:
         return
-
-    from app.services import planner_service
-
-    question_text = event.normalized_payload.get("prompt") or "The agent has a question."
+    question_text = (
+        event.normalized_payload.get("prompt")
+        or event.normalized_payload.get("message")
+        or "The agent has a question."
+    )
     await planner_service.append_planner_message(
         project_id=project_id,
         role="assistant",
-        content=f"**[Question from Agent]**: {question_text}",
+        content=f"[Question from {session_record.get('role') or 'agent'}] {question_text}",
         message_type="question",
         session_id=convex_session_id,
     )
+
+
+async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEvent) -> None:
+    project_id = session_record.get("projectId")
+    task_id = session_record.get("taskId")
+    if not project_id or not task_id:
+        return
+    project = await convex.query("projects:getById", {"projectId": project_id})
+    if not project:
+        return
+    status = STATUS_MAP.get(event.event_type.value, "done")
+    task_status = {
+        "completed": "done",
+        "failed": "blocked",
+        "cancelled": "cancelled",
+    }.get(status, "review")
+    summary = (
+        event.normalized_payload.get("message")
+        or event.normalized_payload.get("stderr")
+        or f"Session ended with status {status}."
+    )
+    await planner_service.update_task(
+        str(task_id),
+        project=project,
+        status=task_status,
+        latestRunSummary=summary,
+    )
+    await planner_service.sync_planner_files(project)
