@@ -1,5 +1,7 @@
 # WO-06: Project Bootstrap Contract
 
+**Status:** completed
+
 ## Goal
 
 Make new projects start with the planner-first repo contract.
