@@ -119,34 +119,6 @@ async def create_session(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Runner error: {e}")
 
-    # Persist a lightweight record in Convex if a task or session ID was provided.
-    if data.convex_task_id or data.convex_agent_session_id:
-        try:
-            from app.services.convex_client import convex
-            from app.runners.base import RunnerEvent, RunnerEventType
-
-            event = RunnerEvent(
-                event_type=RunnerEventType.SESSION_CREATED,
-                session_id=result["session_id"],
-                normalized_payload={
-                    "runner": runner,
-                    "task_id": data.task_id,
-                    "status": result.get("status"),
-                    "url": result.get("url"),
-                },
-                raw_payload=result.get("raw", {}),
-            )
-            await convex.mutation(
-                "runnerEvents:append",
-                {
-                    "agentSessionId": data.convex_agent_session_id,
-                    **event.to_convex_dict(),
-                    "createdAt": int(time.time() * 1000),
-                },
-            )
-        except Exception:
-            pass  # event persistence is best-effort; don't fail the session creation
-
     return result
 
 
@@ -250,27 +222,6 @@ async def cancel(
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Runner error: {e}")
 
-    # Persist cancellation event (best-effort)
-    try:
-        from app.services.convex_client import convex
-        from app.runners.base import RunnerEvent, RunnerEventType
-
-        event = RunnerEvent(
-            event_type=RunnerEventType.CANCELLED,
-            session_id=session_id,
-            normalized_payload={"runner": runner, "reason": "user_requested"},
-            raw_payload={},
-        )
-        await convex.mutation(
-            "runnerEvents:append",
-            {
-                **event.to_convex_dict(),
-                "createdAt": int(time.time() * 1000),
-            },
-        )
-    except Exception:
-        pass
-
     return {"ok": True, "session_id": session_id, "status": "cancelled"}
 
 
@@ -299,29 +250,11 @@ async def ingest_events(
         events = [e for e in events if e.debug_visibility]
 
     persisted: list[dict[str, Any]] = []
-    try:
-        from app.services.convex_client import convex
-        for event in events:
-            try:
-                await convex.mutation(
-                    "runnerEvents:append",
-                    {
-                        "agentSessionId": data.convex_agent_session_id,
-                        **event.to_convex_dict(),
-                        "createdAt": int(time.time() * 1000),
-                    },
-                )
-                persisted.append({
-                    "event_type": event.event_type.value,
-                    "debug_visibility": event.debug_visibility,
-                })
-            except Exception as persist_err:
-                persisted.append({
-                    "event_type": event.event_type.value,
-                    "error": str(persist_err),
-                })
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Convex persistence error: {e}")
+    for event in events:
+        persisted.append({
+            "event_type": event.event_type.value,
+            "debug_visibility": event.debug_visibility,
+        })
 
     return {
         "session_id": session_id,

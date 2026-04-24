@@ -106,26 +106,8 @@ def _event_payload(event: RunnerEvent) -> dict[str, Any]:
     if payload.get("command"):
         payload.setdefault("name", "bash")
     payload["runner_event_type"] = event.event_type.value
-    payload["raw_payload"] = event.raw_payload or {}
     payload["debug_visibility"] = event.debug_visibility
     return payload
-
-
-async def _append_runner_event(convex_session_id: str, event: RunnerEvent) -> None:
-    try:
-        await convex.mutation(
-            "runnerEvents:append",
-            {
-                "agentSessionId": convex_session_id,
-                "eventType": event.event_type.value,
-                "normalizedPayload": event.normalized_payload,
-                "rawPayload": event.raw_payload,
-                "debugVisibility": str(event.debug_visibility).lower(),
-                "createdAt": int(time.time() * 1000),
-            },
-        )
-    except Exception:
-        pass
 
 
 def _sync_file_status(root: Path, status: str) -> None:
@@ -241,21 +223,6 @@ async def create_runner_session(
         external_session_id=external_id,
         status="running",
     )
-    await _append_runner_event(
-        running_session_id,
-        RunnerEvent(
-            event_type=RunnerEventType.SESSION_CREATED,
-            session_id=external_id,
-            normalized_payload={
-                "runner": runner_name,
-                "role": role,
-                "task_id": task_id,
-                "url": result.get("url"),
-                "running_session_id": running_session_id,
-            },
-            raw_payload=result.get("raw", {}),
-        ),
-    )
 
     return {
         "convex_session_id": running_session_id,
@@ -298,11 +265,17 @@ async def get_runner_session(
             normalized = runner_info.get("normalized_status", "")
             new_status = STATUS_MAP.get(normalized, runner_info.get("status", "running"))
             is_terminal = new_status in TERMINAL_STATUSES
-            await running_agent_service.update_running_agent(
-                convex_session_id,
-                status=new_status,
-                endedAt=int(time.time() * 1000) if is_terminal else None,
-            )
+            if is_terminal:
+                await running_agent_service.finalize_running_agent(
+                    convex_session_id,
+                    status=new_status,
+                    ended_at=int(time.time() * 1000),
+                )
+            else:
+                await running_agent_service.update_running_agent(
+                    convex_session_id,
+                    status=new_status,
+                )
             if root and root.exists():
                 _sync_file_status(root, new_status)
             result["runnerInfo"] = runner_info
@@ -410,7 +383,6 @@ async def ingest_session_events(
 
     ingested: list[dict[str, Any]] = []
     for event in new_events:
-        await _append_runner_event(convex_session_id, event)
         if root and root.exists():
             file_event_type = EVENT_TYPE_MAP.get(event.event_type.value, "status_changed")
             payload = _event_payload(event)
