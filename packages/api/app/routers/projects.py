@@ -266,9 +266,9 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
     )
     project = await convex.query("projects:getById", {"projectId": project_id})
     await planner_service.ensure_planner_thread(project_id)
-    board = await planner_service.ensure_main_board(project_id)
+    board = await planner_service.ensure_main_board(project)
     await planner_service.append_planner_message(
-        project_id=project_id,
+        project=project,
         role="system",
         content="Planner thread initialized.",
         message_type="system",
@@ -390,9 +390,9 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     existing_rail = rail_path.read_text(encoding="utf-8") if rail_path.exists() else None
     rail_path.write_text(render_rail_manifest(project, existing_rail), encoding="utf-8")
     await planner_service.ensure_planner_thread(project_id)
-    board = await planner_service.ensure_main_board(project_id)
+    board = await planner_service.ensure_main_board(project)
     await planner_service.append_planner_message(
-        project_id=project_id,
+        project=project,
         role="system",
         content="Project created from a brief. Review the generated research graph, source readiness, and hydration plan before running hydration.",
         message_type="system",
@@ -621,7 +621,7 @@ async def get_project_context(slug: str):
 async def get_planner_thread(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
-    messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id)
+    messages = await planner_service.list_planner_messages(project, thread_id=thread_id)
     return {
         "threadId": thread_id,
         "messages": list(reversed(messages)),
@@ -632,8 +632,8 @@ async def get_planner_thread(slug: str):
 async def get_planner_home(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
-    messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id, limit=50)
-    board = await planner_service.ensure_main_board(project["_id"])
+    messages = await planner_service.list_planner_messages(project, thread_id=thread_id, limit=50)
+    board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
     project_root = planner_service.project_root_from_record(project)
     research_plan_root = project_root / "research_plan" if project_root else None
@@ -665,14 +665,14 @@ async def append_planner_message(slug: str, data: PlannerMessageRequest):
     project = await planner_service.get_project_by_slug(slug)
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     await planner_service.append_planner_message(
-        project_id=project["_id"],
+        project=project,
         role=data.role,
         content=data.content,
         message_type=data.messageType,
         session_id=data.sessionId,
         thread_id=thread_id,
     )
-    messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id)
+    messages = await planner_service.list_planner_messages(project, thread_id=thread_id)
     return {"threadId": thread_id, "messages": list(reversed(messages))}
 
 
@@ -691,7 +691,7 @@ async def planner_chat(slug: str, data: PlannerChatRequest):
 @router.get("/{slug}/planner/board")
 async def get_planner_board(slug: str):
     project = await planner_service.get_project_by_slug(slug)
-    board = await planner_service.ensure_main_board(project["_id"])
+    board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
     return {"board": board, "tasks": tasks}
 
@@ -699,10 +699,10 @@ async def get_planner_board(slug: str):
 @router.post("/{slug}/planner/tasks")
 async def create_planner_task(slug: str, data: PlannerTaskRequest):
     project = await planner_service.get_project_by_slug(slug)
-    board = await planner_service.ensure_main_board(project["_id"], session_id=data.sessionId)
+    board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
+        project=project,
         board_id=board["_id"],
-        project_id=project["_id"],
         title=data.title,
         description=data.description,
         status=data.status,
@@ -722,7 +722,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
 @router.patch("/{slug}/planner/tasks/{task_id}")
 async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRequest):
     project = await planner_service.get_project_by_slug(slug)
-    board = await planner_service.ensure_main_board(project["_id"])
+    board = await planner_service.ensure_main_board(project)
     await planner_service.update_task(task_id, project=project, **data.model_dump())
     await planner_service.sync_planner_files(project, board)
     tasks = await planner_service.list_tasks(board["_id"], project=project)

@@ -545,13 +545,16 @@ async def _relay_question_asked(
         or event.normalized_payload.get("message")
         or "The agent has a question."
     )
-    await planner_service.append_planner_message(
-        project_id=project_id,
-        role="assistant",
-        content=f"[Question from {session_record.get('role') or 'agent'}] {question_text}",
-        message_type="question",
-        session_id=convex_session_id,
-    )
+    # Fetch project to pass to append_planner_message
+    project = await convex.query("projects:getById", {"projectId": project_id})
+    if project:
+        await planner_service.append_planner_message(
+            project=project,
+            role="assistant",
+            content=f"[Question from {session_record.get('role') or 'agent'}] {question_text}",
+            message_type="question",
+            session_id=convex_session_id,
+        )
 
 
 async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEvent) -> None:
