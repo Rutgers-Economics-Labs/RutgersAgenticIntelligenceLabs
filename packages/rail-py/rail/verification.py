@@ -225,7 +225,8 @@ class ExecutionVerificationHook(VerificationHook):
                     "" if in_allowed else f"{p!r} is outside declared write roots"
                 ))
 
-        if not checks:
+
+        if len(checks) == 1 and checks[0].name == "execution_succeeded":
             checks.append(CheckResult("no_outputs_declared", False, "no expected_output_paths declared — required for coding tasks"))
 
         passed = all(c.passed for c in checks)
@@ -281,7 +282,8 @@ class ArtifactVerificationHook(VerificationHook):
             "" if manifest_updated else "artifact index/manifest was not updated"
         ))
 
-        if not checks:
+
+        if len(checks) == 1 and checks[0].name == "manifest_updated":
             checks.append(CheckResult("no_artifacts_declared", False, "no artifact_paths declared — required for artifact tasks"))
 
         passed = all(c.passed for c in checks)

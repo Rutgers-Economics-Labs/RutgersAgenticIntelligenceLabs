@@ -177,7 +177,7 @@ class TestConfigVerificationHook:
 
     def test_missing_required_field_fails(self, tmp_path):
         # rail.yaml missing "agents" field
-        content = VALID_RAIL_YAML.replace("agents:\n  roles_dir: agents\n", "")
+        content = VALID_RAIL_YAML.replace("agents:\n  roles_dir: \"agents\"\n", "")
         f = tmp_path / "rail.yaml"
         f.write_text(content, encoding="utf-8")
         result = self.hook.run({"file_path": str(f), "file_type": "rail.yaml"})

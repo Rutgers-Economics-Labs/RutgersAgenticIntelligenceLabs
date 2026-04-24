@@ -5,7 +5,10 @@ import sys
 from pathlib import Path
 
 import pytest
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError:
+    httpx = None
 
 try:
     import pytest_asyncio
@@ -45,7 +48,7 @@ def convex_mock():
     Intercept all Convex HTTP API calls and return empty/minimal responses.
     Tests can override specific endpoints by calling respx_mock.route() inside the test.
     """
-    if respx is None:
+    if respx is None or httpx is None:
         yield None
         return
 
