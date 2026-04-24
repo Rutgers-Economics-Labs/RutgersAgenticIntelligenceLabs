@@ -1,5 +1,7 @@
 # WO-05: Jules End-To-End Runner
 
+**Status:** done
+
 ## Goal
 
 Make Jules the first real worker runner behind the planner-owned runtime model.
