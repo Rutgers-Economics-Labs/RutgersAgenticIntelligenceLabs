@@ -13,9 +13,13 @@ API_ROOT = ROOT / "packages" / "api"
 ENGINE_ROOT = ROOT / "packages" / "engine"
 RAIL_PY_ROOT = ROOT / "packages" / "rail-py"
 
-for path in (API_ROOT, ENGINE_ROOT, RAIL_PY_ROOT):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+# api must stay ahead of engine on sys.path so `import app` resolves to
+# packages/api/app rather than packages/engine/app.py.
+ordered_paths = [str(API_ROOT), str(RAIL_PY_ROOT), str(ENGINE_ROOT)]
+for path in reversed(ordered_paths):
+    if path in sys.path:
+        sys.path.remove(path)
+    sys.path.insert(0, path)
 
 from app.services.planner_harness import PlannerHarness, format_planner_result
 

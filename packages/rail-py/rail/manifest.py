@@ -12,6 +12,8 @@ RunnerName = Literal["jules", "claude_code", "gemini_cli", "cursor_cli", "codex_
 PlannerThreadMode = Literal["project"]
 IndexMode = Literal["filesystem"]
 HomeView = Literal["planner", "project_home", "artifacts"]
+WorkspaceMode = Literal["isolated"]
+CheckpointMode = Literal["git-ref", "none"]
 
 
 def _validate_repo_relative_path(value: str) -> str:
@@ -110,6 +112,25 @@ class FrontendSection(BaseModel):
     default_home_view: HomeView = "project_home"
 
 
+class WorkspacesSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: WorkspaceMode = "isolated"
+    root: str = ".rail/workspaces"
+    setup_script: str | None = "scripts/setup-workspace.sh"
+    verification_script: str | None = "scripts/run-verification.sh"
+    archive_script: str | None = "scripts/archive-workspace.sh"
+    nonconcurrent_run: bool = True
+    checkpoint_mode: CheckpointMode = "git-ref"
+
+    @field_validator("root", "setup_script", "verification_script", "archive_script")
+    @classmethod
+    def _validate_relative_paths(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return _validate_repo_relative_path(value)
+
+
 class RailManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -118,6 +139,7 @@ class RailManifest(BaseModel):
     paths: PathsSection
     hydration: HydrationSection
     agents: AgentsSection
+    workspaces: WorkspacesSection = Field(default_factory=WorkspacesSection)
     frontend: FrontendSection
 
     @model_validator(mode="after")

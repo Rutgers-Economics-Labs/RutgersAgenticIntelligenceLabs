@@ -1,6 +1,8 @@
 import time
 import yaml
 import subprocess
+import os
+import platform
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks
@@ -10,14 +12,17 @@ from rail.manifest import load_manifest
 
 from app.services.convex_client import convex
 from app.services import ontology_service, sql_service
+from app.services import hydration_worker
 from app.services.project_artifacts_service import find_latest_success_job_with_outputs
 from app.services import planner_runtime, planner_service
 from app.services import running_agent_service
 from app.services import session_files
+from app.services import command_center_service
 from app.services.device_service import get_device_metadata
 from app.services.hydration_registry_service import (
     get_hydration_status as get_project_hydration_status,
     register_hydration_artifact,
+    resolve_pipeline_slug,
 )
 from app.services.repo_contract_service import infer_github_repo, render_rail_manifest
 from app.services.brief_project_service import (
@@ -192,6 +197,183 @@ class ProjectRunnerCommandRequest(BaseModel):
     commandType: str
     content: str | None = None
     payload: dict | None = None
+    idempotencyKey: str | None = None
+
+
+class ResearchLaunchRequest(BaseModel):
+    researchQuestion: str = ""
+    audience: str = "project stakeholders"
+    deliverables: list[str] = []
+    dataConstraints: str = ""
+    publicOnly: bool = True
+    citationStrictness: str = "strict"
+    approvalBeforeWrites: bool = True
+    useSubAgents: bool = True
+    preferredAgentRoles: list[str] = []
+    workflowPresets: list[str] = []
+    notes: str = ""
+
+
+class CatalogProjectActionRequest(BaseModel):
+    clone: bool = False
+    targetDir: str | None = None
+
+
+class HydrationRerunRequest(BaseModel):
+    pipelineSlug: str | None = None
+
+
+KNOWN_PROJECT_REPOS = [
+    {
+        "name": "Academic",
+        "slug": "academic",
+        "description": "Academic research starter workspace.",
+        "repoUrl": "https://github.com/Rutgers-Economics-Labs/RAIL-academic",
+        "directory": "RAIL-academic",
+    },
+    {
+        "name": "Synthetic Test",
+        "slug": "synthetic",
+        "description": "Synthetic test workspace for RAIL workflows.",
+        "repoUrl": "https://github.com/Rutgers-Economics-Labs/RAIL-synthetic-test",
+        "directory": "RAIL-synthetic-test",
+    },
+    {
+        "name": "RAIL Census Ontology Starter",
+        "slug": "census-ontology-starter",
+        "description": "Minimal Census-backed ontology starter repo.",
+        "repoUrl": "https://github.com/Rutgers-Economics-Labs/RAIL-Census-Ontology-Starter",
+        "directory": "RAIL-Census-Ontology-Starter",
+    },
+]
+
+
+def _projects_base_dir() -> Path:
+    default_base = Path(__file__).resolve().parents[5]
+    return Path(os.environ.get("RAIL_PROJECTS_DIR", str(default_base))).expanduser().resolve()
+
+
+def _known_project(slug: str) -> dict | None:
+    for item in KNOWN_PROJECT_REPOS:
+        if item["slug"] == slug:
+            return item
+    return None
+
+
+def _manifest_metadata(root: Path, fallback: dict) -> dict:
+    manifest_path = root / "rail.yaml"
+    if not manifest_path.exists():
+        return {}
+    try:
+        raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    project = raw.get("project") if isinstance(raw.get("project"), dict) else {}
+    hydration = raw.get("hydration") if isinstance(raw.get("hydration"), dict) else {}
+    return {
+        "name": project.get("name") or fallback["name"],
+        "slug": project.get("slug") or fallback["slug"],
+        "description": project.get("description") or fallback["description"],
+        "defaultBranch": project.get("default_branch") or project.get("defaultBranch") or "main",
+        "pipelineConfigSlug": hydration.get("default_pipeline") or hydration.get("pipeline") or None,
+    }
+
+
+async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
+    metadata = _manifest_metadata(root, defn)
+    slug = metadata.get("slug") or defn["slug"]
+    existing = await convex.query("projects:getBySlug", {"slug": slug})
+    payload = {
+        "name": metadata.get("name") or defn["name"],
+        "slug": slug,
+        "description": metadata.get("description") or defn["description"],
+        "approach": "ontology-first",
+        "gitRepoUrl": defn["repoUrl"],
+        "localRepoPath": str(root),
+        "manifestPath": "rail.yaml",
+        "defaultBranch": metadata.get("defaultBranch") or "main",
+    }
+    if metadata.get("pipelineConfigSlug"):
+        payload["pipelineConfigSlug"] = metadata["pipelineConfigSlug"]
+    if existing:
+        await convex.mutation(
+            "projects:updateById",
+            {
+                "projectId": existing["_id"],
+                **{key: value for key, value in payload.items() if key != "slug"},
+            },
+        )
+        return await convex.query("projects:getBySlug", {"slug": slug}) or {**existing, **payload}
+    project_id = await convex.mutation("projects:create", payload)
+    return await convex.query("projects:getById", {"projectId": project_id}) or {**payload, "_id": project_id}
+
+
+async def _catalog_row(defn: dict) -> dict:
+    root = _projects_base_dir() / defn["directory"]
+    metadata = _manifest_metadata(root, defn) if root.exists() else {}
+    slug = metadata.get("slug") or defn["slug"]
+    project = await convex.query("projects:getBySlug", {"slug": slug})
+    return {
+        **defn,
+        "slug": slug,
+        "name": metadata.get("name") or defn["name"],
+        "description": metadata.get("description") or defn["description"],
+        "localRepoPath": str(root),
+        "localExists": root.exists(),
+        "manifestExists": (root / "rail.yaml").exists(),
+        "backendProject": project,
+        "needsClone": not root.exists(),
+    }
+
+
+def _configured_pipeline_slug(project: dict, project_root: Path, requested: str | None = None) -> str:
+    if requested:
+        return requested
+    if project.get("pipelineConfigSlug"):
+        return str(project["pipelineConfigSlug"])
+    try:
+        slug = resolve_pipeline_slug(project_root, project.get("manifestPath") or "rail.yaml")
+        if (project_root / ".ontology" / "pipelines" / f"{slug}.yaml").exists():
+            return slug
+    except Exception:
+        pass
+
+    pipeline_dir = project_root / ".ontology" / "pipelines"
+    candidates = sorted(path.stem for path in pipeline_dir.glob("*.y*ml")) if pipeline_dir.is_dir() else []
+    for preferred in (f"{project.get('slug')}_hydration", "nj_hydration", "academic_hydration", "default"):
+        if preferred in candidates:
+            return preferred
+    return candidates[0] if candidates else "default"
+
+
+def _local_hydration_configs(project_root: Path, pipeline_slug: str) -> tuple[str, dict[str, str], dict[str, str]] | None:
+    pipeline_path = project_root / ".ontology" / "pipelines" / f"{pipeline_slug}.yaml"
+    if not pipeline_path.exists():
+        return None
+    pipeline_content = pipeline_path.read_text(encoding="utf-8")
+    try:
+        pipeline_spec = yaml.safe_load(pipeline_content) or {}
+    except yaml.YAMLError as exc:
+        raise HTTPException(422, f"Local pipeline YAML is invalid: {exc}") from exc
+
+    api_configs: dict[str, str] = {}
+    for step in pipeline_spec.get("steps") or []:
+        if not isinstance(step, dict) or not step.get("api"):
+            continue
+        api_slug = str(step["api"])
+        source_path = project_root / ".ontology" / "sources" / f"{api_slug}.yaml"
+        if source_path.exists():
+            api_configs[api_slug] = source_path.read_text(encoding="utf-8")
+
+    onto_configs: dict[str, str] = {}
+    onto_path = project_root / ".ontology" / "ontology.yaml"
+    if onto_path.exists():
+        onto_content = onto_path.read_text(encoding="utf-8")
+        onto_ref = str(pipeline_spec.get("ontology", "core") or "core")
+        onto_configs[onto_ref] = onto_content
+        onto_configs[Path(onto_ref).stem] = onto_content
+
+    return pipeline_content, api_configs, onto_configs
 
 
 def _git_init(path: Path) -> None:
@@ -200,6 +382,28 @@ def _git_init(path: Path) -> None:
     result = subprocess.run(["git", "init", str(path)], capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"git init failed: {result.stderr or result.stdout}")
+
+
+def _relative_to_project(project_root: Path | None, path: Path | None) -> str | None:
+    if project_root is None or path is None or not path.exists():
+        return None
+    return str(path.relative_to(project_root))
+
+
+def _session_review_model(project: dict, session: dict) -> dict:
+    project_root = Path(project["localRepoPath"]) if project.get("localRepoPath") else None
+    session_path = Path(session["sessionPath"]) if session.get("sessionPath") else None
+    state = session_files.read_state(session_path) if session_path and session_path.exists() else {}
+    return {
+        "workspacePath": state.get("workspace_path"),
+        "workspaceBranch": state.get("workspace_branch"),
+        "reviewStatus": state.get("review_status"),
+        "runnerEventCursor": state.get("runner_event_cursor"),
+        "summaryPath": _relative_to_project(project_root, session_path / "summary.md" if session_path else None),
+        "diffPath": _relative_to_project(project_root, session_path / "diff.md" if session_path else None),
+        "todosPath": _relative_to_project(project_root, session_path / "todos.md" if session_path else None),
+        "verificationPath": _relative_to_project(project_root, session_path / "verification.md" if session_path else None),
+    }
 
 
 @router.post("/")
@@ -240,6 +444,60 @@ async def create_project(data: CreateProjectRequest):
     return await convex.query("projects:getBySlug", {"slug": data.slug})
 
 
+@router.get("")
+async def list_projects_catalog():
+    rows = []
+    for defn in KNOWN_PROJECT_REPOS:
+        try:
+            rows.append(await _catalog_row(defn))
+        except Exception as exc:
+            root = _projects_base_dir() / defn["directory"]
+            rows.append(
+                {
+                    **defn,
+                    "localRepoPath": str(root),
+                    "localExists": root.exists(),
+                    "manifestExists": (root / "rail.yaml").exists(),
+                    "backendProject": None,
+                    "needsClone": not root.exists(),
+                    "error": str(exc),
+                }
+            )
+    return {"projects": rows}
+
+
+@router.post("/catalog/{slug}/activate")
+async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest):
+    defn = _known_project(slug)
+    if not defn:
+        raise HTTPException(404, f"Unknown catalog project '{slug}'")
+
+    root = Path(data.targetDir).expanduser().resolve() if data.targetDir else _projects_base_dir() / defn["directory"]
+    if root.exists() and not root.is_dir():
+        raise HTTPException(409, f"Target exists but is not a directory: {root}")
+    if not root.exists():
+        if not data.clone:
+            return {
+                "status": "clone_required",
+                "project": None,
+                "catalogProject": {
+                    **defn,
+                    "localRepoPath": str(root),
+                    "localExists": False,
+                    "manifestExists": False,
+                    "needsClone": True,
+                },
+            }
+        root.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(["git", "clone", defn["repoUrl"], str(root)], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise HTTPException(500, f"git clone failed: {result.stderr or result.stdout}")
+
+    project = await _upsert_known_project_record(defn, root)
+    row = await _catalog_row(defn)
+    return {"status": "ready", "project": project, "catalogProject": row}
+
+
 @router.post("/future/bootstrap")
 async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
     root = bootstrap_future_project(
@@ -264,10 +522,12 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
         },
     )
     project = await convex.query("projects:getById", {"projectId": project_id})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project could not be loaded after bootstrap")
     await planner_service.ensure_planner_thread(project_id)
-    board = await planner_service.ensure_main_board(project_id)
+    board = await planner_service.ensure_main_board(project)
     await planner_service.append_planner_message(
-        project_id=project_id,
+        project=project,
         role="system",
         content="Planner thread initialized.",
         message_type="system",
@@ -385,13 +645,15 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     )
 
     project = await convex.query("projects:getById", {"projectId": project_id})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project could not be loaded after creation")
     rail_path = repo_root / "rail.yaml"
     existing_rail = rail_path.read_text(encoding="utf-8") if rail_path.exists() else None
     rail_path.write_text(render_rail_manifest(project, existing_rail), encoding="utf-8")
     await planner_service.ensure_planner_thread(project_id)
-    board = await planner_service.ensure_main_board(project_id)
+    board = await planner_service.ensure_main_board(project)
     await planner_service.append_planner_message(
-        project_id=project_id,
+        project=project,
         role="system",
         content="Project created from a brief. Review the generated research graph, source readiness, and hydration plan before running hydration.",
         message_type="system",
@@ -616,11 +878,47 @@ async def get_project_context(slug: str):
     return context
 
 
+@router.get("/{slug}/command-center")
+async def get_command_center(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return await command_center_service.build_command_center(project)
+
+
+@router.get("/{slug}/skills")
+async def get_project_skills(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return command_center_service.list_project_skills(project)
+
+
+@router.get("/{slug}/sources")
+async def get_project_sources(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return command_center_service.list_project_sources(project)
+
+
+@router.get("/{slug}/artifacts")
+async def get_project_artifacts(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return command_center_service.list_project_artifacts(project)
+
+
+@router.post("/{slug}/research-launch/preview")
+async def preview_research_launch(slug: str, data: ResearchLaunchRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    return command_center_service.build_launch_preview(project, data.model_dump())
+
+
+@router.post("/{slug}/research-launch/approve")
+async def approve_research_launch(slug: str, data: ResearchLaunchRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    return await command_center_service.approve_launch_preview(project, data.model_dump())
+
+
 @router.get("/{slug}/planner/thread")
 async def get_planner_thread(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
-    messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id)
+    messages = await planner_service.list_planner_messages(project, thread_id=thread_id)
     return {
         "threadId": thread_id,
         "messages": list(reversed(messages)),
@@ -631,11 +929,15 @@ async def get_planner_thread(slug: str):
 async def get_planner_home(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
-    messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id, limit=50)
-    board = await planner_service.ensure_main_board(project["_id"])
+    messages = await planner_service.list_planner_messages(project, thread_id=thread_id, limit=50)
+    board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
+    approvals = await planner_service.list_approvals(project)
+    sessions = await running_agent_service.list_project_running_agents(project["_id"], active_only=False, limit=20)
     project_root = planner_service.project_root_from_record(project)
     research_plan_root = project_root / "research_plan" if project_root else None
+    blockers_path = research_plan_root / "blockers.md" if research_plan_root else None
+    sessions_root = research_plan_root / "sessions" if research_plan_root else None
 
     return {
         "project": {
@@ -651,10 +953,17 @@ async def get_planner_home(slug: str):
             "messages": list(reversed(messages)),
             "board": board,
             "tasks": tasks,
+            "approvals": approvals,
             "files": {
                 "currentPlan": str((research_plan_root / "current_plan.md").relative_to(project_root)) if research_plan_root and (research_plan_root / "current_plan.md").exists() else None,
                 "taskBoard": str((research_plan_root / "task_board.md").relative_to(project_root)) if research_plan_root and (research_plan_root / "task_board.md").exists() else None,
+                "approvals": str((research_plan_root / "approvals.md").relative_to(project_root)) if research_plan_root and (research_plan_root / "approvals.md").exists() else None,
+                "blockers": str(blockers_path.relative_to(project_root)) if blockers_path and blockers_path.exists() else None,
             },
+            "workspaceReview": {
+                "sessionsRoot": str(sessions_root.relative_to(project_root)) if sessions_root and sessions_root.exists() else None,
+            },
+            "sessions": [_session_review_model(project, session) | {"id": session.get("_id"), "status": session.get("status"), "role": session.get("role")} for session in sessions],
         },
     }
 
@@ -664,14 +973,14 @@ async def append_planner_message(slug: str, data: PlannerMessageRequest):
     project = await planner_service.get_project_by_slug(slug)
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     await planner_service.append_planner_message(
-        project_id=project["_id"],
+        project=project,
         role=data.role,
         content=data.content,
         message_type=data.messageType,
         session_id=data.sessionId,
         thread_id=thread_id,
     )
-    messages = await planner_service.list_planner_messages(project["_id"], thread_id=thread_id)
+    messages = await planner_service.list_planner_messages(project, thread_id=thread_id)
     return {"threadId": thread_id, "messages": list(reversed(messages))}
 
 
@@ -690,18 +999,25 @@ async def planner_chat(slug: str, data: PlannerChatRequest):
 @router.get("/{slug}/planner/board")
 async def get_planner_board(slug: str):
     project = await planner_service.get_project_by_slug(slug)
-    board = await planner_service.ensure_main_board(project["_id"])
+    board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
-    return {"board": board, "tasks": tasks}
+    sessions = await running_agent_service.list_project_running_agents(project["_id"], active_only=False, limit=20)
+    return {
+        "board": board,
+        "tasks": tasks,
+        "approvals": await planner_service.list_approvals(project),
+        "blockersPath": "research_plan/blockers.md",
+        "sessions": [_session_review_model(project, session) | {"id": session.get("_id"), "status": session.get("status"), "role": session.get("role")} for session in sessions],
+    }
 
 
 @router.post("/{slug}/planner/tasks")
 async def create_planner_task(slug: str, data: PlannerTaskRequest):
     project = await planner_service.get_project_by_slug(slug)
-    board = await planner_service.ensure_main_board(project["_id"], session_id=data.sessionId)
+    board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
+        project=project,
         board_id=board["_id"],
-        project_id=project["_id"],
         title=data.title,
         description=data.description,
         status=data.status,
@@ -721,7 +1037,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
 @router.patch("/{slug}/planner/tasks/{task_id}")
 async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRequest):
     project = await planner_service.get_project_by_slug(slug)
-    board = await planner_service.ensure_main_board(project["_id"])
+    board = await planner_service.ensure_main_board(project)
     await planner_service.update_task(task_id, project=project, **data.model_dump())
     await planner_service.sync_planner_files(project, board)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
@@ -771,6 +1087,60 @@ async def register_project_hydration_artifact(slug: str, data: RegisterHydration
         status=data.status,
     )
     return {"artifactId": artifact_id}
+
+
+@router.post("/{slug}/hydration/rerun")
+async def rerun_project_hydration(
+    slug: str,
+    data: HydrationRerunRequest,
+    background_tasks: BackgroundTasks,
+):
+    project = await planner_service.get_project_by_slug(slug)
+    project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
+    if project_root is None:
+        raise HTTPException(400, "Project does not have a localRepoPath configured")
+
+    pipeline_slug = _configured_pipeline_slug(project, project_root, data.pipelineSlug)
+    local_configs = _local_hydration_configs(project_root, pipeline_slug)
+
+    if local_configs:
+        pipeline_content, api_configs, onto_configs = local_configs
+        mutation_result = await convex.mutation(
+            "jobs:create",
+            {
+                "pipelineConfigId": f"local:{slug}:{pipeline_slug}",
+                "pipelineSlug": pipeline_slug,
+                "projectSlug": slug,
+                "projectId": project.get("_id"),
+                "status": "queued",
+                "triggeredBy": "api",
+                "createdAt": int(time.time() * 1000),
+                "stepResults": [],
+                "machine": platform.node(),
+            },
+        )
+        job_id = mutation_result.get("jobId") if isinstance(mutation_result, dict) else None
+        if not job_id:
+            raise HTTPException(500, f"Convex jobs:create did not return a jobId (got {mutation_result!r})")
+        background_tasks.add_task(hydration_worker.run, job_id, pipeline_content, api_configs, onto_configs)
+        result = {"jobId": job_id, "status": "queued", "source": "project_repo"}
+    else:
+        from app.routers.jobs import TriggerJobRequest, trigger_job
+
+        try:
+            result = await trigger_job(
+                TriggerJobRequest(pipeline_slug=pipeline_slug, project_id=slug),
+                background_tasks,
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    return {
+        **result,
+        "pipelineSlug": pipeline_slug,
+        "projectSlug": slug,
+        "device": get_device_metadata(),
+    }
 
 
 @router.get("/{slug}/settings/secrets")
@@ -952,18 +1322,24 @@ async def list_project_runner_sessions(slug: str, limit: int = Query(20)):
         active_only=False,
         limit=limit,
     )
-    return {"sessions": sessions}
+    return {
+        "sessions": [
+            dict(session) | {"review": _session_review_model(project, session)}
+            for session in sessions
+        ]
+    }
 
 
 @router.get("/{slug}/runner/sessions/{session_id}")
 async def get_project_runner_session(slug: str, session_id: str, sync: bool = Query(True)):
     project = await planner_service.get_project_by_slug(slug)
     from app.runners import session_lifecycle
-    return await session_lifecycle.get_runner_session(
+    result = await session_lifecycle.get_runner_session(
         session_id,
         sync_from_runner=sync,
         project_id=project["_id"],
     )
+    return dict(result) | {"review": _session_review_model(project, result)}
 
 
 @router.get("/{slug}/runner/sessions/{session_id}/files")
@@ -986,6 +1362,118 @@ async def get_project_runner_session_files(slug: str, session_id: str):
         "events": session_files.list_events(root),
         "commands": session_files.list_commands(root),
         "summary": (root / "summary.md").read_text(encoding="utf-8") if (root / "summary.md").exists() else "",
+        "reviewFiles": {
+            "diff": str((root / "diff.md").relative_to(Path(project.get("localRepoPath")))) if (root / "diff.md").exists() and project.get("localRepoPath") else None,
+            "todos": str((root / "todos.md").relative_to(Path(project.get("localRepoPath")))) if (root / "todos.md").exists() and project.get("localRepoPath") else None,
+            "verification": str((root / "verification.md").relative_to(Path(project.get("localRepoPath")))) if (root / "verification.md").exists() and project.get("localRepoPath") else None,
+        },
+    }
+
+
+@router.get("/{slug}/runner/sessions/{session_id}/detail")
+async def get_project_runner_session_detail(slug: str, session_id: str):
+    """
+    Rich, frontend-ready session detail object.
+
+    Returns all four agent-observability layers from the command-center spec:
+      Layer 1 – executive summary (currentFocus, status, workspaceBranch, ...)
+      Layer 2 – activity timeline (normalized event rows)
+      Layer 3 – workspace/file activity (changedFiles, changedFileCount, ...)
+      Layer 4 – commands and messages (recentCommands, recentMessages, ...)
+
+    Also includes inline review-file content (summary, diff, todos,
+    verification) so the frontend does not need a separate file-read call for
+    the most common detail views.
+    """
+    from app.services.session_detail_service import build_session_detail
+
+    project = await planner_service.get_project_by_slug(slug)
+    session = await running_agent_service.get_running_agent(session_id)
+    if not session or session.get("projectId") != project["_id"]:
+        raise HTTPException(status_code=404, detail="Runner session not found")
+    session_path = session.get("sessionPath")
+    if not session_path or not Path(session_path).exists():
+        raise HTTPException(status_code=404, detail="Session files not found")
+
+    project_root = Path(project["localRepoPath"]) if project.get("localRepoPath") else None
+    detail = build_session_detail(session_path, project_root)
+    decisions = command_center_service.extract_decisions_from_session_detail(detail)
+
+    return {
+        "sessionId": session_id,
+        "projectSlug": slug,
+        "role": session.get("role"),
+        "runner": session.get("runner"),
+        "title": session.get("title"),
+        "taskId": session.get("taskId"),
+        "externalSessionId": session.get("externalSessionId"),
+        "startedAt": session.get("startedAt"),
+        "endedAt": session.get("endedAt"),
+        **detail,
+        "decisions": decisions,
+    }
+
+
+@router.get("/{slug}/repo/{path:path}")
+async def get_project_repo_file(slug: str, path: str):
+    """
+    Read a file from the project's local Git repository by repo-relative path.
+
+    Used by the frontend repo browser and deep-linked review files
+    (research_plan/current_plan.md, task_board.md, sessions/**/summary.md, etc.)
+
+    Returns the file content as a string plus metadata about the file type
+    so the frontend can choose the right renderer (markdown, yaml, json, text).
+
+    Raises 404 for missing files and 400 for path-traversal attempts.
+    """
+    project = await planner_service.get_project_by_slug(slug)
+    if not project.get("localRepoPath"):
+        raise HTTPException(status_code=400, detail="Project has no localRepoPath configured")
+
+    repo_root = Path(project["localRepoPath"]).resolve()
+    # Normalise and guard against path traversal
+    target = (repo_root / path).resolve()
+    if not str(target).startswith(str(repo_root)):
+        raise HTTPException(status_code=400, detail="Path traversal not allowed")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+    if target.is_dir():
+        # Return a directory listing instead of file content
+        entries = []
+        for child in sorted(target.iterdir()):
+            entries.append({
+                "name": child.name,
+                "path": str(child.relative_to(repo_root)),
+                "kind": "directory" if child.is_dir() else "file",
+                "extension": child.suffix.lstrip(".") if child.is_file() else None,
+            })
+        return {"path": path, "kind": "directory", "entries": entries}
+
+    suffix = target.suffix.lower()
+    syntax_kind = {
+        ".md": "markdown",
+        ".yaml": "yaml",
+        ".yml": "yaml",
+        ".json": "json",
+        ".toml": "toml",
+        ".py": "python",
+        ".sh": "shell",
+        ".txt": "text",
+    }.get(suffix, "text")
+
+    try:
+        content = target.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not read file: {exc}")
+
+    return {
+        "path": path,
+        "kind": "file",
+        "syntaxKind": syntax_kind,
+        "extension": suffix.lstrip("."),
+        "sizeBytes": target.stat().st_size,
+        "content": content,
     }
 
 
@@ -1003,6 +1491,7 @@ async def send_project_runner_session_command(slug: str, session_id: str, data: 
             command_type=data.commandType,
             content=data.content,
             payload=data.payload,
+            idempotency_key=data.idempotencyKey,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))

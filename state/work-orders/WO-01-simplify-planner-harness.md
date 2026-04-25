@@ -1,6 +1,6 @@
 # WO-01: Simplify Planner Harness
 
-**Status:** running
+**Status:** completed
 **Runner:** jules
 **Session:** https://jules.google.com/session/13710073185016377453
 

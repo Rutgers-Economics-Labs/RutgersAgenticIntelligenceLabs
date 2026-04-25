@@ -9,6 +9,8 @@ This document defines the V1 agent model for the future RAIL platform.
 - every worker gets a bounded task with allowed paths and allowed secrets
 - every write-capable run requires human approval
 - project skills are local to the project by default
+- write-capable workers should run in isolated workspaces or branches when possible
+- merge/adoption is a separate human-approved step after execution and verification
 
 ## Agent Roles
 
@@ -116,60 +118,105 @@ V1 uses a planner-controlled sequential workflow:
 2. the planner creates or updates tasks in the internal board
 3. the planner selects exactly one worker task to run
 4. the user approves the run
-5. the worker executes inside its allowed repo paths and secret policy
-6. any worker questions are routed back to the planner
-7. the planner either answers from context or asks the human
-8. the worker completes and writes durable outputs into Git
-9. health and deterministic verification run
-10. the planner updates `research_plan/` and proposes the next step
+5. the runtime creates or attaches an isolated workspace for the worker
+6. the workspace setup step installs dependencies and injects only allowlisted secrets
+7. the worker executes inside its allowed repo paths and secret policy
+8. any worker questions are routed back to the planner
+9. the planner either answers from context or asks the human
+10. the worker completes and writes durable outputs into the workspace
+11. health and deterministic verification run
+12. the planner presents a diff, blockers, and merge/adoption recommendation
+13. the human approves merge/adoption
+14. the planner updates `research_plan/` and proposes the next step
 
 ## Planner-Owned Task Board
 
-The planner uses an internal task board stored in the database.
-For Git visibility, the planner also writes a mirrored human-readable board snapshot into `research_plan/`.
+The planner uses a repo-backed task board stored under `research_plan/`.
+The board should be easy for both humans and agents to inspect and edit.
 
-Suggested entities:
+Suggested files:
 
-- `task_boards`
-- `tasks`
-- `task_events`
+- `research_plan/task_board.md`
+- `research_plan/tasks/*.md`
+- `research_plan/approvals.md`
+- `research_plan/blockers.md`
 
 Task fields:
 
-- `project_id`
-- `session_id`
 - `title`
 - `description`
 - `status`
 - `agent_role`
+- `runner`
 - `repo_paths`
 - `acceptance_criteria`
-- `depends_on_task_ids`
+- `depends_on`
 - `approval_state`
+- `workspace_branch`
+- `session_path`
 - `created_at`
 - `updated_at`
 
-The planner writes human-readable plan documents and board snapshots to `research_plan/`, but the database is the operational system for task sequencing and status.
+The database should not be the durable task system. It should only track currently running agents so the platform can reconnect, cancel, or relay messages.
 
 ## Agent Sessions
 
-The database stores operational session metadata for all planner and worker runs.
+Live sessions use a file-backed protocol. The database stores only active handles needed to interact with currently running agents.
 
-Suggested fields:
+Session files:
+
+- `research_plan/sessions/<role>/<session-id>/session.ndjson`
+- `research_plan/sessions/<role>/<session-id>/commands.ndjson`
+- `research_plan/sessions/<role>/<session-id>/state.json`
+- `research_plan/sessions/<role>/<session-id>/summary.md`
+
+Active runtime fields:
 
 - `project_id`
 - `role`
 - `runner`
 - `external_session_id`
 - `status`
+- `session_path`
+- `workspace_path`
+- `workspace_branch`
 - `started_at`
-- `ended_at`
-- `estimated_cost_usd`
-- `actual_cost_usd`
-- `approval_required`
-- `approval_granted_by`
 
-Detailed user-facing content still lives in Git when it becomes durable project knowledge.
+Completed session history lives in Git as session files and summaries.
+
+## Workspace Model
+
+RAIL should borrow Conductor's core workspace lesson: each agent run is easier to understand and review when it happens in an isolated Git workspace.
+
+V1 still runs one worker at a time, but the model should include:
+
+- a stable workspace directory for the active run
+- a task branch or worktree branch
+- setup script support for dependencies and `.env` handling
+- run script support for tests or dev servers
+- archive script support for cleanup
+- diff review before merge/adoption
+- task todos as merge blockers
+
+Workers should receive workspace context in their prompt:
+
+- project root
+- workspace root
+- branch name
+- allowed paths
+- acceptance criteria
+- setup/run commands
+- where to write session notes
+
+## Todos And Merge Blockers
+
+Task acceptance criteria should behave like Conductor-style todos:
+
+- unresolved todos block merge/adoption
+- failed verification creates blocker entries
+- worker questions create blocker entries until answered
+- health-agent findings can block promotion or merge
+- the planner can tag todos into the next worker prompt
 
 ## Skills Model
 

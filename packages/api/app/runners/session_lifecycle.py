@@ -15,7 +15,9 @@ The runtime DB remains a lightweight live-control plane through
 from __future__ import annotations
 
 import asyncio
+import os
 import time
+from asyncio.subprocess import PIPE
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.factory import RunnerFactory
 from app.services import planner_service, running_agent_service, session_files
 from app.services.convex_client import convex
+from rail.manifest import load_manifest
 
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
@@ -106,9 +109,334 @@ def _event_payload(event: RunnerEvent) -> dict[str, Any]:
     if payload.get("command"):
         payload.setdefault("name", "bash")
     payload["runner_event_type"] = event.event_type.value
-    payload["raw_payload"] = event.raw_payload or {}
     payload["debug_visibility"] = event.debug_visibility
     return payload
+
+
+def _workspace_config(project_root: Path) -> dict[str, Any]:
+    try:
+        manifest = load_manifest(project_root)
+        return manifest.workspaces.model_dump()
+    except Exception:
+        return {
+            "mode": "isolated",
+            "root": ".rail/workspaces",
+            "setup_script": "scripts/setup-workspace.sh",
+            "verification_script": "scripts/run-verification.sh",
+            "archive_script": "scripts/archive-workspace.sh",
+            "nonconcurrent_run": True,
+            "checkpoint_mode": "git-ref",
+        }
+
+
+def _prepare_workspace(project_root: Path, role: str, session_id: str) -> tuple[Path, str, dict[str, Any]]:
+    config = _workspace_config(project_root)
+    relative_root = config.get("root") or ".rail/workspaces"
+    workspace_root = (project_root / relative_root / role / session_id).resolve()
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    branch = f"{role}-{session_id}"
+    return workspace_root, branch, config
+
+
+def _workspace_env(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    session_root: Path,
+    session_id: str,
+    role: str,
+    base_branch: str,
+    workspace_branch: str,
+) -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(
+        {
+            "RAIL_PROJECT_ROOT": str(project_root),
+            "RAIL_WORKSPACE_ROOT": str(workspace_root),
+            "RAIL_SESSION_ROOT": str(session_root),
+            "RAIL_SESSION_ID": session_id,
+            "RAIL_ROLE": role,
+            "RAIL_BASE_BRANCH": base_branch,
+            "RAIL_WORKSPACE_BRANCH": workspace_branch,
+        }
+    )
+    return env
+
+
+async def _run_process(args: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> dict[str, Any]:
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        cwd=str(cwd),
+        env=env,
+        stdout=PIPE,
+        stderr=PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    return {
+        "returncode": proc.returncode,
+        "stdout": stdout.decode("utf-8", errors="replace"),
+        "stderr": stderr.decode("utf-8", errors="replace"),
+    }
+
+
+def _tail_output(text: str, limit: int = 1200) -> str:
+    value = (text or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[-limit:]
+
+
+async def _materialize_workspace(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    base_branch: str,
+    workspace_branch: str,
+) -> dict[str, Any]:
+    if (workspace_root / ".git").exists():
+        return {"status": "ready", "mode": "existing"}
+
+    git_dir = project_root / ".git"
+    if not git_dir.exists():
+        return {"status": "ready", "mode": "directory"}
+
+    result = await _run_process(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "worktree",
+            "add",
+            "--force",
+            "-b",
+            workspace_branch,
+            str(workspace_root),
+            base_branch,
+        ],
+        cwd=project_root,
+    )
+    if result["returncode"] != 0 and "already exists" in result["stderr"].lower():
+        result = await _run_process(
+            [
+                "git",
+                "-C",
+                str(project_root),
+                "worktree",
+                "add",
+                "--force",
+                str(workspace_root),
+                base_branch,
+            ],
+            cwd=project_root,
+        )
+    if result["returncode"] != 0:
+        raise RuntimeError(result["stderr"].strip() or result["stdout"].strip() or "git worktree add failed")
+    return {"status": "ready", "mode": "git-worktree", "stdout": result["stdout"], "stderr": result["stderr"]}
+
+
+async def _run_workspace_hook(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    session_root: Path,
+    session_id: str,
+    role: str,
+    base_branch: str,
+    workspace_branch: str,
+    script_relative_path: str | None,
+    state_prefix: str,
+    start_event_type: str,
+    complete_event_type: str,
+) -> dict[str, Any]:
+    if not script_relative_path:
+        session_files.update_state(session_root, **{f"{state_prefix}_status": "skipped"})
+        session_files.append_event(
+            session_root,
+            complete_event_type,
+            content=f"{state_prefix} skipped: no script configured.",
+            status=session_files.read_state(session_root).get("status"),
+        )
+        return {"status": "skipped", "returncode": 0, "stdout": "", "stderr": ""}
+
+    script_path = (project_root / script_relative_path).resolve()
+    if not script_path.exists():
+        session_files.update_state(
+            session_root,
+            **{
+                f"{state_prefix}_status": "skipped",
+                f"{state_prefix}_script": script_relative_path,
+            },
+        )
+        session_files.append_event(
+            session_root,
+            complete_event_type,
+            content=f"{state_prefix} skipped: `{script_relative_path}` not found.",
+            status=session_files.read_state(session_root).get("status"),
+        )
+        return {"status": "skipped", "returncode": 0, "stdout": "", "stderr": ""}
+
+    session_files.append_event(
+        session_root,
+        start_event_type,
+        content=f"Running `{script_relative_path}`",
+        status=session_files.read_state(session_root).get("status"),
+    )
+    env = _workspace_env(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        session_id=session_id,
+        role=role,
+        base_branch=base_branch,
+        workspace_branch=workspace_branch,
+    )
+    result = await _run_process(["bash", str(script_path)], cwd=workspace_root, env=env)
+    status = "passed" if result["returncode"] == 0 else "failed"
+    session_files.update_state(
+        session_root,
+        **{
+            f"{state_prefix}_status": status,
+            f"{state_prefix}_script": script_relative_path,
+            f"{state_prefix}_exit_code": result["returncode"],
+            f"{state_prefix}_stdout_tail": _tail_output(result["stdout"]),
+            f"{state_prefix}_stderr_tail": _tail_output(result["stderr"]),
+        },
+    )
+    content = result["stderr"].strip() or result["stdout"].strip() or f"{state_prefix} {status}."
+    session_files.append_event(
+        session_root,
+        complete_event_type,
+        content=content[:500],
+        status=session_files.read_state(session_root).get("status"),
+        exit_code=result["returncode"],
+    )
+    return {"status": status, **result}
+
+
+async def _run_workspace_setup(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    session_root: Path,
+    session_id: str,
+    role: str,
+    base_branch: str,
+    workspace_branch: str,
+    workspace_config: dict[str, Any],
+) -> dict[str, Any]:
+    return await _run_workspace_hook(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        session_id=session_id,
+        role=role,
+        base_branch=base_branch,
+        workspace_branch=workspace_branch,
+        script_relative_path=workspace_config.get("setup_script"),
+        state_prefix="setup",
+        start_event_type="workspace_setup_started",
+        complete_event_type="workspace_setup_completed",
+    )
+
+
+async def _run_workspace_verification(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    session_root: Path,
+    session_id: str,
+    role: str,
+    base_branch: str,
+    workspace_branch: str,
+    workspace_config: dict[str, Any],
+) -> dict[str, Any]:
+    return await _run_workspace_hook(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        session_id=session_id,
+        role=role,
+        base_branch=base_branch,
+        workspace_branch=workspace_branch,
+        script_relative_path=workspace_config.get("verification_script"),
+        state_prefix="verification",
+        start_event_type="verification_started",
+        complete_event_type="verification_completed",
+    )
+
+
+async def archive_session_workspace(convex_session_id: str) -> dict[str, Any]:
+    session = await running_agent_service.get_running_agent(convex_session_id)
+    if not session:
+        raise ValueError(f"Session {convex_session_id} not found")
+    session_path = session.get("sessionPath")
+    if not session_path:
+        raise RuntimeError("Session has no sessionPath")
+    session_root = Path(session_path)
+    state = session_files.read_state(session_root)
+    workspace_path = state.get("workspace_path")
+    if not workspace_path:
+        raise RuntimeError("Session has no workspace_path")
+    project = await _load_project(session.get("projectId"), session.get("projectSlug"))
+    project_root = _project_root(project or {})
+    if project_root is None:
+        raise RuntimeError("Session has no project root")
+    workspace_root = Path(workspace_path)
+    workspace_branch = state.get("workspace_branch") or session.get("role") or "workspace"
+    base_branch = project.get("defaultBranch") if project else "main"
+    result = await _run_workspace_hook(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        session_id=convex_session_id,
+        role=session.get("role") or "agent",
+        base_branch=base_branch,
+        workspace_branch=workspace_branch,
+        script_relative_path=_workspace_config(project_root).get("archive_script"),
+        state_prefix="archive",
+        start_event_type="workspace_archive_started",
+        complete_event_type="workspace_archive_completed",
+    )
+    session_files.refresh_summary(session_root)
+    return result
+
+
+async def _finalize_workspace_review(
+    *,
+    convex_session_id: str,
+    session: dict[str, Any],
+    project_root: Path,
+    session_root: Path,
+    base_branch: str,
+) -> None:
+    state = session_files.read_state(session_root)
+    workspace_path = state.get("workspace_path")
+    if not workspace_path:
+        session_files.refresh_summary(session_root)
+        return
+    workspace_root = Path(workspace_path)
+    workspace_branch = state.get("workspace_branch") or f"{session.get('role') or 'agent'}-{convex_session_id}"
+    review_status = state.get("review_status") or "pending"
+    terminal_status = state.get("status")
+    config = _workspace_config(project_root)
+
+    if terminal_status == "completed" and state.get("verification_status") not in {"passed", "failed", "skipped"}:
+        verification = await _run_workspace_verification(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            session_id=convex_session_id,
+            role=session.get("role") or "agent",
+            base_branch=base_branch,
+            workspace_branch=workspace_branch,
+            workspace_config=config,
+        )
+        review_status = "review" if verification["status"] in {"passed", "skipped"} else "needs_changes"
+    elif terminal_status in {"failed", "cancelled"}:
+        review_status = "needs_changes"
+
+    session_files.update_state(session_root, review_status=review_status)
+    session_files.refresh_summary(session_root)
 
 
 async def _append_runner_event(convex_session_id: str, event: RunnerEvent) -> None:
@@ -188,6 +516,24 @@ async def create_runner_session(
         status="queued",
     )
     session_root = session_files.ensure_session_root(project_root, role, running_session_id)
+    workspace_root, workspace_branch, workspace_config = _prepare_workspace(project_root, role, running_session_id)
+    materialized = await _materialize_workspace(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        base_branch=branch,
+        workspace_branch=workspace_branch,
+    )
+    session_files.update_state(
+        session_root,
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+        diff_path=str(session_root / "diff.md"),
+        todos_path=str(session_root / "todos.md"),
+        verification_path=str(session_root / "verification.md"),
+        checkpoint_mode=workspace_config.get("checkpoint_mode"),
+        workspace_materialization=materialized.get("mode"),
+    )
     session_files.append_event(
         session_root,
         "session_started",
@@ -196,7 +542,33 @@ async def create_runner_session(
         role=role,
         task_id=task_id,
         status="queued",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
     )
+    setup_result = await _run_workspace_setup(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        session_id=running_session_id,
+        role=role,
+        base_branch=branch,
+        workspace_branch=workspace_branch,
+        workspace_config=workspace_config,
+    )
+    if setup_result["status"] == "failed":
+        _sync_file_status(session_root, "failed")
+        session_files.update_state(session_root, review_status="needs_changes")
+        await running_agent_service.update_running_agent(running_session_id, sessionPath=str(session_root))
+        await running_agent_service.finalize_running_agent(
+            running_session_id,
+            status="failed",
+            ended_at=int(time.time() * 1000),
+        )
+        raise RuntimeError(
+            setup_result["stderr"].strip()
+            or setup_result["stdout"].strip()
+            or "Workspace setup failed"
+        )
     await running_agent_service.update_running_agent(running_session_id, sessionPath=str(session_root))
 
     task_payload = TaskPayload(
@@ -205,7 +577,7 @@ async def create_runner_session(
         task_id=task_id or running_session_id,
         repo_url=repo_url,
         branch=branch,
-        local_repo_path=str(project_root),
+        local_repo_path=str(workspace_root),
         task_description=task_description,
         allowed_paths=allowed_paths or [],
         acceptance_criteria=acceptance_criteria or [],
@@ -220,6 +592,7 @@ async def create_runner_session(
             content=str(exc),
             status="failed",
         )
+        session_files.update_state(session_root, review_status="needs_changes")
         await running_agent_service.finalize_running_agent(
             running_session_id,
             status="failed",
@@ -240,6 +613,8 @@ async def create_runner_session(
         runner=runner_name,
         external_session_id=external_id,
         status="running",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
     )
     await _append_runner_event(
         running_session_id,
@@ -297,11 +672,9 @@ async def get_runner_session(
             runner_info = await runner.get_session(external_id)
             normalized = runner_info.get("normalized_status", "")
             new_status = STATUS_MAP.get(normalized, runner_info.get("status", "running"))
-            is_terminal = new_status in TERMINAL_STATUSES
             await running_agent_service.update_running_agent(
                 convex_session_id,
                 status=new_status,
-                endedAt=int(time.time() * 1000) if is_terminal else None,
             )
             if root and root.exists():
                 _sync_file_status(root, new_status)
@@ -322,15 +695,15 @@ async def poll_session_until_done(
 ) -> dict[str, Any]:
     for _ in range(max_polls):
         await asyncio.sleep(poll_interval_seconds)
+        try:
+            await ingest_session_events(convex_session_id, project_id=project_id)
+        except Exception:
+            pass
         result = await get_runner_session(
             convex_session_id,
             sync_from_runner=True,
             project_id=project_id,
         )
-        try:
-            await ingest_session_events(convex_session_id, project_id=project_id)
-        except Exception:
-            pass
         if result.get("status") in TERMINAL_STATUSES:
             return result
 
@@ -405,8 +778,9 @@ async def ingest_session_events(
     events = await runner.list_events(external_id)
     session_path = session.get("sessionPath")
     root = Path(session_path) if session_path else None
-    existing_count = len(session_files.list_events(root)) if root and root.exists() else 0
-    new_events = events[existing_count:]
+    state = session_files.read_state(root) if root and root.exists() else {}
+    cursor = int(state.get("runner_event_cursor", 0))
+    new_events = events[cursor:]
 
     ingested: list[dict[str, Any]] = []
     for event in new_events:
@@ -420,6 +794,10 @@ async def ingest_session_events(
             session_files.append_event(root, file_event_type, **payload)
             if status:
                 _sync_file_status(root, status)
+                if status == "completed":
+                    session_files.update_state(root, review_status="review")
+                elif status in {"failed", "cancelled"}:
+                    session_files.update_state(root, review_status="needs_changes")
         await _relay_runner_event(convex_session_id, session, event)
         ingested.append(
             {
@@ -428,9 +806,21 @@ async def ingest_session_events(
             }
         )
 
-    if session_path and Path(session_path).exists():
-        state = session_files.read_state(session_path)
+    if root and root.exists():
+        session_files.update_state(root, runner_event_cursor=cursor + len(new_events))
+        state = session_files.read_state(root)
         if state.get("status") in TERMINAL_STATUSES:
+            project = await _load_project(session.get("projectId"), session.get("projectSlug"))
+            project_root = _project_root(project or {})
+            if project_root is not None:
+                await _finalize_workspace_review(
+                    convex_session_id=convex_session_id,
+                    session=session,
+                    project_root=project_root,
+                    session_root=root,
+                    base_branch=(project or {}).get("defaultBranch") or "main",
+                )
+                state = session_files.read_state(root)
             await running_agent_service.finalize_running_agent(
                 convex_session_id,
                 status=state["status"],
@@ -446,6 +836,7 @@ async def append_session_command(
     command_type: str,
     content: str | None = None,
     payload: dict[str, Any] | None = None,
+    idempotency_key: str | None = None,
 ) -> dict[str, Any]:
     session = await running_agent_service.get_running_agent(convex_session_id)
     if not session:
@@ -459,7 +850,10 @@ async def append_session_command(
         command_type,
         content=content,
         payload=payload or {},
+        idempotency_key=idempotency_key,
     )
+    if command.get("processed") or command.get("duplicate"):
+        return command
     external_id = session.get("externalSessionId")
     if external_id:
         runner_name = session.get("runner", "jules")
@@ -529,13 +923,16 @@ async def _relay_question_asked(
     project_id = session_record.get("projectId")
     if not project_id:
         return
+    project = await convex.query("projects:getById", {"projectId": project_id})
+    if not project:
+        return
     question_text = (
         event.normalized_payload.get("prompt")
         or event.normalized_payload.get("message")
         or "The agent has a question."
     )
     await planner_service.append_planner_message(
-        project_id=project_id,
+        project=project,
         role="assistant",
         content=f"[Question from {session_record.get('role') or 'agent'}] {question_text}",
         message_type="question",
@@ -553,7 +950,7 @@ async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEv
         return
     status = STATUS_MAP.get(event.event_type.value, "done")
     task_status = {
-        "completed": "done",
+        "completed": "review",
         "failed": "blocked",
         "cancelled": "cancelled",
     }.get(status, "review")

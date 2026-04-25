@@ -396,8 +396,11 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
 
             # Persist "active ontology" onto the owning project (if any)
             project_id = None
+            project_doc_for_registry = None
+            job_doc_for_registry = None
             try:
                 job_doc = await convex.query("jobs:get", {"jobId": job_id})
+                job_doc_for_registry = job_doc
                 project_id = job_doc.get("projectId") if job_doc else None
                 if not project_id and job_doc:
                     slug = job_doc.get("projectSlug")
@@ -406,6 +409,7 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                             proj = await convex.query("projects:get", {"slug": slug})
                             if proj:
                                 project_id = proj["_id"]
+                                project_doc_for_registry = proj
                         except Exception:
                             project_id = None
             except Exception:
@@ -451,6 +455,25 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
                 await emit("info", f"[job] DuckDB export ready: {duckdb_path}")
             except Exception as e:
                 await emit("warn", f"[job] DuckDB export failed (non-fatal): {e}")
+
+            if project_id:
+                try:
+                    if project_doc_for_registry is None:
+                        project_doc_for_registry = await convex.query("projects:getById", {"projectId": project_id})
+                    if project_doc_for_registry and project_doc_for_registry.get("localRepoPath"):
+                        from app.services.hydration_registry_service import register_hydration_artifact
+
+                        artifact_id = await register_hydration_artifact(
+                            project=project_doc_for_registry,
+                            pipeline_slug=(job_doc_for_registry or {}).get("pipelineSlug") or pipeline_spec.get("name") or "default",
+                            hydration_mode=hydration_mode,
+                            ontology_artifact_path=db_key,
+                            duckdb_artifact_path=duckdb_path,
+                            status="valid",
+                        )
+                        await emit("info", f"[job] Hydration artifact registered for this compute node ({artifact_id})")
+                except Exception as e:
+                    await emit("warn", f"[job] Hydration artifact registry update failed (non-fatal): {e}")
 
             try:
                 from app.services import embedding_service
@@ -553,4 +576,3 @@ async def _update_step(job_id: str, step_name: str, status: str, row_count: Unio
         })
     except Exception:
         logger.exception("[%s] Convex updateStep failed step=%s status=%s", job_id, step_name, status)
-

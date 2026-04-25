@@ -126,7 +126,7 @@ with tab1:
             st.subheader("Relationships")
             for prop in selected.get_properties():
                 for value in prop[selected]:
-                    st.write(f"**{getattr(prop, "python_name", prop.name)}:** {value.name if hasattr(value, 'name') else value}")
+                    st.write(f"**{getattr(prop, 'python_name', prop.name)}:** {value.name if hasattr(value, 'name') else value}")
 
     with col2:
         st.header("Relationship Graph")

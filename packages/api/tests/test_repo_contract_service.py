@@ -117,4 +117,6 @@ def test_render_manifest_preserves_existing_sections():
     assert 'name: NJ Data' in rendered
     assert 'default_pipeline: nj-hydration' in rendered
     assert 'linked_sources:' in rendered
+    assert 'workspaces:' in rendered
+    assert 'setup_script: scripts/setup-workspace.sh' in rendered
     assert 'show_repo_tree: false' in rendered

@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     )
     claude_code_command: str = Field(default="claude", validation_alias="CLAUDE_CODE_COMMAND")
     gemini_cli_command: str = Field(default="gemini", validation_alias="GEMINI_CLI_COMMAND")
-    cursor_cli_command: str = Field(default="cursor-agent", validation_alias="CURSOR_CLI_COMMAND")
+    cursor_cli_command: str = Field(default="cursor", validation_alias="CURSOR_CLI_COMMAND")
     codex_cli_command: str = Field(default="codex", validation_alias="CODEX_CLI_COMMAND")
 
     # Server

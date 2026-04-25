@@ -24,6 +24,7 @@ project-root/
   agents/
   skills/
   artifacts/
+  scripts/
   rail.yaml
   README.md
 ```
@@ -100,6 +101,9 @@ Examples:
 - blockers
 - approval notes
 - sequencing documents
+- session summaries
+- workspace review notes
+- merge/adoption blockers
 
 ### `agents/`
 
@@ -132,6 +136,18 @@ Examples:
 - exported charts
 - presentation-ready summaries
 
+### `scripts/`
+
+Optional but recommended. Stores repo-defined automation scripts used by planner and runner workspaces.
+
+Recommended examples:
+
+- `scripts/setup-workspace.sh`
+- `scripts/run-verification.sh`
+- `scripts/archive-workspace.sh`
+
+These scripts are inspired by Conductor's setup/run/archive script model. They should be committed to Git when shared across the project. Local secrets and `.env` files must remain outside Git and be injected through the runtime secret policy.
+
 ## `rail.yaml`
 
 Required. This is the project manifest.
@@ -157,6 +173,7 @@ paths:
   agents_root: "agents"
   skills_root: "skills"
   artifacts_root: "artifacts"
+  scripts_root: "scripts"
 
 hydration:
   ontology_file: ".ontology/ontology.yaml"
@@ -169,6 +186,12 @@ agents:
   sequential_execution: true
   role_manifest_mode: "lightweight"
   roles_dir: "agents"
+
+workspaces:
+  mode: "isolated"
+  setup_script: "scripts/setup-workspace.sh"
+  verification_script: "scripts/run-verification.sh"
+  archive_script: "scripts/archive-workspace.sh"
 
 frontend:
   topic_index_mode: "filesystem"
@@ -185,6 +208,7 @@ The dashboard should load project content from the repo using this contract:
 - read `topics/` for topic trees, notes, scripts, and outputs
 - read `artifacts/` for final user-facing deliverables
 - read `skills/` and `agents/` for project capabilities and configuration views
+- read workspace review files and session summaries under `research_plan/`
 
 In hosted mode, this should resolve against the latest commit on the configured default branch.
 
@@ -198,8 +222,8 @@ May write to:
 - `research_plan/`
 - `agents/`
 
-May create tasks in the database.
-Should also mirror planner-visible task snapshots into `research_plan/`.
+May create tasks in `research_plan/tasks/`.
+May write workspace review and merge/adoption notes under `research_plan/`.
 
 ### Research Agent
 
@@ -237,7 +261,39 @@ May write to:
 May modify:
 
 - generated temp files
-- task metadata in DB
+- task metadata in `research_plan/tasks/`
+- blocker and health reports in `research_plan/`
+
+## Workspace Review Files
+
+Each write-capable worker session should have a durable review surface.
+
+Recommended path:
+
+```text
+research_plan/sessions/<role>/<session-id>/
+  session.ndjson
+  commands.ndjson
+  state.json
+  summary.md
+  diff.md
+  todos.md
+  verification.md
+```
+
+The machine protocol is still NDJSON and JSON. Markdown files are the human/planner-readable review layer.
+
+## Worktree And Branch Policy
+
+RAIL should prefer isolated Git workspaces for worker runs:
+
+- one workspace per active worker session
+- one task branch per write-capable run
+- no worker writes directly to the canonical default branch
+- human approval required before merge, PR creation, or copying workspace changes into the canonical branch
+- archive/cleanup after durable summaries and review files are written
+
+V1 may enforce one active worker at a time, but the repo contract should not prevent future parallel branches/worktrees.
 - project-local skills under review
 
 The health agent should not silently delete user-authored source material outside approved cleanup paths.

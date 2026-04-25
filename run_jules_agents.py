@@ -26,7 +26,7 @@ SOURCE = os.environ.get(
 WORK_ORDERS_DIR = os.environ.get("WORK_ORDERS_DIR", "state/work-orders")
 STATUS_ALLOWLIST = {
     value.strip().lower()
-    for value in os.environ.get("WORK_ORDER_STATUSES", "pending").split(",")
+    for value in os.environ.get("WORK_ORDER_STATUSES", "ready").split(",")
     if value.strip()
 }
 WORK_ORDER_IDS = {
@@ -108,7 +108,7 @@ def parse_depends_on(raw_value: str | None) -> list[str]:
 def parse_work_order(path: Path) -> WorkOrder:
     content = path.read_text()
     title = path.stem
-    id_match = re.match(r"^(WO-F\d+\.\d+)", title)
+    id_match = re.match(r"^(WO-[A-Za-z0-9.\-]+)", title)
     work_order_id = id_match.group(1) if id_match else title
     status = (parse_metadata_field(content, "Status") or "pending").lower()
     depends_on = parse_depends_on(parse_metadata_field(content, "Depends on"))
@@ -123,7 +123,7 @@ def parse_work_order(path: Path) -> WorkOrder:
 
 
 def list_work_orders() -> list[WorkOrder]:
-    files = sorted(glob.glob(os.path.join(WORK_ORDERS_DIR, "WO-F*.md")))
+    files = sorted(glob.glob(os.path.join(WORK_ORDERS_DIR, "WO-*.md")))
     return [parse_work_order(Path(file_path)) for file_path in files]
 
 

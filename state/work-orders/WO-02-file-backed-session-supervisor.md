@@ -1,5 +1,7 @@
 # WO-02: File-Backed Session Supervisor
 
+**Status:** ready
+
 ## Goal
 
 Make file-backed sessions the normal control surface for live planner and worker sessions.
@@ -31,4 +33,3 @@ Session files are managed by `packages/api/app/services/session_files.py`. Worke
 
 - `python -m py_compile packages/api/app/services/session_files.py packages/api/app/runners/session_lifecycle.py`
 - Run focused session file tests if the local test environment supports it.
-

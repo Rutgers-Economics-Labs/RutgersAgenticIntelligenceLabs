@@ -71,6 +71,7 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "agents_root": "agents",
             "skills_root": "skills",
             "artifacts_root": "artifacts",
+            "scripts_root": "scripts",
         },
         "hydration": {
             "ontology_file": f"{CURRENT_PATHS['ontology_dir']}/{project['ontologyConfigSlug']}.yaml"
@@ -90,6 +91,15 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "approval_required_for_write_runs": True,
             "planner_thread_mode": "project",
             "default_planner_role": "planner",
+        },
+        "workspaces": {
+            "mode": "isolated",
+            "root": ".rail/workspaces",
+            "setup_script": "scripts/setup-workspace.sh",
+            "verification_script": "scripts/run-verification.sh",
+            "archive_script": "scripts/archive-workspace.sh",
+            "nonconcurrent_run": True,
+            "checkpoint_mode": "git-ref",
         },
         "frontend": {
             "topic_index_mode": "filesystem",
@@ -129,6 +139,7 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
     manifest["paths"].setdefault("agents_root", "agents")
     manifest["paths"].setdefault("skills_root", "skills")
     manifest["paths"].setdefault("artifacts_root", "artifacts")
+    manifest["paths"].setdefault("scripts_root", "scripts")
 
     hydration = manifest.setdefault("hydration", {})
     hydration["sources_dir"] = hydration.get("sources_dir") or CURRENT_PATHS["sources_dir"]
@@ -141,6 +152,15 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
         hydration["ontology_file"] = f"{CURRENT_PATHS['ontology_dir']}/{project['ontologyConfigSlug']}.yaml"
     else:
         hydration["ontology_file"] = hydration.get("ontology_file") or f"{CURRENT_PATHS['ontology_root']}/ontology.yaml"
+
+    workspaces = manifest.setdefault("workspaces", {})
+    workspaces.setdefault("mode", "isolated")
+    workspaces.setdefault("root", ".rail/workspaces")
+    workspaces.setdefault("setup_script", "scripts/setup-workspace.sh")
+    workspaces.setdefault("verification_script", "scripts/run-verification.sh")
+    workspaces.setdefault("archive_script", "scripts/archive-workspace.sh")
+    workspaces.setdefault("nonconcurrent_run", True)
+    workspaces.setdefault("checkpoint_mode", "git-ref")
 
     return yaml.safe_dump(manifest, sort_keys=False, allow_unicode=False)
 

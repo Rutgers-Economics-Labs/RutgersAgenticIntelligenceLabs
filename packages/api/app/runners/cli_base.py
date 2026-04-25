@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shlex
 import shutil
 import uuid
@@ -64,9 +65,80 @@ class LocalCLIRunner(BaseRunner):
             f"Acceptance criteria:\n{criteria}\n"
         )
 
-    def _command_args(self, prompt: str) -> list[str]:
+    def _base_command_parts(self) -> list[str]:
+        return shlex.split(self._command)
+
+    def _command_args(self, prompt: str, task_payload: TaskPayload) -> list[str]:
         parts = shlex.split(self._command)
         return [*parts, self.prompt_flag, prompt]
+
+    def _derived_events_from_stdout_line(self, session_id: str, text: str) -> list[RunnerEvent]:
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, dict):
+            return []
+
+        item = payload.get("item")
+        if not isinstance(item, dict):
+            return []
+
+        events: list[RunnerEvent] = []
+        item_type = item.get("type")
+        event_type = payload.get("type")
+
+        if item_type == "agent_message":
+            message = item.get("text") or item.get("message")
+            if message:
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.PROGRESS,
+                        session_id=session_id,
+                        normalized_payload={"message": message},
+                        raw_payload=payload,
+                    )
+                )
+        elif item_type == "file_change":
+            for change in item.get("changes") or []:
+                path = change.get("path")
+                if path:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.FILE_CHANGE_DETECTED,
+                            session_id=session_id,
+                            normalized_payload={
+                                "path": path,
+                                "kind": change.get("kind"),
+                            },
+                            raw_payload=payload,
+                        )
+                    )
+        elif item_type == "command_execution":
+            normalized = {
+                "command": item.get("command"),
+                "aggregated_output": item.get("aggregated_output"),
+                "exit_code": item.get("exit_code"),
+            }
+            if event_type == "item.started":
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.BASH_COMMAND_STARTED,
+                        session_id=session_id,
+                        normalized_payload=normalized,
+                        raw_payload=payload,
+                    )
+                )
+            elif event_type == "item.completed":
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.BASH_COMMAND_COMPLETED,
+                        session_id=session_id,
+                        normalized_payload=normalized,
+                        raw_payload=payload,
+                    )
+                )
+        return events
 
     async def _consume_stream(
         self,
@@ -98,6 +170,8 @@ class LocalCLIRunner(BaseRunner):
                     debug_visibility=False,
                 )
             )
+            if not stderr:
+                session.events.extend(self._derived_events_from_stdout_line(session.session_id, text))
 
     async def _run_session(self, session: LocalCliSession) -> None:
         try:
@@ -183,7 +257,7 @@ class LocalCLIRunner(BaseRunner):
         session_id = f"{self.runner_name}_{uuid.uuid4().hex[:12]}"
         session = LocalCliSession(
             session_id=session_id,
-            command=self._command_args(prompt),
+            command=self._command_args(prompt, task_payload),
             cwd=task_payload.local_repo_path,
             prompt=prompt,
         )

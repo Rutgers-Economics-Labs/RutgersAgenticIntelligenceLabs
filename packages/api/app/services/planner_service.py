@@ -85,16 +85,13 @@ async def ensure_planner_thread(project_id: str) -> str:
 
 async def append_planner_message(
     *,
-    project_id: str,
+    project: dict,
     role: str,
     content: str,
     message_type: str = "chat",
     session_id: str | None = None,
     thread_id: str = PLANNER_THREAD_ID,
 ) -> Any:
-    project = await convex.query("projects:getById", {"projectId": project_id})
-    if not project:
-        raise ValueError(f"Project '{project_id}' not found")
     root = _planner_session_root(project, thread_id)
     if root is None:
         return {"role": role, "content": content, "messageType": message_type}
@@ -109,17 +106,17 @@ async def append_planner_message(
     )
 
 
-async def list_planner_messages(project_id: str, thread_id: str = PLANNER_THREAD_ID, limit: int = 200) -> list[dict]:
-    project = await convex.query("projects:getById", {"projectId": project_id})
-    if not project:
-        return []
+async def list_planner_messages(project: dict, thread_id: str = PLANNER_THREAD_ID, limit: int = 200) -> list[dict]:
     root = _planner_session_root(project, thread_id)
     if root is None:
         return []
     return session_files.session_messages(root)[-limit:]
 
 
-async def ensure_main_board(project_id: str, session_id: str | None = None) -> dict:
+async def ensure_main_board(project: dict, session_id: str | None = None) -> dict:
+    project_id = project.get("_id") or project.get("projectId")
+    if not project_id:
+        raise ValueError("Project record is missing a durable id")
     return {
         "_id": "main",
         "projectId": project_id,
@@ -194,8 +191,8 @@ def _render_task_markdown(task: dict[str, Any]) -> str:
 
 async def create_task(
     *,
+    project: dict,
     board_id: str,
-    project_id: str,
     title: str,
     description: str,
     status: str,
@@ -209,9 +206,9 @@ async def create_task(
     approval_state: str | None = None,
     git_snapshot_path: str | None = None,
 ) -> dict:
-    project = await convex.query("projects:getById", {"projectId": project_id})
-    if not project:
-        raise ValueError(f"Project '{project_id}' not found")
+    project_id = project.get("_id") or project.get("projectId")
+    if not project_id:
+        raise ValueError("Project record is missing a durable id")
     root = project_root_from_record(project)
     if root is None:
         raise ValueError("Project does not have a localRepoPath configured")
@@ -429,7 +426,7 @@ async def sync_planner_files(project: dict, board: dict | None = None) -> None:
     from rail.planner_sync import PlannerSync
     syncer = PlannerSync(root)
 
-    board = board or await ensure_main_board(project["_id"])
+    board = board or await ensure_main_board(project)
     tasks = await list_tasks(board["_id"], project=project)
     approvals = await list_approvals(project)
     plan_root = root / "research_plan"

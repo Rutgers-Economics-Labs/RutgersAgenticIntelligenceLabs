@@ -1,5 +1,7 @@
 # WO-04: Minimal Runtime DB
 
+**Status:** ready
+
 ## Goal
 
 Reduce runtime database usage to the smallest useful control plane.
@@ -26,4 +28,3 @@ The database should store projects, currently running agents, and encrypted secr
 ## Verification
 
 - `python -m py_compile packages/api/app/services/running_agent_service.py packages/api/app/runners/session_lifecycle.py`
-

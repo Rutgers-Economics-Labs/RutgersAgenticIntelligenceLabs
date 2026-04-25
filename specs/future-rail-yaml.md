@@ -13,6 +13,7 @@ It exists to:
 - tell the hydration kernel where `.ontology/` lives
 - tell the frontend how to load project content
 - tell the runner layer which default execution policy to use
+- point to workspace setup, verification, and archive scripts
 - point to richer agent definitions stored under `agents/`
 
 It should not contain full prompts, large embedded specs, or detailed role instructions.
@@ -73,6 +74,8 @@ The runner layer should use `rail.yaml` to:
 - read whether sequential execution is required
 - read where role definitions live
 - enforce the presence of the required project roots
+- read workspace isolation mode
+- find setup, verification, and archive scripts
 
 ## Top-Level Shape
 
@@ -83,6 +86,7 @@ The manifest should use a small number of top-level sections:
 - `paths`
 - `hydration`
 - `agents`
+- `workspaces`
 - `frontend`
 
 ## Field Specification
@@ -241,6 +245,47 @@ agents:
   planner_thread_mode: "project"
   default_planner_role: "planner"
   question_relay_mode: "planner_first"
+```
+
+### `workspaces`
+
+Purpose:
+
+- define how write-capable worker sessions prepare, test, review, and clean up isolated workspaces
+
+Required fields:
+
+- none in V1
+
+Optional fields:
+
+- `mode`
+- `root`
+- `setup_script`
+- `verification_script`
+- `archive_script`
+- `nonconcurrent_run`
+- `checkpoint_mode`
+
+Notes:
+
+- this section is inspired by Conductor's workspace and script model
+- scripts should run from the worker workspace root
+- script bodies should live in files when they become more than a short command
+- secrets must be injected by the runtime, not stored in `rail.yaml`
+- V1 may run one worker at a time while still using isolated workspace metadata
+
+Example:
+
+```yaml
+workspaces:
+  mode: "isolated"
+  root: ".rail/workspaces"
+  setup_script: "scripts/setup-workspace.sh"
+  verification_script: "scripts/run-verification.sh"
+  archive_script: "scripts/archive-workspace.sh"
+  nonconcurrent_run: true
+  checkpoint_mode: "git-ref"
 ```
 
 ### `frontend`

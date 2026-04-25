@@ -1,5 +1,7 @@
 # WO-03: Repo-Backed Planner State
 
+**Status:** ready
+
 ## Goal
 
 Finish moving planner state to repo-backed Markdown files.
@@ -26,4 +28,3 @@ Planner state should live under `research_plan/`, not in durable database tables
 ## Verification
 
 - `python -m py_compile packages/api/app/services/planner_service.py packages/api/app/services/planner_runtime.py`
-

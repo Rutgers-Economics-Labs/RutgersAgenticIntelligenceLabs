@@ -105,8 +105,9 @@ class PlannerHarness:
         )
         self.history.append({"role": "user", "content": user_message})
         assistant_message = result.get("assistantMessage") or ""
-        self.history.append({"role": "assistant", "content": assistant_message})
-        if root is not None:
+        if assistant_message.strip():
+            self.history.append({"role": "assistant", "content": assistant_message})
+        if root is not None and assistant_message.strip():
             session_files.append_event(
                 root,
                 "assistant_message",

@@ -31,6 +31,7 @@ def bootstrap_future_project(
         ".ontology/sources",
         ".ontology/pipelines",
         ".ontology/transforms",
+        ".rail/workspaces",
         "topics",
         "specs",
         "research_plan/graph",
@@ -39,6 +40,7 @@ def bootstrap_future_project(
         "agents/checklists",
         "skills",
         "artifacts",
+        "scripts",
     ]
     for rel in dirs:
         (project_root / rel).mkdir(parents=True, exist_ok=True)
@@ -76,6 +78,15 @@ def bootstrap_future_project(
           approval_required_for_write_runs: true
           planner_thread_mode: "project"
           default_planner_role: "planner"
+
+        workspaces:
+          mode: "isolated"
+          root: ".rail/workspaces"
+          setup_script: "scripts/setup-workspace.sh"
+          verification_script: "scripts/run-verification.sh"
+          archive_script: "scripts/archive-workspace.sh"
+          nonconcurrent_run: true
+          checkpoint_mode: "git-ref"
 
         frontend:
           topic_index_mode: "filesystem"
@@ -171,7 +182,8 @@ def bootstrap_future_project(
                 "allow": secrets,
             },
             "skills": {
-                "allow_use": role == "planner",
+                "allow_use": True,
+                "root": "skills",
             },
             "tools": {
                 "allow": tools,
@@ -219,13 +231,40 @@ You are the only user-facing agent. Your job is to:
 
 {{skill_lines}}
 """
-        return f"# {role.title()} Prompt\n\nProject-specific system guidance for the {role} role.\n"
+        if role == "research":
+            return """# Research Prompt
+
+You are the research worker for this RAIL project.
+
+Use the project skill files in `skills/` as your operating playbook. For research tasks:
+
+1. Read the relevant skill files before searching or writing.
+2. Prefer primary sources, official datasets, peer-reviewed work, and regulator/agency documents.
+3. Record exact source URLs, access dates when useful, and retrieval limits.
+4. Separate facts, estimates, interpretation, and open questions.
+5. Save durable findings under `topics/` or requested artifacts under `artifacts/`.
+
+Do not treat web snippets as evidence. Open and inspect the source.
+"""
+        return f"# {role.title()} Prompt\n\nProject-specific system guidance for the {role} role. Use relevant project skills from `skills/` before doing specialized work.\n"
     checklist_template = lambda role: f"# {role.title()} Checklist\n\n- follow repo contract\n- stay inside allowed paths\n- satisfy deterministic completion checks\n"
 
     _write(project_root / "rail.yaml", rail_yaml)
     _write(project_root / ".ontology/ontology.yaml", ontology_yaml)
     _write(project_root / "research_plan/current_plan.md", current_plan)
     _write(project_root / "research_plan/task_board.md", task_board)
+    _write(
+        project_root / "scripts" / "setup-workspace.sh",
+        "#!/usr/bin/env bash\nset -euo pipefail\n\n# Install repo dependencies needed by worker workspaces.\n",
+    )
+    _write(
+        project_root / "scripts" / "run-verification.sh",
+        "#!/usr/bin/env bash\nset -euo pipefail\n\n# Run deterministic checks for the current worker workspace.\n",
+    )
+    _write(
+        project_root / "scripts" / "archive-workspace.sh",
+        "#!/usr/bin/env bash\nset -euo pipefail\n\n# Archive or clean temporary worker workspace resources.\n",
+    )
     _write(project_root / "README.md", f"# {name}\n")
 
     roles = {
@@ -283,8 +322,143 @@ You are the only user-facing agent. Your job is to:
 
     starter_skills = {
         "repo-contract.md": "# Repo Contract\n\n- keep top-level structure stable\n- keep generated work inside allowed paths\n",
-        "verification.md": "# Verification\n\n- prefer deterministic checks\n- do not mark tasks done without validation\n",
-        "citations.md": "# Citations\n\n- include sources for research outputs when applicable\n",
+        "verification.md": "# Verification\n\n- prefer deterministic checks\n- do not mark tasks done without validation\n- state what was verified and what remains uncertain\n",
+        "citations.md": "# Citations\n\n- cite sources for research outputs when applicable\n- prefer source title, publisher, URL, and access date for web sources\n- distinguish primary sources from secondary summaries\n- never cite a source that was not opened or otherwise inspected\n",
+        "web-research.md": textwrap.dedent(
+            """\
+            # Web Research
+
+            Use this skill when a task requires finding current or external information.
+
+            ## Workflow
+
+            1. Turn the question into 3-7 targeted search queries.
+            2. Search for primary sources first: official agencies, datasets, filings, standards, papers, and original reports.
+            3. Open candidate sources and inspect their content before using them.
+            4. Capture the citation, relevant facts, date range, geography, and caveats.
+            5. Cross-check high-impact claims with at least two independent sources when possible.
+            6. Save notes in `topics/` with a source table and a short synthesis.
+
+            ## Source Quality
+
+            Prefer official public records, data portals, peer-reviewed papers, regulator filings, and market/operator reports. Use news and blogs mainly to discover leads, not as final evidence.
+
+            ## Output
+
+            Include:
+
+            - answer or finding
+            - evidence table
+            - confidence level
+            - gaps and next searches
+            """
+        ),
+        "source-inventory.md": textwrap.dedent(
+            """\
+            # Source Inventory
+
+            Use this skill when building a data inventory for a research project.
+
+            For each source, record:
+
+            - name and publisher
+            - URL or access path
+            - data format and access method
+            - geography and time coverage
+            - update frequency
+            - key fields
+            - licensing or access constraints
+            - expected joins to project entities
+            - known quality issues
+
+            Mark each source as `candidate`, `validated`, `blocked`, or `rejected`.
+            """
+        ),
+        "literature-review.md": textwrap.dedent(
+            """\
+            # Literature Review
+
+            Use this skill for academic, policy, and technical literature reviews.
+
+            ## Search
+
+            Search across scholar indexes, agency reports, working papers, regulator documents, and domain-specific institutions.
+
+            ## Extraction
+
+            For each important work, capture:
+
+            - research question
+            - data and sample period
+            - identification strategy
+            - main findings
+            - limitations
+            - relevance to this project
+
+            ## Synthesis
+
+            Group findings by claim or mechanism. Highlight agreement, disagreement, and missing evidence.
+            """
+        ),
+        "policy-analysis.md": textwrap.dedent(
+            """\
+            # Policy Analysis
+
+            Use this skill when research outputs need regulatory or public-sector recommendations.
+
+            Separate:
+
+            - empirical finding
+            - affected stakeholders
+            - statutory or regulatory context
+            - policy options
+            - implementation constraints
+            - distributional impacts
+            - risks and unintended consequences
+
+            Recommendations should follow from evidence and include uncertainty.
+            """
+        ),
+        "econometric-design.md": textwrap.dedent(
+            """\
+            # Econometric Design
+
+            Use this skill when a task requires causal inference, forecasting evaluation, or model comparison.
+
+            Before modeling, define:
+
+            - unit of observation
+            - treatment and control groups
+            - treatment timing
+            - outcome variables
+            - identifying assumption
+            - confounders and controls
+            - fixed effects
+            - robustness checks
+            - falsification or placebo tests
+
+            Do not make causal claims from descriptive comparisons alone.
+            """
+        ),
+        "data-provenance.md": textwrap.dedent(
+            """\
+            # Data Provenance
+
+            Use this skill whenever data is downloaded, transformed, or analyzed.
+
+            Record:
+
+            - source URL or API endpoint
+            - retrieval date
+            - query parameters
+            - raw file path or cache key
+            - transformation script
+            - output file path
+            - row counts and key validation checks
+
+            Keep raw data and derived outputs distinguishable.
+            """
+        ),
     }
     for filename, content in starter_skills.items():
         _write(project_root / "skills" / filename, content)

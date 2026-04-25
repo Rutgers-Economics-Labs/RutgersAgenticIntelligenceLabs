@@ -258,7 +258,7 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             return {"error": "command is required"}
         return await _run_shell(command, root)
 
-    board = await planner_service.ensure_main_board(project["_id"])
+    board = await planner_service.ensure_main_board(project)
 
     if name == "list_tasks":
         return {"tasks": await planner_service.list_tasks(board["_id"], project=project)}
@@ -267,8 +267,8 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         role = args["agent_role"]
         role_config = load_role_runtime_config(project, role)
         task = await planner_service.create_task(
+            project=project,
             board_id=board["_id"],
-            project_id=project["_id"],
             title=args["title"],
             description=args["description"],
             status="ready",
@@ -412,7 +412,7 @@ async def run_planner_turn(
 
     if persist:
         await planner_service.append_planner_message(
-            project_id=project["_id"],
+            project=project,
             role="user",
             content=user_message,
             message_type="chat",
@@ -461,18 +461,26 @@ async def run_planner_turn(
                 }
             )
 
+    board = await planner_service.ensure_main_board(project)
+
+    if not assistant_text.strip():
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
+        if tasks:
+            assistant_text = f"Planner completed without a final summary. Current task count: {len(tasks)}."
+        else:
+            assistant_text = "Planner completed without a final summary."
+
     if persist and assistant_text:
         await planner_service.append_planner_message(
-            project_id=project["_id"],
+            project=project,
             role="assistant",
             content=assistant_text,
             message_type="chat",
         )
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
-    board = await planner_service.ensure_main_board(project["_id"])
     return {
         "threadId": thread_id,
         "assistantMessage": assistant_text,
-        "messages": list(reversed(await planner_service.list_planner_messages(project["_id"], thread_id=thread_id))),
+        "messages": list(reversed(await planner_service.list_planner_messages(project, thread_id=thread_id))),
         "tasks": await planner_service.list_tasks(board["_id"], project=project),
     }

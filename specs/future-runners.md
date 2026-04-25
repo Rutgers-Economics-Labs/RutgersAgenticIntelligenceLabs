@@ -16,6 +16,15 @@ Reasons:
 Claude Code should remain a planned second runner with a separate adapter.
 The planner-facing orchestration model must not depend on Jules-specific event names or concepts.
 
+Conductor is useful as a reference implementation for the local-agent side of the system. The lessons to keep are:
+
+- agent runs should happen in isolated Git workspaces/branches
+- setup, run/test, and archive scripts make workspaces repeatable
+- local CLI agents can reuse auth already present on the machine
+- diff review and merge/adoption should be explicit
+- todos and failed checks should block merge/adoption
+- checkpoints should capture turn-level changes before destructive rollback is needed
+
 ## Runner Abstraction
 
 The platform should define an internal runner interface:
@@ -28,6 +37,16 @@ The platform should define an internal runner interface:
 - `cancel(session_id)`
 
 The planner and DB should depend on this abstraction rather than on a specific vendor.
+
+The runner layer should also expose workspace lifecycle hooks:
+
+- `prepare_workspace(task_payload)`
+- `run_setup(workspace)`
+- `run_verification(workspace)`
+- `summarize_diff(workspace)`
+- `archive_workspace(workspace)`
+
+These hooks may be no-ops for hosted runners at first, but the planner contract should include them so local runners and future parallel workers do not require a new architecture.
 
 ## Jules Runner
 
@@ -87,27 +106,57 @@ Suggested fields:
 
 ## Claude Code Runner
 
-Claude Code should be modeled as a future adapter.
+Claude Code should be modeled as a local CLI/workspace adapter first, not as an assumed cloud API.
 
 Current design assumptions:
 
-- use Anthropic-supported remote or cloud workflows where available
+- use the installed Claude Code CLI and the user's local auth where appropriate
+- allow environment overrides through scoped runner settings
 - do not assume a public REST API equivalent to Jules until confirmed
-- support a transport based on CLI, remote session orchestration, or MCP
+- support a transport based on CLI, terminal supervision, file-backed commands, or MCP
+- run in an isolated workspace/branch rather than directly in the canonical project root
 
 This runner should use the same internal abstraction as Jules.
 The first Claude Code integration should be treated as a future managed adapter rather than assumed REST parity with Jules.
+
+## Codex And Local CLI Runners
+
+Codex and other terminal agents should follow the same local workspace pattern:
+
+- create or attach to a workspace
+- run setup scripts
+- launch the CLI with a bounded prompt
+- stream output into `session.ndjson`
+- accept planner/human commands through `commands.ndjson`
+- run verification scripts
+- summarize diffs and blockers before merge/adoption
+
+Local CLI runners may be less interactive than hosted APIs. Their capability metadata should tell the planner whether they support:
+
+- live message injection
+- approval callbacks
+- cancellation
+- event streaming
+- structured tool call extraction
+- checkpoint creation
 
 ## Runner Event Model
 
 All runner backends should normalize events into a common shape:
 
 - `session_created`
+- `workspace_created`
+- `setup_started`
+- `setup_completed`
 - `plan_proposed`
 - `approval_requested`
 - `question_asked`
 - `progress`
 - `file_change_detected`
+- `verification_started`
+- `verification_completed`
+- `diff_ready`
+- `merge_blocked`
 - `completed`
 - `failed`
 - `cancelled`
@@ -115,6 +164,50 @@ All runner backends should normalize events into a common shape:
 - `waiting_for_human`
 
 The planner consumes these normalized events and updates task state.
+
+## Workspace Scripts
+
+Each project may define scripts for worker workspaces:
+
+- setup script: runs when a workspace is created
+- run script: runs tests, dev servers, or verification commands
+- archive script: cleans up temporary resources when a workspace is archived
+
+Script requirements:
+
+- scripts run from the workspace root
+- scripts receive environment variables for project root, workspace root, branch, task id, role, and allocated ports when relevant
+- scripts must not write secrets into Git-tracked files
+- nonconcurrent mode should be supported for resources that cannot run in parallel
+
+V1 may store these scripts in `rail.yaml` or `agents/*.yaml`, but the command bodies should remain editable repo files when they become long.
+
+## Diff Review And Merge
+
+Runner completion does not mean changes are adopted.
+
+After a worker finishes:
+
+1. collect changed files
+2. run deterministic verification
+3. render a diff summary
+4. list unresolved todos/blockers
+5. ask for human approval before merge, PR creation, or copying changes into the canonical branch
+
+The planner should never silently merge or publish worker changes.
+
+## Checkpoints
+
+Before each approved worker turn, the runtime should create a lightweight checkpoint.
+
+Acceptable implementations:
+
+- private Git ref
+- temporary branch
+- patch file
+- workspace snapshot metadata
+
+Checkpoints are not a replacement for Git history. They are a safety rail for undoing a single agent turn or explaining what changed between turns.
 
 ## Secrets Injection
 
@@ -127,6 +220,7 @@ Rules:
 - every agent role has an explicit allowlist
 - secret values are never written into the repository
 - secret injection should be session-scoped and least-privilege
+- local runners may reuse existing local auth, but the planner must still record which secret policy or auth mode was used
 
 ## Human-in-the-Loop
 
@@ -144,3 +238,4 @@ Read-only validation runs may proceed without approval.
 - planner remains the single human-facing role
 - runner adapters may emit vendor-specific raw events, but the app should operate on normalized events
 - publishing or merging agent changes is a separate approval checkpoint from starting a run
+- even with one active worker, model each write-capable run as a workspace so parallel worktrees can be added later

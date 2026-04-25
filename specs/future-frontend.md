@@ -2,6 +2,9 @@
 
 This document defines the future dashboard for the RAIL platform.
 
+For the detailed product spec, page-by-page information architecture, and
+agent-observability requirements, see `specs/frontend-command-center.md`.
+
 ## Operating Model
 
 The frontend is split evenly across three persistent planes:
@@ -9,6 +12,7 @@ The frontend is split evenly across three persistent planes:
 - planner chat and execution control
 - repository and knowledge views
 - artifacts and run timeline
+- workspace review and merge/adoption control
 
 The UI should feel like an agent command center rather than a form-based admin console.
 The frontend should prefer repository-backed rendering whenever durable project state is involved.
@@ -25,6 +29,7 @@ Responsibilities:
 - show current plan summary
 - show current task and next proposed task
 - relay worker questions to the human only when the planner cannot answer them from existing context
+- show unresolved todos/blockers that prevent merge or adoption
 
 ### Center Plane: Repository
 
@@ -35,6 +40,7 @@ Responsibilities:
 - open files with syntax-aware viewers
 - show commit and diff context for current session outputs
 - keep the topic tree flexible and exploratory rather than schema-bound
+- show active workspace branch/worktree context when a worker is running
 
 ### Right Plane: Artifacts and Timeline
 
@@ -44,6 +50,7 @@ Responsibilities:
 - show the sequential timeline of planner and worker runs
 - show verification and health status
 - show completed task history and costs
+- show workspace diffs, todos, checkpoints, and merge/adoption controls
 
 This plane should render repo-backed artifacts from `artifacts/` while also showing live runner status from the operational database.
 
@@ -55,14 +62,13 @@ For GitHub-backed projects, this can be implemented with raw file fetches, tree 
 
 The database supplements the repo with operational data:
 
-- agent sessions
+- currently running agents
 - secrets metadata
-- task board status
-- approvals
-- run costs
-- live runner events
+- active runner status and reconnect handles
+- live runner events that have not yet been mirrored into files
 
 The database should not be treated as the primary renderer for plans, specs, topics, ontology files, or artifacts.
+The frontend should load task board state, approvals, blockers, and completed session summaries from repo-backed files whenever possible.
 
 ## Primary Screens
 
@@ -94,10 +100,25 @@ Shows:
 
 The frontend should render both:
 
-- the live operational board from the database
-- the Git-visible planner snapshot in `research_plan/`
+- the Git-visible planner task board in `research_plan/`
+- the currently running agent state from the live control database
 
 Task cards should deep-link to the exact repo paths assigned to the active worker.
+Task cards should also deep-link to the worker session folder, diff review, todos, and verification output when present.
+
+### Workspace Review View
+
+Shows:
+
+- active worker session
+- workspace branch or worktree path
+- changed files and diff summary
+- unresolved todos/blockers
+- verification output
+- checkpoint/snapshot metadata
+- merge/adoption approval control
+
+This view is the RAIL equivalent of Conductor's diff/review flow. Worker completion should not automatically mean the changes are adopted.
 
 ### Ontology View
 
@@ -154,6 +175,7 @@ The platform should support a simple setup flow that:
 - installs starter project skills
 - initializes starter `agents/` files
 - creates an initial `research_plan/` document
+- creates optional workspace scripts under `scripts/`
 
 The setup flow should be available from the dashboard.
 It should also exist as a bootstrap command for local-first users.
@@ -164,12 +186,21 @@ Minimum operational surfaces:
 
 - `projects`
 - `project_secrets`
-- `agent_sessions`
-- `task_boards`
-- `tasks`
-- `task_events`
-- `approvals`
-- `runner_events`
+- `running_agents`
+- active runner reconnect/status handles
+- optional live event cache for events not yet flushed to repo files
+
+Repo-backed frontend surfaces:
+
+- `research_plan/current_plan.md`
+- `research_plan/task_board.md`
+- `research_plan/tasks/*.md`
+- `research_plan/approvals.md`
+- `research_plan/blockers.md`
+- `research_plan/sessions/**/summary.md`
+- `research_plan/sessions/**/diff.md`
+- `research_plan/sessions/**/todos.md`
+- `research_plan/sessions/**/verification.md`
 
 ## Design Direction
 

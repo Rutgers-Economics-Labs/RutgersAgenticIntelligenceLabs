@@ -1,5 +1,7 @@
 # WO-05: Jules End-To-End Runner
 
+**Status:** ready
+
 ## Goal
 
 Make Jules the first real worker runner behind the planner-owned runtime model.
@@ -27,4 +29,3 @@ The Jules adapter is in `packages/api/app/runners/jules.py`. The runner lifecycl
 
 - Start one Jules session against a small safe task.
 - Confirm `research_plan/sessions/<role>/<session-id>/summary.md` updates.
-

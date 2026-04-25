@@ -1,5 +1,7 @@
 # WO-07: Test And Cleanup Pass
 
+**Status:** ready
+
 ## Goal
 
 Clean remaining old-platform assumptions and make the focused test path reliable.
@@ -26,4 +28,3 @@ The codebase currently has incomplete dependency setup in the local environment.
 
 - `python -m py_compile` on touched runtime files.
 - Focused `pytest` where dependencies are installed.
-

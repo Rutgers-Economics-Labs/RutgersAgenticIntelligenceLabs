@@ -11,6 +11,13 @@ from app.services.yaml_service import load_agent_prompts, parse
 
 
 SUPPORTED_RUNNERS = {"jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
+ROLE_ALIASES = {
+    "researcher": "research",
+    "analyst": "data",
+    "developer": "coding",
+    "engineer": "coding",
+    "auditor": "health",
+}
 
 
 @dataclass
@@ -38,7 +45,8 @@ def _project_root(project: dict[str, Any]) -> Path:
 
 
 def _role_path(project_root: Path, manifest: Any, role: str) -> Path:
-    return project_root / manifest.agents.roles_dir / f"{role}.yaml"
+    normalized_role = ROLE_ALIASES.get(role, role)
+    return project_root / manifest.agents.roles_dir / f"{normalized_role}.yaml"
 
 
 def _normalize_runner_name(name: str | None, default_name: str) -> str:
@@ -51,6 +59,7 @@ def _normalize_runner_name(name: str | None, default_name: str) -> str:
 def load_role_runtime_config(project: dict[str, Any], role: str) -> RoleRuntimeConfig:
     project_root = _project_root(project)
     manifest = load_manifest(project_root)
+    canonical_role = ROLE_ALIASES.get(role, role)
     role_path = _role_path(project_root, manifest, role)
     if not role_path.is_file():
         raise FileNotFoundError(f"Role config not found: {role_path}")
@@ -64,8 +73,8 @@ def load_role_runtime_config(project: dict[str, Any], role: str) -> RoleRuntimeC
     system_prompt, checklist_prompt = load_agent_prompts(role_path.read_text(encoding="utf-8"), project_root)
 
     return RoleRuntimeConfig(
-        role=raw.get("role") or role,
-        label=raw.get("label") or role.title(),
+        role=raw.get("role") or canonical_role,
+        label=raw.get("label") or canonical_role.title(),
         purpose=raw.get("purpose") or "",
         policy=policy,
         system_prompt=system_prompt,
