@@ -223,29 +223,7 @@ class HydrationRerunRequest(BaseModel):
     pipelineSlug: str | None = None
 
 
-KNOWN_PROJECT_REPOS = [
-    {
-        "name": "Academic",
-        "slug": "academic",
-        "description": "Academic research starter workspace.",
-        "repoUrl": "https://github.com/Rutgers-Economics-Labs/RAIL-academic",
-        "directory": "RAIL-academic",
-    },
-    {
-        "name": "Synthetic Test",
-        "slug": "synthetic",
-        "description": "Synthetic test workspace for RAIL workflows.",
-        "repoUrl": "https://github.com/Rutgers-Economics-Labs/RAIL-synthetic-test",
-        "directory": "RAIL-synthetic-test",
-    },
-    {
-        "name": "RAIL Census Ontology Starter",
-        "slug": "census-ontology-starter",
-        "description": "Minimal Census-backed ontology starter repo.",
-        "repoUrl": "https://github.com/Rutgers-Economics-Labs/RAIL-Census-Ontology-Starter",
-        "directory": "RAIL-Census-Ontology-Starter",
-    },
-]
+# Catalog projects are now managed in Convex.
 
 
 def _projects_base_dir() -> Path:
@@ -253,11 +231,8 @@ def _projects_base_dir() -> Path:
     return Path(os.environ.get("RAIL_PROJECTS_DIR", str(default_base))).expanduser().resolve()
 
 
-def _known_project(slug: str) -> dict | None:
-    for item in KNOWN_PROJECT_REPOS:
-        if item["slug"] == slug:
-            return item
-    return None
+async def _known_project(slug: str) -> dict | None:
+    return await convex.query("projects:getBySlug", {"slug": slug})
 
 
 def _manifest_metadata(root: Path, fallback: dict) -> dict:
@@ -308,16 +283,20 @@ async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
     return await convex.query("projects:getById", {"projectId": project_id}) or {**payload, "_id": project_id}
 
 
-async def _catalog_row(defn: dict) -> dict:
-    root = _projects_base_dir() / defn["directory"]
-    metadata = _manifest_metadata(root, defn) if root.exists() else {}
-    slug = metadata.get("slug") or defn["slug"]
-    project = await convex.query("projects:getBySlug", {"slug": slug})
+async def _catalog_row(project: dict) -> dict:
+    repo_path = project.get("localRepoPath")
+    if repo_path:
+        root = Path(repo_path).expanduser().resolve()
+    else:
+        # Fallback if localRepoPath is missing
+        root = _projects_base_dir() / project["slug"]
+        
+    metadata = _manifest_metadata(root, project) if root.exists() else {}
     return {
-        **defn,
-        "slug": slug,
-        "name": metadata.get("name") or defn["name"],
-        "description": metadata.get("description") or defn["description"],
+        "name": project.get("name") or metadata.get("name"),
+        "slug": project["slug"],
+        "description": project.get("description") or metadata.get("description"),
+        "repoUrl": project.get("gitRepoUrl"),
         "localRepoPath": str(root),
         "localExists": root.exists(),
         "manifestExists": (root / "rail.yaml").exists(),
@@ -329,21 +308,7 @@ async def _catalog_row(defn: dict) -> dict:
 def _configured_pipeline_slug(project: dict, project_root: Path, requested: str | None = None) -> str:
     if requested:
         return requested
-    if project.get("pipelineConfigSlug"):
-        return str(project["pipelineConfigSlug"])
-    try:
-        slug = resolve_pipeline_slug(project_root, project.get("manifestPath") or "rail.yaml")
-        if (project_root / ".ontology" / "pipelines" / f"{slug}.yaml").exists():
-            return slug
-    except Exception:
-        pass
-
-    pipeline_dir = project_root / ".ontology" / "pipelines"
-    candidates = sorted(path.stem for path in pipeline_dir.glob("*.y*ml")) if pipeline_dir.is_dir() else []
-    for preferred in (f"{project.get('slug')}_hydration", "nj_hydration", "academic_hydration", "default"):
-        if preferred in candidates:
-            return preferred
-    return candidates[0] if candidates else "default"
+    return resolve_pipeline_slug(project, project_root)
 
 
 def _local_hydration_configs(project_root: Path, pipeline_slug: str) -> tuple[str, dict[str, str], dict[str, str]] | None:
@@ -446,20 +411,16 @@ async def create_project(data: CreateProjectRequest):
 
 @router.get("")
 async def list_projects_catalog():
+    projects = await convex.query("projects:list", {}) or []
     rows = []
-    for defn in KNOWN_PROJECT_REPOS:
+    for project in projects:
         try:
-            rows.append(await _catalog_row(defn))
+            rows.append(await _catalog_row(project))
         except Exception as exc:
-            root = _projects_base_dir() / defn["directory"]
             rows.append(
                 {
-                    **defn,
-                    "localRepoPath": str(root),
-                    "localExists": root.exists(),
-                    "manifestExists": (root / "rail.yaml").exists(),
-                    "backendProject": None,
-                    "needsClone": not root.exists(),
+                    **project,
+                    "localExists": False,
                     "error": str(exc),
                 }
             )
@@ -468,11 +429,17 @@ async def list_projects_catalog():
 
 @router.post("/catalog/{slug}/activate")
 async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest):
-    defn = _known_project(slug)
-    if not defn:
+    project = await _known_project(slug)
+    if not project:
         raise HTTPException(404, f"Unknown catalog project '{slug}'")
 
-    root = Path(data.targetDir).expanduser().resolve() if data.targetDir else _projects_base_dir() / defn["directory"]
+    repo_path = project.get("localRepoPath")
+    if data.targetDir:
+        root = Path(data.targetDir).expanduser().resolve()
+    elif repo_path:
+        root = Path(repo_path).expanduser().resolve()
+    else:
+        root = _projects_base_dir() / project["slug"]
     if root.exists() and not root.is_dir():
         raise HTTPException(409, f"Target exists but is not a directory: {root}")
     if not root.exists():
@@ -1097,21 +1064,32 @@ async def rerun_project_hydration(
 ):
     project = await planner_service.get_project_by_slug(slug)
     project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
+    
     if project_root is None:
         raise HTTPException(400, "Project does not have a localRepoPath configured")
+    if not project_root.exists():
+        raise HTTPException(404, f"Project root directory not found: {project_root}")
 
     pipeline_slug = _configured_pipeline_slug(project, project_root, data.pipelineSlug)
+    
+    # Try to find a registered pipeline in Convex first to get a valid ID
+    pipeline_record = await convex.query("configs:getPipeline", {"slug": pipeline_slug})
+    pipeline_id = pipeline_record["_id"] if pipeline_record else None
+
     local_configs = _local_hydration_configs(project_root, pipeline_slug)
 
     if local_configs:
         pipeline_content, api_configs, onto_configs = local_configs
+        
+        # If no registered ID, we must use a fallback format that the database accepts
+        effective_pipeline_id = pipeline_id or f"local_{pipeline_slug}"
+        
         mutation_result = await convex.mutation(
             "jobs:create",
             {
-                "pipelineConfigId": f"local:{slug}:{pipeline_slug}",
+                "pipelineConfigId": effective_pipeline_id,
                 "pipelineSlug": pipeline_slug,
                 "projectSlug": slug,
-                "projectId": project.get("_id"),
                 "status": "queued",
                 "triggeredBy": "api",
                 "createdAt": int(time.time() * 1000),
@@ -1133,7 +1111,7 @@ async def rerun_project_hydration(
                 background_tasks,
             )
         except ValueError as exc:
-            raise HTTPException(404, str(exc)) from exc
+            raise HTTPException(404, f"Pipeline '{pipeline_slug}' not found locally or in registry: {exc}") from exc
 
     return {
         **result,

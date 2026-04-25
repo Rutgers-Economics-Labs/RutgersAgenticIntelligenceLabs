@@ -223,38 +223,37 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             # Resolve ontology config
             onto_ref = pipeline_spec.get("ontology", "core")
             if onto_ref in onto_configs:
-                # Use user-provided ontology from Convex
-                onto_path = onto_dir / f"{onto_ref}.yaml"
+                # Use user-provided ontology from Convex/Local
+                out_name = f"{Path(str(onto_ref)).stem}.yaml"
+                onto_path = onto_dir / out_name
                 merged_onto = _merge_kernel(onto_configs[onto_ref])
                 onto_path.write_text(merged_onto)
                 pipeline_spec["ontology"] = str(onto_path)
-                await emit("info", f"[setup] Ontology YAML → {onto_path.relative_to(tmpdir)} (from Convex, merged with kernel)")
+                await emit("info", f"[setup] Ontology YAML → {onto_path.relative_to(tmpdir)} (from Project/Convex, merged with kernel)")
             else:
-                # Fall back to engine defaults (support both slugs and engine-relative paths)
+                # Fall back to engine defaults
+                # We check these in order:
+                # 1. Exactly as specified (relative to engine root)
+                # 2. As a slug in configs/ontology/{slug}.yaml
+                # 3. Default to core.yaml
+                
                 onto_ref_str = str(onto_ref or "core").strip() or "core"
-                import shutil
-                from pathlib import Path as _Path
-
-                engine_onto: _Path | None = None
-
-                # If pipeline uses engine-relative path like "configs/ontology/academic.yaml",
-                # resolve it against the engine root.
-                if onto_ref_str.endswith((".yaml", ".yml", ".owl")) or "/" in onto_ref_str or "\\" in onto_ref_str:
-                    cand = _Path(onto_ref_str)
-                    if cand.is_absolute():
-                        engine_onto = cand if cand.exists() else None
-                    else:
-                        engine_onto = (settings.engine_root / cand).resolve()
-                        if not engine_onto.exists():
-                            engine_onto = None
-
-                # Otherwise treat as slug and look in configs/ontology/{slug}.yaml
-                if engine_onto is None:
-                    engine_onto = settings.engine_root / "configs" / "ontology" / f"{onto_ref_str}.yaml"
-                    if not engine_onto.exists():
-                        engine_onto = settings.engine_root / "configs" / "ontology" / "core.yaml"
-
-                if engine_onto.exists():
+                slug = onto_ref_str.replace(".yaml", "").replace(".yml", "").split("/")[-1]
+                
+                candidates = [
+                    settings.engine_root / onto_ref_str,
+                    settings.engine_root / f"{onto_ref_str}.yaml",
+                    settings.engine_root / "configs" / "ontology" / f"{slug}.yaml",
+                    settings.engine_root / "configs" / "ontology" / "core.yaml",
+                ]
+                
+                engine_onto = None
+                for cand in candidates:
+                    if cand.is_file():
+                        engine_onto = cand
+                        break
+                
+                if engine_onto and engine_onto.exists():
                     out_name = engine_onto.name
                     out_path = onto_dir / out_name
 
@@ -571,7 +570,7 @@ async def _update_step(job_id: str, step_name: str, status: str, row_count: Unio
             "jobId": job_id,
             "stepName": step_name,
             "status": status,
-            "rowCount": row_count,
+            "rowCount": row_count if row_count is not None else 0,
             "timestamp": int(time.time() * 1000),
         })
     except Exception:

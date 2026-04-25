@@ -37,10 +37,30 @@ def get_manifest_fingerprint(project_root: Path, manifest_path: str = "rail.yaml
     return hashlib.sha256(content).hexdigest()
 
 
-def resolve_pipeline_slug(project_root: Path, manifest_path: str = "rail.yaml") -> str:
-    content = (project_root / manifest_path).read_text(encoding="utf-8")
-    manifest = parse_manifest_content(content)
-    return manifest.hydration.default_pipeline or "default"
+def resolve_pipeline_slug(project: dict, project_root: Path) -> str:
+    # 1. Check if project record has a hardcoded pipeline
+    if project.get("pipelineConfigSlug"):
+        return str(project["pipelineConfigSlug"])
+    
+    # 2. Check for local pipeline files in .ontology/pipelines/
+    pipelines_dir = project_root / ".ontology" / "pipelines"
+    if pipelines_dir.exists():
+        candidates = [f.stem for f in pipelines_dir.glob("*.yaml")]
+        # Prefer specific slugs in order
+        for preferred in (f"{project.get('slug')}_hydration", "nj_hydration", "academic_hydration", "default"):
+            if preferred in candidates:
+                return preferred
+        if candidates:
+            return candidates[0]
+
+    # 3. Fallback to manifest if available
+    try:
+        manifest_path = project.get("manifestPath") or "rail.yaml"
+        content = (project_root / manifest_path).read_text(encoding="utf-8")
+        manifest = parse_manifest_content(content)
+        return manifest.hydration.default_pipeline or "default"
+    except Exception:
+        return "default"
 
 
 def artifact_files_exist(record: dict[str, Any]) -> bool:
@@ -87,7 +107,7 @@ async def get_hydration_status(
 ) -> dict[str, Any]:
     root = Path(project["localRepoPath"]).resolve()
     manifest_path = project.get("manifestPath") or "rail.yaml"
-    pipeline_slug = pipeline_slug or resolve_pipeline_slug(root, manifest_path)
+    pipeline_slug = pipeline_slug or resolve_pipeline_slug(project, root)
     current_device_id = get_device_id()
     current_commit = get_repo_commit(root)
     manifest_fingerprint = get_manifest_fingerprint(root, manifest_path)
@@ -123,7 +143,21 @@ async def get_hydration_status(
     stale_local = any(item["filesExist"] and not item["isReusable"] for item in current_device_matches)
     hydrated_elsewhere = any(item["filesExist"] for item in other_device_matches)
 
-    if reusable_local:
+    # Check for active jobs
+    active_jobs = await convex.query(
+        "jobs:listByProject",
+        {"projectId": project["_id"], "limit": 10},
+    ) or []
+    
+    running_job = next(
+        (j for j in active_jobs if j.get("status") in ["queued", "started", "running"] 
+         and j.get("pipelineSlug") == pipeline_slug),
+        None
+    )
+
+    if running_job:
+        state = "hydrating"
+    elif reusable_local:
         state = "hydrated_on_this_device"
     elif stale_local:
         state = "stale_on_this_device"
@@ -142,6 +176,7 @@ async def get_hydration_status(
         "reusableArtifact": reusable_local,
         "currentDeviceArtifacts": current_device_matches,
         "otherDeviceArtifacts": other_device_matches,
+        "runningJobId": running_job.get("_id") if running_job else None,
         "projectRoot": str(root),
         "manifestPath": _safe_relpath(root / manifest_path, root),
     }
