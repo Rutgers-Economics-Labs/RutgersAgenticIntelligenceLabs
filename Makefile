@@ -1,7 +1,7 @@
-.PHONY: help install install-api install-engine install-agent-tools \
-        dev api b \
+.PHONY: help install setup install-api install-engine install-web install-agent-tools \
+        dev api web frontend run \
         hydrate hydrate-pipeline hydrate-academic \
-        kill kill-api \
+        kill kill-api kill-web kill-all \
         seed \
         test \
         deploy-api \
@@ -11,6 +11,7 @@
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 VENV     := $(ROOT_DIR).venv
 VENV_PY  := $(VENV)/bin/python
+
 # Same effect as `source .venv/bin/activate`: this interpreter + PATH for all recipes.
 ifneq ($(wildcard $(VENV_PY)),)
 export VIRTUAL_ENV := $(abspath $(VENV))
@@ -19,10 +20,14 @@ PYTHON            := $(abspath $(VENV_PY))
 else
 PYTHON            := python3
 endif
+
 API_DIR  := $(ROOT_DIR)packages/api
 ENG_DIR  := $(ROOT_DIR)packages/engine
+WEB_DIR  := $(ROOT_DIR)apps/web
 
 API_PORT := 8000
+WEB_PORT := 3000
+
 PIPELINE           := configs/pipelines/nj_hydration.yaml
 ACADEMIC_PIPELINE  := configs/pipelines/academic_hydration.yaml
 
@@ -43,46 +48,44 @@ endef
 # ─────────────────────────────────────────────────────────────────────────────
 help:
 	@echo ""
-	@echo "  RAIL Platform — available targets"
+	@echo "  RAIL Platform — Command Center"
 	@echo ""
-	@echo "  Setup"
-	@echo "    (optional) python3 -m venv .venv   — Makefile uses .venv when present"
-	@echo "    make install          Install all dependencies (api + engine)"
+	@echo "  🚀 Setup & Installation"
+	@echo "    make setup            One-step install (API + Engine + Web + Seeding)"
+	@echo "    make install          Install all dependencies (api + engine + web)"
 	@echo "    make install-api      Install FastAPI service deps"
 	@echo "    make install-engine   Install Streamlit/engine deps"
-	@echo "    make install-agent-tools Install CLI tools used by agents (grepai + Gemini CLI)"
+	@echo "    make install-web      Install Next.js frontend deps"
 	@echo ""
-	@echo "  Development"
-	@echo "    make dev              Start FastAPI only (foreground)"
+	@echo "  💻 Development"
+	@echo "    make run              Start both API and Web (background logs: *.log)"
 	@echo "    make api              Start FastAPI only (foreground)"
-	@echo "    make kill             Kill FastAPI"
-	@echo "    make kill-api         Kill FastAPI on port $(API_PORT)"
+	@echo "    make web              Start Next.js Command Center (foreground)"
+	@echo "    make frontend         Alias for 'make web'"
 	@echo ""
-	@echo "  Ontology"
+	@echo "  🛑 Control"
+	@echo "    make kill-all         Kill both API and Web servers"
+	@echo "    make kill-api         Kill process on :$(API_PORT)"
+	@echo "    make kill-web          Kill process on :$(WEB_PORT)"
+	@echo ""
+	@echo "  🧠 Ontology & Data"
 	@echo "    make hydrate          Run default pipeline (nj_hydration)"
-	@echo "    make hydrate-academic Academic ontology (CSV demo → academic.db / academic_populated.owl)"
-	@echo "    make hydrate-pipeline PIPELINE=path/to/pipeline.yaml"
-	@echo "    make seed             Seed backend config state"
+	@echo "    make seed             Seed Convex backend with default configs"
 	@echo "    make cache-clear      Delete cached API responses"
 	@echo ""
-	@echo "  Testing"
-	@echo "    make test             Run all Python tests (API + engine)"
-	@echo ""
-	@echo "  Deploy"
-	@echo "    make deploy-api       Build and push Docker image to Railway"
-	@echo ""
-	@echo "  Git"
-	@echo "    make push             Push current branch to both origin and personal"
-	@echo ""
-	@echo "  Cleanup"
-	@echo "    make clean            Delete generated ontology files + cache"
+	@echo "  🧪 Testing & Maintenance"
+	@echo "    make test             Run all Python tests"
+	@echo "    make clean            Reset ontology state + clear cache"
 	@echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Install
+# Setup
 # ─────────────────────────────────────────────────────────────────────────────
 
-install: install-api install-engine install-agent-tools
+setup: install seed
+	@echo "→ Setup complete. Run 'make run' to start the platform."
+
+install: install-api install-engine install-web install-agent-tools
 
 install-api:
 	@echo "→ Installing FastAPI deps…"
@@ -93,16 +96,25 @@ install-engine:
 	@echo "→ Installing engine deps…"
 	$(PYTHON) -m pip install owlready2 pandas streamlit pyvis requests openpyxl rdflib pyyaml beautifulsoup4 lxml duckdb aioboto3 litellm matplotlib numpy pdfplumber scikit-learn statsmodels python-multipart playwright
 
+install-web:
+	@echo "→ Installing Next.js deps…"
+	cd $(WEB_DIR) && npm install
+
 install-agent-tools:
 	@echo "→ Installing agent CLI tools…"
-	brew install yoanbernabeu/tap/grepai
-	npm install -g @google/gemini-cli
-	@echo "  Installed grepai and Gemini CLI."
-	@echo "  Note: Gemini CLI still requires authentication or API credentials on each machine."
+	brew install yoanbernabeu/tap/grepai || true
+	npm install -g @google/gemini-cli || true
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Development servers
+# Execution
 # ─────────────────────────────────────────────────────────────────────────────
+
+run: kill-all
+	@echo "→ Starting RAIL Platform (Logs: backend.log, frontend.log)..."
+	@nohup make api > backend.log 2>&1 &
+	@nohup make web > frontend.log 2>&1 &
+	@echo "  API: http://localhost:$(API_PORT)"
+	@echo "  WEB: http://localhost:$(WEB_PORT)"
 
 dev: api
 
@@ -111,16 +123,30 @@ api:
 	cd $(API_DIR) && $(api_env) \
 	  $(PYTHON) -m uvicorn app.main:app --port $(API_PORT) --reload
 
-b: api
+web:
+	@echo "→ Starting Next.js on :$(WEB_PORT)…"
+	cd $(WEB_DIR) && npm run dev
 
-kill: kill-api
+frontend: web
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lifecycle
+# ─────────────────────────────────────────────────────────────────────────────
+
+kill-all: kill-api kill-web
 
 kill-api:
 	@lsof -ti :$(API_PORT) | xargs kill -9 2>/dev/null \
 	  && echo "  API on :$(API_PORT) killed." || echo "  Nothing on :$(API_PORT)."
 
+kill-web:
+	@lsof -ti :$(WEB_PORT) | xargs kill -9 2>/dev/null \
+	  && echo "  Web on :$(WEB_PORT) killed." || echo "  Nothing on :$(WEB_PORT)."
+
+kill: kill-api
+
 # ─────────────────────────────────────────────────────────────────────────────
-# Ontology hydration
+# Ontology
 # ─────────────────────────────────────────────────────────────────────────────
 
 hydrate:
@@ -143,25 +169,17 @@ cache-clear:
 	@echo "  Cache cleared."
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tests
+# Testing & Git
 # ─────────────────────────────────────────────────────────────────────────────
 
 test:
 	@echo "→ Running Python tests (API + engine)…"
 	$(PYTHON) -m pytest -v
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Deploy
-# ─────────────────────────────────────────────────────────────────────────────
-
 deploy-api:
 	@echo "→ Deploying API to Railway (push triggers auto-deploy)…"
 	@echo "  Ensure railway.json is committed and Railway is linked to this repo."
 	@echo "  Run: railway up   (or just push — Railway deploys on every push)"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Git
-# ─────────────────────────────────────────────────────────────────────────────
 
 push:
 	git -C $(ROOT_DIR) push origin HEAD
@@ -171,7 +189,7 @@ push:
 # Cleanup
 # ─────────────────────────────────────────────────────────────────────────────
 
-clean: kill
+clean: kill-all
 	rm -f $(ENG_DIR)/cache/*.json
 	rm -f $(ENG_DIR)/ontology/onto.db $(ENG_DIR)/ontology/onto.db-journal
 	rm -f $(ENG_DIR)/ontology/populated_ontology.owl

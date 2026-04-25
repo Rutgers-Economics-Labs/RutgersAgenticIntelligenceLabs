@@ -8,38 +8,35 @@ Inspired by Palantir Foundry's Ontology layer, built on [owlready2](https://owlr
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Initial Setup
+Run the one-step setup to install all dependencies (API, Engine, and Web) and seed the initial configuration:
 
 ```bash
-pip install owlready2 pandas streamlit pyvis requests openpyxl rdflib pyyaml
+make setup
 ```
 
-### 2. Set your API keys
+### 2. Set API Keys
+Ensure your `.env` file (or environment) has the necessary keys:
 
 ```bash
 export FRED_API_KEY=your_key_here
 ```
 
-### 3. Hydrate the ontology
+### 3. Start the Platform
+Launch both the FastAPI backend and the Next.js Command Center:
 
 ```bash
-cd RutgersAgenticIntelligenceLabs
-python hydrate.py
+make run
 ```
 
-This fetches Census geographic data and FRED economic time-series, builds an OWL knowledge graph, and saves it to `ontology/onto.db` (SQLite) and `ontology/populated_ontology.owl` (RDF/XML).
+- **API**: [http://localhost:8000](http://localhost:8000)
+- **Command Center**: [http://localhost:3000](http://localhost:3000)
 
-Default pipeline loads:
-- **52** US states (Census 2020)
-- **83** NJ + NY counties (Census 2020)
-- **1,579** NJ + NY municipalities (Census 2020)
-- **270** FRED economic measures (unemployment, housing, income)
-- **5** sample individuals
-
-### 4. Explore the ontology
+### 4. Hydrate the Ontology (Optional)
+If you need to fetch fresh data and rebuild the knowledge graph:
 
 ```bash
-streamlit run app.py
+make hydrate
 ```
 
 ---
