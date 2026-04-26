@@ -147,14 +147,19 @@ def _planner_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "update_task",
-                "description": "Update task status or metadata.",
+                "description": "Update task status, description, or metadata. Always use this instead of writing files directly.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "task_id": {"type": "string"},
-                        "status": {"type": "string"},
-                        "approval_state": {"type": "string"},
+                        "title": {"type": "string"},
+                        "description": {"type": "string"},
+                        "status": {"type": "string", "enum": ["backlog", "ready", "awaiting_approval", "running", "blocked", "review", "done", "cancelled"]},
+                        "agent_role": {"type": "string"},
                         "runner": {"type": "string"},
+                        "approval_state": {"type": "string"},
+                        "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                        "depends_on_task_ids": {"type": "array", "items": {"type": "string"}},
                     },
                     "required": ["task_id"],
                 },
@@ -212,6 +217,27 @@ def _planner_tools() -> list[dict[str, Any]]:
             },
         },
     ]
+
+
+async def _git_commit_and_push(project: dict[str, Any], message: str = "chore(planner): sync plan files") -> None:
+    """Commit and push any changes the planner wrote to the project repo."""
+    import logging
+    log = logging.getLogger(__name__)
+    root = planner_service.project_root_from_record(project)
+    if root is None or not root.is_dir():
+        return
+    if not (root / ".git").is_dir():
+        return
+    try:
+        proc = await asyncio.create_subprocess_shell(
+            f'git add -A && git diff --cached --quiet || git commit -m "{message}" && git push 2>&1 || true',
+            cwd=str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=30)
+    except Exception as exc:
+        log.warning("planner git push failed for %s: %s", root, exc)
 
 
 async def _run_shell(command: str, cwd: Path) -> dict[str, Any]:
@@ -301,9 +327,14 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         await planner_service.update_task(
             task_id,
             project=project,
+            title=args.get("title"),
+            description=args.get("description"),
             status=args.get("status"),
             approval_state=args.get("approval_state"),
             runner=args.get("runner"),
+            agentRole=args.get("agent_role"),
+            acceptanceCriteria=args.get("acceptance_criteria"),
+            dependsOnTaskIds=args.get("depends_on_task_ids"),
         )
         tasks = await planner_service.list_tasks(board["_id"], project=project)
         await planner_service.sync_planner_files(project, board)
@@ -515,6 +546,7 @@ async def stream_planner_turn(
         )
 
     await planner_service.sync_planner_files(project, board)
+    await _git_commit_and_push(project, "chore(planner): sync plan and task files")
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     yield {"type": "done", "assistant_message": assistant_text, "tasks": tasks, "thread_id": thread_id}
 
