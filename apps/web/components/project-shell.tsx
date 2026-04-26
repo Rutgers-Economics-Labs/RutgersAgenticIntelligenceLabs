@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ReactNode, useEffect, useState } from "react";
+import { AgentMonitor } from "@/components/agent-monitor";
 
 const NAV = [
   { label: "Overview",  suffix: "",         key: "overview"  },
@@ -76,7 +77,7 @@ export function ProjectShell({
 
         {/* Brand */}
         <div style={{ padding: "12px 12px 10px", borderBottom: "1px solid var(--border)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none" }}>
             <img
               src="/rel-logo.jpeg"
               alt="Rutgers Economics Labs"
@@ -101,7 +102,7 @@ export function ProjectShell({
                 RAIL
               </div>
             </div>
-          </div>
+          </Link>
         </div>
 
         {/* Project */}
@@ -159,6 +160,11 @@ export function ProjectShell({
               </span>
             </Link>
           ))}
+        </div>
+
+        {/* Live agent monitor */}
+        <div style={{ borderBottom: "1px solid var(--border)" }}>
+          <AgentMonitor slug={slug} />
         </div>
 
         {/* Bottom controls */}

@@ -1,11 +1,10 @@
 """
-Research subagent powered by Gemini + Google Search grounding.
+Research subagent powered by Gemini 2.5 Flash + Google Search grounding.
 
 The planner spawns one subagent per focus area. Each subagent:
-  1. Uses Gemini with Google Search to research a specific topic
-  2. Runs multiple agentic turns (search → read → refine → write)
-  3. Writes structured findings to research/findings/{slug}/findings.md
-  4. Returns a summary dict for the planner to include in its response
+  1. Uses Gemini with live Google Search to research a specific topic
+  2. Writes structured findings to research/findings/{slug}/findings.md
+  3. Returns a summary dict for the planner to include in its response
 
 Usage (from planner_runtime):
     results = await run_research_agents(project, agents=[
@@ -18,44 +17,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-import textwrap
 from pathlib import Path
 from typing import Any
 
-import google.generativeai as genai
-import google.ai.generativelanguage as glm
+from google import genai
+from google.genai import types
 
 from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-_FINDINGS_SCHEMA = """\
-# {focus} — Research Findings
-
-## Summary
-{summary}
-
-## Data Sources Found
-
-{sources}
-
-## Access & Authentication
-{access}
-
-## Data Formats
-{formats}
-
-## Notes
-{notes}
-
-## Search Sources
-{citations}
-"""
-
 _SYSTEM_PROMPT = """\
-You are a focused research agent working on an economic research project.
-Your job is to thoroughly research ONE specific data source or topic.
-Use Google Search to find accurate, up-to-date information.
+You are a focused research agent working on an economic policy research project.
+Your job is to thoroughly research ONE specific data source or topic using Google Search.
 
 After researching, write a structured findings document covering:
 1. What this data source is and what it contains
@@ -65,30 +39,17 @@ After researching, write a structured findings document covering:
 5. Sample fields or schema if available
 6. Any known limitations or quirks
 
-Be specific and factual. Include actual URLs. If you find conflicting info, note it.
-Do not hallucinate URLs — only include ones you confirmed via search.
+Be specific and factual. Include actual URLs you found via search.
+Do not hallucinate URLs — only include ones confirmed via search results.
+Structure your response with clear markdown headings.
 """
 
 
-def _make_model() -> genai.GenerativeModel:
+def _make_client() -> genai.Client:
     api_key = settings.google_api_key
     if not api_key:
         raise RuntimeError("GOOGLE_API_KEY is not set — needed for Gemini research subagents")
-    genai.configure(api_key=api_key)
-
-    google_search_tool = glm.Tool(
-        google_search_retrieval=glm.GoogleSearchRetrieval(
-            dynamic_retrieval_config=glm.DynamicRetrievalConfig(
-                mode=glm.DynamicRetrievalConfig.Mode.MODE_DYNAMIC,
-                dynamic_threshold=0.3,
-            )
-        )
-    )
-    return genai.GenerativeModel(
-        model_name="gemini-2.0-flash",
-        tools=[google_search_tool],
-        system_instruction=_SYSTEM_PROMPT,
-    )
+    return genai.Client(api_key=api_key)
 
 
 def _slug(text: str) -> str:
@@ -99,14 +60,13 @@ def _slug(text: str) -> str:
 
 
 def _extract_citations(response) -> str:
-    """Pull grounding source URLs from the Gemini response metadata."""
     lines: list[str] = []
     try:
-        for candidate in response.candidates:
+        for candidate in (response.candidates or []):
             meta = getattr(candidate, "grounding_metadata", None)
             if not meta:
                 continue
-            for chunk in getattr(meta, "grounding_chunks", []):
+            for chunk in getattr(meta, "grounding_chunks", []) or []:
                 web = getattr(chunk, "web", None)
                 if web:
                     uri = getattr(web, "uri", "")
@@ -128,31 +88,35 @@ async def _run_single_agent(
     """Run one Gemini research subagent synchronously in a thread pool."""
 
     def _sync_run() -> dict[str, Any]:
-        model = _make_model()
-        chat = model.start_chat()
-
+        client = _make_client()
         query_list = "\n".join(f"- {q}" for q in queries)
-        prompt = textwrap.dedent(f"""
-            Research topic: **{focus}**
-
-            {("Additional context:\n" + extra_context + "\n") if extra_context else ""}
-            Please research the following questions:
-            {query_list}
-
-            Use Google Search to find accurate information. After gathering information,
-            write a comprehensive findings document following the structured format in your instructions.
-            Include specific URLs, API endpoints, and access details.
-        """).strip()
+        prompt_parts = [
+            f"Research topic: **{focus}**\n",
+        ]
+        if extra_context:
+            prompt_parts.append(f"Additional context:\n{extra_context}\n")
+        prompt_parts.append(
+            f"Please research the following questions:\n{query_list}\n\n"
+            "Use Google Search to find accurate information. Write a comprehensive "
+            "findings document with specific URLs, API endpoints, and access details."
+        )
+        prompt = "\n".join(prompt_parts)
 
         try:
-            response = chat.send_message(prompt)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=_SYSTEM_PROMPT,
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                ),
+            )
             text = response.text or ""
             citations = _extract_citations(response)
         except Exception as exc:
             log.error("Gemini research agent failed for '%s': %s", focus, exc)
             return {"focus": focus, "error": str(exc), "output_path": None}
 
-        # Write findings to disk
         slug = _slug(focus)
         findings_dir = output_dir / slug
         findings_dir.mkdir(parents=True, exist_ok=True)
@@ -163,8 +127,6 @@ async def _run_single_agent(
             f"---\n## Search Sources\n{citations}\n",
             encoding="utf-8",
         )
-
-        # Also save raw response for debugging
         (findings_dir / "raw_response.txt").write_text(text, encoding="utf-8")
 
         summary = text[:400].replace("\n", " ").strip()
@@ -190,7 +152,7 @@ async def run_research_agents(
     Run multiple research subagents in parallel.
 
     Each item in `agents` should have:
-      - focus: str   — topic name (used as folder name too)
+      - focus: str          — topic name (used as folder name too)
       - queries: list[str]  — specific questions to research
 
     Returns list of result dicts with focus, output_path, summary, error.

@@ -1547,3 +1547,67 @@ async def trigger_project_runner_session_poll(
         project_id=project["_id"],
     )
     return {"ok": True, "message": "Polling started in background"}
+
+
+@router.get("/{slug}/agents/active")
+async def list_active_agents(slug: str):
+    """Return currently active (queued/running/awaiting_*) sessions for this project."""
+    project = await planner_service.get_project_by_slug(slug)
+    sessions = await running_agent_service.list_project_running_agents(
+        project["_id"],
+        active_only=True,
+        limit=50,
+    )
+    return {
+        "agents": [
+            {
+                "sessionId": s.get("_id") or s.get("sessionId"),
+                "role": s.get("role"),
+                "runner": s.get("runner"),
+                "status": s.get("status"),
+                "title": s.get("title"),
+                "startedAt": s.get("startedAt"),
+                "taskId": s.get("taskId"),
+            }
+            for s in sessions
+        ]
+    }
+
+
+class ResearchAgentSpec(BaseModel):
+    focus: str
+    queries: list[str] = []
+
+
+class RunResearchAgentsRequest(BaseModel):
+    agents: list[ResearchAgentSpec]
+    extra_context: str = ""
+    output_subdir: str = "research/findings"
+
+
+@router.post("/{slug}/research-agents/run")
+async def run_research_agents_direct(slug: str, data: RunResearchAgentsRequest, background_tasks: BackgroundTasks):
+    """Directly trigger Gemini research subagents and commit findings to repo."""
+    from app.services.research_subagent import run_research_agents
+
+    project = await planner_service.get_project_by_slug(slug)
+
+    async def _run():
+        results = await run_research_agents(
+            project,
+            agents=[a.model_dump() for a in data.agents],
+            output_subdir=data.output_subdir,
+            extra_context=data.extra_context,
+        )
+        from app.services.planner_runtime import _git_commit_and_push
+        await _git_commit_and_push(
+            project,
+            f"feat(research): add findings from {len(results)} research subagent(s)",
+        )
+
+    background_tasks.add_task(_run)
+    return {
+        "ok": True,
+        "message": f"Launched {len(data.agents)} research agent(s) in background",
+        "agents": [a.focus for a in data.agents],
+    }

@@ -137,6 +137,21 @@ export async function fetchRunnerEvents(runner: string, sessionId: string): Prom
   return getJson(`/runners/${runner}/sessions/${encodeURIComponent(sessionId)}/events`);
 }
 
+export async function fetchActiveAgents(slug: string): Promise<{ agents: Array<{ sessionId: string; role: string; runner: string; status: string; title: string; startedAt?: number; taskId?: string }> }> {
+  return getJson(`/projects/${slug}/agents/active`);
+}
+
+export async function runResearchAgents(
+  slug: string,
+  agents: Array<{ focus: string; queries: string[] }>,
+  extraContext?: string,
+): Promise<{ ok: boolean; message: string; agents: string[] }> {
+  return postJson(`/projects/${slug}/research-agents/run`, {
+    agents,
+    extra_context: extraContext ?? "",
+  });
+}
+
 export async function fetchOntologyClasses(projectId: string): Promise<OntologyClassesResponse> {
   const response = await fetch(`${API_ROOT}/ontology/classes?projectId=${encodeURIComponent(projectId)}`, {
     cache: "no-store"
