@@ -535,7 +535,23 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     write_repo_files(repo_root, preview["repoFiles"])
     _git_init(repo_root)
 
-    git_repo = infer_github_repo(data.gitRepoUrl) if data.gitRepoUrl else None
+    # Auto-create GitHub repo if no URL provided
+    git_repo_url = data.gitRepoUrl
+    if not git_repo_url:
+        try:
+            repo_name = f"RAIL-{slug}"
+            created = await GitHubService().create_repo(
+                name=repo_name,
+                description=project_meta.get("description", ""),
+                private=True,
+            )
+            git_repo_url = created["clone_url"].replace("https://", "https://x-access-token:placeholder@")
+            git_repo_url = created["html_url"].rstrip("/") + ".git"
+            git_repo_url = f"https://github.com/{created['full_name']}"
+        except Exception:
+            git_repo_url = None
+
+    git_repo = infer_github_repo(git_repo_url) if git_repo_url else None
     project_id = await convex.mutation(
         "projects:create",
         {
@@ -543,7 +559,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
             "slug": slug,
             "description": project_meta["description"],
             "approach": project_meta.get("approach", "ontology-first"),
-            "gitRepoUrl": data.gitRepoUrl,
+            "gitRepoUrl": git_repo_url,
             "localRepoPath": str(repo_root),
             "manifestPath": "rail.yaml",
         },
@@ -624,6 +640,24 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     rail_path = repo_root / "rail.yaml"
     existing_rail = rail_path.read_text(encoding="utf-8") if rail_path.exists() else None
     rail_path.write_text(render_rail_manifest(project, existing_rail), encoding="utf-8")
+
+    # Push all local repo files to GitHub as the initial commit
+    if git_repo:
+        try:
+            repo_files: list[dict] = []
+            for file_path in repo_root.rglob("*"):
+                if file_path.is_file() and ".git" not in file_path.parts:
+                    rel = file_path.relative_to(repo_root).as_posix()
+                    try:
+                        content = file_path.read_text(encoding="utf-8")
+                        repo_files.append({"path": rel, "content": content})
+                    except Exception:
+                        pass
+            if repo_files:
+                await GitHubService().commit_files(git_repo, data.defaultBranch, repo_files, "chore: initial project scaffold from RAIL brief")
+        except Exception:
+            pass
+
     await planner_service.ensure_planner_thread(project_id)
     board = await planner_service.ensure_main_board(project)
     await planner_service.append_planner_message(

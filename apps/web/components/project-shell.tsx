@@ -5,6 +5,7 @@ import { ReactNode, useEffect, useState } from "react";
 
 const NAV = [
   { label: "Overview",  suffix: "",         key: "overview"  },
+  { label: "Agent",     suffix: "/agent",   key: "agent"     },
   { label: "Launch",    suffix: "/launch",  key: "launch"    },
   { label: "Planner",   suffix: "/planner", key: "planner"   },
   { label: "Runs",      suffix: "/runs",    key: "sessions"  },

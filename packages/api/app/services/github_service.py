@@ -54,6 +54,39 @@ class GitHubService:
             resp.raise_for_status()
             return resp.json()["token"]
 
+    async def get_org_installation_token(self, org: str) -> str:
+        """Generate a short-lived installation token scoped to an org (for repo creation)."""
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{self.BASE}/orgs/{org}/installation",
+                headers={"Authorization": f"Bearer {self._make_jwt()}",
+                         "Accept": "application/vnd.github+json"},
+            )
+            resp.raise_for_status()
+            installation_id = resp.json()["id"]
+            resp2 = await client.post(
+                f"{self.BASE}/app/installations/{installation_id}/access_tokens",
+                headers={"Authorization": f"Bearer {self._make_jwt()}",
+                         "Accept": "application/vnd.github+json"},
+            )
+            resp2.raise_for_status()
+            return resp2.json()["token"]
+
+    async def create_repo(self, name: str, description: str = "", private: bool = True, org: str | None = None) -> dict:
+        """Create a new GitHub repo under the org. Returns {full_name, html_url, clone_url}."""
+        from app.core.config import settings
+        target_org = org or settings.github_app_org
+        token = await self.get_org_installation_token(target_org)
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self.BASE}/orgs/{target_org}/repos",
+                headers={"Authorization": f"token {token}", "Accept": "application/vnd.github+json"},
+                json={"name": name, "description": description, "private": private, "auto_init": False},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return {"full_name": data["full_name"], "html_url": data["html_url"], "clone_url": data["clone_url"]}
+
     async def get_file(self, repo: str, path: str, ref: str = "main") -> str:
         """Fetch file content from GitHub Contents API."""
         resp = await self._request("GET", repo, f"/contents/{path}", params={"ref": ref})

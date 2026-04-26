@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     github_app_id: str = Field(default="", validation_alias="GITHUB_APP_ID")
     github_app_private_key: str = Field(default="", validation_alias="GITHUB_APP_PRIVATE_KEY")
     github_webhook_secret: str = Field(default="", validation_alias="GITHUB_WEBHOOK_SECRET")
+    github_app_org: str = Field(default="Rutgers-Economics-Labs", validation_alias="GITHUB_APP_ORG")
 
     # Jules runner
     jules_api_key: str = Field(default="", validation_alias="JULES_API_KEY")

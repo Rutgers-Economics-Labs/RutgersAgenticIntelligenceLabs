@@ -121,6 +121,10 @@ export async function fetchRepoPath(slug: string, path: string): Promise<RepoPat
   return getJson(`/projects/${slug}/repo/${trimmed}`);
 }
 
+export async function createProjectFromBrief(brief: string): Promise<{ project: { slug: string; name: string }; gitRepoUrl?: string }> {
+  return postJson("/projects/from-brief/create", { brief });
+}
+
 export async function fetchOntologyClasses(projectId: string): Promise<OntologyClassesResponse> {
   const response = await fetch(`${API_ROOT}/ontology/classes?projectId=${encodeURIComponent(projectId)}`, {
     cache: "no-store"

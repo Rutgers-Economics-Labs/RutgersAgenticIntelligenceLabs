@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { ProjectCatalogAction } from "@/components/project-catalog-actions";
 import { StatusPill } from "@/components/status-pill";
 import { fetchProjectCatalog } from "@/lib/api";
@@ -70,14 +71,30 @@ export default async function LandingPage() {
           }}>
             Project Catalog
           </span>
-          <span style={{
-            marginLeft: "auto",
-            fontFamily: "JetBrains Mono, monospace",
-            fontSize: 10,
-            color: "var(--muted)",
-          }}>
-            {process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1"}
-          </span>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
+            <span style={{
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: 10,
+              color: "var(--muted)",
+            }}>
+              {process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1"}
+            </span>
+            <Link
+              href="/projects/new"
+              style={{
+                padding: "4px 10px",
+                border: "1px solid var(--border-strong)",
+                fontFamily: "JetBrains Mono, monospace",
+                fontSize: 10,
+                letterSpacing: "0.1em",
+                textTransform: "uppercase",
+                color: "var(--fg)",
+                background: "var(--panel)",
+              }}
+            >
+              + New
+            </Link>
+          </div>
         </div>
 
         <div style={{ padding: "8px 0" }}>
