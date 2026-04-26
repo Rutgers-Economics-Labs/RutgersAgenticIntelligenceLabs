@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from app.services import llm_service, planner_service
 from app.services import running_agent_service
@@ -391,6 +391,100 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         return {"sessions": sessions}
 
     return {"error": f"Unknown planner tool: {name}"}
+
+
+async def stream_planner_turn(
+    *,
+    project: dict[str, Any],
+    user_message: str,
+    history: list[dict[str, str]] | None = None,
+    model: str | None = None,
+    persist: bool = True,
+) -> AsyncGenerator[dict, None]:
+    """
+    Streaming version of run_planner_turn. Yields SSE-compatible event dicts:
+      {"type": "text_delta",   "content": str}
+      {"type": "tool_call",    "id": str, "name": str, "args": dict}
+      {"type": "tool_result",  "id": str, "name": str, "result": any}
+      {"type": "done",         "assistant_message": str, "tasks": list}
+    """
+    role_summaries = [summarize_role_config(item) for item in list_role_runtime_configs(project)]
+    skills = read_project_skills(project)
+    all_tools = [
+        *_planner_tools(),
+        *__import__("app.routers.project_agent", fromlist=["PROJECT_TOOLS_MERGED"]).PROJECT_TOOLS_MERGED,
+    ]
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": _planner_system_prompt(project, role_summaries, skills)},
+    ]
+    for item in history or []:
+        messages.append({"role": item["role"], "content": item["content"]})
+    messages.append({"role": "user", "content": user_message})
+
+    if persist:
+        await planner_service.append_planner_message(
+            project=project, role="user", content=user_message, message_type="chat",
+        )
+
+    assistant_text = ""
+
+    for _ in range(PLANNER_MAX_TURNS):
+        turn_tool_calls: list[dict] = []
+        turn_text = ""
+
+        async for event in llm_service.stream_agent(messages, all_tools, model=model):
+            if event["type"] == "text_delta":
+                turn_text += event["content"]
+                yield event
+            elif event["type"] == "tool_call":
+                turn_tool_calls.append(event)
+                yield event
+
+        if turn_text:
+            assistant_text = turn_text
+
+        # Build assistant message to append to history
+        raw_tool_calls = [
+            {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": json.dumps(tc["args"])}}
+            for tc in turn_tool_calls
+        ] if turn_tool_calls else None
+        messages.append({
+            "role": "assistant",
+            "content": turn_text or None,
+            "tool_calls": raw_tool_calls,
+        })
+
+        if not turn_tool_calls:
+            break
+
+        # Execute each tool and stream results
+        for tc in turn_tool_calls:
+            try:
+                result = await _execute_planner_tool(project, tc["name"], tc["args"])
+            except Exception as exc:
+                result = {"error": str(exc)}
+            yield {"type": "tool_result", "id": tc["id"], "name": tc["name"], "result": result}
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc["id"],
+                "content": json.dumps(result, default=str),
+            })
+
+    board = await planner_service.ensure_main_board(project)
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
+
+    if not assistant_text.strip():
+        assistant_text = f"Done. {len(tasks)} task(s) on the board." if tasks else "Planner turn complete."
+
+    if persist and assistant_text:
+        await planner_service.append_planner_message(
+            project=project, role="assistant", content=assistant_text, message_type="chat",
+        )
+
+    await planner_service.sync_planner_files(project, board)
+    thread_id = await planner_service.ensure_planner_thread(project["_id"])
+    yield {"type": "done", "assistant_message": assistant_text, "tasks": tasks, "thread_id": thread_id}
 
 
 async def run_planner_turn(

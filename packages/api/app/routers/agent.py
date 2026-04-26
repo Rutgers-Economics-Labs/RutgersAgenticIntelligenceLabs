@@ -43,16 +43,19 @@ async def agent_chat(req: ChatRequest, project: str | None = Query(default=None)
         try:
             if project:
                 project_record = await planner_service.get_project_by_slug(project)
-                result = await planner_runtime.run_planner_turn(
+                assistant_message = ""
+                async for event in planner_runtime.stream_planner_turn(
                     project=project_record,
                     user_message=req.message,
                     history=req.history,
                     model=req.model,
                     persist=True,
-                )
-                if result.get("assistantMessage"):
-                    yield f"data: {json.dumps({'type': 'text_delta', 'content': result['assistantMessage']}, default=str)}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'new_messages': [{'role': 'assistant', 'content': result.get('assistantMessage', '')}]}, default=str)}\n\n"
+                ):
+                    if event["type"] == "done":
+                        assistant_message = event.get("assistant_message", "")
+                        yield f"data: {json.dumps({'type': 'done', 'new_messages': [{'role': 'assistant', 'content': assistant_message}]}, default=str)}\n\n"
+                    else:
+                        yield f"data: {json.dumps(event, default=str)}\n\n"
                 return
             async for event in agent_service.run_chat(
                 user_message=req.message,
