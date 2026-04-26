@@ -39,8 +39,10 @@ function TaskCard({ task }: { task: any }) {
       )}
       {task.acceptanceCriteria && task.acceptanceCriteria.length > 0 && (
         <ul style={{ marginTop: 8, paddingLeft: 14, fontSize: 12, color: "var(--muted)" }}>
-          {task.acceptanceCriteria.map((c: string, i: number) => (
-            <li key={i} style={{ marginBottom: 2 }}>{c}</li>
+          {task.acceptanceCriteria.map((c: unknown, i: number) => (
+            <li key={i} style={{ marginBottom: 2 }}>
+              {typeof c === "string" ? c : JSON.stringify(c)}
+            </li>
           ))}
         </ul>
       )}
