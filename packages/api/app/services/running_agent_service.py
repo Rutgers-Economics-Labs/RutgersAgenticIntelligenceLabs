@@ -31,7 +31,7 @@ async def create_running_agent(
             "taskId": task_id,
             "role": role,
             "runner": runtime_kind,
-            "externalSessionId": external_session_id,
+            "externalSessionId": external_session_id or "",
             "status": status,
             "sessionPath": session_path,
             "startedAt": int(time.time() * 1000),

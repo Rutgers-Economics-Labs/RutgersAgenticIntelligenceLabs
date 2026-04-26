@@ -216,6 +216,45 @@ def _planner_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "spawn_research_agents",
+                "description": (
+                    "Launch one or more Gemini-powered research subagents in parallel. "
+                    "Each agent uses Google Search to research a specific topic and writes findings "
+                    "to research/findings/{slug}/findings.md in the project repo. "
+                    "Use this to gather information about data sources, APIs, literature, or any "
+                    "topic before writing code or creating analysis tasks."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agents": {
+                            "type": "array",
+                            "description": "List of research agents to spawn in parallel",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "focus": {"type": "string", "description": "Topic name, e.g. 'PJM Data Miner 2 API'"},
+                                    "queries": {
+                                        "type": "array",
+                                        "items": {"type": "string"},
+                                        "description": "Specific questions to research, e.g. ['PJM Data Miner 2 API endpoint', 'PJM load data download format']",
+                                    },
+                                },
+                                "required": ["focus", "queries"],
+                            },
+                        },
+                        "extra_context": {
+                            "type": "string",
+                            "description": "Optional project context to give each subagent (research question, geography, time period, etc.)",
+                        },
+                    },
+                    "required": ["agents"],
+                },
+            },
+        },
     ]
 
 
@@ -452,6 +491,29 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         if task_id:
             await planner_service.update_task(task_id, project=project, approval_state="granted")
         return {"granted": True, "approvalId": approval_id, "taskId": task_id}
+
+    if name == "spawn_research_agents":
+        from app.services.research_subagent import run_research_agents
+        agent_specs = args.get("agents", [])
+        extra_context = args.get("extra_context", "")
+        if not agent_specs:
+            return {"error": "No agents specified"}
+        results = await run_research_agents(
+            project,
+            agents=agent_specs,
+            extra_context=extra_context,
+        )
+        # Commit findings to repo immediately
+        await _git_commit_and_push(project, f"feat(research): add findings from {len(results)} research subagent(s)")
+        successful = [r for r in results if not r.get("error")]
+        failed = [r for r in results if r.get("error")]
+        return {
+            "completed": len(successful),
+            "failed": len(failed),
+            "results": results,
+            "findings_dir": "research/findings/",
+            "note": "Findings written to repo and committed. Read each findings.md to synthesize a plan.",
+        }
 
     return {"error": f"Unknown planner tool: {name}"}
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    google_api_key: str = ""
+    google_api_key: str = Field(default="", validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY", "google_api_key"))
     openrouter_api_key: str = ""
 
     # GitHub App
