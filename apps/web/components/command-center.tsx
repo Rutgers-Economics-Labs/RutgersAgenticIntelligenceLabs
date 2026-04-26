@@ -59,6 +59,7 @@ export function AgentRunCard({ slug, session }: { slug: string; session: RunnerS
   );
 }
 
+/** @deprecated use ApprovalPanel from approval-panel.tsx (client component with Approve/Reject buttons) */
 export function ApprovalPanel({ approvals }: { approvals: Array<Record<string, unknown>> }) {
   if (!approvals.length) return <EmptyState title="No approvals pending" detail="Write-capable agent work will appear here before execution." />;
   return (

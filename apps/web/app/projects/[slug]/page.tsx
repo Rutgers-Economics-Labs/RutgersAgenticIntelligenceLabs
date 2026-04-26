@@ -4,7 +4,8 @@ import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
-import { AgentRunCard, ApprovalPanel, CommandShell, InlineStatus, MetricStrip, TaskBoard } from "@/components/command-center";
+import { AgentRunCard, CommandShell, InlineStatus, MetricStrip, TaskBoard } from "@/components/command-center";
+import { ApprovalPanel } from "@/components/approval-panel";
 
 export default async function ProjectHomePage({
   params
@@ -25,7 +26,7 @@ export default async function ProjectHomePage({
         <div style={{ padding: "12px 14px", fontWeight: 600 }}>{center.nextAction}</div>
       </SectionCard>
       <SectionCard eyebrow="Approvals" noPad>
-        <ApprovalPanel approvals={center.pendingApprovals} />
+        <ApprovalPanel approvals={center.pendingApprovals} slug={slug} />
       </SectionCard>
       <SectionCard eyebrow="Source Health" noPad>
         <InlineStatus label="sources" value={center.sourceSummary.count} />

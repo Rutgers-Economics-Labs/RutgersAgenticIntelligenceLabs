@@ -125,6 +125,18 @@ export async function createProjectFromBrief(brief: string): Promise<{ project: 
   return postJson("/projects/from-brief/create", { brief });
 }
 
+export async function resolveApproval(slug: string, approvalId: string, status: "granted" | "rejected", note?: string): Promise<Record<string, unknown>> {
+  return postJson(`/projects/${slug}/approvals/${encodeURIComponent(approvalId)}/resolve`, {
+    status,
+    grantedByUserId: "user",
+    resolutionNote: note ?? (status === "granted" ? "Approved via dashboard." : "Rejected via dashboard."),
+  });
+}
+
+export async function fetchRunnerEvents(runner: string, sessionId: string): Promise<{ session_id: string; runner: string; events: unknown[] }> {
+  return getJson(`/runners/${runner}/sessions/${encodeURIComponent(sessionId)}/events`);
+}
+
 export async function fetchOntologyClasses(projectId: string): Promise<OntologyClassesResponse> {
   const response = await fetch(`${API_ROOT}/ontology/classes?projectId=${encodeURIComponent(projectId)}`, {
     cache: "no-store"

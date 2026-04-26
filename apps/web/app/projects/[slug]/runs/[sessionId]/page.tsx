@@ -2,6 +2,7 @@ import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
 import { fetchRunnerSessionDetail } from "@/lib/api";
+import { RunnerLiveEvents } from "@/components/runner-live-events";
 import Link from "next/link";
 
 // ── Timeline row renderers ────────────────────────────────────────────
@@ -270,7 +271,7 @@ export default async function RunDetailPage({
   const { tab = "summary" } = await searchParams;
   const session = await fetchRunnerSessionDetail(slug, sessionId);
   const timeline: any[] = session.timeline ?? [];
-  const tabs = ["summary", "timeline", "files", "commands", "sources", "decisions"];
+  const tabs = ["summary", "live", "timeline", "files", "commands", "sources", "decisions"];
 
   function tabHref(name: string) {
     return `/projects/${slug}/runs/${sessionId}?tab=${name}`;
@@ -344,6 +345,13 @@ export default async function RunDetailPage({
               </div>
             )}
           </div>
+        )}
+
+        {tab === "live" && (
+          <RunnerLiveEvents
+            runner={session.runner ?? "jules"}
+            sessionId={sessionId}
+          />
         )}
 
         {tab === "timeline" && (
