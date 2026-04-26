@@ -1275,9 +1275,19 @@ async def resolve_project_approval(slug: str, approval_id: str, data: ApprovalRe
         approval_id=approval_id,
         status=data.status,
         granted_by_user_id=data.grantedByUserId,
+        resolution_note=data.resolutionNote,
     )
     if approval is None:
         raise HTTPException(status_code=404, detail="Approval not found")
+    # Sync task approval_state so planner and runner pick up the change
+    task_id = approval.get("taskId")
+    if task_id and data.status == "granted":
+        await planner_service.update_task(
+            task_id,
+            project=project,
+            status="ready",
+            approvalState="granted",
+        )
     return approval
 
 
