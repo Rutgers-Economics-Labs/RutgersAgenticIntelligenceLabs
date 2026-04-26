@@ -21,23 +21,25 @@ async def create_running_agent(
     session_path: str | None = None,
     status: str = "queued",
 ) -> str:
-    result = await convex.mutation(
-        "agent:createSession",
-        {
-            "title": title,
-            "model": f"runtime:{runtime_kind}",
-            "projectSlug": project_slug,
-            "projectId": project_id,
-            "taskId": task_id,
-            "role": role,
-            "runner": runtime_kind,
-            "externalSessionId": external_session_id or "",
-            "status": status,
-            "sessionPath": session_path,
-            "startedAt": int(time.time() * 1000),
-            "lastHeartbeatAt": int(time.time() * 1000),
-        },
-    )
+    # Only pass taskId when it's a real Convex document ID (no hyphens).
+    # File-based task slugs like "my-task-name" are not valid v.id("tasks") values.
+    is_convex_id = task_id and "-" not in task_id
+    payload: dict = {
+        "title": title,
+        "model": f"runtime:{runtime_kind}",
+        "projectSlug": project_slug,
+        "projectId": project_id,
+        "role": role,
+        "runner": runtime_kind,
+        "externalSessionId": external_session_id or "",
+        "status": status,
+        "sessionPath": session_path,
+        "startedAt": int(time.time() * 1000),
+        "lastHeartbeatAt": int(time.time() * 1000),
+    }
+    if is_convex_id:
+        payload["taskId"] = task_id
+    result = await convex.mutation("agent:createSession", payload)
     return result["sessionId"]
 
 

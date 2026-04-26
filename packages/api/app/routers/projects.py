@@ -156,6 +156,7 @@ class ApprovalCreateRequest(BaseModel):
 class ApprovalResolveRequest(BaseModel):
     status: str
     grantedByUserId: str | None = None
+    resolutionNote: str | None = None
 
 
 class ProjectMetadataSyncRequest(BaseModel):
@@ -924,7 +925,7 @@ async def get_planner_thread(slug: str):
     messages = await planner_service.list_planner_messages(project, thread_id=thread_id)
     return {
         "threadId": thread_id,
-        "messages": list(reversed(messages)),
+        "messages": messages,
     }
 
 
