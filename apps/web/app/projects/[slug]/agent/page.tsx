@@ -15,17 +15,89 @@ interface ChatMessage {
   role: MessageRole;
   content: string;
   toolName?: string;
+  toolArgs?: Record<string, unknown>;
   isStreaming?: boolean;
+}
+
+function ToolArgPreview({ name, args }: { name?: string; args?: Record<string, unknown> }) {
+  if (!args) return null;
+
+  // run_bash — show the command
+  if (name === "run_bash" || name === "run_shell") {
+    const cmd = (args.command ?? args.cmd ?? args.script) as string | undefined;
+    if (cmd) return (
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", marginLeft: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 420, display: "inline-block", verticalAlign: "middle" }}>
+        {cmd.slice(0, 120)}{cmd.length > 120 ? "…" : ""}
+      </span>
+    );
+  }
+
+  // spawn_research_agents — show focus areas and queries
+  if (name === "spawn_research_agents") {
+    const agents = (args.agents ?? []) as Array<{ focus: string; queries?: string[] }>;
+    if (agents.length === 0) return null;
+    return (
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", marginLeft: 6 }}>
+        {agents.map(a => a.focus).join(" · ")}
+      </span>
+    );
+  }
+
+  // read_file / write_file — show the path
+  if (name === "read_file" || name === "write_file") {
+    const p = (args.path ?? args.file_path) as string | undefined;
+    if (p) return (
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", marginLeft: 6 }}>
+        {p}
+      </span>
+    );
+  }
+
+  // update_task / create_task — show task id/title
+  if (name === "update_task" || name === "create_task") {
+    const label = (args.task_id ?? args.title ?? args.id) as string | undefined;
+    if (label) return (
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", marginLeft: 6 }}>
+        {String(label).slice(0, 60)}
+      </span>
+    );
+  }
+
+  return null;
+}
+
+function ToolArgDetail({ name, args }: { name?: string; args?: Record<string, unknown> }) {
+  if (!args) return null;
+
+  // For spawn_research_agents, show each agent's full query list
+  if (name === "spawn_research_agents") {
+    const agents = (args.agents ?? []) as Array<{ focus: string; queries?: string[] }>;
+    return (
+      <div>
+        {agents.map((a, i) => (
+          <div key={i} style={{ marginBottom: 8 }}>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>↳ {a.focus}</div>
+            {(a.queries ?? []).map((q, j) => (
+              <div key={j} style={{ paddingLeft: 10, opacity: 0.75 }}>• {q}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return null;
 }
 
 function ToolRow({ msg }: { msg: ChatMessage }) {
   const [open, setOpen] = useState(false);
   const isRunning = msg.isStreaming;
+  const hasArgDetail = msg.toolName === "spawn_research_agents";
 
   return (
     <div style={{ marginBottom: 6 }}>
       <button
-        onClick={() => !isRunning && setOpen((o) => !o)}
+        onClick={() => setOpen((o) => !o)}
         style={{
           display: "flex",
           alignItems: "center",
@@ -33,13 +105,14 @@ function ToolRow({ msg }: { msg: ChatMessage }) {
           background: "none",
           border: "none",
           padding: "3px 0",
-          cursor: isRunning ? "default" : "pointer",
+          cursor: "pointer",
           color: "var(--muted)",
           fontFamily: "JetBrains Mono, monospace",
           fontSize: 11,
           letterSpacing: "0.04em",
           width: "100%",
           textAlign: "left",
+          minWidth: 0,
         }}
       >
         <span style={{
@@ -57,11 +130,14 @@ function ToolRow({ msg }: { msg: ChatMessage }) {
             <span style={{ position: "absolute", inset: "3px 4px", borderLeft: "1px solid var(--muted)", borderBottom: "1px solid var(--muted)", transform: open ? "rotate(-135deg) translate(2px,-2px)" : "rotate(-45deg)", transition: "transform 120ms" }} />
           )}
         </span>
-        <span style={{ color: "var(--fg)", fontWeight: 500 }}>{msg.toolName}</span>
-        {isRunning && <span style={{ opacity: 0.5 }}>running…</span>}
+        <span style={{ color: "var(--fg)", fontWeight: 500, flexShrink: 0 }}>{msg.toolName}</span>
+        {isRunning
+          ? <span style={{ opacity: 0.5, flexShrink: 0 }}>running…</span>
+          : <ToolArgPreview name={msg.toolName} args={msg.toolArgs} />
+        }
       </button>
 
-      {open && !isRunning && (
+      {open && (
         <div style={{
           marginTop: 4,
           marginLeft: 21,
@@ -74,10 +150,21 @@ function ToolRow({ msg }: { msg: ChatMessage }) {
           whiteSpace: "pre-wrap",
           wordBreak: "break-word",
           color: "var(--fg)",
-          maxHeight: 320,
+          maxHeight: 400,
           overflowY: "auto",
         }}>
-          {msg.content}
+          {/* Show queries/args detail above result when running or has arg detail */}
+          {(isRunning || hasArgDetail) && msg.toolArgs && (
+            <div style={{ marginBottom: isRunning ? 0 : 10, opacity: 0.8 }}>
+              <ToolArgDetail name={msg.toolName} args={msg.toolArgs} />
+            </div>
+          )}
+          {!isRunning && msg.content && (
+            <div style={{ borderTop: hasArgDetail ? "1px solid var(--border)" : "none", paddingTop: hasArgDetail ? 8 : 0 }}>
+              {msg.content}
+            </div>
+          )}
+          {isRunning && !hasArgDetail && <span style={{ opacity: 0.5 }}>running…</span>}
         </div>
       )}
     </div>
@@ -218,7 +305,8 @@ export default function AgentPage() {
                 id: `tool-${event.id}`,
                 role: "tool_result" as MessageRole,
                 toolName: event.name,
-                content: `Running…`,
+                toolArgs: event.args ?? {},
+                content: "",
                 isStreaming: true,
               }]);
             } else if (event.type === "tool_result") {

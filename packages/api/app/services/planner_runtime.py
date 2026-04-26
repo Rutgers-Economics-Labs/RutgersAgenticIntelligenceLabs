@@ -518,6 +518,36 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
     return {"error": f"Unknown planner tool: {name}"}
 
 
+def _append_agent_log(
+    project: dict[str, Any],
+    user_message: str,
+    assistant_text: str,
+    tool_calls: list[dict],
+) -> None:
+    """Append one planner turn to research_plan/agent_log.jsonl in the project repo."""
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        return
+    log_path = root / "research_plan" / "agent_log.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "user": user_message,
+        "summary": assistant_text[:500],
+        "tools": [
+            {
+                "name": tc["name"],
+                "args": tc.get("args", {}),
+                # truncate large results to keep the log readable
+                "result_preview": str(tc.get("result", ""))[:300],
+            }
+            for tc in tool_calls
+        ],
+    }
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, default=str) + "\n")
+
+
 async def stream_planner_turn(
     *,
     project: dict[str, Any],
@@ -553,6 +583,7 @@ async def stream_planner_turn(
         )
 
     assistant_text = ""
+    all_tool_calls_log: list[dict] = []   # for agent_log.jsonl
 
     for _ in range(PLANNER_MAX_TURNS):
         turn_tool_calls: list[dict] = []
@@ -595,17 +626,37 @@ async def stream_planner_turn(
                 "tool_call_id": tc["id"],
                 "content": json.dumps(result, default=str),
             })
+            all_tool_calls_log.append({
+                "name": tc["name"],
+                "args": tc["args"],
+                "result": result,
+            })
 
     board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
 
+    # If the last turn ended on tool calls without text, force a summary turn
     if not assistant_text.strip():
-        assistant_text = f"Done. {len(tasks)} task(s) on the board." if tasks else "Planner turn complete."
+        messages.append({
+            "role": "user",
+            "content": "Please write a concise summary of everything you just did and the current state of the project.",
+        })
+        summary_text = ""
+        async for event in llm_service.stream_agent(messages, [], model=model):
+            if event["type"] == "text_delta":
+                summary_text += event["content"]
+                yield event
+        assistant_text = summary_text.strip() or (
+            f"Done. {len(tasks)} task(s) on the board." if tasks else "Planner turn complete."
+        )
 
     if persist and assistant_text:
         await planner_service.append_planner_message(
             project=project, role="assistant", content=assistant_text, message_type="chat",
         )
+
+    # Write tool call log to repo
+    _append_agent_log(project, user_message, assistant_text, all_tool_calls_log)
 
     await planner_service.sync_planner_files(project, board)
     await _git_commit_and_push(project, "chore(planner): sync plan and task files")
