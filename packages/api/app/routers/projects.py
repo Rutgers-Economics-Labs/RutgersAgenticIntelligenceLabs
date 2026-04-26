@@ -25,6 +25,7 @@ from app.services.hydration_registry_service import (
     resolve_pipeline_slug,
 )
 from app.services.repo_contract_service import infer_github_repo, render_rail_manifest
+from app.services.github_service import GitHubService
 from app.services.brief_project_service import (
     READY,
     DRAFT,
@@ -456,7 +457,13 @@ async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest)
                 },
             }
         root.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(["git", "clone", defn["repoUrl"], str(root)], capture_output=True, text=True)
+        clone_url = defn["repoUrl"]
+        github_repo = infer_github_repo(clone_url)
+        if github_repo:
+            token = await GitHubService().get_installation_token(github_repo)
+            # Embed token into HTTPS URL: https://x-access-token:<token>@github.com/...
+            clone_url = clone_url.replace("https://", f"https://x-access-token:{token}@")
+        result = subprocess.run(["git", "clone", clone_url, str(root)], capture_output=True, text=True)
         if result.returncode != 0:
             raise HTTPException(500, f"git clone failed: {result.stderr or result.stdout}")
 
