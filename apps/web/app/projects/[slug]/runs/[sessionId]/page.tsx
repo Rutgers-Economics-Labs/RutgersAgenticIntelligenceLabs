@@ -1,7 +1,7 @@
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
-import { fetchRunnerSessionDetail } from "@/lib/api";
+import { fetchRunnerSession, fetchRunnerSessionDetail } from "@/lib/api";
 import { RunnerLiveEvents } from "@/components/runner-live-events";
 import Link from "next/link";
 
@@ -269,7 +269,15 @@ export default async function RunDetailPage({
 }) {
   const { slug, sessionId } = await params;
   const { tab = "summary" } = await searchParams;
-  const session = await fetchRunnerSessionDetail(slug, sessionId);
+  // Detail endpoint 404s when session files don't exist yet (e.g. gemini_cli just launched).
+  // Fall back to the simple session record so the page renders immediately.
+  let session: any;
+  try {
+    session = await fetchRunnerSessionDetail(slug, sessionId);
+  } catch {
+    const simple = await fetchRunnerSession(slug, sessionId).catch(() => null);
+    session = simple ?? { sessionId, title: "Session", status: "queued", timeline: [], runner: "unknown" };
+  }
   const timeline: any[] = session.timeline ?? [];
   const tabs = ["summary", "live", "timeline", "files", "commands", "sources", "decisions"];
 
