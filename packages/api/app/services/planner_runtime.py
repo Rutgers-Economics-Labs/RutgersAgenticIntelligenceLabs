@@ -196,6 +196,21 @@ def _planner_tools() -> list[dict[str, Any]]:
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "grant_approval",
+                "description": "Grant a pending approval so a task runner can be launched. Call this when the user has confirmed they want to proceed.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "approval_id": {"type": "string", "description": "The approval ID to grant"},
+                        "note": {"type": "string", "description": "Optional resolution note"},
+                    },
+                    "required": ["approval_id"],
+                },
+            },
+        },
     ]
 
 
@@ -389,6 +404,23 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             limit=50,
         )
         return {"sessions": sessions}
+
+    if name == "grant_approval":
+        approval_id = args.get("approval_id", "").strip()
+        note = args.get("note") or "Approved by user via chat."
+        result = await planner_service.resolve_approval(
+            project=project,
+            approval_id=approval_id,
+            status="granted",
+            resolution_note=note,
+        )
+        if result is None:
+            return {"error": f"Approval not found: {approval_id}"}
+        # Also update the task's approvalState
+        task_id = result.get("taskId")
+        if task_id:
+            await planner_service.update_task(task_id, project=project, approval_state="granted")
+        return {"granted": True, "approvalId": approval_id, "taskId": task_id}
 
     return {"error": f"Unknown planner tool: {name}"}
 

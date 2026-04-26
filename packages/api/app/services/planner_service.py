@@ -134,7 +134,11 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
     meta, body = _split_frontmatter(_read_text(path))
     title = meta.get("title") or path.stem.replace("-", " ").title()
     task_id = meta.get("task_id") or path.stem
+    # Strip the "## Description\n\n" header that _render_task_markdown adds,
+    # to avoid it accumulating on every read/write cycle.
     description = body.strip()
+    if description.startswith("## Description"):
+        description = description[len("## Description"):].lstrip("\n").strip()
     return {
         "_id": task_id,
         "boardId": "main",

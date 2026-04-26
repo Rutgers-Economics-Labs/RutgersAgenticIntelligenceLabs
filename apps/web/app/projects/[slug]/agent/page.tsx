@@ -4,6 +4,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ProjectShell } from "@/components/project-shell";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { fetchPlannerThread } from "@/lib/api";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -17,22 +18,69 @@ interface ChatMessage {
   isStreaming?: boolean;
 }
 
-function ToolBadge({ name }: { name: string }) {
+function ToolRow({ msg }: { msg: ChatMessage }) {
+  const [open, setOpen] = useState(false);
+  const isRunning = msg.isStreaming;
+
   return (
-    <span style={{
-      display: "inline-block",
-      padding: "2px 7px",
-      fontFamily: "JetBrains Mono, monospace",
-      fontSize: 10,
-      letterSpacing: "0.08em",
-      textTransform: "uppercase",
-      background: "var(--panel-alt)",
-      border: "1px solid var(--border)",
-      color: "var(--muted)",
-      marginBottom: 4,
-    }}>
-      {name}
-    </span>
+    <div style={{ marginBottom: 6 }}>
+      <button
+        onClick={() => !isRunning && setOpen((o) => !o)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          background: "none",
+          border: "none",
+          padding: "3px 0",
+          cursor: isRunning ? "default" : "pointer",
+          color: "var(--muted)",
+          fontFamily: "JetBrains Mono, monospace",
+          fontSize: 11,
+          letterSpacing: "0.04em",
+          width: "100%",
+          textAlign: "left",
+        }}
+      >
+        <span style={{
+          display: "inline-block",
+          width: 14,
+          height: 14,
+          border: "1px solid var(--border)",
+          background: "var(--panel-alt)",
+          flexShrink: 0,
+          position: "relative",
+        }}>
+          {isRunning ? (
+            <span style={{ position: "absolute", inset: 2, background: "var(--muted)", opacity: 0.5, animation: "pulse 1s infinite" }} />
+          ) : (
+            <span style={{ position: "absolute", inset: "3px 4px", borderLeft: "1px solid var(--muted)", borderBottom: "1px solid var(--muted)", transform: open ? "rotate(-135deg) translate(2px,-2px)" : "rotate(-45deg)", transition: "transform 120ms" }} />
+          )}
+        </span>
+        <span style={{ color: "var(--fg)", fontWeight: 500 }}>{msg.toolName}</span>
+        {isRunning && <span style={{ opacity: 0.5 }}>running…</span>}
+      </button>
+
+      {open && !isRunning && (
+        <div style={{
+          marginTop: 4,
+          marginLeft: 21,
+          padding: "8px 10px",
+          background: "var(--panel-alt)",
+          border: "1px solid var(--border)",
+          fontFamily: "JetBrains Mono, monospace",
+          fontSize: 11,
+          lineHeight: 1.6,
+          whiteSpace: "pre-wrap",
+          wordBreak: "break-word",
+          color: "var(--fg)",
+          maxHeight: 320,
+          overflowY: "auto",
+        }}>
+          {msg.content}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -41,14 +89,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isTool = msg.role === "tool_result";
   const isError = msg.role === "error";
 
-  const bubbleStyle: React.CSSProperties = {
-    maxWidth: "82%",
-    padding: "10px 14px",
-    border: `1px solid ${isError ? "var(--s-failed)" : isTool ? "var(--border)" : isUser ? "var(--fg)" : "var(--border)"}`,
-    background: isUser ? "var(--fg)" : isTool ? "var(--panel-alt)" : isError ? "var(--panel)" : "var(--panel)",
-    color: isUser ? "var(--bg)" : isError ? "var(--s-failed)" : "var(--fg)",
-    opacity: msg.isStreaming ? 0.85 : 1,
-  };
+  if (isTool) return <ToolRow msg={msg} />;
 
   return (
     <div style={{
@@ -57,18 +98,17 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       alignItems: isUser ? "flex-end" : "flex-start",
       marginBottom: 16,
     }}>
-      {isTool && msg.toolName && <ToolBadge name={msg.toolName} />}
-      <div style={bubbleStyle}>
-        {isUser || isTool ? (
-          <span style={{
-            fontFamily: isTool ? "JetBrains Mono, monospace" : "Inter, sans-serif",
-            fontSize: isTool ? 11 : 13,
-            lineHeight: 1.6,
-            whiteSpace: "pre-wrap",
-            wordBreak: "break-word",
-          }}>
-            {msg.content || (msg.isStreaming ? "▌" : "")}
-            {msg.isStreaming && msg.content && "▌"}
+      <div style={{
+        maxWidth: "82%",
+        padding: "10px 14px",
+        border: `1px solid ${isError ? "var(--s-failed)" : isUser ? "var(--fg)" : "var(--border)"}`,
+        background: isUser ? "var(--fg)" : "var(--panel)",
+        color: isUser ? "var(--bg)" : isError ? "var(--s-failed)" : "var(--fg)",
+        opacity: msg.isStreaming ? 0.85 : 1,
+      }}>
+        {isUser ? (
+          <span style={{ fontFamily: "Inter, sans-serif", fontSize: 13, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {msg.content}
           </span>
         ) : (
           <div style={{ fontSize: 13, lineHeight: 1.6 }}>
@@ -92,6 +132,7 @@ export default function AgentPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<object[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -100,12 +141,35 @@ export default function AgentPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Load existing planner thread on mount
   useEffect(() => {
-    if (isWelcome && messages.length === 0) {
+    if (isWelcome) {
       const welcome = `I've set up your new project **${slug}** — a GitHub repo has been created and the initial ontology, pipeline, and data sources have been scaffolded.\n\nWhat would you like to research first? I can discover data sources, run a pipeline to populate the ontology, and start analysing once data is loaded.`;
       setMessages([{ id: "welcome", role: "assistant", content: welcome }]);
+      setLoading(false);
+      return;
     }
-  }, [isWelcome, slug]);
+    fetchPlannerThread(slug)
+      .then(({ messages: raw }) => {
+        const loaded: ChatMessage[] = (raw as any[])
+          .filter((m: any) => m.role === "user" || m.role === "assistant")
+          .map((m: any, i: number) => ({
+            id: `hist-${i}`,
+            role: m.role as MessageRole,
+            content: String(m.content ?? ""),
+          }));
+        setMessages(loaded);
+        setHistory((raw as any[]).filter((m: any) => m.role === "user" || m.role === "assistant"));
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [slug, isWelcome]);
+
+  function startNewThread() {
+    setMessages([]);
+    setHistory([]);
+    setTimeout(() => inputRef.current?.focus(), 50);
+  }
 
   async function sendMessage(text: string) {
     if (!text.trim() || busy) return;
@@ -208,9 +272,41 @@ export default function AgentPage() {
     <ProjectShell slug={slug} title="Research Agent" section="agent">
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
 
+        {/* Thread bar */}
+        <div style={{
+          borderBottom: "1px solid var(--border)",
+          padding: "6px 16px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          background: "var(--panel)",
+          flexShrink: 0,
+        }}>
+          <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}>
+            {loading ? "Loading thread…" : messages.length > 0 ? `${messages.filter(m => m.role === "user" || m.role === "assistant").length} messages` : "New thread"}
+          </span>
+          <button
+            onClick={startNewThread}
+            disabled={busy}
+            style={{
+              background: "none",
+              border: "1px solid var(--border)",
+              padding: "2px 8px",
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              color: "var(--muted)",
+              cursor: "pointer",
+            }}
+          >
+            + New thread
+          </button>
+        </div>
+
         {/* Messages */}
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
-          {messages.length === 0 && (
+          {!loading && messages.length === 0 && (
             <div style={{
               display: "flex",
               flexDirection: "column",
