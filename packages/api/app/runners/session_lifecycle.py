@@ -98,8 +98,19 @@ def _project_root(project_record: dict[str, Any]) -> Path | None:
     return Path(path).resolve() if path else None
 
 
+def _scrub_secrets(data: Any) -> Any:
+    if isinstance(data, dict):
+        return {
+            k: "***REDACTED***" if any(t in str(k).lower() for t in ("key", "secret", "token", "password")) else _scrub_secrets(v)
+            for k, v in data.items()
+        }
+    if isinstance(data, list):
+        return [_scrub_secrets(item) for item in data]
+    return data
+
+
 def _event_payload(event: RunnerEvent) -> dict[str, Any]:
-    payload = dict(event.normalized_payload or {})
+    payload = _scrub_secrets(dict(event.normalized_payload or {}))
     if payload.get("line"):
         payload.setdefault("content", payload.get("line"))
     if payload.get("message"):
@@ -439,21 +450,7 @@ async def _finalize_workspace_review(
     session_files.refresh_summary(session_root)
 
 
-async def _append_runner_event(convex_session_id: str, event: RunnerEvent) -> None:
-    try:
-        await convex.mutation(
-            "runnerEvents:append",
-            {
-                "agentSessionId": convex_session_id,
-                "eventType": event.event_type.value,
-                "normalizedPayload": event.normalized_payload,
-                "rawPayload": event.raw_payload,
-                "debugVisibility": str(event.debug_visibility).lower(),
-                "createdAt": int(time.time() * 1000),
-            },
-        )
-    except Exception:
-        pass
+
 
 
 def _sync_file_status(root: Path, status: str) -> None:
@@ -616,21 +613,7 @@ async def create_runner_session(
         workspace_path=str(workspace_root),
         workspace_branch=workspace_branch,
     )
-    await _append_runner_event(
-        running_session_id,
-        RunnerEvent(
-            event_type=RunnerEventType.SESSION_CREATED,
-            session_id=external_id,
-            normalized_payload={
-                "runner": runner_name,
-                "role": role,
-                "task_id": task_id,
-                "url": result.get("url"),
-                "running_session_id": running_session_id,
-            },
-            raw_payload=result.get("raw", {}),
-        ),
-    )
+
 
     return {
         "convex_session_id": running_session_id,
@@ -784,7 +767,7 @@ async def ingest_session_events(
 
     ingested: list[dict[str, Any]] = []
     for event in new_events:
-        await _append_runner_event(convex_session_id, event)
+
         if root and root.exists():
             file_event_type = EVENT_TYPE_MAP.get(event.event_type.value, "status_changed")
             payload = _event_payload(event)
@@ -966,3 +949,32 @@ async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEv
         latestRunSummary=summary,
     )
     await planner_service.sync_planner_files(project)
+
+async def flush_live_events(session_root: Path) -> None:
+    """
+    Flushes any pending live events and refreshes the summary.
+    Live planners write directly via session_files.append_event, so this mainly 
+    ensures the summary.md is up to date with the latest appended NDJSON lines.
+    """
+    if session_root.exists():
+        session_files.refresh_summary(session_root)
+
+async def process_pending_commands(session_root: Path) -> list[dict]:
+    """
+    Reads pending commands from commands.ndjson, processes them, and marks them as processed exactly once.
+    """
+    if not session_root.exists():
+        return []
+        
+    commands = session_files.list_commands(session_root)
+    processed = []
+    
+    for cmd in commands:
+        if not cmd.get("processed"):
+            session_files.mark_command_processed(session_root, cmd["id"])
+            processed.append(cmd)
+            
+    if processed:
+        session_files.refresh_summary(session_root)
+        
+    return processed
