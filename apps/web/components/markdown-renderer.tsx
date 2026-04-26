@@ -1,6 +1,8 @@
 import clsx from "clsx";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 
 type MarkdownRendererProps = {
   content: string;
@@ -11,7 +13,8 @@ export function MarkdownRenderer({ content, className }: MarkdownRendererProps) 
   return (
     <div className={clsx("prose-rail", className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           a: ({ className: linkClassName, ...props }) => (
             <a
