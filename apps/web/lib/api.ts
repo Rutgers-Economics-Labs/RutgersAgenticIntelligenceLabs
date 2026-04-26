@@ -137,6 +137,22 @@ export async function fetchRunnerEvents(runner: string, sessionId: string): Prom
   return getJson(`/runners/${runner}/sessions/${encodeURIComponent(sessionId)}/events`);
 }
 
+export async function launchTask(
+  slug: string,
+  task: { _id?: string; title: string; description?: string; agentRole?: string; acceptanceCriteria?: unknown[] },
+  runnerName: string,
+): Promise<{ convex_session_id?: string; session_id?: string }> {
+  return postJson(`/projects/${slug}/runner/sessions`, {
+    taskId: task._id ?? null,
+    role: task.agentRole ?? "research",
+    taskDescription: task.description ?? task.title,
+    runnerName,
+    acceptanceCriteria: (task.acceptanceCriteria ?? []).map((c) =>
+      typeof c === "string" ? c : JSON.stringify(c)
+    ),
+  });
+}
+
 export async function fetchActiveAgents(slug: string): Promise<{ agents: Array<{ sessionId: string; role: string; runner: string; status: string; title: string; startedAt?: number; taskId?: string }> }> {
   return getJson(`/projects/${slug}/agents/active`);
 }
