@@ -1,5 +1,7 @@
+"use client";
+
 import Link from "next/link";
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { StatusPill } from "@/components/status-pill";
 import { ProjectArtifact, ProjectSkill, ProjectSource, RunnerSession } from "@/lib/types";
@@ -80,31 +82,46 @@ export function ApprovalPanel({ approvals }: { approvals: Array<Record<string, u
   );
 }
 
-export function TaskBoard({ tasks }: { tasks: Array<any> }) {
+// Lazy-import the modal to avoid server-component issues
+import dynamic from "next/dynamic";
+const TaskModal = dynamic(() => import("@/components/task-board").then(m => m.TaskModalExport), { ssr: false });
+
+export function TaskBoard({ tasks, slug }: { tasks: Array<any>; slug?: string }) {
+  const [selected, setSelected] = useState<any | null>(null);
   const statuses = ["running", "awaiting_approval", "ready", "review", "blocked", "backlog", "done"];
   if (!tasks.length) return <EmptyState title="No tasks yet" detail="Launch a research workflow to seed the first execution plan." />;
   return (
-    <div className="task-board">
-      {statuses.map((status) => {
-        const rows = tasks.filter((task) => (task.status ?? "backlog") === status);
-        return (
-          <div className="task-column" key={status}>
-            <div className="task-column-header">
-              <span>{status.replaceAll("_", " ")}</span>
-              <strong>{rows.length}</strong>
-            </div>
-            {rows.length === 0 ? (
-              <div className="task-empty">Empty</div>
-            ) : rows.map((task) => (
-              <div className="task-mini-card" key={task._id}>
-                <div style={{ fontWeight: 600, color: "var(--fg)" }}>{task.title}</div>
-                <div className="mono-muted">{task.agentRole ?? "planner"}{task.runner ? ` · ${task.runner}` : ""}</div>
+    <>
+      <div className="task-board">
+        {statuses.map((status) => {
+          const rows = tasks.filter((task) => (task.status ?? "backlog") === status);
+          return (
+            <div className="task-column" key={status}>
+              <div className="task-column-header">
+                <span>{status.replaceAll("_", " ")}</span>
+                <strong>{rows.length}</strong>
               </div>
-            ))}
-          </div>
-        );
-      })}
-    </div>
+              {rows.length === 0 ? (
+                <div className="task-empty">Empty</div>
+              ) : rows.map((task) => (
+                <div
+                  className="task-mini-card"
+                  key={task._id}
+                  onClick={() => slug && setSelected(task)}
+                  style={{ cursor: slug ? "pointer" : "default" }}
+                >
+                  <div style={{ fontWeight: 600, color: "var(--fg)" }}>{task.title}</div>
+                  <div className="mono-muted">{task.agentRole ?? "planner"}{task.runner ? ` · ${task.runner}` : ""}</div>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+      {selected && slug && (
+        <TaskModal slug={slug} task={selected} onClose={() => setSelected(null)} />
+      )}
+    </>
   );
 }
 

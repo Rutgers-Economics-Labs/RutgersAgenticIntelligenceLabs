@@ -10,14 +10,14 @@ import { ApprovalPanel } from "@/components/approval-panel";
 
 const RUNNERS = [
   {
-    id: "gemini",
+    id: "gemini_cli",
     label: "RAIL Gemini",
     sub: "Gemini 3 Flash · web search · file I/O",
     icon: "G",
     color: "#4285f4",
   },
   {
-    id: "claude-code",
+    id: "claude_code",
     label: "Claude Code",
     sub: "Sonnet 4.6 · local CLI · full repo access",
     icon: "C",
@@ -33,6 +33,12 @@ const RUNNERS = [
 ];
 
 // ── Task launch modal ──────────────────────────────────────────────────
+
+export function TaskModalExport({
+  slug, task, onClose,
+}: { slug: string; task: any; onClose: () => void }) {
+  return <TaskModal slug={slug} task={task} onClose={onClose} />;
+}
 
 function TaskModal({
   slug,

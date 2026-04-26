@@ -64,7 +64,7 @@ export default async function ProjectHomePage({
           </SectionCard>
 
           <SectionCard eyebrow="Task Board" noPad>
-            <TaskBoard tasks={tasks} />
+            <TaskBoard tasks={tasks} slug={slug} />
           </SectionCard>
 
           <SectionCard eyebrow="Latest Planner Message">
