@@ -21,8 +21,11 @@ async def create_running_agent(
     session_path: str | None = None,
     status: str = "queued",
 ) -> str:
-    # Only pass taskId when it's a real Convex document ID (no hyphens).
-    # File-based task slugs like "my-task-name" are not valid v.id("tasks") values.
+    # Convex agent:createSession validator (from schema inspection):
+    #   required: title, model
+    #   optional: externalSessionId, projectId, projectSlug, role, runner, status, taskId
+    #   NOT accepted: startedAt, lastHeartbeatAt, sessionPath (extra fields → 400)
+    # taskId must be v.id("tasks") — omit for file-based slug IDs (contain hyphens)
     is_convex_id = task_id and "-" not in task_id
     payload: dict = {
         "title": title,
@@ -33,9 +36,6 @@ async def create_running_agent(
         "runner": runtime_kind,
         "externalSessionId": external_session_id or "",
         "status": status,
-        "sessionPath": session_path,
-        "startedAt": int(time.time() * 1000),
-        "lastHeartbeatAt": int(time.time() * 1000),
     }
     if is_convex_id:
         payload["taskId"] = task_id
@@ -44,8 +44,10 @@ async def create_running_agent(
 
 
 async def update_running_agent(session_id: str, **fields: Any) -> None:
-    patch = {k: v for k, v in fields.items() if v is not None}
-    patch["lastHeartbeatAt"] = int(time.time() * 1000)
+    # Convex updateSessionState accepts: status, externalSessionId, endedAt,
+    # actualCostUsd, estimatedCostUsd. All other fields are silently dropped.
+    _allowed = {"status", "externalSessionId", "endedAt", "actualCostUsd", "estimatedCostUsd"}
+    patch = {k: v for k, v in fields.items() if k in _allowed and v is not None}
     await convex.mutation("agent:updateSessionState", {"sessionId": session_id, **patch})
 
 
