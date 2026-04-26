@@ -1,8 +1,11 @@
+import logging
 import time
 import yaml
 import subprocess
 import os
 import platform
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 
 from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks
@@ -539,17 +542,21 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     git_repo_url = data.gitRepoUrl
     if not git_repo_url:
         try:
-            repo_name = f"RAIL-{slug}"
+            # Use a short repo name: RAIL- + first 40 chars of slug (trimmed at word boundary)
+            short_slug = slug[:40].rstrip("-")
+            repo_name = f"RAIL-{short_slug}"
             created = await GitHubService().create_repo(
                 name=repo_name,
                 description=project_meta.get("description", ""),
                 private=True,
             )
-            git_repo_url = created["clone_url"].replace("https://", "https://x-access-token:placeholder@")
-            git_repo_url = created["html_url"].rstrip("/") + ".git"
             git_repo_url = f"https://github.com/{created['full_name']}"
-        except Exception:
-            git_repo_url = None
+        except Exception as exc:
+            logger.error("GitHub repo creation failed for project '%s': %s", slug, exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitHub repo creation failed: {exc}. Check that the GitHub App has 'administration: write' permission on the org.",
+            )
 
     git_repo = infer_github_repo(git_repo_url) if git_repo_url else None
     project_id = await convex.mutation(
@@ -643,8 +650,8 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
                         pass
             if repo_files:
                 await GitHubService().commit_files(git_repo, data.defaultBranch, repo_files, "chore: initial project scaffold from RAIL brief")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("Initial scaffold push to GitHub failed for '%s': %s", git_repo, exc)
 
     await planner_service.ensure_planner_thread(project_id)
     board = await planner_service.ensure_main_board(project)
