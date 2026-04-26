@@ -255,7 +255,15 @@ Do not treat web snippets as evidence. Open and inspect the source.
     _write(project_root / "research_plan/task_board.md", task_board)
     _write(
         project_root / "scripts" / "setup-workspace.sh",
-        "#!/usr/bin/env bash\nset -euo pipefail\n\n# Install repo dependencies needed by worker workspaces.\n",
+        "#!/usr/bin/env bash\nset -euo pipefail\n\n"
+        "# Install the RAIL engine so any cloud agent (Jules, etc.) has access to the\n"
+        "# full ontology/pipeline/analysis stack.\n"
+        'pip install --quiet \\\n'
+        '  "git+https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs.git#subdirectory=packages/engine"\n\n'
+        "# Common data science deps used by analysis scripts\n"
+        "pip install --quiet pandas requests httpx pyyaml duckdb matplotlib statsmodels scikit-learn\n\n"
+        "echo \"RAIL engine installed.\"\n"
+        'python -c "import engine; print(\'engine ok\')" 2>/dev/null || echo "Note: engine import check skipped"\n',
     )
     _write(
         project_root / "scripts" / "run-verification.sh",
