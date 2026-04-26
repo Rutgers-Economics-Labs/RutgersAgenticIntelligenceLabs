@@ -71,7 +71,6 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "agents_root": "agents",
             "skills_root": "skills",
             "artifacts_root": "artifacts",
-            "scripts_root": "scripts",
         },
         "hydration": {
             "ontology_file": f"{CURRENT_PATHS['ontology_dir']}/{project['ontologyConfigSlug']}.yaml"
@@ -139,7 +138,7 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
     manifest["paths"].setdefault("agents_root", "agents")
     manifest["paths"].setdefault("skills_root", "skills")
     manifest["paths"].setdefault("artifacts_root", "artifacts")
-    manifest["paths"].setdefault("scripts_root", "scripts")
+    manifest["paths"].pop("scripts_root", None)
 
     hydration = manifest.setdefault("hydration", {})
     hydration["sources_dir"] = hydration.get("sources_dir") or CURRENT_PATHS["sources_dir"]

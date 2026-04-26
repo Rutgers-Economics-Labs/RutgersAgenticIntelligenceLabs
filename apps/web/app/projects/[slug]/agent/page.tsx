@@ -3,10 +3,11 @@
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ProjectShell } from "@/components/project-shell";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
-type MessageRole = "user" | "assistant" | "tool_result";
+type MessageRole = "user" | "assistant" | "tool_result" | "error";
 
 interface ChatMessage {
   id: string;
@@ -38,6 +39,17 @@ function ToolBadge({ name }: { name: string }) {
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === "user";
   const isTool = msg.role === "tool_result";
+  const isError = msg.role === "error";
+
+  const bubbleStyle: React.CSSProperties = {
+    maxWidth: "82%",
+    padding: "10px 14px",
+    border: `1px solid ${isError ? "var(--s-failed)" : isTool ? "var(--border)" : isUser ? "var(--fg)" : "var(--border)"}`,
+    background: isUser ? "var(--fg)" : isTool ? "var(--panel-alt)" : isError ? "var(--panel)" : "var(--panel)",
+    color: isUser ? "var(--bg)" : isError ? "var(--s-failed)" : "var(--fg)",
+    opacity: msg.isStreaming ? 0.85 : 1,
+  };
+
   return (
     <div style={{
       display: "flex",
@@ -46,21 +58,26 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
       marginBottom: 16,
     }}>
       {isTool && msg.toolName && <ToolBadge name={msg.toolName} />}
-      <div style={{
-        maxWidth: "82%",
-        padding: "10px 14px",
-        background: isUser ? "var(--fg)" : isTool ? "var(--panel-alt)" : "var(--panel)",
-        color: isUser ? "var(--bg)" : "var(--fg)",
-        border: `1px solid ${isTool ? "var(--border)" : isUser ? "var(--fg)" : "var(--border)"}`,
-        fontFamily: isTool ? "JetBrains Mono, monospace" : "Inter, sans-serif",
-        fontSize: isTool ? 11 : 13,
-        lineHeight: 1.6,
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
-        opacity: msg.isStreaming ? 0.85 : 1,
-      }}>
-        {msg.content || (msg.isStreaming ? "▌" : "")}
-        {msg.isStreaming && msg.content && "▌"}
+      <div style={bubbleStyle}>
+        {isUser || isTool ? (
+          <span style={{
+            fontFamily: isTool ? "JetBrains Mono, monospace" : "Inter, sans-serif",
+            fontSize: isTool ? 11 : 13,
+            lineHeight: 1.6,
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-word",
+          }}>
+            {msg.content || (msg.isStreaming ? "▌" : "")}
+            {msg.isStreaming && msg.content && "▌"}
+          </span>
+        ) : (
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            {msg.content
+              ? <MarkdownRenderer content={msg.content + (msg.isStreaming ? " ▌" : "")} />
+              : msg.isStreaming ? <span style={{ opacity: 0.5 }}>▌</span> : null
+            }
+          </div>
+        )}
       </div>
     </div>
   );
@@ -79,12 +96,10 @@ export default function AgentPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-scroll on new content
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Pre-seed welcome message on fresh project creation
   useEffect(() => {
     if (isWelcome && messages.length === 0) {
       const welcome = `I've set up your new project **${slug}** — a GitHub repo has been created and the initial ontology, pipeline, and data sources have been scaffolded.\n\nWhat would you like to research first? I can discover data sources, run a pipeline to populate the ontology, and start analysing once data is loaded.`;
@@ -117,7 +132,6 @@ export default function AgentPage() {
       const decoder = new TextDecoder();
       let buffer = "";
       let assistantContent = "";
-      const toolMessages: ChatMessage[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -136,15 +150,13 @@ export default function AgentPage() {
                 prev.map((m) => m.id === assistantId ? { ...m, content: assistantContent } : m)
               );
             } else if (event.type === "tool_call") {
-              const toolMsg: ChatMessage = {
+              setMessages((prev) => [...prev, {
                 id: `tool-${event.id}`,
-                role: "tool_result",
+                role: "tool_result" as MessageRole,
                 toolName: event.name,
-                content: `Calling ${event.name}…`,
+                content: `Running…`,
                 isStreaming: true,
-              };
-              toolMessages.push(toolMsg);
-              setMessages((prev) => [...prev, toolMsg]);
+              }]);
             } else if (event.type === "tool_result") {
               const resultStr = typeof event.result === "string"
                 ? event.result
@@ -152,6 +164,13 @@ export default function AgentPage() {
               setMessages((prev) =>
                 prev.map((m) => m.id === `tool-${event.id}`
                   ? { ...m, content: resultStr.slice(0, 600) + (resultStr.length > 600 ? "\n…" : ""), isStreaming: false }
+                  : m
+                )
+              );
+            } else if (event.type === "error") {
+              setMessages((prev) =>
+                prev.map((m) => m.id === assistantId
+                  ? { ...m, role: "error" as MessageRole, content: event.message ?? "Agent error.", isStreaming: false }
                   : m
                 )
               );
@@ -168,7 +187,7 @@ export default function AgentPage() {
     } catch (err) {
       setMessages((prev) =>
         prev.map((m) => m.id === assistantId
-          ? { ...m, content: err instanceof Error ? err.message : "Error contacting agent.", isStreaming: false }
+          ? { ...m, role: "error" as MessageRole, content: err instanceof Error ? err.message : "Error contacting agent.", isStreaming: false }
           : m
         )
       );
