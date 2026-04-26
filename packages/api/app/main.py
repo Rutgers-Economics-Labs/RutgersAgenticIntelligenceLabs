@@ -79,17 +79,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
 _cors_kw: dict = {
-    "allow_origins": [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    "allow_origins": _cors_origins,
     "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],
 }
-# Removed regex temporarily to avoid conflict with generic origin allow
 app.add_middleware(CORSMiddleware, **_cors_kw)
+
+# Ensure CORS headers are present even on unhandled 500s
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request, exc):
+    origin = request.headers.get("origin", "")
+    headers = {}
+    if origin in _cors_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "message": str(exc)},
+        headers=headers,
+    )
 
 app.include_router(configs.router,  prefix="/api/v1")
 app.include_router(jobs.router,     prefix="/api/v1")

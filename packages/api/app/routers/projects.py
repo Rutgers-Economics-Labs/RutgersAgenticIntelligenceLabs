@@ -559,7 +559,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
             "slug": slug,
             "description": project_meta["description"],
             "approach": project_meta.get("approach", "ontology-first"),
-            "gitRepoUrl": git_repo_url,
+            "gitRepoUrl": git_repo_url or "",
             "localRepoPath": str(repo_root),
             "manifestPath": "rail.yaml",
         },
@@ -609,8 +609,6 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
         },
     )
 
-    source_counts = preview["readiness"]
-    status = "ready_for_hydration_review" if source_counts.get(DRAFT, 0) == 0 and source_counts.get(MISSING, 0) == 0 and created_source_slugs else "draft"
     await convex.mutation(
         "projects:updateById",
         {
@@ -619,18 +617,8 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
             "apiConfigSlugs": created_source_slugs,
             "pipelineConfigSlug": pipeline["slug"],
             "defaultBranch": data.defaultBranch,
-            "github": git_repo,
-            "githubSyncMode": data.githubSyncMode or "manual",
-            "status": status,
-            "creationStatus": "from_brief",
-            "briefHash": preview["briefHash"],
-            "researchGraphSummary": {
-                "title": preview["researchGraph"]["title"],
-                "objective": preview["researchGraph"]["objective"],
-                "methods": preview["researchGraph"]["methods"],
-                "deliverables": preview["researchGraph"]["deliverables"],
-            },
-            "sourceReadinessCounts": source_counts,
+            "github": git_repo or "",
+            "status": "draft",
         },
     )
 
@@ -689,7 +677,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
         "project": updated,
         "preview": preview,
         "publish": publish_results,
-        "hydrationReady": status == "ready_for_hydration_review",
+        "hydrationReady": False,
         "nextAction": "Review draft sources if needed, then approve hydration separately.",
     }
 
