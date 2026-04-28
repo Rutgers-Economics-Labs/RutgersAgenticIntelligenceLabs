@@ -88,6 +88,8 @@ class TaskPayload:
     allowed_secrets: dict[str, str] = field(default_factory=dict)
     acceptance_criteria: list[str] = field(default_factory=list)
     bash_access: bool = True
+    project_context: str = ""  # Rich context block: ontology, data sources, repo structure
+    session_root: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {

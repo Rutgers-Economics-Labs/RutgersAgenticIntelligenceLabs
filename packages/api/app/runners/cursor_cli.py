@@ -10,4 +10,4 @@ class CursorCliRunner(LocalCLIRunner):
 
     def _command_args(self, prompt: str, task_payload: TaskPayload) -> list[str]:
         parts = self._base_command_parts()
-        return [*parts, "agent", prompt]
+        return [*parts, prompt]

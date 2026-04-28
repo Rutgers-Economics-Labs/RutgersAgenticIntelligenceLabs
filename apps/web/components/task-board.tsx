@@ -24,11 +24,25 @@ const RUNNERS = [
     color: "#d97706",
   },
   {
+    id: "cursor_cli",
+    label: "Cursor Agent",
+    sub: "Cursor CLI · local agent mode",
+    icon: "A",
+    color: "#0ea5e9",
+  },
+  {
     id: "jules",
     label: "Jules",
     sub: "Google Jules · cloud · GitHub integration",
     icon: "J",
     color: "#16a34a",
+  },
+  {
+    id: "codex_cli",
+    label: "Codex CLI",
+    sub: "OpenAI Codex · local CLI",
+    icon: "X",
+    color: "#8b5cf6",
   },
 ];
 
@@ -50,7 +64,9 @@ function TaskModal({
   onClose: () => void;
 }) {
   const router = useRouter();
-  const [runner, setRunner] = useState("gemini");
+  const [runner, setRunner] = useState("gemini_cli");
+  const [additionalInstructions, setAdditionalInstructions] = useState("");
+  const [verifyAfter, setVerifyAfter] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,7 +74,14 @@ function TaskModal({
     setLaunching(true);
     setError(null);
     try {
-      const result = await launchTask(slug, task, runner);
+      const verifyNote = verifyAfter
+        ? "\n\nAfter completing the main work, run a self-verification pass: check for hardcoded values that should be config-driven, verify all pipeline connections reference real sources and transforms (not placeholder names), and confirm each acceptance criterion is met with evidence."
+        : "";
+      const instructions = additionalInstructions.trim()
+        ? `\n\nAdditional instructions:\n${additionalInstructions.trim()}`
+        : "";
+      const taskWithExtras = { ...task, description: (task.description ?? task.title) + instructions + verifyNote };
+      const result = await launchTask(slug, taskWithExtras, runner);
       const sessionId = result.convex_session_id ?? result.session_id;
       onClose();
       if (sessionId) {
@@ -144,6 +167,52 @@ function TaskModal({
             </div>
           )}
 
+          {/* Additional instructions */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--muted)", marginBottom: 6 }}>
+              Additional instructions
+            </div>
+            <textarea
+              value={additionalInstructions}
+              onChange={(e) => setAdditionalInstructions(e.target.value)}
+              placeholder="Extra context or constraints for the agent…"
+              rows={3}
+              style={{
+                width: "100%", boxSizing: "border-box",
+                background: "var(--bg)", border: "1px solid var(--border)",
+                color: "var(--fg)", fontFamily: "JetBrains Mono, monospace", fontSize: 11,
+                padding: "8px 10px", resize: "vertical", outline: "none",
+                lineHeight: 1.6,
+              }}
+            />
+          </div>
+
+          {/* Verification checkbox */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{
+              display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+              padding: "10px 12px",
+              border: `1px solid ${verifyAfter ? "var(--s-review)" : "var(--border)"}`,
+              background: verifyAfter ? "var(--s-review)11" : "var(--bg)",
+              transition: "border-color 100ms, background 100ms",
+            }}>
+              <input
+                type="checkbox"
+                checked={verifyAfter}
+                onChange={(e) => setVerifyAfter(e.target.checked)}
+                style={{ marginTop: 2, accentColor: "var(--s-review)", flexShrink: 0 }}
+              />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: verifyAfter ? 600 : 400, color: "var(--fg)" }}>
+                  Self-verify after completion
+                </div>
+                <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)", marginTop: 2 }}>
+                  Agent checks for hardcoded values, bad pipeline connections, and unmet criteria
+                </div>
+              </div>
+            </label>
+          </div>
+
           {/* Runner picker */}
           <div style={{ marginBottom: 6 }}>
             <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--muted)", marginBottom: 8 }}>
@@ -189,8 +258,29 @@ function TaskModal({
                 );
               })}
             </div>
-          </div>
 
+            {/* Custom runner */}
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)", flexShrink: 0 }}>
+                or custom:
+              </span>
+              <input
+                value={RUNNERS.some(r => r.id === runner) ? "" : runner}
+                onChange={(e) => setRunner(e.target.value.trim().toLowerCase().replace(/\s+/g, "_") || "gemini_cli")}
+                placeholder="e.g. open_code_cli"
+                style={{
+                  flex: 1, background: "var(--bg)", border: "1px solid var(--border)",
+                  color: "var(--fg)", fontFamily: "JetBrains Mono, monospace", fontSize: 11,
+                  padding: "5px 8px", outline: "none",
+                }}
+              />
+            </div>
+            {!RUNNERS.some(r => r.id === runner) && runner && (
+              <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", marginTop: 4 }}>
+                Using custom runner: <strong style={{ color: "var(--fg)" }}>{runner}</strong>
+              </div>
+            )}
+          </div>
           {error && (
             <div style={{ marginTop: 10, padding: "8px 10px", background: "var(--s-failed)22", border: "1px solid var(--s-failed)", fontSize: 12, color: "var(--s-failed)", fontFamily: "JetBrains Mono, monospace" }}>
               {error}
@@ -292,23 +382,44 @@ function TaskCard({ task, onClick }: { task: any; onClick: () => void }) {
 // ── Approval row ───────────────────────────────────────────────────────
 
 function ApprovalRow({ approval, slug }: { approval: any; slug: string }) {
+  const isAuto = approval.resolutionNote?.includes("Auto-approved");
+  const isGranted = approval.status === "granted";
+
   return (
     <div style={{
       borderBottom: "1px solid var(--border)",
       padding: "10px 14px",
+      background: isAuto && isGranted ? "var(--s-running)05" : "none",
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, color: "var(--fg)" }}>
-          {String(approval.approvalType ?? "approval")}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ fontSize: 12, fontWeight: 500, color: "var(--fg)" }}>
+            {String(approval.approvalType ?? "approval")}
+          </div>
+          {isAuto && isGranted && (
+            <span style={{
+              fontFamily: "JetBrains Mono, monospace", fontSize: 8,
+              background: "var(--s-running)", color: "white",
+              padding: "1px 4px", borderRadius: 2, letterSpacing: "0.05em"
+            }}>AUTO</span>
+          )}
         </div>
         <StatusPill value={String(approval.status ?? "pending")} />
       </div>
-      <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)", marginBottom: approval.status === "pending" ? 8 : 0 }}>
+      <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)", marginBottom: (approval.status === "pending" || approval.resolutionNote) ? 8 : 0 }}>
         {String(approval.requestedByRole ?? "planner")}
         {approval.taskId ? ` · task ${String(approval.taskId).slice(-6)}` : ""}
       </div>
       {approval.status === "pending" && (
-        <ApprovalPanel slug={slug} approvalId={approval._id ?? approval.approvalId} />
+        <ApprovalPanel slug={slug} approvals={[approval]} />
+      )}
+      {isGranted && approval.resolutionNote && (
+        <div style={{
+          fontSize: 11, fontStyle: "italic", color: "var(--muted)",
+          padding: "6px 8px", background: "var(--panel-alt)", borderLeft: "2px solid var(--border)"
+        }}>
+          {approval.resolutionNote}
+        </div>
       )}
     </div>
   );

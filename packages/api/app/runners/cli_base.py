@@ -23,6 +23,7 @@ class LocalCliSession:
     stderr_lines: list[str] = field(default_factory=list)
     events: list[RunnerEvent] = field(default_factory=list)
     returncode: int | None = None
+    session_root: str | None = None
 
 
 class LocalCLIRunner(BaseRunner):
@@ -55,15 +56,26 @@ class LocalCLIRunner(BaseRunner):
     def _build_prompt(self, task_payload: TaskPayload) -> str:
         allowed = "\n".join(f"- {path}" for path in task_payload.allowed_paths) or "- none declared"
         criteria = "\n".join(f"- {item}" for item in task_payload.acceptance_criteria) or "- satisfy the task request"
-        return (
-            f"Role: {task_payload.role}\n"
-            f"Project: {task_payload.project_slug}\n"
-            f"Task ID: {task_payload.task_id}\n"
-            f"Bash access: {'enabled' if task_payload.bash_access else 'disabled'}\n\n"
-            f"Task:\n{task_payload.task_description}\n\n"
-            f"Allowed paths:\n{allowed}\n\n"
-            f"Acceptance criteria:\n{criteria}\n"
-        )
+
+        sections = [
+            f"Role: {task_payload.role}",
+            f"Project: {task_payload.project_slug}",
+            f"Task ID: {task_payload.task_id}",
+            f"Bash access: {'enabled' if task_payload.bash_access else 'disabled'}",
+            "",
+            f"Task:\n{task_payload.task_description}",
+            "",
+            f"Allowed paths:\n{allowed}",
+            "",
+            f"Acceptance criteria:\n{criteria}",
+        ]
+
+        if task_payload.project_context:
+            sections.append("")
+            sections.append("Project context:")
+            sections.append(task_payload.project_context)
+
+        return "\n".join(sections) + "\n"
 
     def _base_command_parts(self) -> list[str]:
         return shlex.split(self._command)
@@ -171,7 +183,24 @@ class LocalCLIRunner(BaseRunner):
                 )
             )
             if not stderr:
-                session.events.extend(self._derived_events_from_stdout_line(session.session_id, text))
+                derived = self._derived_events_from_stdout_line(session.session_id, text)
+                session.events.extend(derived)
+                for ev in derived:
+                    self._persist_event(session, ev)
+
+    def _persist_event(self, session: LocalCliSession, event: RunnerEvent) -> None:
+        if not session.session_root:
+            return
+        from pathlib import Path
+        from app.services import session_files
+        root = Path(session.session_root)
+        if root.exists():
+            session_files.append_event(
+                root,
+                event.event_type.value,
+                content=event.normalized_payload.get("message") or event.normalized_payload.get("line") or "",
+                **event.normalized_payload
+            )
 
     async def _run_session(self, session: LocalCliSession) -> None:
         try:
@@ -183,6 +212,7 @@ class LocalCLIRunner(BaseRunner):
                     normalized_payload={"status": "running"},
                 )
             )
+            self._persist_event(session, session.events[-1])
             session.events.append(
                 RunnerEvent(
                     event_type=RunnerEventType.BASH_COMMAND_STARTED,
@@ -193,6 +223,7 @@ class LocalCLIRunner(BaseRunner):
                     },
                 )
             )
+            self._persist_event(session, session.events[-1])
             process = await asyncio.create_subprocess_exec(
                 *session.command,
                 cwd=session.cwd,
@@ -221,6 +252,8 @@ class LocalCLIRunner(BaseRunner):
                         normalized_payload={"returncode": session.returncode},
                     )
                 )
+                self._persist_event(session, session.events[-2])
+                self._persist_event(session, session.events[-1])
             else:
                 session.status = "failed"
                 session.events.append(
@@ -240,6 +273,8 @@ class LocalCLIRunner(BaseRunner):
                         },
                     )
                 )
+                self._persist_event(session, session.events[-2])
+                self._persist_event(session, session.events[-1])
         except Exception as exc:
             session.status = "failed"
             session.events.append(
@@ -260,6 +295,7 @@ class LocalCLIRunner(BaseRunner):
             command=self._command_args(prompt, task_payload),
             cwd=task_payload.local_repo_path,
             prompt=prompt,
+            session_root=task_payload.session_root,
         )
         session.events.append(
             RunnerEvent(

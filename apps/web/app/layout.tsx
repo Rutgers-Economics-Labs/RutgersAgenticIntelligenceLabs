@@ -5,7 +5,10 @@ import { ReactNode } from "react";
 
 export const metadata: Metadata = {
   title: "RAIL Command Center",
-  description: "Planner-first command center for RAIL projects"
+  description: "Planner-first command center for RAIL projects",
+  icons: {
+    apple: "/rel-logo.jpeg"
+  }
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

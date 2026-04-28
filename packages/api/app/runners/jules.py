@@ -46,6 +46,7 @@ _ACTIVITY_KEY_TO_EVENT: dict[str, RunnerEventType] = {
     "sessionFailed": RunnerEventType.FAILED,
     "sessionCancelled": RunnerEventType.CANCELLED,
     "fileChanged": RunnerEventType.FILE_CHANGE_DETECTED,
+    "planApproved": RunnerEventType.PROGRESS,
 }
 
 # Default Jules prompt sent when auto-approving a plan-approval request.
@@ -246,13 +247,16 @@ class JulesRunner(BaseRunner):
 
     async def approve(self, session_id: str, payload: dict[str, Any]) -> None:
         """Approve a Jules plan-approval gate.
-
-        Jules does not have a dedicated approve endpoint. Approval is signaled
-        by sending a message. The message text may be provided via
-        ``payload["message"]``; otherwise the default approval message is used.
+        
+        Uses the dedicated :approvePlan endpoint if the activity suggests a plan approval,
+        otherwise falls back to :sendMessage.
         """
-        message = payload.get("message") or _DEFAULT_APPROVAL_MESSAGE
-        await self.send_message(session_id, message)
+        activity_key = payload.get("activity_key")
+        if activity_key == "planProposed" or activity_key == "approvalRequested":
+            await self._post(f"sessions/{session_id}:approvePlan", {})
+        else:
+            message = payload.get("message") or _DEFAULT_APPROVAL_MESSAGE
+            await self.send_message(session_id, message)
 
     async def cancel(self, session_id: str) -> None:
         """Record cancellation intent.

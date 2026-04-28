@@ -1,9 +1,10 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ProjectShell } from "@/components/project-shell";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { TaskBoard } from "@/components/task-board";
 import { fetchPlannerThread } from "@/lib/api";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
@@ -210,6 +211,81 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
+// ── Right rail: live-fetched TaskBoard ─────────────────────────────────
+
+function PlannerRail({ slug }: { slug: string }) {
+  const [board, setBoard] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const loadBoard = useCallback(async () => {
+    try {
+      const resp = await fetch(
+        `${API_ROOT}/projects/${encodeURIComponent(slug)}/planner/board`,
+        { cache: "no-store" },
+      );
+      if (resp.ok) setBoard(await resp.json());
+    } catch {}
+    setLoading(false);
+  }, [slug]);
+
+  useEffect(() => { loadBoard(); }, [loadBoard]);
+
+  // Auto-refresh every 15s while visible
+  useEffect(() => {
+    const iv = setInterval(loadBoard, 15_000);
+    return () => clearInterval(iv);
+  }, [loadBoard]);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Rail header */}
+      <div style={{
+        padding: "8px 14px",
+        borderBottom: "1px solid var(--border)",
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        flexShrink: 0,
+      }}>
+        <span className="rail-label">Plan Board</span>
+        <button
+          onClick={() => { setLoading(true); loadBoard(); }}
+          style={{
+            background: "none",
+            border: "1px solid var(--border)",
+            padding: "2px 8px",
+            fontFamily: "JetBrains Mono, monospace",
+            fontSize: 10,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            color: "var(--muted)",
+            cursor: "pointer",
+          }}
+        >
+          {loading ? "…" : "↻ Refresh"}
+        </button>
+      </div>
+
+      {/* Board content */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {loading && !board ? (
+          <div style={{ padding: "24px 14px", textAlign: "center", color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
+            Loading board…
+          </div>
+        ) : board ? (
+          <TaskBoard board={board} slug={slug} />
+        ) : (
+          <div style={{ padding: "24px 14px", textAlign: "center", color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
+            Could not load board.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ──────────────────────────────────────────────────────────
+
 export default function AgentPage() {
   const params = useParams<{ slug: string }>();
   const searchParams = useSearchParams();
@@ -219,10 +295,60 @@ export default function AgentPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [autopilot, setAutopilot] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<object[]>([]);
+  const [lastAction, setLastAction] = useState<string | null>(null);
+  const [lastTurnResult, setLastTurnResult] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    // Poll autopilot status
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_ROOT}/projects/${slug}/autopilot/status`);
+        const data = await res.json();
+        setAutopilot(data.enabled);
+        setAutoApprove(data.autoApprove);
+        setLastAction(data.lastAction);
+        setLastTurnResult(data.lastTurnResult);
+      } catch {}
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [slug]);
+
+  async function toggleAutopilot() {
+    const next = !autopilot;
+    setAutopilot(next);
+    try {
+      await fetch(`${API_ROOT}/projects/${slug}/autopilot`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next, autoApprove }),
+      });
+    } catch {
+      setAutopilot(!next);
+    }
+  }
+
+  async function toggleAutoApprove() {
+    const next = !autoApprove;
+    setAutoApprove(next);
+    // If autopilot is already on, we need to update its config
+    if (autopilot) {
+      try {
+        await fetch(`${API_ROOT}/projects/${slug}/autopilot`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: true, autoApprove: next }),
+        });
+      } catch {
+        setAutoApprove(!next);
+      }
+    }
+  }
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -357,7 +483,12 @@ export default function AgentPage() {
   }
 
   return (
-    <ProjectShell slug={slug} title="Research Agent" section="agent">
+    <ProjectShell
+      slug={slug}
+      title="Agent & Plan"
+      section="agent"
+      rightRail={<PlannerRail slug={slug} />}
+    >
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
 
         {/* Thread bar */}
@@ -391,6 +522,42 @@ export default function AgentPage() {
             + New thread
           </button>
         </div>
+        
+        {/* Autopilot Status Bar */}
+        {autopilot && (
+          <div style={{
+            background: "var(--panel-alt)",
+            borderBottom: "1px solid var(--border)",
+            padding: "8px 16px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            minHeight: 36,
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 6,
+              fontFamily: "JetBrains Mono, monospace", fontSize: 10,
+              color: "var(--s-running)", fontWeight: 600, flexShrink: 0,
+            }}>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--s-running)", animation: "pulse 1s infinite" }} />
+              ACTIVE
+            </div>
+            <div style={{
+              flex: 1, minWidth: 0,
+              fontFamily: "JetBrains Mono, monospace", fontSize: 11,
+              color: "var(--fg)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"
+            }}>
+              {lastAction || "Evaluating next project step…"}
+            </div>
+            {lastTurnResult && (
+              <div style={{
+                fontSize: 10, color: "var(--muted)", fontStyle: "italic", flexShrink: 0
+              }}>
+                ↳ {lastTurnResult.length > 60 ? lastTurnResult.slice(0, 57) + "…" : lastTurnResult}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Messages */}
         <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
@@ -458,6 +625,57 @@ export default function AgentPage() {
               el.style.height = Math.min(el.scrollHeight, 120) + "px";
             }}
           />
+          <button
+            onClick={toggleAutopilot}
+            style={{
+              padding: "8px 12px",
+              background: autopilot ? "var(--s-running)" : "var(--panel-alt)",
+              color: autopilot ? "white" : "var(--muted)",
+              border: "1px solid var(--border)",
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: 10,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              transition: "all 0.2s",
+              boxShadow: autopilot ? "0 0 12px var(--s-running-alpha)" : "none",
+            }}
+          >
+            <div style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: autopilot ? "white" : "var(--muted)",
+              animation: autopilot ? "pulse 1.5s infinite" : "none",
+            }} />
+            {autopilot ? "Autopilot ON" : "Autopilot"}
+          </button>
+          <button
+            onClick={toggleAutoApprove}
+            title="Automatically grant task approvals"
+            style={{
+              padding: "8px 12px",
+              background: "var(--panel-alt)",
+              color: autoApprove ? "var(--s-running)" : "var(--muted)",
+              border: `1px solid ${autoApprove ? "var(--s-running)" : "var(--border)"}`,
+              fontFamily: "JetBrains Mono, monospace",
+              fontSize: 10,
+              letterSpacing: "0.1em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              transition: "all 0.2s",
+            }}
+          >
+            {autoApprove ? "✓ Auto-Approve" : "Auto-Approve"}
+          </button>
           <button
             onClick={() => sendMessage(input)}
             disabled={busy || !input.trim()}

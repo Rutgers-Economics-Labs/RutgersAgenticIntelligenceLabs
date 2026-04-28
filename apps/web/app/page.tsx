@@ -50,9 +50,20 @@ export default async function LandingPage() {
           padding: "14px 20px",
           borderBottom: "1px solid var(--border)",
           display: "flex",
-          alignItems: "baseline",
+          alignItems: "center",
           gap: 12,
         }}>
+          <img
+            src="/rel-logo.jpeg"
+            alt="Rutgers Economics Labs"
+            style={{
+              width: 30,
+              height: 30,
+              objectFit: "contain",
+              background: "#fff",
+              border: "1px solid var(--border)",
+            }}
+          />
           <span style={{
             fontFamily: "JetBrains Mono, monospace",
             fontSize: 13,

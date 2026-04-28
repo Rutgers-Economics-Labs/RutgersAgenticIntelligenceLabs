@@ -78,9 +78,21 @@ class Settings(BaseSettings):
 
     # GitHub App
     github_app_id: str = Field(default="", validation_alias="GITHUB_APP_ID")
-    github_app_private_key: str = Field(default="", validation_alias="GITHUB_APP_PRIVATE_KEY")
+    github_app_private_key_raw: str = Field(default="", validation_alias="GITHUB_APP_PRIVATE_KEY")
     github_webhook_secret: str = Field(default="", validation_alias="GITHUB_WEBHOOK_SECRET")
     github_app_org: str = Field(default="Rutgers-Economics-Labs", validation_alias="GITHUB_APP_ORG")
+
+    @property
+    def github_app_private_key(self) -> str:
+        """Clean and unescape the RSA private key."""
+        raw = self.github_app_private_key_raw or ""
+        # Remove surrounding quotes if they exist
+        if raw.startswith('"') and raw.endswith('"'):
+            raw = raw[1:-1]
+        elif raw.startswith("'") and raw.endswith("'"):
+            raw = raw[1:-1]
+        # Unescape literal \n into actual newlines
+        return raw.replace("\\n", "\n")
 
     # Jules runner
     jules_api_key: str = Field(default="", validation_alias="JULES_API_KEY")
@@ -94,7 +106,7 @@ class Settings(BaseSettings):
     )
     claude_code_command: str = Field(default="claude", validation_alias="CLAUDE_CODE_COMMAND")
     gemini_cli_command: str = Field(default="gemini", validation_alias="GEMINI_CLI_COMMAND")
-    cursor_cli_command: str = Field(default="cursor", validation_alias="CURSOR_CLI_COMMAND")
+    cursor_cli_command: str = Field(default="agent", validation_alias="CURSOR_CLI_COMMAND")
     codex_cli_command: str = Field(default="codex", validation_alias="CODEX_CLI_COMMAND")
 
     # Server

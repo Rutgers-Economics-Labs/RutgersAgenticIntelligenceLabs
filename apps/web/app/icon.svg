@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+  <rect width="500" height="500" fill="#E4E4E4"/>
+  <text
+    x="250"
+    y="330"
+    text-anchor="middle"
+    font-family="Arial Black, Arial, Helvetica, sans-serif"
+    font-weight="900"
+    font-size="220"
+    fill="#CC0033"
+    letter-spacing="-4"
+  >REL</text>
+</svg>

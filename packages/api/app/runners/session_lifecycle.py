@@ -689,6 +689,7 @@ async def create_runner_session(
         allowed_paths=allowed_paths or [],
         acceptance_criteria=acceptance_criteria or [],
         project_context=project_context,
+        session_root=str(session_root),
     )
     try:
         result = await runner.create_session(task_payload)

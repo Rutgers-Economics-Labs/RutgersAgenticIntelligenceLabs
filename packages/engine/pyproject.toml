@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rail-engine"
+version = "0.1.0"
+description = "RAIL Engine for ontology-backed data hydration and analysis"
+dependencies = [
+    "owlready2",
+    "pandas",
+    "streamlit",
+    "pyvis",
+    "requests",
+    "openpyxl",
+    "rdflib",
+    "pyyaml",
+    "beautifulsoup4",
+    "lxml",
+    "duckdb",
+    "aioboto3",
+    "litellm",
+    "matplotlib",
+    "numpy",
+    "pdfplumber",
+    "scikit-learn",
+    "statsmodels",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["engine*"]

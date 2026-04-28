@@ -108,6 +108,14 @@ class PlannerTaskRequest(BaseModel):
     runner: str | None = None
     approvalState: str | None = None
 
+class AutopilotRequest(BaseModel):
+    enabled: bool
+    autoApprove: bool = False
+
+class WorkerUpdateRequest(BaseModel):
+    message: str
+    role: str = "agent"
+
 
 class PlannerTaskUpdateRequest(BaseModel):
     title: str | None = None
@@ -1000,6 +1008,22 @@ async def planner_chat(slug: str, data: PlannerChatRequest):
     )
 
 
+@router.post("/{slug}/planner/worker-update")
+async def worker_update_planner(slug: str, data: WorkerUpdateRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    # Append to planner history as a system/agent message
+    await planner_service.append_planner_message(
+        project=project,
+        role=data.role,
+        content=data.message,
+        message_type="worker_update"
+    )
+    # Trigger Autopilot wake-up so the planner can react
+    from app.services.autopilot_service import trigger_wake
+    trigger_wake(slug)
+    return {"status": "message_sent"}
+
+
 @router.get("/{slug}/planner/board")
 async def get_planner_board(slug: str):
     project = await planner_service.get_project_by_slug(slug)
@@ -1272,6 +1296,8 @@ async def create_project_approval(slug: str, data: ApprovalCreateRequest):
         requested_by_role=data.requestedByRole,
         granted_by_user_id=data.grantedByUserId,
     )
+    from app.services.autopilot_service import trigger_wake
+    trigger_wake(slug)
     return {"approvalId": approval_id}
 
 
@@ -1296,6 +1322,10 @@ async def resolve_project_approval(slug: str, approval_id: str, data: ApprovalRe
             status="ready",
             approvalState="granted",
         )
+    
+    from app.services.autopilot_service import trigger_wake
+    trigger_wake(slug)
+    
     return approval
 
 
@@ -1610,4 +1640,27 @@ async def run_research_agents_direct(slug: str, data: RunResearchAgentsRequest, 
         "ok": True,
         "message": f"Launched {len(data.agents)} research agent(s) in background",
         "agents": [a.focus for a in data.agents],
+    }
+# --- Autopilot (God Mode) ---
+
+@router.post("/{slug}/autopilot")
+async def toggle_autopilot(
+    slug: str,
+    data: AutopilotRequest,
+    background_tasks: BackgroundTasks,
+):
+    from app.services import autopilot_service
+    if data.enabled:
+        background_tasks.add_task(autopilot_service.start_autopilot, slug, data.autoApprove)
+        return {"status": "started", "slug": slug, "autoApprove": data.autoApprove}
+    else:
+        await autopilot_service.stop_autopilot(slug)
+        return {"status": "stopped", "slug": slug}
+
+@router.get("/{slug}/autopilot/status")
+async def get_autopilot_status(slug: str):
+    from app.services import autopilot_service
+    return {
+        "enabled": autopilot_service.is_autopilot_active(slug),
+        "autoApprove": autopilot_service.get_autopilot_config(slug).get("auto_approve", False)
     }

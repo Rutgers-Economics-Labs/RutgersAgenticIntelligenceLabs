@@ -17,7 +17,12 @@ class ClaudeCodeRunner(LocalCLIRunner):
             "stream-json",
             "--permission-mode",
             "bypassPermissions",
+            "--verbose",
         ]
         if task_payload.local_repo_path:
             args.extend(["--add-dir", task_payload.local_repo_path])
+        if task_payload.session_root:
+            from pathlib import Path
+            log_path = Path(task_payload.session_root) / "claude_debug.log"
+            args.extend(["--debug-file", str(log_path)])
         return [*args, prompt]

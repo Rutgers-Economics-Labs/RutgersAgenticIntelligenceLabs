@@ -101,7 +101,8 @@ export function AgentMonitor({ slug }: { slug: string }) {
         );
 
         return href ? (
-          <Link key={a.sessionId} href={href} style={{ display: "block", textDecoration: "none" }}>
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          <Link key={a.sessionId} href={href as any} style={{ display: "block", textDecoration: "none" }}>
             {row}
           </Link>
         ) : (

@@ -238,6 +238,8 @@ async def create_task(
         "latestRunSummary": "Not started",
     }
     _write_file(path, _render_task_markdown(task))
+    from app.services.autopilot_service import trigger_wake
+    trigger_wake(project["slug"])
     return task
 
 
@@ -267,6 +269,8 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
         if target in task:
             task[target] = value
     _write_file(path, _render_task_markdown(task))
+    from app.services.autopilot_service import trigger_wake
+    trigger_wake(project["slug"])
     return task
 
 
@@ -441,3 +445,50 @@ async def sync_planner_files(project: dict, board: dict | None = None) -> None:
         syncer.mirror_task(task)
     _write_file(plan_root / "approvals.md", _render_approvals_index(approvals))
     _write_file(plan_root / "blockers.md", _render_blockers(root))
+    
+async def git_sync(project: dict, message: str = "chore: sync workspace") -> bool:
+    """Commit and push any changes in the project repo to GitHub."""
+    import logging
+    import asyncio
+    log = logging.getLogger(__name__)
+    root = project_root_from_record(project)
+    if root is None or not root.is_dir():
+        return False
+    if not (root / ".git").is_dir():
+        return False
+    try:
+        # Check if there are changes
+        status_proc = await asyncio.create_subprocess_shell(
+            "git status --porcelain",
+            cwd=str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await status_proc.communicate()
+        if not stdout.strip():
+            # No changes to sync, but we should push just in case local is ahead
+            push_proc = await asyncio.create_subprocess_shell(
+                "git push",
+                cwd=str(root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await push_proc.communicate()
+            return True
+
+        # Add, commit, and push
+        cmd = f'git add -A && git commit -m "{message}" && git push'
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=45)
+        if proc.returncode != 0:
+            log.warning(f"git sync failed: {stdout.decode()}")
+            return False
+        return True
+    except Exception as exc:
+        log.warning(f"git sync error: {exc}")
+        return False

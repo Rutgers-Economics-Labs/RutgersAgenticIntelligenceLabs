@@ -119,7 +119,7 @@ class RunnerFactory:
             RunnerFactory._instances[name] = instance
             return instance
         if name == "cursor_cli":
-            instance = cls(command=getattr(settings, "cursor_cli_command", "cursor"))
+            instance = cls(command=getattr(settings, "cursor_cli_command", "agent"))
             RunnerFactory._instances[name] = instance
             return instance
 

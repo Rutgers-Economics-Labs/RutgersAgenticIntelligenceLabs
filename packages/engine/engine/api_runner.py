@@ -61,6 +61,9 @@ def _http_fetch(spec, extra_params=None):
         with open(cp) as f:
             return json.load(f)
 
+    if os.environ.get("RAIL_CACHE_ONLY") == "true":
+        raise RuntimeError(f"Cache miss for {cache_key} and RAIL_CACHE_ONLY is enabled.")
+
     print(f"  [fetch] {spec['url']} params={params}")
     resp = requests.get(spec["url"], params=params, timeout=30)
     resp.raise_for_status()

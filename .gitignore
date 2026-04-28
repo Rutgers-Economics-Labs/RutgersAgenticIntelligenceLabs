@@ -217,3 +217,4 @@ apps/web/node_modules/
 apps/web/tsconfig.tsbuildinfo
 state/work-orders/.jules-runner-state.json
 .DS_Store
+.rail/

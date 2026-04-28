@@ -255,15 +255,31 @@ Do not treat web snippets as evidence. Open and inspect the source.
     _write(project_root / "research_plan/task_board.md", task_board)
     _write(
         project_root / "scripts" / "setup-workspace.sh",
-        "#!/usr/bin/env bash\nset -euo pipefail\n\n"
-        "# Install the RAIL engine so any cloud agent (Jules, etc.) has access to the\n"
-        "# full ontology/pipeline/analysis stack.\n"
-        'pip install --quiet \\\n'
-        '  "git+https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs.git#subdirectory=packages/engine"\n\n'
-        "# Common data science deps used by analysis scripts\n"
-        "pip install --quiet pandas requests httpx pyyaml duckdb matplotlib statsmodels scikit-learn\n\n"
-        "echo \"RAIL engine installed.\"\n"
-        'python -c "import engine; print(\'engine ok\')" 2>/dev/null || echo "Note: engine import check skipped"\n',
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            set -euo pipefail
+
+            # 1. Install the RAIL engine. 
+            # We prefer local installation if we're in the monorepo, 
+            # otherwise we fall back to the remote GitHub package.
+            LOCAL_ENGINE="$RAIL_PROJECT_ROOT/../../packages/engine"
+            if [ -d "$LOCAL_ENGINE" ]; then
+              echo "→ Installing engine from local path: $LOCAL_ENGINE"
+              pip install --quiet -e "$LOCAL_ENGINE"
+            else
+              echo "→ Installing engine from GitHub..."
+              pip install --quiet \\
+                "git+https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs.git#subdirectory=packages/engine"
+            fi
+
+            # 2. Common data science deps used by analysis scripts
+            pip install --quiet pandas requests httpx pyyaml duckdb matplotlib statsmodels scikit-learn
+
+            echo "RAIL engine installed."
+            python -c "import engine; print('engine ok')" 2>/dev/null || echo "Note: engine import check skipped"
+            """
+        ),
     )
     _write(
         project_root / "scripts" / "run-verification.sh",

@@ -3,19 +3,21 @@
 import Link from "next/link";
 import { ReactNode, useEffect, useState } from "react";
 import { AgentMonitor } from "@/components/agent-monitor";
+import { CommandPalette } from "@/components/command-palette";
+import { LiveOutputPanel } from "@/components/live-output-panel";
 
 const NAV = [
-  { label: "Overview",  suffix: "",         key: "overview"  },
-  { label: "Agent",     suffix: "/agent",   key: "agent"     },
-  { label: "Launch",    suffix: "/launch",  key: "launch"    },
-  { label: "Planner",   suffix: "/planner", key: "planner"   },
-  { label: "Runs",      suffix: "/runs",    key: "sessions"  },
-  { label: "Review",    suffix: "/review",  key: "review"    },
-  { label: "Skills",    suffix: "/skills",  key: "skills"    },
-  { label: "Sources",   suffix: "/sources", key: "sources"   },
-  { label: "Artifacts", suffix: "/artifacts", key: "artifacts" },
-  { label: "Repo",      suffix: "/repo",    key: "repo"      },
-  { label: "Ontology",  suffix: "/ontology",key: "ontology"  },
+  { label: "Overview",     suffix: "",           key: "overview"  },
+  { label: "Agent & Plan", suffix: "/agent",     key: "agent"     },
+  { label: "Launch",       suffix: "/launch",    key: "launch"    },
+  { label: "Runs",         suffix: "/runs",      key: "sessions"  },
+  { label: "Review",       suffix: "/review",    key: "review"    },
+  { label: "Skills",       suffix: "/skills",    key: "skills"    },
+  { label: "Sources",      suffix: "/sources",   key: "sources"   },
+  { label: "Artifacts",    suffix: "/artifacts", key: "artifacts" },
+  { label: "Repo",         suffix: "/repo",      key: "repo"      },
+  { label: "Ontology",     suffix: "/ontology",  key: "ontology"  },
+  { label: "Settings",     suffix: "/settings",  key: "settings"  },
 ];
 
 const REPO_SHORTCUTS = [
@@ -63,6 +65,8 @@ export function ProjectShell({
 }) {
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg)" }}>
+      <CommandPalette slug={slug} />
+      <LiveOutputPanel slug={slug} />
 
       {/* ── Left sidebar ─────────────────────────────────────────── */}
       <aside style={{
@@ -192,7 +196,24 @@ export function ProjectShell({
             <span style={{ color: "var(--border)", fontSize: 12 }}>·</span>
             <span style={{ fontSize: 12, color: "var(--fg)", fontWeight: 500 }}>{title}</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }))}
+              style={{
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                padding: "2px 8px",
+                fontFamily: "JetBrains Mono, monospace",
+                fontSize: 10,
+                letterSpacing: "0.08em",
+                color: "var(--muted)",
+                cursor: "pointer",
+                display: "flex", alignItems: "center", gap: 6,
+              }}
+            >
+              <span>⌘K</span>
+              <span style={{ opacity: 0.6 }}>search</span>
+            </button>
             <Link
               href={`/projects/${slug}/launch`}
               style={{
@@ -213,7 +234,7 @@ export function ProjectShell({
 
         {/* Content + optional right rail */}
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <main style={{ flex: 1, overflow: "auto", minWidth: 0 }}>
+          <main style={{ flex: 1, overflow: "auto", minWidth: 0, paddingBottom: 30 }}>
             {children}
           </main>
           {rightRail && (
