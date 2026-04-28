@@ -36,6 +36,23 @@ class Project:
     def run_analysis(self, plugin_slug: str, **kwargs) -> dict:
         return self._backend.run_analysis(plugin_slug, config=kwargs)
 
+    def discover(self, q: str, tags: list[str] | None = None) -> list[dict]:
+        """Search for connector templates (Census, FRED, etc)."""
+        return self._backend.discover_templates(q, tags=tags)
+
+    def search_registry(self, q: str, provider: str | None = None, geography: str | None = None) -> list[dict]:
+        """Search the platform's data catalog."""
+        return self._backend.search_registry(q, provider=provider, geography=geography)
+
+    def list_secrets(self) -> list[dict]:
+        return self._backend.list_secrets(self.slug)
+
+    def set_secret(self, key: str, value: str) -> dict:
+        return self._backend.set_secret(self.slug, key, value)
+
+    def delete_secret(self, key: str) -> dict:
+        return self._backend.delete_secret(self.slug, key)
+
     @property
     def agent(self) -> "AgentClient":
         """Access the research agent for this project."""

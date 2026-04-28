@@ -6,7 +6,8 @@
         test \
         deploy-api \
         clean cache-clear \
-        push
+        push \
+        install-rail secrets-list
 
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 VENV     := $(ROOT_DIR).venv
@@ -76,6 +77,11 @@ help:
 	@echo "  🧪 Testing & Maintenance"
 	@echo "    make test             Run all Python tests"
 	@echo "    make clean            Reset ontology state + clear cache"
+	@echo ""
+	@echo "  🛠️ CLI & Secrets"
+	@echo "    make install-rail     Install 'rail' CLI in editable mode"
+	@echo "    make secrets-list     List project secrets (masked)"
+	@echo "    make secrets-set      Set a secret (Usage: make secrets-set KEY=foo VAL=bar)"
 	@echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -184,6 +190,25 @@ deploy-api:
 push:
 	git -C $(ROOT_DIR) push origin HEAD
 	git -C $(ROOT_DIR) push personal HEAD
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI & Secrets
+# ─────────────────────────────────────────────────────────────────────────────
+
+install-rail:
+	@echo "→ Installing 'rail' CLI in editable mode…"
+	$(PYTHON) -m pip install -e $(ROOT_DIR)packages/rail-py
+
+secrets-list:
+	rail secrets list
+
+secrets-set:
+	@if [ -z "$(KEY)" ] || [ -z "$(VAL)" ]; then \
+		echo "Usage: make secrets-set KEY=NAME VAL=VALUE"; \
+		exit 1; \
+	fi
+	rail secrets set $(KEY) $(VAL)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cleanup

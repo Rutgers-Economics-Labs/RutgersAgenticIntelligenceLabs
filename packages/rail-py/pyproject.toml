@@ -19,3 +19,6 @@ local = ["owlready2", "duckdb", "pyyaml"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["rail*"]
+
+[project.scripts]
+rail = "rail.cli:main"

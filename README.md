@@ -1,28 +1,47 @@
-# Rutgers Agentic Intelligence Labs — YAML-Driven Ontology Engine
+# RAIL: The Agentic Data OS
 
-A declarative knowledge-graph engine for economic analysis. APIs, ontology schemas, and hydration pipelines are all defined in YAML — no domain Python is required to add new data sources or extend the ontology.
+RAIL (Rutgers Agentic Intelligence Labs) is a repo-centric **Data Operating System** designed for economic research. It treats a Git repository as the primary source of truth for ontology schemas, data hydration pipelines, and research logic.
 
-Inspired by Palantir Foundry's Ontology layer, built on [owlready2](https://owlready2.readthedocs.io/), [Census Bureau API](https://api.census.gov/), and [FRED API](https://fred.stlouisfed.org/docs/api/fred/).
+### The Vision
+- **Repo-Centric**: Everything from data lineage to research plans lives in the repository.
+- **Agent-First**: Designed for autonomous agents (Research Agent & Jules) to operate natively via bash and the `rail` CLI.
+- **Semantic Navigation**: Move beyond keyword search with `lgrep` for semantic discovery across documents and data.
+- **Declarative Hydration**: Unify disparate APIs (Census, FRED, etc.) into a cohesive knowledge graph via YAML.
 
 ---
 
 ## Quick Start
 
 ### 1. Initial Setup
-Run the one-step setup to install all dependencies (API, Engine, and Web) and seed the initial configuration:
+Run the one-step setup to install the platform and the `rail` CLI:
 
 ```bash
 make setup
+make install-rail
 ```
 
-### 2. Set API Keys
-Ensure your `.env` file (or environment) has the necessary keys:
+### 2. Manage Secrets
+RAIL handles API keys securely. Set your FRED key via the CLI:
 
 ```bash
-export FRED_API_KEY=your_key_here
+make secrets-set KEY=FRED_API_KEY VAL=your_key_here
 ```
 
-### 3. Start the Platform
+### 3. Operate via CLI
+The `rail` CLI is the primary interface for humans and agents alike:
+
+```bash
+# Search for data sources
+rail search "unemployment"
+
+# Query the knowledge graph
+rail query sql "SELECT * FROM Measure WHERE val > 5.0"
+
+# Trigger hydration
+rail hydrate --pipeline nj_hydration
+```
+
+### 4. Start the Platform
 Launch both the FastAPI backend and the Next.js Command Center:
 
 ```bash
@@ -345,6 +364,38 @@ Each `onto.search_one()` is a SQLite query. The NJ municipalities step processes
 
 **FRED missing values**
 FRED returns the string `"."` for data points not yet available. Standard `int()` / `float()` casts raise `ValueError`. The engine uses `pd.to_numeric(errors='coerce')` which converts `"."` to `NaN`, then `drop_na: true` in the API config removes those rows cleanly.
+
+---
+
+## The Data OS Architecture
+
+RAIL operates as a **Agentic Data Operating System** where the repository is the kernel.
+
+### 📁 Repository as State
+Unlike traditional platforms that store research state in a hidden database, RAIL flattens state into the filesystem:
+- **`configs/`**: The system's "drivers" (APIs, pipelines, ontology).
+- **`research_plan/`**: The system's "process table" (active tasks, decisions, logs).
+- **`ontology/`**: The system's "disk" (hydrated DuckDB and OWL storage).
+
+### 🤖 Agent-Native Interface
+Agents don't call APIs; they execute bash. The `rail` CLI provides a standardized interface for:
+- **Discovery**: `rail search "census"`
+- **Analysis**: `rail query sql "..."`
+- **Hydration**: `rail hydrate`
+- **Secrets**: `rail secrets list`
+
+### 🔑 Secret Management
+RAIL uses server-side Fernet encryption for API keys. You can manage them via the CLI or Makefile:
+
+```bash
+# List secrets (masked)
+make secrets-list
+
+# Set a new secret
+make secrets-set KEY=FRED_API_KEY VAL=abc123...
+```
+
+The `rail-py` library automatically resolves these secrets for agents based on their assigned role policy (e.g., the `data` agent can access `FRED_API_KEY`, but the `coding` agent cannot).
 
 ---
 

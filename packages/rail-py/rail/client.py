@@ -41,3 +41,27 @@ class CloudClient:
 
     def execute_python(self, code: str, timeout: int = 60) -> dict:
         return self.post("/execute", {"code": code, "timeout": timeout})
+
+    def search_registry(self, q: str, provider: str | None = None, geography: str | None = None) -> list[dict]:
+        params = {"query": q}
+        if provider: params["provider"] = provider
+        if geography: params["geography"] = geography
+        return self.get("/registry/search", **params)
+
+    def discover_templates(self, q: str, tags: list[str] | None = None) -> list[dict]:
+        params = {"query": q}
+        if tags: params["tags"] = ",".join(tags)
+        return self.get("/connectors/templates", **params)
+
+    def list_secrets(self, project_slug: str) -> list[dict]:
+        return self.get(f"/projects/{project_slug}/settings/secrets")
+
+    def set_secret(self, project_slug: str, key: str, value: str) -> dict:
+        return self.post(f"/projects/{project_slug}/settings/secrets", {"keyName": key, "plaintextValue": value})
+
+    def delete_secret(self, project_slug: str, key: str) -> dict:
+        import httpx
+        with httpx.Client() as client:
+            r = client.delete(f"{self.base_url}/projects/{project_slug}/settings/secrets/{key}", headers=self.headers)
+            r.raise_for_status()
+            return r.json()

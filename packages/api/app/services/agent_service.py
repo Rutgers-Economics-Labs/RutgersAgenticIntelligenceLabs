@@ -23,10 +23,21 @@ RAIL is a platform for building and querying economic knowledge graphs from stru
 
 You can autonomously help researchers by:
 1. Discovering and configuring data sources (Census, FRED, World Bank, uploaded CSVs)
-2. Writing YAML configs for API sources, ontology schemas, and hydration pipelines
-3. Running data pipelines that populate a knowledge graph (OWL ontology backed by SQLite)
+2. Managing configurations and project files via bash (git, ls, cat, etc.)
+3. Running data pipelines via the CLI (`python -m engine.pipeline_runner_cli`)
 4. Querying the knowledge graph via SQL (DuckDB) or ontology search
 5. Running statistical analysis with Python: panel regression, DiD, clustering, time-series
+
+For semantic search across the repository or documents, use `lgrep` in bash.
+
+## Operating with Bash
+You have a `run_bash` tool and the `rail` CLI is installed. Use them to:
+- **Search Registry**: `rail search "topic"` (replaces registry tools)
+- **Query Data**: `rail query sql "SELECT..."` or `rail query entities ClassName`
+- **Run Pipelines**: `rail hydrate --pipeline slug`
+- **Time Series**: `rail series SERIES_ID`
+- **File Management**: `ls`, `cat`, `git` for configs and reports.
+- **Semantic Search**: `lgrep` for searching the repository.
 
 The knowledge graph uses these core classes: State, County, Municipality, Individual, Measure.
 
@@ -36,6 +47,13 @@ When a researcher asks a question:
 - Explain your findings clearly with concrete numbers
 
 Always show your reasoning. When you write code or SQL, explain the results after seeing them.
+
+## Semantic Search
+For semantic search across the project repo or documentation, use `lgrep` via `run_bash`. This is more effective than keyword search for finding relevant code patterns or research context.
+
+## Python Analysis
+When using `execute_python`, the `rail` package (from the private `rail-py` library) is available. Use it to interact with the platform's ontology and data sources directly within your scripts.
+
 Never invent CSV paths, table names, or column names — call get_sql_schema or describe_database first, then run_sql or execute_python to verify.
 To save maps or HTML reports, write files under OUTPUT_DIR in execute_python; saved files are returned as artifacts you can reference.
 Be concise and research-focused."""
@@ -83,26 +101,14 @@ ALL_TOOLS: list[dict] = [
     {
         "type": "function",
         "function": {
-            "name": "publish_to_github",
-            "description": "Commit one or more config files to the project's GitHub repo. Only call after the user has explicitly confirmed they want to publish.",
+            "name": "run_bash",
+            "description": "Execute a shell command in the project repository. Use this for file management, git operations, running pipeline CLIs, and semantic search with `lgrep`.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "files": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "path": {"type": "string"},
-                                "content": {"type": "string"},
-                            },
-                            "required": ["path", "content"],
-                        },
-                        "description": "Files to commit. Paths must be within configs/ or ontology/.",
-                    },
-                    "commit_message": {"type": "string"},
+                    "command": {"type": "string", "description": "The bash command to execute"},
                 },
-                "required": ["files"],
+                "required": ["command"],
             },
         },
     },
@@ -130,67 +136,6 @@ ALL_TOOLS: list[dict] = [
                     },
                 },
                 "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_configs",
-            "description": "List available API sources, ontology schemas, and pipeline configs stored in the platform.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "config_type": {
-                        "type": "string",
-                        "enum": ["apis", "ontologies", "pipelines", "all"],
-                        "description": "Which config type to list. Default 'all'.",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "create_config",
-            "description": (
-                "Create a new YAML config in the platform (API source, ontology schema, or pipeline). "
-                "Use this to set up new data sources or pipelines, including scrape sources for HTML pages."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "config_type": {
-                        "type": "string",
-                        "enum": ["apis", "ontologies", "pipelines"],
-                    },
-                    "name": {"type": "string", "description": "Human-readable name"},
-                    "slug": {"type": "string", "description": "Unique identifier (kebab-case)"},
-                    "content": {"type": "string", "description": "Full YAML content"},
-                },
-                "required": ["config_type", "name", "slug", "content"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_pipeline",
-            "description": (
-                "Trigger a hydration pipeline by slug. This fetches data and populates the knowledge graph. "
-                "Returns the job ID and final status."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "pipeline_slug": {
-                        "type": "string",
-                        "description": "Slug of the pipeline config to run",
-                    }
-                },
-                "required": ["pipeline_slug"],
             },
         },
     },
@@ -420,34 +365,18 @@ async def _execute_tool(
         pathlib.Path(tmp_path).unlink(missing_ok=True)
         return {"storage_key": storage_key, "title": args["title"], "filename": filename}
 
-    if name == "publish_to_github":
-        if not project_slug:
-            return {"error": "publish_to_github requires a project context (pass ?project= to the chat endpoint)"}
-
-        # Verify paths
-        ALLOWED_PREFIXES = ["configs/", "ontology/"]
-        for f in args["files"]:
-            path = f["path"]
-            if not any(path.startswith(p) for p in ALLOWED_PREFIXES):
-                return {"error": f"Path not allowed: {path}. Must be within configs/ or ontology/."}
-            if ".." in path:
-                return {"error": f"Path traversal not allowed: {path}"}
-
-        # Call the publish endpoint
-        import httpx
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                "http://localhost:8000/api/v1/github/publish",
-                json={
-                    "project_slug": project_slug,
-                    "files": args["files"],
-                    "commit_message": args.get("commit_message", "chore: publish from RAIL agent"),
-                }
-            )
-
-        if resp.status_code != 200:
-            return {"error": resp.text}
-        return resp.json()
+    if name == "run_bash":
+        import subprocess
+        cmd = args["command"]
+        try:
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+            return {
+                "stdout": result.stdout[:10000],
+                "stderr": result.stderr[:2000],
+                "returncode": result.returncode
+            }
+        except Exception as e:
+            return {"error": f"Failed to run bash: {str(e)}"}
 
     if name == "search_data_registry":
         from app.services import registry_service
@@ -458,75 +387,6 @@ async def _execute_tool(
             limit=min(args.get("limit", 10), 20),
         )
         return {"results": results}
-
-    if name == "list_configs":
-        from app.services.convex_client import convex
-        config_type = args.get("config_type", "all")
-        result: dict = {}
-        if config_type in ("apis", "all"):
-            result["apis"] = await convex.query("configs:listApis", {})
-        if config_type in ("ontologies", "all"):
-            result["ontologies"] = await convex.query("configs:listOntologies", {})
-        if config_type in ("pipelines", "all"):
-            result["pipelines"] = await convex.query("configs:listPipelines", {})
-        # Trim to just name/slug/tags for token efficiency
-        for key in result:
-            result[key] = [{"name": c["name"], "slug": c["slug"]} for c in (result[key] or [])]
-        return result
-
-    elif name == "create_config":
-        from app.services.convex_client import convex
-        config_type = args["config_type"]
-        mutation_map = {
-            "apis": "configs:createApi",
-            "ontologies": "configs:createOntology",
-            "pipelines": "configs:createPipeline",
-        }
-        import yaml as _yaml
-        parsed = {}
-        try:
-            parsed = _yaml.safe_load(args["content"]) or {}
-        except Exception:
-            pass
-        payload = {
-            "name": args["name"],
-            "slug": args["slug"],
-            "content": args["content"],
-            "parsedSpec": parsed,
-            "isPublic": False,
-            "tags": [],
-            "createdAt": int(time.time() * 1000),
-            "updatedAt": int(time.time() * 1000),
-        }
-        if config_type == "ontologies":
-            payload["ontologyUri"] = parsed.get("uri", "")
-        if config_type == "pipelines":
-            steps = parsed.get("steps", [])
-            payload["referencedApiSlugs"] = [s["api"] for s in steps if "api" in s]
-        await convex.mutation(mutation_map[config_type], payload)
-        return {"created": True, "slug": args["slug"], "type": config_type}
-
-    elif name == "run_pipeline":
-        import asyncio
-        from app.services.convex_client import convex
-        from app.routers.jobs import _trigger_job  # internal helper
-        from app.services.pipeline_validate import PipelineValidationFailed
-
-        pipeline_slug = args["pipeline_slug"]
-        try:
-            result = await _trigger_job(pipeline_slug)
-        except PipelineValidationFailed as e:
-            return {"error": "pipeline_validation_failed", "errors": e.errors}
-        job_id = result["jobId"]
-
-        # Poll until done (max 10 min)
-        for _ in range(120):
-            await asyncio.sleep(5)
-            job = await convex.query("jobs:get", {"jobId": job_id})
-            status = job.get("status", "unknown")
-            if status in ("success", "failed", "cancelled"):
-                return {"jobId": job_id, "status": status}
-        return {"jobId": job_id, "status": "timeout", "message": "Job still running after 10 min"}
 
     elif name == "query_ontology":
         from app.services import ontology_service

@@ -77,7 +77,7 @@ async def resolve_jules_api_key(project_id: str | None, agent_role: str = "data"
     return global_key
 
 
-def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | None = None) -> Any:
+def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | None = None, source: str | None = None) -> Any:
     if runner_name == "jules":
         from app.core.config import settings
         from app.runners.jules import JulesRunner
@@ -87,7 +87,7 @@ def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | Non
         return JulesRunner(
             api_key=api_key,
             api_url=settings.jules_api_url,
-            source=settings.jules_source,
+            source=source or settings.jules_source,
         )
 
     return RunnerFactory.get(runner_name)
@@ -466,6 +466,99 @@ async def _load_project(project_id: str | None, project_slug: str | None) -> dic
     return None
 
 
+async def _build_project_context(
+    project: dict[str, Any] | None,
+    project_root: Path,
+    workspace_root: Path,
+) -> str:
+    """Assemble rich project context for CLI runner prompts.
+
+    Includes: ontology classes, DuckDB schema DDL, data source configs,
+    research plan summary, and a shallow repo tree so the agent can
+    orient itself without needing additional discovery steps.
+    """
+    parts: list[str] = [
+        "## Platform Tools & Capabilities",
+        "- For semantic search across the repository or documents, use `lgrep` via `run_bash`. It is much more effective than keyword-based `grep` or `find` for finding complex patterns and research context.",
+        "- The `rail` CLI and package (from the private `rail-py` library) are installed and available. Use `rail search`, `rail query`, and `rail hydrate` via `run_bash` for platform operations.",
+        ""
+    ]
+
+    if not project:
+        return ""
+
+    # 1. Project description
+    desc = project.get("description")
+    if desc:
+        parts.append(f"Project description: {desc}")
+
+    # 2. Ontology classes (from Owlready2 if hydrated)
+    try:
+        db_path = project.get("activeOntologyDbPath")
+        if db_path and Path(db_path).is_file():
+            from app.services import ontology_service
+            classes = await ontology_service._run(ontology_service.list_classes)
+            if classes:
+                parts.append(f"Ontology classes: {', '.join(classes[:40])}")
+    except Exception:
+        pass
+
+    # 3. DuckDB schema DDL (compact)
+    try:
+        duck_path = project.get("activeOntologyDuckdbPath")
+        if duck_path and Path(duck_path).is_file():
+            from app.services import sql_service
+            sql_service.set_path(duck_path)
+            ddl = sql_service.get_schema_ddl()
+            if ddl:
+                parts.append(f"DuckDB schema:\n{ddl[:2000]}")
+    except Exception:
+        pass
+
+    # 4. Data source configs (yaml filenames and types)
+    sources_dir = project_root / ".ontology" / "sources"
+    if sources_dir.is_dir():
+        source_files = sorted(sources_dir.glob("*.yaml"))[:20]
+        if source_files:
+            source_names = [f.stem for f in source_files]
+            parts.append(f"Data sources: {', '.join(source_names)}")
+
+    # 5. Pipeline config
+    pipelines_dir = project_root / ".ontology" / "pipelines"
+    if pipelines_dir.is_dir():
+        pipeline_files = sorted(pipelines_dir.glob("*.yaml"))[:5]
+        if pipeline_files:
+            parts.append(f"Pipelines: {', '.join(f.stem for f in pipeline_files)}")
+
+    # 6. Research plan overview (first 800 chars of current_plan.md)
+    plan_path = project_root / "research_plan" / "current_plan.md"
+    if plan_path.is_file():
+        try:
+            plan_text = plan_path.read_text(encoding="utf-8")[:800].strip()
+            if plan_text:
+                parts.append(f"Research plan:\n{plan_text}")
+        except Exception:
+            pass
+
+    # 7. Shallow repo tree (workspace, depth 2)
+    try:
+        tree_lines: list[str] = []
+        for child in sorted(workspace_root.iterdir()):
+            if child.name.startswith("."):
+                continue
+            if child.is_dir():
+                sub = sorted([f.name for f in child.iterdir() if not f.name.startswith(".")])[:8]
+                tree_lines.append(f"  {child.name}/  ({', '.join(sub)}{'…' if len(list(child.iterdir())) > 8 else ''})")
+            else:
+                tree_lines.append(f"  {child.name}")
+        if tree_lines:
+            parts.append(f"Repo structure:\n" + "\n".join(tree_lines[:30]))
+    except Exception:
+        pass
+
+    return "\n\n".join(parts)
+
+
 async def create_runner_session(
     *,
     project_id: str | None,
@@ -497,8 +590,22 @@ async def create_runner_session(
     if project_root is None:
         raise RuntimeError("Runner sessions require a local repo path")
 
+    # Deriving Jules source from repo_url (e.g. sources/github/OWNER/REPO)
+    jules_source = None
+    if runner_name == "jules":
+        from app.core.config import settings
+        jules_source = settings.jules_source # Default
+        if "github.com/" in repo_url:
+            clean_url = repo_url.split("github.com/")[-1].replace(".git", "")
+            jules_source = f"sources/github/{clean_url}"
+
+    # Sync to GitHub before launching cloud runner (Jules)
+    if runner_name == "jules" and project:
+        from app.services import planner_service
+        await planner_service.git_sync(project, f"chore: sync for {role} session")
+
     api_key = await resolve_jules_api_key(project_id, secret_role) if runner_name == "jules" else None
-    runner = resolve_runner_for_project(runner_name, api_key=api_key)
+    runner = resolve_runner_for_project(runner_name, api_key=api_key, source=jules_source)
 
     title = f"[{role}] {task_description[:60]}"
     running_session_id = await running_agent_service.create_running_agent(
@@ -568,6 +675,9 @@ async def create_runner_session(
         )
     await running_agent_service.update_running_agent(running_session_id, sessionPath=str(session_root))
 
+    # Build rich project context for CLI runners
+    project_context = await _build_project_context(project, project_root, workspace_root)
+
     task_payload = TaskPayload(
         project_slug=project_slug or (project.get("slug") if project else "unknown"),
         role=role,
@@ -578,6 +688,7 @@ async def create_runner_session(
         task_description=task_description,
         allowed_paths=allowed_paths or [],
         acceptance_criteria=acceptance_criteria or [],
+        project_context=project_context,
     )
     try:
         result = await runner.create_session(task_payload)
