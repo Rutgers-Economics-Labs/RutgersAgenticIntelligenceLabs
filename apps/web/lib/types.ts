@@ -368,12 +368,37 @@ export type ProjectArtifact = {
   sizeBytes: number;
   modifiedAt: number;
   previewable: boolean;
+  promotionState?: string;
+  verificationStatus?: string;
+  assumptions?: string[];
+  sources?: string[];
+  claims?: string[];
+  inputs?: string[];
+  scripts?: string[];
+  verificationRuns?: string[];
+  staleReasons?: string[];
+  generatedAt?: string | null;
   preview?: {
     kind: string;
     content?: string;
     rows?: string[][];
     imagePath?: string;
   };
+};
+
+export type ProjectIntegrityResponse = {
+  indexes: IntegrityIndexes;
+  summary: {
+    assumptionCount: number;
+    sourceCount: number;
+    claimCount: number;
+    artifactCount: number;
+    staleArtifactCount: number;
+    verificationRunCount: number;
+    verificationStatusCounts: Record<string, number>;
+    promotionStateCounts: Record<string, number>;
+  };
+  staleOutputs: ArtifactLineageRecord[];
 };
 
 export type ResearchLaunchPayload = {

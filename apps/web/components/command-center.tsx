@@ -177,8 +177,9 @@ export function SourceInventoryTable({ sources }: { sources: ProjectSource[] }) 
   );
 }
 
-export function ArtifactPreview({ artifact }: { artifact: ProjectArtifact }) {
+export function ArtifactPreview({ slug, artifact }: { slug: string; artifact: ProjectArtifact }) {
   const preview = artifact.preview;
+  const sourceDataPath = artifact.inputs?.[0] ?? artifact.sources?.[0]?.split("#", 1)[0] ?? "research_plan/state/sources.json";
   return (
     <div className="artifact-card">
       <div className="artifact-header">
@@ -186,7 +187,59 @@ export function ArtifactPreview({ artifact }: { artifact: ProjectArtifact }) {
           <div style={{ fontWeight: 700, color: "var(--fg)" }}>{artifact.name}</div>
           <div className="mono-muted">{artifact.path}</div>
         </div>
-        <StatusPill value={artifact.type} />
+        <div className="artifact-pill-row">
+          <StatusPill value={artifact.type} />
+          <StatusPill value={artifact.promotionState ?? "exploratory"} />
+          <StatusPill value={artifact.verificationStatus ?? "unverified"} />
+        </div>
+      </div>
+      <div className="artifact-meta-grid">
+        <div className="artifact-meta-cell">
+          <span>promotion</span>
+          <strong>{artifact.promotionState ?? "exploratory"}</strong>
+        </div>
+        <div className="artifact-meta-cell">
+          <span>verification</span>
+          <strong>{artifact.verificationStatus ?? "unverified"}</strong>
+        </div>
+        <div className="artifact-meta-cell">
+          <span>sources</span>
+          <strong>{artifact.sources?.length ?? 0}</strong>
+        </div>
+        <div className="artifact-meta-cell">
+          <span>assumptions</span>
+          <strong>{artifact.assumptions?.length ?? 0}</strong>
+        </div>
+        <div className="artifact-meta-cell">
+          <span>claims</span>
+          <strong>{artifact.claims?.length ?? 0}</strong>
+        </div>
+        <div className="artifact-meta-cell">
+          <span>stale flags</span>
+          <strong>{artifact.staleReasons?.length ?? 0}</strong>
+        </div>
+      </div>
+      <div className="artifact-link-row">
+        <Link href={`/projects/${slug}/repo?path=${encodeURIComponent(sourceDataPath)}`} className="artifact-link">
+          source data
+        </Link>
+        <Link href={`/projects/${slug}/integrity#assumptions`} className="artifact-link">
+          assumptions
+        </Link>
+        <Link href={`/projects/${slug}/integrity#claims`} className="artifact-link">
+          claim evidence
+        </Link>
+        <Link href={`/projects/${slug}/integrity#lineage`} className="artifact-link">
+          lineage
+        </Link>
+        <Link href={`/projects/${slug}/integrity#verification`} className="artifact-link">
+          verification
+        </Link>
+        {(artifact.staleReasons?.length ?? 0) > 0 ? (
+          <Link href={`/projects/${slug}/integrity#stale-outputs`} className="artifact-link">
+            stale outputs
+          </Link>
+        ) : null}
       </div>
       {preview?.kind === "markdown" && preview.content ? (
         <div className="artifact-preview"><MarkdownRenderer content={preview.content} /></div>

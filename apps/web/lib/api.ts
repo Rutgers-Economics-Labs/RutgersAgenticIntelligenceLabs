@@ -10,6 +10,7 @@ import {
   ProjectArtifact,
   ProjectApprovals,
   ProjectContext,
+  ProjectIntegrityResponse,
   ProjectSkill,
   ProjectSource,
   ResearchLaunchPayload,
@@ -106,6 +107,10 @@ export async function fetchProjectSources(slug: string): Promise<{ sources: Proj
 
 export async function fetchProjectArtifacts(slug: string): Promise<{ artifacts: ProjectArtifact[]; summary: Record<string, unknown> }> {
   return getJson(`/projects/${slug}/artifacts`);
+}
+
+export async function fetchProjectIntegrity(slug: string): Promise<ProjectIntegrityResponse> {
+  return getJson(`/projects/${slug}/integrity`);
 }
 
 export async function previewResearchLaunch(slug: string, payload: ResearchLaunchPayload): Promise<ResearchLaunchPreview> {

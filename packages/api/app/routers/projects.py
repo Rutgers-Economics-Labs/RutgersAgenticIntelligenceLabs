@@ -914,6 +914,12 @@ async def get_project_artifacts(slug: str):
     return command_center_service.list_project_artifacts(project)
 
 
+@router.get("/{slug}/integrity")
+async def get_project_integrity(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return command_center_service.list_project_integrity(project)
+
+
 @router.post("/{slug}/research-launch/preview")
 async def preview_research_launch(slug: str, data: ResearchLaunchRequest):
     project = await planner_service.get_project_by_slug(slug)

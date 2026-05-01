@@ -15,6 +15,7 @@ const NAV = [
   { label: "Skills",       suffix: "/skills",    key: "skills"    },
   { label: "Sources",      suffix: "/sources",   key: "sources"   },
   { label: "Artifacts",    suffix: "/artifacts", key: "artifacts" },
+  { label: "Integrity",    suffix: "/integrity", key: "integrity" },
   { label: "Repo",         suffix: "/repo",      key: "repo"      },
   { label: "Ontology",     suffix: "/ontology",  key: "ontology"  },
   { label: "Settings",     suffix: "/settings",  key: "settings"  },

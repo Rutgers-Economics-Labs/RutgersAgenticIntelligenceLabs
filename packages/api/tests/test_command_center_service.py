@@ -43,11 +43,88 @@ sources:
     )
     _write(tmp_path / ".ontology" / "sources" / "noaa.yaml", "name: NOAA CDO\ntype: api\n")
     _write(tmp_path / "artifacts" / "summary.md", "# Summary\n\nResult.\n")
+    _write(
+        tmp_path / "research_plan" / "state" / "assumptions.json",
+        """[
+  {
+    "assumption_key": "baseline-window",
+    "title": "Baseline window",
+    "value": "2010-2024",
+    "status": "active",
+    "source_path": "research_plan/state/assumptions.json",
+    "affected_paths": ["artifacts/summary.md"]
+  }
+]
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "state" / "sources.json",
+        """[
+  {
+    "source_key": "pjm-hourly-load",
+    "source_type": "dataset",
+    "title": "PJM hourly load",
+    "url_or_path": "https://example.com/pjm.csv",
+    "quality_status": "validated",
+    "source_path": "research_plan/state/sources.json"
+  }
+]
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "state" / "claims.json",
+        """[
+  {
+    "claim_key": "claim-001",
+    "claim_text": "Grid costs increased during peak summer intervals.",
+    "artifact_path": "artifacts/summary.md",
+    "evidence_paths": ["topics/grid/outputs/peak_costs.csv"],
+    "status": "supported",
+    "source_path": "research_plan/state/claims.json",
+    "caveats": []
+  }
+]
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "state" / "artifact_lineage.json",
+        """[
+  {
+    "artifact_path": "artifacts/summary.md",
+    "artifact_type": "report",
+    "title": "Summary",
+    "promotion_state": "verified",
+    "inputs": ["topics/grid/outputs/peak_costs.csv"],
+    "scripts": ["topics/grid/scripts/analyze.py"],
+    "sources": ["research_plan/state/sources.json#pjm-hourly-load"],
+    "assumptions": ["research_plan/state/assumptions.json#baseline-window"],
+    "claims": ["research_plan/state/claims.json#claim-001"],
+    "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
+    "stale_reasons": []
+  }
+]
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "state" / "verification_runs.json",
+        """[
+  {
+    "run_id": "run-001",
+    "status": "passed",
+    "checks": [],
+    "artifact_paths": ["artifacts/summary.md"],
+    "blockers": [],
+    "source_path": "research_plan/state/verification_runs.json"
+  }
+]
+""",
+    )
     project = _project(tmp_path)
 
     skills = command_center_service.list_project_skills(project)
     sources = command_center_service.list_project_sources(project)
     artifacts = command_center_service.list_project_artifacts(project)
+    integrity = command_center_service.list_project_integrity(project)
 
     assert skills["summary"]["count"] == 1
     assert skills["skills"][0]["usedBy"] == ["research"]
@@ -55,6 +132,15 @@ sources:
     assert {row["id"] for row in sources["sources"]} == {"pjm", "noaa"}
     assert artifacts["summary"]["count"] == 1
     assert artifacts["artifacts"][0]["preview"]["content"].startswith("# Summary")
+    assert artifacts["artifacts"][0]["promotionState"] == "verified"
+    assert artifacts["artifacts"][0]["verificationStatus"] == "passed"
+    assert artifacts["artifacts"][0]["assumptions"] == ["research_plan/state/assumptions.json#baseline-window"]
+    assert integrity["summary"]["assumptionCount"] == 1
+    assert integrity["summary"]["sourceCount"] == 1
+    assert integrity["summary"]["claimCount"] == 1
+    assert integrity["summary"]["artifactCount"] == 1
+    assert integrity["summary"]["verificationRunCount"] == 1
+    assert integrity["summary"]["promotionStateCounts"]["verified"] == 1
 
 
 def test_launch_preview_and_approval_create_repo_tasks(tmp_path: Path):

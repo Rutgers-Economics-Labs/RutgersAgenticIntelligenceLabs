@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from app.services import planner_service, running_agent_service
+from app.services.integrity_service import load_integrity_indexes
 
 
 TEXT_PREVIEW_LIMIT = 80_000
@@ -74,15 +74,31 @@ WORKFLOW_PRESETS: dict[str, dict[str, Any]] = {
 
 
 def project_root(project: dict) -> Path:
-    root = planner_service.project_root_from_record(project)
+    planner_service, _ = _runtime_services()
+    root = planner_service.project_root_from_record(project) if planner_service else None
+    if root is None and project.get("localRepoPath"):
+        root = Path(str(project["localRepoPath"]))
     if root is None:
         raise ValueError("Project does not have a localRepoPath configured")
     return root
 
 
+def _runtime_services() -> tuple[Any | None, Any | None]:
+    try:
+        from app.services import planner_service, running_agent_service
+    except ModuleNotFoundError:
+        return None, None
+    return planner_service, running_agent_service
+
+
 def _read(path: Path, limit: int | None = None) -> str:
     text = path.read_text(encoding="utf-8", errors="replace")
     return text[:limit] if limit else text
+
+
+def _write(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def _rel(path: Path, root: Path) -> str:
@@ -269,32 +285,178 @@ def _preview_artifact(path: Path) -> dict[str, Any]:
     return preview
 
 
+def _project_integrity_indexes(project: dict) -> Any | None:
+    root = project_root(project)
+    if not root.exists():
+        return None
+    try:
+        return load_integrity_indexes(root)
+    except Exception:
+        return None
+
+
+def _reference_key(reference: str) -> str:
+    return reference.split("#", 1)[-1].strip()
+
+
+def _artifact_verification_status(path: str, lineage: Any | None, verification_runs: list[Any]) -> str:
+    if lineage and lineage.promotion_state == "stale":
+        return "stale"
+    if lineage and lineage.verification_runs:
+        statuses = [
+            run.status
+            for run in verification_runs
+            if any(_reference_key(reference) == run.run_id for reference in lineage.verification_runs)
+        ]
+        if statuses:
+            if "failed" in statuses:
+                return "failed"
+            if "blocked" in statuses:
+                return "blocked"
+            if "pending" in statuses:
+                return "pending"
+            if all(status == "passed" for status in statuses):
+                return "passed"
+    matching_runs = [run.status for run in verification_runs if path in run.artifact_paths]
+    if matching_runs:
+        if "failed" in matching_runs:
+            return "failed"
+        if "blocked" in matching_runs:
+            return "blocked"
+        if "pending" in matching_runs:
+            return "pending"
+        if all(status == "passed" for status in matching_runs):
+            return "passed"
+    return "unverified"
+
+
+def list_project_integrity(project: dict) -> dict[str, Any]:
+    indexes = _project_integrity_indexes(project)
+    if indexes is None:
+        empty = {
+            "assumptions": [],
+            "sources": [],
+            "claims": [],
+            "artifact_lineage": [],
+            "verification_runs": [],
+        }
+        return {
+            "indexes": empty,
+            "summary": {
+                "assumptionCount": 0,
+                "sourceCount": 0,
+                "claimCount": 0,
+                "artifactCount": 0,
+                "staleArtifactCount": 0,
+                "verificationRunCount": 0,
+                "verificationStatusCounts": {},
+                "promotionStateCounts": {},
+            },
+            "staleOutputs": [],
+        }
+
+    assumptions = [row.model_dump(mode="json") for row in indexes.assumptions]
+    sources = [row.model_dump(mode="json") for row in indexes.sources]
+    claims = [row.model_dump(mode="json") for row in indexes.claims]
+    artifact_lineage = [row.model_dump(mode="json") for row in indexes.artifact_lineage]
+    verification_runs = [row.model_dump(mode="json") for row in indexes.verification_runs]
+
+    promotion_state_counts: dict[str, int] = {}
+    verification_status_counts: dict[str, int] = {}
+    for row in indexes.artifact_lineage:
+        promotion_state_counts[row.promotion_state] = promotion_state_counts.get(row.promotion_state, 0) + 1
+        status = _artifact_verification_status(row.artifact_path, row, indexes.verification_runs)
+        verification_status_counts[status] = verification_status_counts.get(status, 0) + 1
+
+    stale_outputs = [
+        row.model_dump(mode="json")
+        for row in indexes.artifact_lineage
+        if row.promotion_state == "stale" or row.stale_reasons
+    ]
+
+    return {
+        "indexes": {
+            "assumptions": assumptions,
+            "sources": sources,
+            "claims": claims,
+            "artifact_lineage": artifact_lineage,
+            "verification_runs": verification_runs,
+        },
+        "summary": {
+            "assumptionCount": len(assumptions),
+            "sourceCount": len(sources),
+            "claimCount": len(claims),
+            "artifactCount": len(artifact_lineage),
+            "staleArtifactCount": len(stale_outputs),
+            "verificationRunCount": len(verification_runs),
+            "verificationStatusCounts": verification_status_counts,
+            "promotionStateCounts": promotion_state_counts,
+        },
+        "staleOutputs": stale_outputs,
+    }
+
+
 def list_project_artifacts(project: dict) -> dict[str, Any]:
     root = project_root(project)
     artifact_root = root / "artifacts"
+    indexes = _project_integrity_indexes(project)
+    lineage_by_path = {
+        row.artifact_path: row for row in (indexes.artifact_lineage if indexes is not None else [])
+    }
+    verification_runs = indexes.verification_runs if indexes is not None else []
     artifacts: list[dict[str, Any]] = []
     if artifact_root.is_dir():
         for path in sorted(p for p in artifact_root.rglob("*") if p.is_file()):
             stat = path.stat()
+            rel_path = _rel(path, root)
+            lineage = lineage_by_path.get(rel_path)
             artifacts.append(
                 {
                     "name": path.name,
-                    "path": _rel(path, root),
+                    "path": rel_path,
                     "type": _artifact_type(path),
                     "sizeBytes": stat.st_size,
                     "modifiedAt": int(stat.st_mtime * 1000),
                     "previewable": _artifact_type(path) in {"markdown", "table", "structured", "image", "html"},
                     "preview": _preview_artifact(path),
+                    "promotionState": lineage.promotion_state if lineage else "exploratory",
+                    "verificationStatus": _artifact_verification_status(rel_path, lineage, verification_runs),
+                    "assumptions": list(lineage.assumptions) if lineage else [],
+                    "sources": list(lineage.sources) if lineage else [],
+                    "claims": list(lineage.claims) if lineage else [],
+                    "inputs": list(lineage.inputs) if lineage else [],
+                    "scripts": list(lineage.scripts) if lineage else [],
+                    "verificationRuns": list(lineage.verification_runs) if lineage else [],
+                    "staleReasons": list(lineage.stale_reasons) if lineage else [],
+                    "generatedAt": lineage.generated_at if lineage else None,
                 }
             )
     type_counts: dict[str, int] = {}
+    promotion_counts: dict[str, int] = {}
+    verification_counts: dict[str, int] = {}
     for artifact in artifacts:
         type_counts[artifact["type"]] = type_counts.get(artifact["type"], 0) + 1
-    return {"artifacts": artifacts, "summary": {"count": len(artifacts), "typeCounts": type_counts}}
+        promotion = artifact["promotionState"]
+        verification = artifact["verificationStatus"]
+        promotion_counts[promotion] = promotion_counts.get(promotion, 0) + 1
+        verification_counts[verification] = verification_counts.get(verification, 0) + 1
+    return {
+        "artifacts": artifacts,
+        "summary": {
+            "count": len(artifacts),
+            "typeCounts": type_counts,
+            "promotionStateCounts": promotion_counts,
+            "verificationStatusCounts": verification_counts,
+            "staleCount": sum(1 for artifact in artifacts if artifact["promotionState"] == "stale"),
+        },
+    }
 
 
 def _summarize_current_plan(project: dict) -> dict[str, Any]:
-    root = planner_service.project_root_from_record(project)
+    planner_service, _ = _runtime_services()
+    root = planner_service.project_root_from_record(project) if planner_service else None
+    if root is None and project.get("localRepoPath"):
+        root = Path(str(project["localRepoPath"]))
     if root is None:
         return {"path": None, "summary": ""}
     path = root / "research_plan" / "current_plan.md"
@@ -305,10 +467,16 @@ def _summarize_current_plan(project: dict) -> dict[str, Any]:
 
 
 async def build_command_center(project: dict) -> dict[str, Any]:
-    board = await planner_service.ensure_main_board(project)
-    tasks = await planner_service.list_tasks(board["_id"], project=project)
-    approvals = await planner_service.list_approvals(project)
-    sessions = await running_agent_service.list_project_running_agents(project["_id"], active_only=False, limit=20)
+    planner_service, running_agent_service = _runtime_services()
+    if planner_service is None or running_agent_service is None:
+        tasks = []
+        approvals = []
+        sessions = []
+    else:
+        board = await planner_service.ensure_main_board(project)
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
+        approvals = await planner_service.list_approvals(project)
+        sessions = await running_agent_service.list_project_running_agents(project["_id"], active_only=False, limit=20)
     active_sessions = [s for s in sessions if s.get("status") in {"running", "awaiting_approval", "awaiting_input"}]
     pending_approvals = [a for a in approvals if a.get("status") == "pending"]
     sources = list_project_sources(project)
@@ -426,6 +594,47 @@ def build_launch_preview(project: dict, payload: dict[str, Any]) -> dict[str, An
 
 async def approve_launch_preview(project: dict, payload: dict[str, Any]) -> dict[str, Any]:
     preview = build_launch_preview(project, payload)
+    planner_service, _ = _runtime_services()
+    root = project_root(project)
+    if planner_service is None:
+        tasks_dir = root / "research_plan" / "tasks"
+        approvals_dir = root / "research_plan" / "approvals"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+        approvals_dir.mkdir(parents=True, exist_ok=True)
+        created = []
+        for idx, task in enumerate(preview["agentWorkBreakdown"], start=1):
+            task_id = f"task-{idx}"
+            created_task = {
+                "_id": task_id,
+                "title": task["title"],
+                "description": task["description"],
+                "status": task["status"],
+                "agentRole": task["agentRole"],
+                "repoPaths": task["repoPaths"],
+                "acceptanceCriteria": task["acceptanceCriteria"],
+                "approvalState": "pending" if task["status"] == "awaiting_approval" else None,
+            }
+            created.append(created_task)
+            _write(
+                tasks_dir / f"{task_id}.md",
+                "\n".join(
+                    [
+                        f"# {task['title']}",
+                        "",
+                        task["description"],
+                        "",
+                        f"- status: {task['status']}",
+                        f"- role: {task['agentRole']}",
+                    ]
+                ) + "\n",
+            )
+        approval_id = "approval-local-launch"
+        _write(
+            approvals_dir / f"{approval_id}.md",
+            json.dumps({"objective": preview["objective"], "tasks": [t["_id"] for t in created]}, indent=2) + "\n",
+        )
+        return {"preview": preview, "tasks": created, "approvalId": approval_id}
+
     board = await planner_service.ensure_main_board(project)
     created = []
     for task in preview["agentWorkBreakdown"]:

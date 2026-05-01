@@ -23,6 +23,7 @@ function navItems(slug: string): PaletteItem[] {
     { id: "skills", category: "Navigate", label: "Skills", sub: "Playbooks", href: `/projects/${slug}/skills` },
     { id: "sources", category: "Navigate", label: "Sources", sub: "Data sources", href: `/projects/${slug}/sources` },
     { id: "artifacts", category: "Navigate", label: "Artifacts", sub: "Outputs", href: `/projects/${slug}/artifacts` },
+    { id: "integrity", category: "Navigate", label: "Integrity", sub: "Assumptions, evidence, lineage", href: `/projects/${slug}/integrity` },
     { id: "repo", category: "Navigate", label: "Repo", sub: "File browser", href: `/projects/${slug}/repo` },
     { id: "ontology", category: "Navigate", label: "Ontology", sub: "Data model", href: `/projects/${slug}/ontology` },
     { id: "settings", category: "Navigate", label: "Settings", sub: "Git, secrets, runners", href: `/projects/${slug}/settings` },
