@@ -5,8 +5,11 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from app.runners import session_lifecycle
 from app.services import session_files
+from app.services import running_agent_service
 from app.services.role_runtime_service import load_role_runtime_config
 from rail.bootstrap import bootstrap_future_project
 
@@ -248,3 +251,37 @@ def test_finalize_workspace_review_normalizes_completion_summary_and_mirrors_sta
     assert assumptions[0]["assumption_key"] == "window-2020-2024"
     assert verification_runs[0]["task_id"] == "task-123"
     assert any(item["artifact_path"] == "artifacts/report.md" for item in lineage)
+
+
+def test_create_runner_session_rejects_write_run_in_assisted_mode(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Approval Project")
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "approval-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    async def _fake_find_active_worker(project_id: str):
+        return None
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(running_agent_service, "find_active_worker", _fake_find_active_worker)
+
+    with pytest.raises(PermissionError, match="Assisted mode requires approval"):
+        asyncio.run(
+            session_lifecycle.create_runner_session(
+                project_id="project-1",
+                project_slug="approval-project",
+                task_id="task-1",
+                runner_name="codex_cli",
+                role="research",
+                task_description="Collect source notes",
+                repo_url="https://github.com/example/repo",
+                branch="main",
+                local_repo_path=str(tmp_path),
+                allowed_paths=["topics", "artifacts"],
+                acceptance_criteria=[],
+            )
+        )

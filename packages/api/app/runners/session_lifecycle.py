@@ -26,7 +26,9 @@ from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.factory import RunnerFactory
 from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
+from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy
 from app.services.convex_client import convex
+from app.services.role_runtime_service import load_role_runtime_config
 from rail.manifest import load_manifest
 
 
@@ -859,6 +861,18 @@ async def create_runner_session(
         project_root = Path(local_repo_path).resolve()
     if project_root is None:
         raise RuntimeError("Runner sessions require a local repo path")
+
+    if project:
+        role_config = load_role_runtime_config(project, role)
+        decision = evaluate_autonomy_policy(
+            role_config.manifest,
+            action=activity_key_for_role(role_config.role),
+            write_capable=bool(allowed_paths or role_config.policy.paths.write),
+        )
+        if decision.blocked:
+            raise RuntimeError(decision.reason)
+        if decision.requires_human_approval:
+            raise PermissionError(decision.reason)
 
     # Deriving Jules source from repo_url (e.g. sources/github/OWNER/REPO)
     jules_source = None

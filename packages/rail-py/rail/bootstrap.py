@@ -192,7 +192,7 @@ def bootstrap_future_project(
             "purpose": purpose,
             "runner": {
                 "default": "jules",
-                "approval_required": True,
+                "approval_required": role == "planner",
                 "max_retries": 3,
                 "timeout_minutes": 20,
                 "bash_access": True,

@@ -59,6 +59,9 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
     assert "# RAIL Planner Prompt" in planner_prompt
 
     research_cfg = yaml.safe_load((root / "agents/research.yaml").read_text(encoding="utf-8"))
+    planner_cfg = yaml.safe_load((root / "agents/planner.yaml").read_text(encoding="utf-8"))
+    assert planner_cfg["runner"]["approval_required"] is True
+    assert research_cfg["runner"]["approval_required"] is False
     assert research_cfg["skills"]["allow_use"] is True
     assert research_cfg["skills"]["root"] == "skills"
     assert "web_research" in research_cfg["tools"]["allow"]

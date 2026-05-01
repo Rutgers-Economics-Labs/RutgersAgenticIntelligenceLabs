@@ -8,6 +8,7 @@ from typing import Any, AsyncGenerator
 
 from app.services import llm_service, planner_service
 from app.services import running_agent_service
+from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy, is_write_capable
 from app.services.role_runtime_service import (
     load_role_runtime_config,
     list_role_runtime_configs,
@@ -347,6 +348,11 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
     if name == "create_task":
         role = args["agent_role"]
         role_config = load_role_runtime_config(project, role)
+        decision = evaluate_autonomy_policy(
+            role_config.manifest,
+            action=activity_key_for_role(role_config.role),
+            write_capable=is_write_capable(role_policy=role_config.policy),
+        )
         task = await planner_service.create_task(
             project=project,
             board_id=board["_id"],
@@ -357,7 +363,7 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             repo_paths=args.get("repo_paths") or [],
             acceptance_criteria=args.get("acceptance_criteria") or [],
             runner=role_config.policy.runner.default,
-            approval_state="pending" if role_config.policy.runner.approval_required else "not_required",
+            approval_state="pending" if decision.requires_human_approval else "not_required",
         )
         await planner_service.sync_planner_files(project, board)
         return {"task": task, "role": summarize_role_config(role_config)}
@@ -418,13 +424,30 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         role_config = load_role_runtime_config(project, task["agentRole"])
         selected_runner = args.get("runner") or task.get("runner") or role_config.policy.runner.default
         selected_runner = selected_runner if selected_runner else role_config.policy.runner.default
+        write_paths = role_config.policy.paths.write or task.get("repoPaths") or []
+        decision = evaluate_autonomy_policy(
+            role_config.manifest,
+            action=activity_key_for_role(role_config.role),
+            write_capable=is_write_capable(role_policy=role_config.policy, allowed_paths=write_paths),
+        )
 
         approvals = await planner_service.list_approvals(project)
         granted = any(
             item.get("taskId") == task["_id"] and item.get("status") == "granted"
             for item in approvals
         )
-        if role_config.policy.runner.approval_required and not granted:
+        if decision.blocked:
+            await planner_service.update_task(
+                str(task["_id"]),
+                project=project,
+                status="blocked",
+                runner=selected_runner,
+                latestRunSummary=decision.reason,
+            )
+            await planner_service.sync_planner_files(project, board)
+            return {"status": "blocked", "taskId": task_id, "reason": decision.reason, "boundary": decision.boundary}
+
+        if decision.requires_human_approval and not granted:
             await planner_service.update_task(
                 str(task["_id"]),
                 project=project,
@@ -453,7 +476,7 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             repo_url=project.get("gitRepoUrl") or "",
             branch=project.get("defaultBranch") or "main",
             local_repo_path=project.get("localRepoPath"),
-            allowed_paths=role_config.policy.paths.write or task.get("repoPaths") or [],
+            allowed_paths=write_paths,
             acceptance_criteria=task.get("acceptanceCriteria") or [],
             agent_role_for_secrets=task["agentRole"],
         )

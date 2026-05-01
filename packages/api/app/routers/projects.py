@@ -1350,20 +1350,25 @@ async def create_project_runner_session(
     if not repo_url:
         raise HTTPException(status_code=400, detail="Project has no gitRepoUrl and none provided")
 
-    result = await session_lifecycle.create_runner_session(
-        project_id=project["_id"],
-        project_slug=project["slug"],
-        task_id=data.taskId,
-        runner_name=data.runnerName,
-        role=data.role,
-        task_description=data.taskDescription,
-        repo_url=repo_url,
-        branch=data.branch,
-        local_repo_path=project.get("localRepoPath"),
-        allowed_paths=data.allowedPaths,
-        acceptance_criteria=data.acceptanceCriteria,
-        agent_role_for_secrets=data.agentRoleForSecrets,
-    )
+    try:
+        result = await session_lifecycle.create_runner_session(
+            project_id=project["_id"],
+            project_slug=project["slug"],
+            task_id=data.taskId,
+            runner_name=data.runnerName,
+            role=data.role,
+            task_description=data.taskDescription,
+            repo_url=repo_url,
+            branch=data.branch,
+            local_repo_path=project.get("localRepoPath"),
+            allowed_paths=data.allowedPaths,
+            acceptance_criteria=data.acceptanceCriteria,
+            agent_role_for_secrets=data.agentRoleForSecrets,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     # Start polling in background
     background_tasks.add_task(
