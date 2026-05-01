@@ -49,6 +49,13 @@ from app.services.safe_publish_service import (
     should_auto_publish,
 )
 from app.services.secret_service import decrypt_secret_value, encrypt_secret_value, mask_secret_value
+from app.services.integrity_service import (
+    build_rerun_plan,
+    get_integrity_repo,
+    update_assumption_and_mark_stale,
+)
+from app.services.role_runtime_service import load_role_runtime_config
+from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy, is_write_capable
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -234,6 +241,18 @@ class CatalogProjectActionRequest(BaseModel):
 
 class HydrationRerunRequest(BaseModel):
     pipelineSlug: str | None = None
+
+
+class IntegrityAssumptionUpdateRequest(BaseModel):
+    title: str | None = None
+    value: str | None = None
+    status: str | None = None
+    notes: str | None = None
+    affectedPaths: list[str] | None = None
+
+
+class IntegrityRerunPlanRequest(BaseModel):
+    assumptionKey: str
 
 
 # Catalog projects are now managed in Convex.
@@ -918,6 +937,125 @@ async def get_project_artifacts(slug: str):
 async def get_project_integrity(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     return command_center_service.list_project_integrity(project)
+
+
+@router.get("/{slug}/integrity/assumptions")
+async def get_project_integrity_assumptions(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    return {"assumptions": [item.model_dump(mode="json") for item in repo.load_assumptions()]}
+
+
+@router.patch("/{slug}/integrity/assumptions/{assumption_key}")
+async def patch_project_integrity_assumption(slug: str, assumption_key: str, data: IntegrityAssumptionUpdateRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    changes = {
+        key: value
+        for key, value in {
+            "title": data.title,
+            "value": data.value,
+            "status": data.status,
+            "notes": data.notes,
+            "affected_paths": data.affectedPaths,
+        }.items()
+        if value is not None
+    }
+    try:
+        updated, affected = update_assumption_and_mark_stale(root, assumption_key, changes)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    rerun_plan = build_rerun_plan(root, assumption_key)
+    return {
+        "assumption": updated.model_dump(mode="json"),
+        "affectedArtifacts": [item.model_dump(mode="json") for item in affected],
+        "rerunPlan": rerun_plan,
+    }
+
+
+@router.get("/{slug}/integrity/sources")
+async def get_project_integrity_sources(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    return {"sources": [item.model_dump(mode="json") for item in repo.load_sources()]}
+
+
+@router.get("/{slug}/integrity/claims")
+async def get_project_integrity_claims(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    return {"claims": [item.model_dump(mode="json") for item in repo.load_claims()]}
+
+
+@router.get("/{slug}/integrity/lineage")
+async def get_project_integrity_lineage(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    return {"artifactLineage": [item.model_dump(mode="json") for item in repo.load_artifact_lineage()]}
+
+
+@router.post("/{slug}/integrity/rerun-plan")
+async def preview_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPlanRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    try:
+        plan = build_rerun_plan(root, data.assumptionKey)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return plan
+
+
+@router.post("/{slug}/integrity/rerun-plan/apply")
+async def apply_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPlanRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    try:
+        plan = build_rerun_plan(root, data.assumptionKey)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    board = await planner_service.ensure_main_board(project)
+    created_tasks = []
+    for spec in plan["proposedTasks"]:
+        role_config = load_role_runtime_config(project, spec["agentRole"])
+        decision = evaluate_autonomy_policy(
+            role_config.manifest,
+            action=activity_key_for_role(role_config.role),
+            write_capable=is_write_capable(role_policy=role_config.policy, allowed_paths=spec["repoPaths"]),
+        )
+        task = await planner_service.create_task(
+            project=project,
+            board_id=board["_id"],
+            title=spec["title"],
+            description=spec["description"],
+            status="ready",
+            agent_role=spec["agentRole"],
+            repo_paths=spec["repoPaths"],
+            acceptance_criteria=spec["acceptanceCriteria"],
+            runner=role_config.policy.runner.default,
+            approval_state="pending" if decision.requires_human_approval else "not_required",
+        )
+        created_tasks.append(task)
+    await planner_service.sync_planner_files(project, board)
+    return {"rerunPlan": plan, "tasks": created_tasks}
 
 
 @router.post("/{slug}/research-launch/preview")

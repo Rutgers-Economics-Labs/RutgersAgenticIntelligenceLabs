@@ -284,6 +284,41 @@ class ResearchIntegrityRepo:
             self.write_artifact_lineage(records)
         return changed
 
+    def artifacts_for_assumption(self, assumption_key: str) -> list[ArtifactLineageRecord]:
+        return [
+            record
+            for record in self.load_artifact_lineage()
+            if assumption_key in {_normalize_reference_key(reference) for reference in record.assumptions}
+        ]
+
+    def clear_artifact_stale(
+        self,
+        artifact_paths: list[str],
+        *,
+        promotion_state: PromotionState | None = None,
+    ) -> list[ArtifactLineageRecord]:
+        changed: list[ArtifactLineageRecord] = []
+        wanted = set(artifact_paths)
+        if not wanted:
+            return changed
+        records = self.load_artifact_lineage()
+        for idx, record in enumerate(records):
+            if record.artifact_path not in wanted:
+                continue
+            updated = record.model_copy(
+                update={
+                    "promotion_state": promotion_state or ("partially_verified" if record.promotion_state == "stale" else record.promotion_state),
+                    "stale_reasons": [],
+                    "stale_marked_at": None,
+                }
+            )
+            updated = self._normalize_timestamps(updated, preserve_created_at=record.created_at)
+            records[idx] = updated
+            changed.append(updated)
+        if changed:
+            self.write_artifact_lineage(records)
+        return changed
+
     def _upsert_by_key(
         self,
         load_fn: Any,

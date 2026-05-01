@@ -28,6 +28,7 @@ from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy
 from app.services.convex_client import convex
+from app.services.integrity_service import evaluate_integrity_gate
 from app.services.role_runtime_service import load_role_runtime_config
 from rail.manifest import load_manifest
 
@@ -427,6 +428,8 @@ def _sync_completion_summary_to_integrity_indexes(
                 "blockers": result.get("blockers") or [],
             }
         )
+        if result.get("status") == "passed":
+            repo.clear_artifact_stale(result.get("artifact_paths") or [], promotion_state="partially_verified")
 
 
 async def _run_process(args: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -845,6 +848,7 @@ async def create_runner_session(
     allowed_paths: list[str] | None = None,
     acceptance_criteria: list[str] | None = None,
     agent_role_for_secrets: str | None = None,
+    policy_approval_granted: bool = False,
 ) -> dict[str, Any]:
     secret_role = agent_role_for_secrets or role
 
@@ -864,14 +868,21 @@ async def create_runner_session(
 
     if project:
         role_config = load_role_runtime_config(project, role)
+        integrity_gate = evaluate_integrity_gate(
+            role_config.project_root,
+            role_config.manifest,
+            action=activity_key_for_role(role_config.role),
+        )
         decision = evaluate_autonomy_policy(
             role_config.manifest,
             action=activity_key_for_role(role_config.role),
             write_capable=bool(allowed_paths or role_config.policy.paths.write),
+            integrity_blocked=integrity_gate["blocked"],
         )
         if decision.blocked:
-            raise RuntimeError(decision.reason)
-        if decision.requires_human_approval:
+            detail = "; ".join(integrity_gate["reasons"]) if integrity_gate["reasons"] else decision.reason
+            raise RuntimeError(detail)
+        if decision.requires_human_approval and not policy_approval_granted:
             raise PermissionError(decision.reason)
 
     # Deriving Jules source from repo_url (e.g. sources/github/OWNER/REPO)

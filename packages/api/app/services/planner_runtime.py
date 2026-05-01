@@ -9,6 +9,7 @@ from typing import Any, AsyncGenerator
 from app.services import llm_service, planner_service
 from app.services import running_agent_service
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy, is_write_capable
+from app.services.integrity_service import evaluate_integrity_gate
 from app.services.role_runtime_service import (
     load_role_runtime_config,
     list_role_runtime_configs,
@@ -429,6 +430,11 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             role_config.manifest,
             action=activity_key_for_role(role_config.role),
             write_capable=is_write_capable(role_policy=role_config.policy, allowed_paths=write_paths),
+            integrity_blocked=evaluate_integrity_gate(
+                role_config.project_root,
+                role_config.manifest,
+                action=activity_key_for_role(role_config.role),
+            )["blocked"],
         )
 
         approvals = await planner_service.list_approvals(project)
@@ -479,6 +485,7 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             allowed_paths=write_paths,
             acceptance_criteria=task.get("acceptanceCriteria") or [],
             agent_role_for_secrets=task["agentRole"],
+            policy_approval_granted=granted,
         )
         await planner_service.update_task(
             str(task["_id"]),

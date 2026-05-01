@@ -134,3 +134,26 @@ def test_integrity_repo_rejects_invalid_json_shape(tmp_path):
     repo = ResearchIntegrityRepo(root)
     with pytest.raises(ValueError, match="must contain a JSON array"):
         repo.load_assumptions()
+
+
+def test_clear_artifact_stale_marks_artifact_partially_verified(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "stale",
+                "stale_reasons": ["assumption_changed:years-2010-2024"],
+            }
+        ]
+    )
+
+    updated = repo.clear_artifact_stale(["artifacts/report.md"])
+
+    assert len(updated) == 1
+    assert updated[0].promotion_state == "partially_verified"
+    assert updated[0].stale_reasons == []
+    assert updated[0].stale_marked_at is None

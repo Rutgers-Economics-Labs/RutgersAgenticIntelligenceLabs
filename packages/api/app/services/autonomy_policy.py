@@ -14,6 +14,7 @@ ROLE_ACTIVITY_KEYS = {
 }
 
 PUBLISH_BOUNDARY_ACTIONS = {"publish_changes", "merge_changes", "create_pull_request"}
+PROMOTION_ACTIONS = PUBLISH_BOUNDARY_ACTIONS | {"artifact_generation"}
 
 
 @dataclass(frozen=True)

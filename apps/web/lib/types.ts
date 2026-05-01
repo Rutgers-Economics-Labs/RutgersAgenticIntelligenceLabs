@@ -401,6 +401,20 @@ export type ProjectIntegrityResponse = {
   staleOutputs: ArtifactLineageRecord[];
 };
 
+export type IntegrityRerunPlan = {
+  assumption: AssumptionRecord;
+  affectedArtifacts: ArtifactLineageRecord[];
+  affectedPaths: string[];
+  stalePaths: string[];
+  proposedTasks: Array<{
+    title: string;
+    description: string;
+    agentRole: string;
+    repoPaths: string[];
+    acceptanceCriteria: string[];
+  }>;
+};
+
 export type ResearchLaunchPayload = {
   researchQuestion: string;
   audience: string;

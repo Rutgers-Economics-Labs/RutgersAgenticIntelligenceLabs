@@ -4,6 +4,7 @@ import { InlineStatus } from "@/components/command-center";
 import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
+import { IntegrityAssumptionsPanel } from "@/components/integrity-assumptions-panel";
 
 function RepoLink({ slug, path, label }: { slug: string; path: string; label?: string }) {
   return (
@@ -42,33 +43,11 @@ export default async function IntegrityPage({
     <ProjectShell slug={slug} title="Integrity" section="integrity" rightRail={rightRail}>
       <SectionCard eyebrow="Assumptions" noPad>
         <div id="assumptions" className="integrity-section">
-          {indexes.assumptions.length ? (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>Key</th>
-                  <th>Value</th>
-                  <th>Status</th>
-                  <th>Affected Outputs</th>
-                </tr>
-              </thead>
-              <tbody>
-                {indexes.assumptions.map((row) => (
-                  <tr key={row.assumption_key}>
-                    <td>
-                      <strong>{row.title}</strong>
-                      <div className="mono-muted">{row.assumption_key}</div>
-                    </td>
-                    <td>{row.value}</td>
-                    <td><StatusPill value={row.status} /></td>
-                    <td className="mono-muted">{row.affected_paths.join(", ") || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <EmptyStateRow text="No assumptions recorded yet." />
-          )}
+          <IntegrityAssumptionsPanel
+            slug={slug}
+            assumptions={indexes.assumptions}
+            artifactLineage={indexes.artifact_lineage}
+          />
         </div>
       </SectionCard>
 

@@ -11,6 +11,7 @@ import {
   ProjectApprovals,
   ProjectContext,
   ProjectIntegrityResponse,
+  IntegrityRerunPlan,
   ProjectSkill,
   ProjectSource,
   ResearchLaunchPayload,
@@ -111,6 +112,40 @@ export async function fetchProjectArtifacts(slug: string): Promise<{ artifacts: 
 
 export async function fetchProjectIntegrity(slug: string): Promise<ProjectIntegrityResponse> {
   return getJson(`/projects/${slug}/integrity`);
+}
+
+export async function updateIntegrityAssumption(
+  slug: string,
+  assumptionKey: string,
+  payload: {
+    title?: string;
+    value?: string;
+    status?: string;
+    notes?: string | null;
+    affectedPaths?: string[];
+  },
+): Promise<{ assumption: Record<string, unknown>; affectedArtifacts: Array<Record<string, unknown>>; rerunPlan: IntegrityRerunPlan }> {
+  const response = await fetch(`${API_ROOT}/projects/${slug}/integrity/assumptions/${encodeURIComponent(assumptionKey)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`API /projects/${slug}/integrity/assumptions/${assumptionKey} failed: ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function previewIntegrityRerunPlan(slug: string, assumptionKey: string): Promise<IntegrityRerunPlan> {
+  return postJson(`/projects/${slug}/integrity/rerun-plan`, { assumptionKey });
+}
+
+export async function applyIntegrityRerunPlan(
+  slug: string,
+  assumptionKey: string,
+): Promise<{ rerunPlan: IntegrityRerunPlan; tasks: Array<Record<string, unknown>> }> {
+  return postJson(`/projects/${slug}/integrity/rerun-plan/apply`, { assumptionKey });
 }
 
 export async function previewResearchLaunch(slug: string, payload: ResearchLaunchPayload): Promise<ResearchLaunchPreview> {

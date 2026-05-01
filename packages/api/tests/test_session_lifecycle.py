@@ -285,3 +285,57 @@ def test_create_runner_session_rejects_write_run_in_assisted_mode(tmp_path: Path
                 acceptance_criteria=[],
             )
         )
+
+
+def test_create_runner_session_allows_write_run_after_policy_approval(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Approval Project")
+    _init_repo(tmp_path)
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "approval-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    async def _fake_find_active_worker(project_id: str):
+        return None
+
+    async def _fake_create_running_agent(**kwargs):
+        return "sess-approved"
+
+    async def _fake_update_running_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(running_agent_service, "find_active_worker", _fake_find_active_worker)
+    monkeypatch.setattr(running_agent_service, "create_running_agent", _fake_create_running_agent)
+    monkeypatch.setattr(running_agent_service, "update_running_agent", _fake_update_running_agent)
+    monkeypatch.setattr(session_lifecycle, "_materialize_workspace", lambda **kwargs: asyncio.sleep(0, result={"mode": "directory"}))
+    monkeypatch.setattr(session_lifecycle, "_run_workspace_setup", lambda **kwargs: asyncio.sleep(0, result={"status": "passed"}))
+    monkeypatch.setattr(session_lifecycle, "_build_project_context", lambda *args, **kwargs: asyncio.sleep(0, result=""))
+
+    class _FakeRunner:
+        async def create_session(self, task_payload):
+            return {"session_id": "external-1", "status": "running"}
+
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+
+    result = asyncio.run(
+        session_lifecycle.create_runner_session(
+            project_id="project-1",
+            project_slug="approval-project",
+            task_id="task-1",
+            runner_name="codex_cli",
+            role="research",
+            task_description="Collect source notes",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            local_repo_path=str(tmp_path),
+            allowed_paths=["topics", "artifacts"],
+            acceptance_criteria=[],
+            policy_approval_granted=True,
+        )
+    )
+
+    assert result["status"] == "running"
