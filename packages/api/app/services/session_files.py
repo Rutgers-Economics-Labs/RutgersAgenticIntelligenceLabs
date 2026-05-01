@@ -10,6 +10,20 @@ from pathlib import Path
 from typing import Any
 
 
+COMPLETION_SUMMARY_FIELDS = (
+    "assumptions_added",
+    "assumptions_changed",
+    "sources_used",
+    "datasets_created",
+    "artifacts_created",
+    "claims_created",
+    "verification_results",
+    "open_questions",
+    "blockers",
+    "recommended_next_tasks",
+)
+
+
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -23,6 +37,38 @@ def _slugify(text: str) -> str:
 
 def session_root(project_root: str | Path, role: str, session_id: str) -> Path:
     return Path(project_root) / "research_plan" / "sessions" / role / session_id
+
+
+def empty_completion_summary(*, status: str = "initialized") -> dict[str, Any]:
+    return {
+        "status": status,
+        "assumptions_added": [],
+        "assumptions_changed": [],
+        "sources_used": [],
+        "datasets_created": [],
+        "artifacts_created": [],
+        "claims_created": [],
+        "verification_results": [],
+        "open_questions": [],
+        "blockers": [],
+        "recommended_next_tasks": [],
+    }
+
+
+def normalize_completion_summary(summary: dict[str, Any] | None, *, status: str | None = None) -> dict[str, Any]:
+    normalized = empty_completion_summary(status=status or (summary or {}).get("status") or "initialized")
+    if not isinstance(summary, dict):
+        return normalized
+    for field in COMPLETION_SUMMARY_FIELDS:
+        value = summary.get(field, [])
+        if isinstance(value, list):
+            normalized[field] = value
+        elif value in (None, ""):
+            normalized[field] = []
+        else:
+            normalized[field] = [value]
+    normalized["status"] = status or summary.get("status") or normalized["status"]
+    return normalized
 
 
 def ensure_session_root(project_root: str | Path, role: str, session_id: str) -> Path:
@@ -47,6 +93,7 @@ def ensure_session_root(project_root: str | Path, role: str, session_id: str) ->
                 "setup_status": None,
                 "verification_status": None,
                 "archive_status": None,
+                "completion_summary": empty_completion_summary(),
             },
         )
     if not (root / "summary.md").exists():
@@ -225,6 +272,10 @@ def _render_summary(events: list[dict[str, Any]], state: dict[str, Any]) -> str:
     review_status = state.get("review_status") or "pending"
     workspace_path = state.get("workspace_path") or "none"
     workspace_branch = state.get("workspace_branch") or "none"
+    completion_summary = normalize_completion_summary(
+        state.get("completion_summary"),
+        status=status,
+    )
     lines = [
         "# Session Summary",
         "",
@@ -255,7 +306,37 @@ def _render_summary(events: list[dict[str, Any]], state: dict[str, Any]) -> str:
             lines.append(f"- `{ts}` **{label}**: {content[:200] or '[no details]'}")
         else:
             lines.append(f"- `{ts}` **{label}**")
+    lines.extend(
+        [
+            "",
+            "## Completion Summary",
+            "",
+            f"- status: `{completion_summary['status']}`",
+        ]
+    )
+    for field in COMPLETION_SUMMARY_FIELDS:
+        values = completion_summary.get(field) or []
+        lines.append(f"- {field}: {len(values)}")
+        if values:
+            lines.extend(_format_summary_values(values))
     return "\n".join(lines) + "\n"
+
+
+def _format_summary_values(values: list[Any]) -> list[str]:
+    lines: list[str] = []
+    for value in values[:20]:
+        if isinstance(value, dict):
+            compact = ", ".join(
+                f"{key}={json.dumps(item, ensure_ascii=True)}"
+                for key, item in value.items()
+                if item not in (None, [], {}, "")
+            )
+            lines.append(f"  - {compact or '{}'}")
+        else:
+            lines.append(f"  - {value}")
+    if len(values) > 20:
+        lines.append(f"  - ... {len(values) - 20} more")
+    return lines
 
 
 def refresh_summary(root: str | Path) -> None:
@@ -270,6 +351,10 @@ def refresh_review_files(root: str | Path) -> None:
     root = Path(root)
     state = read_state(root)
     events = list_events(root)
+    completion_summary = normalize_completion_summary(
+        state.get("completion_summary"),
+        status=state.get("status") or "unknown",
+    )
     workspace_path = state.get("workspace_path")
     workspace_root = Path(workspace_path) if workspace_path else None
     changed_files = [item.get("path") for item in events if item.get("type") == "file_change_detected" and item.get("path")]
@@ -332,6 +417,12 @@ def refresh_review_files(root: str | Path) -> None:
         todo_lines.append("- Verification failed; inspect verification.md before adoption.")
     if state.get("archive_status") == "failed":
         todo_lines.append("- Workspace archive failed.")
+    for blocker in completion_summary.get("blockers") or []:
+        todo_lines.append(f"- Blocker: {blocker}")
+    for question in completion_summary.get("open_questions") or []:
+        todo_lines.append(f"- Open question: {question}")
+    for task in completion_summary.get("recommended_next_tasks") or []:
+        todo_lines.append(f"- Recommended next task: {task}")
     todo_lines.append("")
     (root / "todos.md").write_text("\n".join(todo_lines), encoding="utf-8")
 
@@ -353,6 +444,10 @@ def refresh_review_files(root: str | Path) -> None:
         verification_lines.extend(["", "## Stdout", "", "```text", stdout_tail, "```"])
     if stderr_tail:
         verification_lines.extend(["", "## Stderr", "", "```text", stderr_tail, "```"])
+    verification_results = completion_summary.get("verification_results") or []
+    if verification_results:
+        verification_lines.extend(["", "## Verification Results", ""])
+        verification_lines.extend(_format_summary_values(verification_results))
     verification_lines.append("")
     (root / "verification.md").write_text("\n".join(verification_lines), encoding="utf-8")
 

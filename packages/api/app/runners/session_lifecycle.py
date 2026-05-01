@@ -15,6 +15,7 @@ The runtime DB remains a lightweight live-control plane through
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from asyncio.subprocess import PIPE
@@ -23,6 +24,7 @@ from typing import Any
 
 from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.factory import RunnerFactory
+from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
 from app.services.convex_client import convex
 from rail.manifest import load_manifest
@@ -52,6 +54,15 @@ EVENT_TYPE_MAP = {
     RunnerEventType.FAILED.value: "failed",
     RunnerEventType.CANCELLED.value: "cancelled",
 }
+STATE_INDEX_FILE_NAMES = (
+    "assumptions.json",
+    "sources.json",
+    "claims.json",
+    "artifact_lineage.json",
+    "verification_runs.json",
+)
+DATASET_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".parquet", ".xlsx", ".xls"}
+ARTIFACT_SUFFIXES = {".md", ".pdf", ".png", ".svg", ".jpg", ".jpeg", ".html", ".htm", ".pptx", ".docx"}
 
 
 async def resolve_jules_api_key(project_id: str | None, agent_role: str = "data") -> str:
@@ -172,6 +183,248 @@ def _workspace_env(
         }
     )
     return env
+
+
+def _relative_to(root: Path, path: Path) -> str:
+    return path.resolve().relative_to(root.resolve()).as_posix()
+
+
+def _dedupe(values: list[Any]) -> list[Any]:
+    seen: set[str] = set()
+    deduped: list[Any] = []
+    for value in values:
+        marker = json.dumps(value, sort_keys=True, default=str)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        deduped.append(value)
+    return deduped
+
+
+def _load_json_array(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _copy_workspace_state_indexes(project_root: Path, workspace_root: Path) -> None:
+    project_state_root = project_root / "research_plan" / "state"
+    workspace_state_root = workspace_root / "research_plan" / "state"
+    project_state_root.mkdir(parents=True, exist_ok=True)
+    for file_name in STATE_INDEX_FILE_NAMES:
+        source = workspace_state_root / file_name
+        if not source.exists():
+            continue
+        target = project_state_root / file_name
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+def _diff_index_keys(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    file_name: str,
+    key_field: str,
+) -> tuple[list[str], list[str]]:
+    before = {
+        str(item.get(key_field)): item
+        for item in _load_json_array(project_root / "research_plan" / "state" / file_name)
+        if item.get(key_field)
+    }
+    after = {
+        str(item.get(key_field)): item
+        for item in _load_json_array(workspace_root / "research_plan" / "state" / file_name)
+        if item.get(key_field)
+    }
+    added = [key for key in after if key not in before]
+    changed = [key for key, value in after.items() if key in before and before[key] != value]
+    return added, changed
+
+
+async def _list_changed_files(workspace_root: Path) -> list[str]:
+    if not (workspace_root / ".git").exists():
+        return []
+    result = await _run_process(
+        ["git", "-C", str(workspace_root), "status", "--short"],
+        cwd=workspace_root,
+    )
+    if result["returncode"] != 0:
+        return []
+    changed: list[str] = []
+    for line in result["stdout"].splitlines():
+        if not line.strip():
+            continue
+        path = line[3:].strip() if len(line) > 3 else line.strip()
+        if path:
+            candidate = workspace_root / path
+            if candidate.is_dir():
+                changed.extend(
+                    _relative_to(workspace_root, item)
+                    for item in candidate.rglob("*")
+                    if item.is_file()
+                )
+            else:
+                changed.append(path)
+    return changed
+
+
+def _collect_runner_summary_from_events(session_root: Path, status: str) -> dict[str, Any]:
+    merged = session_files.empty_completion_summary(status=status)
+    for event in session_files.list_events(session_root):
+        for field in ("status", *session_files.COMPLETION_SUMMARY_FIELDS):
+            if field not in event:
+                continue
+            if field == "status":
+                merged["status"] = event.get("status") or merged["status"]
+                continue
+            values = event.get(field)
+            if values in (None, "", [], {}):
+                continue
+            if not isinstance(values, list):
+                values = [values]
+            merged[field].extend(values)
+    for field in session_files.COMPLETION_SUMMARY_FIELDS:
+        merged[field] = _dedupe(merged[field])
+    return merged
+
+
+async def _normalize_completion_summary(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    session_root: Path,
+    session_id: str,
+    task_id: str | None,
+    status: str,
+    role: str,
+) -> dict[str, Any]:
+    summary = _collect_runner_summary_from_events(session_root, status)
+    assumptions_added, assumptions_changed = _diff_index_keys(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        file_name="assumptions.json",
+        key_field="assumption_key",
+    )
+    source_added, source_changed = _diff_index_keys(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        file_name="sources.json",
+        key_field="source_key",
+    )
+    claim_added, _claim_changed = _diff_index_keys(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        file_name="claims.json",
+        key_field="claim_key",
+    )
+    changed_files = await _list_changed_files(workspace_root)
+    datasets_created = [
+        path
+        for path in changed_files
+        if Path(path).suffix.lower() in DATASET_SUFFIXES and not path.startswith("research_plan/state/")
+    ]
+    artifacts_created = [
+        path
+        for path in changed_files
+        if path.startswith("artifacts/") or (Path(path).suffix.lower() in ARTIFACT_SUFFIXES and path.startswith("topics/"))
+    ]
+    summary["assumptions_added"].extend(assumptions_added)
+    summary["assumptions_changed"].extend(assumptions_changed)
+    summary["sources_used"].extend(source_added)
+    summary["sources_used"].extend(source_changed)
+    summary["datasets_created"].extend(datasets_created)
+    summary["artifacts_created"].extend(artifacts_created)
+    summary["claims_created"].extend(claim_added)
+
+    verification_status = session_files.read_state(session_root).get("verification_status")
+    verification_result = {
+        "run_id": f"{session_id}-verification",
+        "status": "passed" if verification_status == "passed" else "failed" if verification_status == "failed" else "pending",
+        "task_id": task_id,
+        "agent_session_id": session_id,
+        "artifact_paths": _dedupe(artifacts_created + datasets_created),
+        "checks": [
+            {
+                "name": "workspace_verification",
+                "status": verification_status or "pending",
+                "role": role,
+            }
+        ],
+        "blockers": [],
+    }
+    if verification_result["status"] == "failed":
+        verification_result["blockers"].append("Deterministic verification failed.")
+    summary["verification_results"].append(verification_result)
+    if verification_result["blockers"]:
+        summary["blockers"].extend(verification_result["blockers"])
+    if status in {"failed", "cancelled"}:
+        summary["blockers"].append(f"Worker session ended with status `{status}`.")
+    if verification_result["status"] == "failed":
+        summary["recommended_next_tasks"].append("Fix verification failures and rerun the worker task.")
+    if summary["open_questions"]:
+        summary["recommended_next_tasks"].append("Resolve open research questions before promotion.")
+
+    for field in session_files.COMPLETION_SUMMARY_FIELDS:
+        summary[field] = _dedupe(summary[field])
+    summary["status"] = status
+    return summary
+
+
+def _sync_completion_summary_to_integrity_indexes(
+    *,
+    project_root: Path,
+    summary: dict[str, Any],
+    session_id: str,
+    task_id: str | None,
+) -> None:
+    repo = get_integrity_repo(project_root)
+    existing_artifacts = {item.artifact_path for item in repo.load_artifact_lineage()}
+    for artifact_path in summary.get("artifacts_created") or []:
+        if artifact_path in existing_artifacts:
+            continue
+        suffix = Path(artifact_path).suffix.lower()
+        artifact_type = "dataset" if suffix in DATASET_SUFFIXES else "report" if suffix == ".md" else "artifact"
+        repo.upsert_artifact_lineage(
+            {
+                "artifact_path": artifact_path,
+                "artifact_type": artifact_type,
+                "title": Path(artifact_path).name,
+                "promotion_state": "draft",
+                "verification_runs": [f"research_plan/state/verification_runs.json#{session_id}-verification"],
+            }
+        )
+        existing_artifacts.add(artifact_path)
+    for dataset_path in summary.get("datasets_created") or []:
+        if dataset_path in existing_artifacts:
+            continue
+        repo.upsert_artifact_lineage(
+            {
+                "artifact_path": dataset_path,
+                "artifact_type": "dataset",
+                "title": Path(dataset_path).name,
+                "promotion_state": "draft",
+                "verification_runs": [f"research_plan/state/verification_runs.json#{session_id}-verification"],
+            }
+        )
+        existing_artifacts.add(dataset_path)
+    for result in summary.get("verification_results") or []:
+        repo.upsert_verification_run(
+            {
+                "run_id": result.get("run_id") or f"{session_id}-verification",
+                "task_id": task_id,
+                "agent_session_id": session_id,
+                "status": result.get("status") or "pending",
+                "checks": result.get("checks") or [],
+                "artifact_paths": result.get("artifact_paths") or [],
+                "blockers": result.get("blockers") or [],
+            }
+        )
 
 
 async def _run_process(args: list[str], *, cwd: Path, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -446,7 +699,24 @@ async def _finalize_workspace_review(
     elif terminal_status in {"failed", "cancelled"}:
         review_status = "needs_changes"
 
+    summary = await _normalize_completion_summary(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        session_id=convex_session_id,
+        task_id=session.get("taskId"),
+        status=terminal_status or "unknown",
+        role=session.get("role") or "agent",
+    )
+    _copy_workspace_state_indexes(project_root, workspace_root)
+    _sync_completion_summary_to_integrity_indexes(
+        project_root=project_root,
+        summary=summary,
+        session_id=convex_session_id,
+        task_id=session.get("taskId"),
+    )
     session_files.update_state(session_root, review_status=review_status)
+    session_files.update_state(session_root, completion_summary=summary)
     session_files.refresh_summary(session_root)
 
 

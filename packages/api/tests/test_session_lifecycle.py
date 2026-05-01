@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from pathlib import Path
 
@@ -120,3 +121,130 @@ def test_role_aliases_resolve_repo_configs(tmp_path: Path):
 
     assert config.role == "research"
     assert config.config_path.name == "research.yaml"
+
+
+def test_finalize_workspace_review_normalizes_completion_summary_and_mirrors_state(tmp_path: Path):
+    bootstrap_future_project(tmp_path, name="Completion Project")
+    setup_script = tmp_path / "scripts" / "setup-workspace.sh"
+    setup_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\n", encoding="utf-8")
+    verify_script = tmp_path / "scripts" / "run-verification.sh"
+    verify_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho 'verification ok'\n", encoding="utf-8")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "research", "sess-2")
+    workspace_root, workspace_branch, workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "research",
+        "sess-2",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    asyncio.run(
+        session_lifecycle._run_workspace_setup(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            session_id="sess-2",
+            role="research",
+            base_branch="main",
+            workspace_branch=workspace_branch,
+            workspace_config=workspace_config,
+        )
+    )
+
+    (workspace_root / "artifacts").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "topics").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "artifacts" / "report.md").write_text("# Report\n", encoding="utf-8")
+    (workspace_root / "topics" / "analysis.csv").write_text("value\n1\n", encoding="utf-8")
+    assumptions_path = workspace_root / "research_plan" / "state" / "assumptions.json"
+    assumptions_path.write_text(
+        json.dumps(
+            [
+                {
+                    "assumption_key": "window-2020-2024",
+                    "title": "Window",
+                    "value": "Use 2020-2024",
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    sources_path = workspace_root / "research_plan" / "state" / "sources.json"
+    sources_path.write_text(
+        json.dumps(
+            [
+                {
+                    "source_key": "bls-laus",
+                    "source_type": "dataset",
+                    "title": "BLS LAUS",
+                    "url_or_path": "https://www.bls.gov/lau/",
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    claims_path = workspace_root / "research_plan" / "state" / "claims.json"
+    claims_path.write_text(
+        json.dumps(
+            [
+                {
+                    "claim_key": "claim-001",
+                    "claim_text": "Employment recovered after 2021.",
+                    "artifact_path": "artifacts/report.md",
+                }
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    session_files.append_event(
+        session_root,
+        "completed",
+        status="completed",
+        open_questions=["Confirm whether 2024 data is final."],
+        recommended_next_tasks=["Review the draft report for publication readiness."],
+    )
+    session_files.update_state(
+        session_root,
+        status="completed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-2",
+            session={"role": "research", "taskId": "task-123"},
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    summary_text = (session_root / "summary.md").read_text(encoding="utf-8")
+    todos_text = (session_root / "todos.md").read_text(encoding="utf-8")
+    assumptions = json.loads((tmp_path / "research_plan" / "state" / "assumptions.json").read_text(encoding="utf-8"))
+    verification_runs = json.loads((tmp_path / "research_plan" / "state" / "verification_runs.json").read_text(encoding="utf-8"))
+    lineage = json.loads((tmp_path / "research_plan" / "state" / "artifact_lineage.json").read_text(encoding="utf-8"))
+
+    assert state["completion_summary"]["assumptions_added"] == ["window-2020-2024"]
+    assert state["completion_summary"]["sources_used"] == ["bls-laus"]
+    assert state["completion_summary"]["claims_created"] == ["claim-001"]
+    assert "artifacts/report.md" in state["completion_summary"]["artifacts_created"]
+    assert "topics/analysis.csv" in state["completion_summary"]["datasets_created"]
+    assert state["review_status"] == "review"
+    assert "## Completion Summary" in summary_text
+    assert "Confirm whether 2024 data is final." in todos_text
+    assert assumptions[0]["assumption_key"] == "window-2020-2024"
+    assert verification_runs[0]["task_id"] == "task-123"
+    assert any(item["artifact_path"] == "artifacts/report.md" for item in lineage)
