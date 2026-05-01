@@ -91,6 +91,35 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "planner_thread_mode": "project",
             "default_planner_role": "planner",
         },
+        "autonomy": {
+            "mode": "assisted",
+            "require_human_for": [
+                "publish_changes",
+                "destructive_delete",
+                "missing_source_data",
+                "low_confidence_claims",
+                "methodology_change_with_material_effect",
+            ],
+            "allow_without_human": [
+                "plan_decomposition",
+                "source_discovery",
+                "data_ingestion",
+                "analysis_scripts",
+                "artifact_generation",
+                "verification",
+                "assumption_recording",
+            ],
+            "max_runtime_minutes": 180,
+            "max_cost_usd": 20,
+            "max_retries_per_task": 3,
+        },
+        "integrity": {
+            "allow_synthetic_data": False,
+            "require_source_for_datasets": True,
+            "require_lineage_for_final_artifacts": True,
+            "require_evidence_for_report_claims": True,
+            "stale_outputs_block_promotion": True,
+        },
         "workspaces": {
             "mode": "isolated",
             "root": ".rail/workspaces",
@@ -160,6 +189,35 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
     workspaces.setdefault("archive_script", "scripts/archive-workspace.sh")
     workspaces.setdefault("nonconcurrent_run", True)
     workspaces.setdefault("checkpoint_mode", "git-ref")
+
+    autonomy = manifest.setdefault("autonomy", {})
+    autonomy.setdefault("mode", "assisted")
+    autonomy.setdefault("require_human_for", [
+        "publish_changes",
+        "destructive_delete",
+        "missing_source_data",
+        "low_confidence_claims",
+        "methodology_change_with_material_effect",
+    ])
+    autonomy.setdefault("allow_without_human", [
+        "plan_decomposition",
+        "source_discovery",
+        "data_ingestion",
+        "analysis_scripts",
+        "artifact_generation",
+        "verification",
+        "assumption_recording",
+    ])
+    autonomy.setdefault("max_runtime_minutes", 180)
+    autonomy.setdefault("max_cost_usd", 20)
+    autonomy.setdefault("max_retries_per_task", 3)
+
+    integrity = manifest.setdefault("integrity", {})
+    integrity.setdefault("allow_synthetic_data", False)
+    integrity.setdefault("require_source_for_datasets", True)
+    integrity.setdefault("require_lineage_for_final_artifacts", True)
+    integrity.setdefault("require_evidence_for_report_claims", True)
+    integrity.setdefault("stale_outputs_block_promotion", True)
 
     return yaml.safe_dump(manifest, sort_keys=False, allow_unicode=False)
 

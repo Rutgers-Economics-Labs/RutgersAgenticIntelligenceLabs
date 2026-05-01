@@ -35,6 +35,7 @@ def bootstrap_future_project(
         "topics",
         "specs",
         "research_plan/graph",
+        "research_plan/state",
         "research_plan/tasks",
         "agents/prompts",
         "agents/checklists",
@@ -75,9 +76,35 @@ def bootstrap_future_project(
           roles_dir: "agents"
           default_runner: "jules"
           sequential_execution: true
-          approval_required_for_write_runs: true
           planner_thread_mode: "project"
           default_planner_role: "planner"
+
+        autonomy:
+          mode: "assisted"
+          require_human_for:
+            - "publish_changes"
+            - "destructive_delete"
+            - "missing_source_data"
+            - "low_confidence_claims"
+            - "methodology_change_with_material_effect"
+          allow_without_human:
+            - "plan_decomposition"
+            - "source_discovery"
+            - "data_ingestion"
+            - "analysis_scripts"
+            - "artifact_generation"
+            - "verification"
+            - "assumption_recording"
+          max_runtime_minutes: 180
+          max_cost_usd: 20
+          max_retries_per_task: 3
+
+        integrity:
+          allow_synthetic_data: false
+          require_source_for_datasets: true
+          require_lineage_for_final_artifacts: true
+          require_evidence_for_report_claims: true
+          stale_outputs_block_promotion: true
 
         workspaces:
           mode: "isolated"
@@ -249,10 +276,32 @@ Do not treat web snippets as evidence. Open and inspect the source.
         return f"# {role.title()} Prompt\n\nProject-specific system guidance for the {role} role. Use relevant project skills from `skills/` before doing specialized work.\n"
     checklist_template = lambda role: f"# {role.title()} Checklist\n\n- follow repo contract\n- stay inside allowed paths\n- satisfy deterministic completion checks\n"
 
+    research_plan_files = {
+        "current_plan.md": current_plan,
+        "task_board.md": task_board,
+        "assumptions.md": "# Assumptions\n\n",
+        "decisions.md": "# Decisions\n\n",
+        "methodology.md": "# Methodology\n\n",
+        "provenance.md": "# Provenance\n\n",
+        "claim_evidence.md": "# Claim Evidence\n\n",
+        "open_questions.md": "# Open Questions\n\n",
+        "rerun_options.md": "# Rerun Options\n\n",
+        "verification_summary.md": "# Verification Summary\n\n",
+    }
+    research_plan_state_files = {
+        "assumptions.json": "[]\n",
+        "sources.json": "[]\n",
+        "claims.json": "[]\n",
+        "artifact_lineage.json": "[]\n",
+        "verification_runs.json": "[]\n",
+    }
+
     _write(project_root / "rail.yaml", rail_yaml)
     _write(project_root / ".ontology/ontology.yaml", ontology_yaml)
-    _write(project_root / "research_plan/current_plan.md", current_plan)
-    _write(project_root / "research_plan/task_board.md", task_board)
+    for filename, content in research_plan_files.items():
+        _write(project_root / "research_plan" / filename, content)
+    for filename, content in research_plan_state_files.items():
+        _write(project_root / "research_plan" / "state" / filename, content)
     _write(
         project_root / "scripts" / "setup-workspace.sh",
         textwrap.dedent(

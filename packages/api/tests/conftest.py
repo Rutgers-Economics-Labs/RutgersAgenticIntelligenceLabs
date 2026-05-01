@@ -21,9 +21,12 @@ except ModuleNotFoundError:  # pragma: no cover - local fallback for lightweight
 # packages/api/app/ (FastAPI) rather than packages/engine/app.py (Streamlit)
 API_ROOT = Path(__file__).parents[1]
 ENGINE_ROOT = Path(__file__).parents[2] / "engine"
+RAIL_PY_ROOT = Path(__file__).parents[2] / "rail-py"
 
 if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
+if str(RAIL_PY_ROOT) not in sys.path:
+    sys.path.append(str(RAIL_PY_ROOT))
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.append(str(ENGINE_ROOT))
 

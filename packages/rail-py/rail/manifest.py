@@ -14,6 +14,7 @@ IndexMode = Literal["filesystem"]
 HomeView = Literal["planner", "project_home", "artifacts"]
 WorkspaceMode = Literal["isolated"]
 CheckpointMode = Literal["git-ref", "none"]
+AutonomyMode = Literal["assisted", "supervised_autopilot", "autopilot"]
 
 
 def _validate_repo_relative_path(value: str) -> str:
@@ -84,7 +85,7 @@ class AgentsSection(BaseModel):
     roles_dir: str = "agents"
     default_runner: RunnerName = "jules"
     sequential_execution: bool = True
-    approval_required_for_write_runs: bool = True
+    approval_required_for_write_runs: bool | None = None
     planner_thread_mode: PlannerThreadMode = "project"
     default_planner_role: str = "planner"
 
@@ -97,9 +98,28 @@ class AgentsSection(BaseModel):
     def _enforce_v1_constraints(self) -> "AgentsSection":
         if not self.sequential_execution:
             raise ValueError("V1 requires sequential_execution=true")
-        if not self.approval_required_for_write_runs:
-            raise ValueError("V1 requires approval_required_for_write_runs=true")
         return self
+
+
+class AutonomySection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: AutonomyMode = "assisted"
+    require_human_for: list[str] = Field(default_factory=list)
+    allow_without_human: list[str] = Field(default_factory=list)
+    max_runtime_minutes: int | None = Field(default=None, ge=1)
+    max_cost_usd: float | None = Field(default=None, ge=0)
+    max_retries_per_task: int | None = Field(default=None, ge=0)
+
+
+class IntegritySection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allow_synthetic_data: bool = False
+    require_source_for_datasets: bool = True
+    require_lineage_for_final_artifacts: bool = True
+    require_evidence_for_report_claims: bool = True
+    stale_outputs_block_promotion: bool = True
 
 
 class FrontendSection(BaseModel):
@@ -139,6 +159,8 @@ class RailManifest(BaseModel):
     paths: PathsSection
     hydration: HydrationSection
     agents: AgentsSection
+    autonomy: AutonomySection = Field(default_factory=AutonomySection)
+    integrity: IntegritySection = Field(default_factory=IntegritySection)
     workspaces: WorkspacesSection = Field(default_factory=WorkspacesSection)
     frontend: FrontendSection
 
@@ -155,6 +177,21 @@ class RailManifest(BaseModel):
                 continue
             if ontology_root not in PurePosixPath(value).parents and PurePosixPath(value) != ontology_root:
                 raise ValueError("hydration paths must resolve inside ontology_root in V1")
+        return self
+
+    @model_validator(mode="after")
+    def _apply_legacy_approval_shorthand(self) -> "RailManifest":
+        legacy = self.agents.approval_required_for_write_runs
+        if legacy is None:
+            return self
+        if legacy is False:
+            raise ValueError(
+                "approval_required_for_write_runs=false is not supported; use autonomy.mode explicitly"
+            )
+        if self.autonomy.mode != "assisted":
+            raise ValueError(
+                "approval_required_for_write_runs=true is only compatible with autonomy.mode=assisted"
+            )
         return self
 
     def resolve_repo_path(self, project_root: str | Path, relative_path: str) -> Path:

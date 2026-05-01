@@ -259,6 +259,84 @@ export type CommandCenter = {
   };
 };
 
+export type AssumptionRecord = {
+  assumption_key: string;
+  title: string;
+  value: string;
+  status: "active" | "needs_review" | "superseded" | "rejected";
+  source_path: string;
+  affected_paths: string[];
+  notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type SourceRecord = {
+  source_key: string;
+  source_type: string;
+  title: string;
+  url_or_path: string;
+  retrieved_at?: string | null;
+  license?: string | null;
+  quality_status: "candidate" | "validated" | "blocked" | "rejected";
+  source_path: string;
+  notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ClaimRecord = {
+  claim_key: string;
+  claim_text: string;
+  artifact_path?: string | null;
+  evidence_paths: string[];
+  status: "draft" | "supported" | "unsupported" | "needs_evidence" | "superseded";
+  confidence?: number | null;
+  source_path: string;
+  caveats: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ArtifactLineageRecord = {
+  artifact_path: string;
+  artifact_type: string;
+  title: string;
+  promotion_state: "exploratory" | "draft" | "needs_evidence" | "partially_verified" | "verified" | "stale" | "blocked";
+  inputs: string[];
+  scripts: string[];
+  sources: string[];
+  assumptions: string[];
+  claims: string[];
+  verification_runs: string[];
+  stale_reasons: string[];
+  stale_marked_at?: string | null;
+  generated_at?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type VerificationRunRecord = {
+  run_id: string;
+  task_id?: string | null;
+  agent_session_id?: string | null;
+  status: "pending" | "passed" | "failed" | "blocked";
+  checks: Array<Record<string, unknown>>;
+  artifact_paths: string[];
+  blockers: string[];
+  source_path: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type IntegrityIndexes = {
+  assumptions: AssumptionRecord[];
+  sources: SourceRecord[];
+  claims: ClaimRecord[];
+  artifact_lineage: ArtifactLineageRecord[];
+  verification_runs: VerificationRunRecord[];
+};
+
 export type ProjectSkill = {
   slug: string;
   name: string;

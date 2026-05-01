@@ -20,6 +20,19 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
     assert (root / "rail.yaml").exists()
     assert (root / ".ontology/ontology.yaml").exists()
     assert (root / "research_plan/current_plan.md").exists()
+    assert (root / "research_plan/assumptions.md").exists()
+    assert (root / "research_plan/decisions.md").exists()
+    assert (root / "research_plan/methodology.md").exists()
+    assert (root / "research_plan/provenance.md").exists()
+    assert (root / "research_plan/claim_evidence.md").exists()
+    assert (root / "research_plan/open_questions.md").exists()
+    assert (root / "research_plan/rerun_options.md").exists()
+    assert (root / "research_plan/verification_summary.md").exists()
+    assert (root / "research_plan/state/assumptions.json").exists()
+    assert (root / "research_plan/state/sources.json").exists()
+    assert (root / "research_plan/state/claims.json").exists()
+    assert (root / "research_plan/state/artifact_lineage.json").exists()
+    assert (root / "research_plan/state/verification_runs.json").exists()
     assert (root / "agents/prompts/planner.md").exists()
     assert (root / "skills/repo-contract.md").exists()
     assert (root / "skills/web-research.md").exists()
@@ -33,8 +46,14 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
 
     rail_data = yaml.safe_load((root / "rail.yaml").read_text(encoding="utf-8"))
     assert rail_data["project"]["name"] == "Test Project"
+    assert rail_data["autonomy"]["mode"] == "assisted"
+    assert rail_data["autonomy"]["max_retries_per_task"] == 3
+    assert rail_data["integrity"]["require_evidence_for_report_claims"] is True
     assert rail_data["workspaces"]["mode"] == "isolated"
     assert rail_data["workspaces"]["setup_script"] == "scripts/setup-workspace.sh"
+
+    assert yaml.safe_load((root / "research_plan/state/assumptions.json").read_text(encoding="utf-8")) == []
+    assert yaml.safe_load((root / "research_plan/state/verification_runs.json").read_text(encoding="utf-8")) == []
 
     planner_prompt = (root / "agents/prompts/planner.md").read_text(encoding="utf-8")
     assert "# RAIL Planner Prompt" in planner_prompt

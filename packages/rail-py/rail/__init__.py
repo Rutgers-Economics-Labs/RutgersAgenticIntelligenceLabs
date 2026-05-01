@@ -1,6 +1,15 @@
 from rail.project import Project
 from rail.client import CloudClient
 from rail.local import LocalEngine
+from rail.integrity import (
+    ArtifactLineageRecord,
+    AssumptionRecord,
+    ClaimRecord,
+    IntegrityIndexes,
+    ResearchIntegrityRepo,
+    SourceRecord,
+    VerificationRunRecord,
+)
 from rail.manifest import RailManifest, load_manifest, parse_manifest_content
 from rail.exceptions import RailError
 
