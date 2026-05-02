@@ -21,10 +21,12 @@ async def list_classes(project_id: str | None = Query(None, alias="projectId")):
     try:
         if project_id:
             art = await project_artifacts_service.resolve(project_id)
-            return await ontology_service._run_with_ensure(
+            items = await ontology_service._run_with_ensure(
                 project_id, art.db_path, ontology_service.list_classes
             )
-        return await ontology_service._run(project_id, ontology_service.list_classes)
+            return {"classes": items}
+        items = await ontology_service._run(project_id, ontology_service.list_classes)
+        return {"classes": items}
     except Exception as e:
         _handle_artifact_error(e)
 
@@ -90,7 +92,7 @@ async def get_entity_graph(uri: str, project_id: str | None = Query(None, alias=
 
 @router.get("/graph")
 async def get_full_graph(
-    types: str = Query("State,County,Municipality,Individual,Measure"),
+    types: str = Query("Observation,DataCenterFacilities,LoadZones,Electricutilities,Geography,Measure"),
     state_fips: Union[str, None] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     project_id: str | None = Query(None, alias="projectId"),

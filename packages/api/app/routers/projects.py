@@ -60,6 +60,27 @@ from app.services.autonomy_policy import activity_key_for_role, evaluate_autonom
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
+
+def _resolve_session_path(project: dict, session: dict) -> str | None:
+    session_path = session.get("sessionPath")
+    if session_path:
+        return session_path
+    project_root = project.get("localRepoPath")
+    session_id = session.get("_id") or session.get("sessionId")
+    role = session.get("role")
+    if not project_root or not session_id:
+        return None
+    if role:
+        candidate = session_files.session_root(project_root, role, session_id)
+        if candidate.exists():
+            return str(candidate)
+    sessions_root = Path(project_root) / "research_plan" / "sessions"
+    if sessions_root.exists():
+        for candidate in sessions_root.glob(f"*/{session_id}"):
+            if candidate.exists():
+                return str(candidate)
+    return None
+
 class RegisterArtifactsBody(BaseModel):
     """Optional explicit paths when job discovery fails (e.g. paths only on disk)."""
 
@@ -430,7 +451,8 @@ def _relative_to_project(project_root: Path | None, path: Path | None) -> str | 
 
 def _session_review_model(project: dict, session: dict) -> dict:
     project_root = Path(project["localRepoPath"]) if project.get("localRepoPath") else None
-    session_path = Path(session["sessionPath"]) if session.get("sessionPath") else None
+    resolved_session_path = _resolve_session_path(project, session)
+    session_path = Path(resolved_session_path) if resolved_session_path else None
     state = session_files.read_state(session_path) if session_path and session_path.exists() else {}
     return {
         "workspacePath": state.get("workspace_path"),
@@ -902,6 +924,7 @@ async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
 @router.get("/{slug}/context")
 async def get_project_context(slug: str):
     """Returns a structured context snapshot for agent initialization."""
+    print(f"  [context] resolving for slug={slug}")
     project = await convex.query("projects:getBySlug", {"slug": slug})
     if not project:
         raise HTTPException(404, "Project not found")
@@ -920,32 +943,59 @@ async def get_project_context(slug: str):
     }
 
     # Fetch ontology info if project is hydrated
-    if project.get("activeOntologyDuckdbPath"):
+    if project.get("activeOntologyDuckdbPath") or project.get("status") == "hydrated":
         try:
-            from app.services import sql_service, ontology_service
-            sql_service.set_path(project["activeOntologyDuckdbPath"])
-            schema = sql_service.get_schema()
-            classes = await ontology_service._run(ontology_service.list_classes)
+            from app.services import sql_service, ontology_service, project_artifacts_service
+            art = await project_artifacts_service.resolve(slug)
+            print(f"  [context] resolved artifacts for {slug}: db={art.db_path}")
+            sql_service.set_path(art.duckdb_path)
+            classes = await ontology_service._run_with_ensure(
+                slug, art.db_path, ontology_service.list_classes
+            )
             context["ontology"] = {
                 "classes": classes,
                 "schema_ddl": sql_service.get_schema_ddl(),
             }
-        except Exception:
+        except Exception as e:
+            print(f"  [context] ontology load failed for {slug}: {e}")
             pass
 
-    # Fetch data sources
+    # Fetch data sources (Convex + Local Fallback)
     api_slugs = project.get("apiConfigSlugs", [])
+    found_slugs = set()
     for slug_s in api_slugs:
         cfg = await convex.query("configs:getApiBySlug", {"slug": slug_s})
         if cfg:
             context["data_sources"].append({"slug": cfg["slug"], "name": cfg["name"]})
+            found_slugs.add(slug_s)
 
-    # Fetch pipeline info
+    # Local fallback for sources
+    from pathlib import Path
+    import yaml
+    local_sources = Path(project["localRepoPath"]) / ".ontology" / "sources"
+    if local_sources.exists():
+        for yml in local_sources.glob("*.yaml"):
+            if yml.stem in found_slugs: continue
+            try:
+                with open(yml) as f:
+                    cfg = yaml.safe_load(f)
+                    if cfg and "name" in cfg:
+                        context["data_sources"].append({"slug": yml.stem, "name": cfg["name"]})
+            except Exception: pass
+
+    # Fetch pipeline info (Convex + Local Fallback)
     pipeline_slug = project.get("pipelineConfigSlug")
     if pipeline_slug:
         pipeline = await convex.query("configs:getPipelineBySlug", {"slug": pipeline_slug})
         if pipeline:
             context["pipelines"].append({"slug": pipeline["slug"], "name": pipeline["name"]})
+        else:
+            # Local fallback
+            local_pipelines = Path(project["localRepoPath"]) / ".ontology" / "pipelines"
+            if local_pipelines.exists():
+                for yml in local_pipelines.glob("*.yaml"):
+                    if yml.stem == pipeline_slug:
+                        context["pipelines"].append({"slug": yml.stem, "name": yml.stem})
 
     return context
 
@@ -1584,6 +1634,14 @@ async def create_project_runner_session(
     if not repo_url:
         raise HTTPException(status_code=400, detail="Project has no gitRepoUrl and none provided")
 
+    policy_approval_granted = False
+    if data.taskId:
+        approvals = await planner_service.list_approvals(project)
+        policy_approval_granted = any(
+            item.get("taskId") == data.taskId and item.get("status") == "granted"
+            for item in approvals
+        )
+
     try:
         result = await session_lifecycle.create_runner_session(
             project_id=project["_id"],
@@ -1598,6 +1656,7 @@ async def create_project_runner_session(
             allowed_paths=data.allowedPaths,
             acceptance_criteria=data.acceptanceCriteria,
             agent_role_for_secrets=data.agentRoleForSecrets,
+            policy_approval_granted=policy_approval_granted,
         )
     except PermissionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1648,7 +1707,7 @@ async def get_project_runner_session_files(slug: str, session_id: str):
     session = await running_agent_service.get_running_agent(session_id)
     if not session or session.get("projectId") != project["_id"]:
         raise HTTPException(status_code=404, detail="Runner session not found")
-    session_path = session.get("sessionPath")
+    session_path = _resolve_session_path(project, session)
     if not session_path:
         raise HTTPException(status_code=404, detail="Session files not found")
     root = Path(session_path)
@@ -1691,7 +1750,7 @@ async def get_project_runner_session_detail(slug: str, session_id: str):
     session = await running_agent_service.get_running_agent(session_id)
     if not session or session.get("projectId") != project["_id"]:
         raise HTTPException(status_code=404, detail="Runner session not found")
-    session_path = session.get("sessionPath")
+    session_path = _resolve_session_path(project, session)
     if not session_path or not Path(session_path).exists():
         raise HTTPException(status_code=404, detail="Session files not found")
 
@@ -1851,8 +1910,8 @@ async def list_active_agents(slug: str):
                     "currentActivity": detail.get("currentActivity"),
                 }
             )(
-                build_session_detail(s.get("sessionPath"))
-                if s.get("sessionPath") and Path(s.get("sessionPath")).exists()
+                build_session_detail(resolved)
+                if (resolved := _resolve_session_path(project, s)) and Path(resolved).exists()
                 else {}
             )
             for s in sessions

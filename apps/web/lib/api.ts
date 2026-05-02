@@ -18,7 +18,8 @@ import {
   ResearchLaunchPreview,
   RepoPathResponse,
   RunnerSession,
-  RunnerSessionDetail
+  RunnerSessionDetail,
+  ZenResponse
 } from "@/lib/types";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
@@ -44,6 +45,10 @@ async function postJson<T>(path: string, payload: unknown): Promise<T> {
     throw new Error(`API ${path} failed: ${response.status}`);
   }
   return response.json() as Promise<T>;
+}
+
+export async function fetchZenMode(slug: string): Promise<ZenResponse> {
+  return getJson<ZenResponse>(`/projects/${slug}/zen`);
 }
 
 export async function fetchCommandCenter(slug: string): Promise<CommandCenter> {
@@ -220,14 +225,44 @@ export async function runResearchAgents(
 }
 
 export async function fetchOntologyClasses(projectId: string): Promise<OntologyClassesResponse> {
-  const response = await fetch(`${API_ROOT}/ontology/classes?projectId=${encodeURIComponent(projectId)}`, {
-    cache: "no-store"
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    return {
-      error: String(payload?.message ?? payload?.detail ?? `Ontology classes failed: ${response.status}`)
-    };
+  try {
+    const response = await fetch(`${API_ROOT}/ontology/classes?projectId=${projectId}`, {
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      return {
+        error: String(payload?.message ?? payload?.detail ?? `Ontology classes failed: ${response.status}`)
+      };
+    }
+    return response.json() as Promise<OntologyClassesResponse>;
+  } catch (err) {
+    return { error: String(err) };
   }
-  return response.json() as Promise<OntologyClassesResponse>;
 }
+
+export async function fetchOntologyInstances(
+  projectId: string,
+  className: string,
+  options: { page?: number; limit?: number; search?: string } = {}
+): Promise<any> {
+  const query = new URLSearchParams({
+    projectId,
+    page: String(options.page ?? 1),
+    limit: String(options.limit ?? 10),
+  });
+  if (options.search) query.append("search", options.search);
+  return getJson(`/ontology/classes/${className}/instances?${query.toString()}`);
+}
+
+export async function fetchOntologyGraph(
+  projectId: string,
+  options: { limit?: number } = {}
+): Promise<any> {
+  const query = new URLSearchParams({
+    projectId,
+    limit: String(options.limit ?? 50),
+  });
+  return getJson(`/ontology/graph?${query.toString()}`);
+}
+

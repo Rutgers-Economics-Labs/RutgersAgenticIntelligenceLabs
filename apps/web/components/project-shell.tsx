@@ -8,6 +8,7 @@ import { LiveOutputPanel } from "@/components/live-output-panel";
 
 const NAV = [
   { label: "Overview",     suffix: "",           key: "overview"  },
+  { label: "Zen Mode",     suffix: "/zen",       key: "zen"       },
   { label: "Agent & Plan", suffix: "/agent",     key: "agent"     },
   { label: "Launch",       suffix: "/launch",    key: "launch"    },
   { label: "Runs",         suffix: "/runs",      key: "sessions"  },

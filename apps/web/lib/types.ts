@@ -490,3 +490,72 @@ export type PlannerBoard = {
   blockersPath?: string | null;
   sessions?: RunnerSession[];
 };
+
+export type ZenProject = {
+  name: string;
+  slug: string;
+  phase: string;
+  health: string;
+};
+
+export type ZenActiveRun = {
+  id: string;
+  label: string;
+  role: string;
+  runner: string;
+  status: string;
+  elapsedSeconds: number;
+  lastEvent?: string;
+  outputsCreated: string[];
+  needsInput: boolean;
+};
+
+export type ZenTruth = {
+  claim: string;
+  confidence: number;
+  evidenceRefs: string[];
+  verified: boolean;
+};
+
+export type ZenDecision = {
+  id?: string | null;
+  type: string;
+  severity?: string | null;
+  source?: string | null;
+  prompt: string;
+  recommendedAction?: string;
+  actions: Array<Record<string, unknown>>;
+};
+
+export type ZenPlan = {
+  now: string[];
+  next: string[];
+  later: string[];
+  done: string[];
+};
+
+export type ZenAttention = {
+  severity: "info" | "warning" | "error";
+  title: string;
+  detail: string;
+  action?: Record<string, unknown>;
+};
+
+export type ZenArtifactSummary = {
+  name: string;
+  path: string;
+  freshness: string;
+  verified: boolean;
+};
+
+export type ZenResponse = {
+  project: ZenProject;
+  objective: string;
+  activeRun?: ZenActiveRun | null;
+  latestTruth: ZenTruth[];
+  nextDecision?: ZenDecision | null;
+  plan: ZenPlan;
+  attention: ZenAttention[];
+  artifacts: ZenArtifactSummary[];
+  decisions?: ZenDecision[];
+};

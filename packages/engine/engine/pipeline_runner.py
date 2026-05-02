@@ -138,6 +138,10 @@ def run_pipeline(pipeline_path):
 
         resolved[api_name] = df
 
+        limit = step.get("limit")
+        if limit:
+            df = df.head(int(limit))
+
         onto_class = class_map.get(class_name)
         if onto_class is None:
             raise ValueError(f"Class '{class_name}' not found in ontology. Check ontology YAML.")

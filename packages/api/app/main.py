@@ -14,7 +14,7 @@ from app.core.config import settings
 from app.services.convex_client import ConvexBackendConfigurationError
 from app.services.project_artifacts_service import HydrationRequiredError
 from app.services.scheduler_service import scheduler
-from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, questions, context, quality, connectors, projects, ontology_templates, github, schedules, runners, repo
+from app.routers import configs, jobs, ontology, analysis, storage, sql, execute, agent, registry, project_agent, questions, context, quality, connectors, projects, ontology_templates, github, schedules, runners, repo, zen
 
 
 @asynccontextmanager
@@ -106,6 +106,11 @@ async def _unhandled_exception_handler(request, exc):
         headers=headers,
     )
 
+@app.get("/v1/hello")
+def hello():
+    return {"hello": "world"}
+
+
 app.include_router(configs.router,  prefix="/api/v1")
 app.include_router(jobs.router,     prefix="/api/v1")
 app.include_router(ontology.router, prefix="/api/v1")
@@ -122,6 +127,7 @@ app.include_router(quality.router,        prefix="/api/v1")
 app.include_router(connectors.router,     prefix="/api/v1/connectors")
 app.include_router(ontology_templates.router, prefix="/api/v1")
 app.include_router(projects.router,       prefix="/api/v1")
+app.include_router(zen.router,            prefix="/api/v1")
 app.include_router(github.router,         prefix="/api/v1")
 app.include_router(schedules.router,      prefix="/api/v1")
 app.include_router(runners.router,        prefix="/api/v1")

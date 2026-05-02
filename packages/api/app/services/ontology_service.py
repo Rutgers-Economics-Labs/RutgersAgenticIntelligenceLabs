@@ -198,7 +198,7 @@ def list_classes(project_id: str | None = None) -> list[dict]:
     onto = _require_onto(project_id)
     return sorted(
         [
-            {"name": cls.name, "instanceCount": len(list(cls.instances()))}
+            {"name": cls.name, "count": len(list(cls.instances()))}
             for cls in onto.classes()
         ],
         key=lambda c: c["name"],

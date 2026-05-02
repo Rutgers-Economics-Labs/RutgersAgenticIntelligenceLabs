@@ -1,7 +1,10 @@
 import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
 import { HydrationRerunButton } from "@/components/hydration-actions";
-import { fetchHydrationStatus, fetchOntologyClasses, fetchPlannerHome, fetchProjectContext } from "@/lib/api";
+import { fetchHydrationStatus, fetchOntologyClasses, fetchPlannerHome, fetchProjectContext, fetchOntologyGraph } from "@/lib/api";
+import { EntityExplorer } from "@/components/entity-explorer";
+import { GraphVisualizer } from "@/components/graph-visualizer";
+import { MetadataExplorer } from "@/components/metadata-explorer";
 
 function OntologyRightRail({ slug, context, home, hydration }: { slug: string; context: any; home: any; hydration: any }) {
   const rows = [
@@ -82,6 +85,10 @@ export default async function OntologyPage({
   const classList = Array.isArray((classes as any).classes) ? (classes as any).classes : [];
   const classError = (classes as any).error as string | undefined;
 
+  const graphData = homeValue.project?.id 
+    ? await fetchOntologyGraph(homeValue.project.id, { limit: 100 })
+    : { nodes: [], links: [] };
+
   return (
     <ProjectShell
       slug={slug}
@@ -89,112 +96,54 @@ export default async function OntologyPage({
       section="ontology"
       rightRail={<OntologyRightRail slug={slug} context={contextValue} home={homeValue} hydration={hydration} />}
     >
-      {/* Ontology classes */}
-      <div style={{ borderBottom: "1px solid var(--border)" }}>
-        <div style={{
-          padding: "8px 14px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-        }}>
-          <span className="rail-label">Classes</span>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <HydrationRerunButton slug={slug} pipelineSlug={hydration?.pipelineSlug} />
-            {!classError && (
-              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)" }}>
-                {classList.length}
-              </span>
-            )}
+      <div style={{ display: "flex", flexDirection: "column", gap: "24px", padding: "20px" }}>
+        
+        {/* Metadata Explorer */}
+        <section>
+          <div style={{ marginBottom: "12px", borderBottom: "1px solid var(--border)", paddingBottom: "6px" }}>
+            <span className="rail-label">Metadata Explorer</span>
           </div>
-        </div>
+          <MetadataExplorer slug={slug} />
+        </section>
 
-        {classError ? (
-          <div style={{
-            padding: "14px",
-            fontFamily: "JetBrains Mono, monospace",
-            fontSize: 11,
-            color: "var(--s-awaiting)",
-            borderLeft: "2px solid var(--s-awaiting)",
-            margin: "8px 14px",
-          }}>
-            {classError}
+        {/* Graph Visualizer */}
+        <section>
+          <div style={{ marginBottom: "12px", borderBottom: "1px solid var(--border)", paddingBottom: "6px" }}>
+            <span className="rail-label">Knowledge Graph</span>
           </div>
-        ) : classList.length === 0 ? (
-          <div style={{ padding: "24px 14px", color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
-            No ontology classes returned yet.
+          <GraphVisualizer nodes={graphData.nodes || []} links={graphData.links || []} />
+        </section>
+
+        {/* Entity Explorer */}
+        <section>
+          <div style={{ marginBottom: "12px", borderBottom: "1px solid var(--border)", paddingBottom: "6px" }}>
+            <span className="rail-label">Entity Explorer</span>
           </div>
-        ) : (
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-          }}>
-            {classList.slice(0, 48).map((item: any, i: number) => (
-              <div key={i} style={{
-                padding: "10px 14px",
-                borderBottom: "1px solid var(--border)",
-                borderRight: "1px solid var(--border)",
-              }}>
-                <div style={{ fontSize: 12, fontWeight: 500, color: "var(--fg)", marginBottom: 2 }}>
-                  {String(item.name ?? item.class_name ?? item.label ?? "class")}
+          {!classError && homeValue.project?.id && (
+             <EntityExplorer projectId={homeValue.project.id} classes={classList} />
+          )}
+        </section>
+
+        {/* Original Class Grid (Summary) */}
+        <section>
+          <div style={{ marginBottom: "12px", borderBottom: "1px solid var(--border)", paddingBottom: "6px" }}>
+            <span className="rail-label">Class Summary</span>
+          </div>
+          {classError ? (
+            <div style={{ padding: "14px", fontFamily: "JetBrains Mono, monospace", fontSize: 11, color: "var(--s-awaiting)", borderLeft: "2px solid var(--s-awaiting)" }}>
+              {classError}
+            </div>
+          ) : (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: "8px" }}>
+              {classList.map((item: any, i: number) => (
+                <div key={i} style={{ padding: "10px", background: "var(--panel)", border: "1px solid var(--border)", borderRadius: "4px" }}>
+                  <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--fg)" }}>{item.name}</div>
+                  <div style={{ fontSize: "10px", color: "var(--muted)", fontFamily: "JetBrains Mono, monospace" }}>{item.count} instances</div>
                 </div>
-                {item.count != null && (
-                  <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)" }}>
-                    {item.count} instances
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Data sources + pipelines */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr" }}>
-        <div style={{ borderRight: "1px solid var(--border)" }}>
-          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)" }}>
-            <span className="rail-label">Data Sources</span>
-          </div>
-          {(contextValue.data_sources ?? []).length === 0 ? (
-            <div style={{ padding: "24px 14px", color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
-              None discovered.
+              ))}
             </div>
-          ) : (
-            (contextValue.data_sources ?? []).map((source: any, i: number) => (
-              <div key={i} style={{
-                padding: "8px 14px",
-                borderBottom: "1px solid var(--border)",
-                fontSize: 12,
-                color: "var(--fg)",
-              }}>
-                {String(source.name ?? source.slug ?? "source")}
-              </div>
-            ))
           )}
-        </div>
-
-        <div>
-          <div style={{ padding: "8px 14px", borderBottom: "1px solid var(--border)" }}>
-            <span className="rail-label">Pipelines</span>
-          </div>
-          {(contextValue.pipelines ?? []).length === 0 ? (
-            <div style={{ padding: "24px 14px", color: "var(--muted)", fontFamily: "JetBrains Mono, monospace", fontSize: 11 }}>
-              None linked.
-            </div>
-          ) : (
-            (contextValue.pipelines ?? []).map((pipeline: any, i: number) => (
-              <div key={i} style={{
-                padding: "8px 14px",
-                borderBottom: "1px solid var(--border)",
-                fontSize: 12,
-                color: "var(--fg)",
-              }}>
-                {String(pipeline.name ?? pipeline.slug ?? "pipeline")}
-              </div>
-            ))
-          )}
-        </div>
+        </section>
       </div>
     </ProjectShell>
   );
