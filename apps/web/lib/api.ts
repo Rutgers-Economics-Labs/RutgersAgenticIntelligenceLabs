@@ -148,6 +148,17 @@ export async function applyIntegrityRerunPlan(
   return postJson(`/projects/${slug}/integrity/rerun-plan/apply`, { assumptionKey });
 }
 
+export async function previewBatchIntegrityRerunPlan(slug: string, assumptionKeys: string[]): Promise<IntegrityRerunPlan> {
+  return postJson(`/projects/${slug}/integrity/batch-rerun-plan`, { assumptionKeys });
+}
+
+export async function applyBatchIntegrityRerunPlan(
+  slug: string,
+  assumptionKeys: string[],
+): Promise<{ rerunPlan: IntegrityRerunPlan; tasks: Array<Record<string, unknown>> }> {
+  return postJson(`/projects/${slug}/integrity/batch-rerun-plan/apply`, { assumptionKeys });
+}
+
 export async function previewResearchLaunch(slug: string, payload: ResearchLaunchPayload): Promise<ResearchLaunchPreview> {
   return postJson(`/projects/${slug}/research-launch/preview`, payload);
 }

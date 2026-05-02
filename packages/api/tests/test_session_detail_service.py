@@ -21,6 +21,7 @@ def test_detail_empty_session(tmp_path: Path):
 
     assert detail["status"] == "initialized"
     assert isinstance(detail["currentFocus"], str)
+    assert detail["currentActivity"]["summary"] == detail["currentFocus"]
     assert detail["changedFiles"] == []
     assert detail["changedFileCount"] == 0
     assert detail["timeline"] == []
@@ -35,14 +36,20 @@ def test_detail_current_focus_file_change(tmp_path: Path):
 
     detail = build_session_detail(root)
     assert "topics/labor/notes.md" in detail["currentFocus"]
+    assert detail["currentActivity"]["kind"] == "editing_file"
+    assert detail["activeFile"] == "topics/labor/notes.md"
+    assert detail["workingOn"] == "topics/labor/notes.md"
 
 
 def test_detail_current_focus_tool_call(tmp_path: Path):
     root = _make_session(tmp_path)
-    session_files.append_event(root, "tool_call", name="bash", status="running")
+    session_files.append_event(root, "tool_call", name="bash", content="python scripts/check.py", status="running")
 
     detail = build_session_detail(root)
     assert "bash" in detail["currentFocus"]
+    assert detail["currentActivity"]["kind"] == "running_command"
+    assert detail["activeCommand"]["name"] == "bash"
+    assert "python scripts/check.py" in detail["activeCommand"]["preview"]
 
 
 def test_detail_current_focus_awaiting_input(tmp_path: Path):
@@ -55,6 +62,8 @@ def test_detail_current_focus_awaiting_input(tmp_path: Path):
     detail = build_session_detail(root)
     # Status-based shortcut fires before event scan: "Agent is waiting for input"
     assert "waiting" in detail["currentFocus"].lower() or "input" in detail["currentFocus"].lower()
+    assert detail["currentActivity"]["kind"] == "awaiting_input"
+    assert detail["waitingFor"]["kind"] == "question_asked"
 
 
 def test_detail_current_focus_approval_requested(tmp_path: Path):
@@ -66,6 +75,8 @@ def test_detail_current_focus_approval_requested(tmp_path: Path):
 
     detail = build_session_detail(root)
     assert "approval" in detail["currentFocus"].lower()
+    assert detail["currentActivity"]["kind"] == "awaiting_approval"
+    assert detail["waitingFor"]["kind"] == "approval_requested"
 
 
 def test_detail_current_focus_completed_ready_for_review(tmp_path: Path):
@@ -106,6 +117,8 @@ def test_detail_current_focus_assistant_message(tmp_path: Path):
 
     detail = build_session_detail(root)
     assert "county labor" in detail["currentFocus"].lower()
+    assert "county labor" in detail["thinkingSummary"].lower()
+    assert detail["currentActivity"]["kind"] == "thinking"
 
 
 def test_detail_current_focus_verification_started(tmp_path: Path):
@@ -114,6 +127,18 @@ def test_detail_current_focus_verification_started(tmp_path: Path):
 
     detail = build_session_detail(root)
     assert "verification" in detail["currentFocus"].lower()
+
+
+def test_detail_prefers_latest_working_signal(tmp_path: Path):
+    root = _make_session(tmp_path)
+    session_files.append_event(root, "assistant_message", content="Comparing source coverage for labor data.", status="running")
+    session_files.append_event(root, "tool_call", name="bash", content="git diff --stat", status="running")
+    session_files.append_event(root, "file_change_detected", path="topics/labor/source_notes.md", status="running")
+
+    detail = build_session_detail(root)
+    assert detail["currentActivity"]["kind"] == "editing_file"
+    assert detail["workingOn"] == "topics/labor/source_notes.md"
+    assert "Comparing source coverage" in detail["thinkingSummary"]
 
 
 # ---------------------------------------------------------------------------

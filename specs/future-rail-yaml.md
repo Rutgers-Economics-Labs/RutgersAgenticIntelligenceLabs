@@ -220,10 +220,10 @@ Required fields:
 - `roles_dir`
 - `default_runner`
 - `sequential_execution`
-- `approval_required_for_write_runs`
 
 Optional fields:
 
+- `approval_required_for_write_runs` (legacy shorthand for `autonomy.mode: assisted`)
 - `planner_thread_mode`
 - `default_planner_role`
 - `default_worker_roles`
@@ -241,10 +241,89 @@ agents:
   roles_dir: "agents"
   default_runner: "jules"
   sequential_execution: true
-  approval_required_for_write_runs: true
   planner_thread_mode: "project"
   default_planner_role: "planner"
   question_relay_mode: "planner_first"
+```
+
+### `autonomy`
+
+Purpose:
+
+- define how much work the planner and workers may do without human approval
+- define escalation boundaries for fire-and-forget research runs
+
+Required fields:
+
+- none in V1
+
+Optional fields:
+
+- `mode`
+- `require_human_for`
+- `allow_without_human`
+- `max_runtime_minutes`
+- `max_cost_usd`
+- `max_retries_per_task`
+
+Notes:
+
+- `mode` should be one of `assisted`, `supervised_autopilot`, or `autopilot`
+- if omitted, V1 should default to `assisted`
+- `approval_required_for_write_runs: true` maps to `mode: assisted` for compatibility
+- autonomy policy never overrides role path allowlists, secret allowlists, or integrity gates
+
+Example:
+
+```yaml
+autonomy:
+  mode: "supervised_autopilot"
+  require_human_for:
+    - publish_changes
+    - destructive_delete
+    - missing_source_data
+    - low_confidence_claims
+    - methodology_change_with_material_effect
+  allow_without_human:
+    - plan_decomposition
+    - source_discovery
+    - data_ingestion
+    - analysis_scripts
+    - artifact_generation
+    - verification
+    - assumption_recording
+  max_runtime_minutes: 180
+  max_cost_usd: 20
+  max_retries_per_task: 3
+```
+
+### `integrity`
+
+Purpose:
+
+- define the evidence and reproducibility requirements for trusted outputs
+
+Required fields:
+
+- none in V1
+
+Optional fields:
+
+- `allow_synthetic_data`
+- `require_source_for_datasets`
+- `require_lineage_for_final_artifacts`
+- `require_evidence_for_report_claims`
+- `stale_outputs_block_promotion`
+
+Example:
+
+```yaml
+integrity:
+  allow_synthetic_data: false
+  require_source_for_datasets: true
+  require_lineage_for_final_artifacts: true
+  require_evidence_for_report_claims: true
+  stale_outputs_block_promotion: true
 ```
 
 ### `workspaces`
@@ -354,10 +433,30 @@ agents:
   roles_dir: "agents"
   default_runner: "jules"
   sequential_execution: true
-  approval_required_for_write_runs: true
   planner_thread_mode: "project"
   default_planner_role: "planner"
   question_relay_mode: "planner_first"
+
+autonomy:
+  mode: "assisted"
+  require_human_for:
+    - publish_changes
+    - destructive_delete
+    - missing_source_data
+    - low_confidence_claims
+    - methodology_change_with_material_effect
+  allow_without_human:
+    - plan_decomposition
+    - source_discovery
+    - verification
+    - assumption_recording
+
+integrity:
+  allow_synthetic_data: false
+  require_source_for_datasets: true
+  require_lineage_for_final_artifacts: true
+  require_evidence_for_report_claims: true
+  stale_outputs_block_promotion: true
 
 frontend:
   topic_index_mode: "filesystem"
@@ -397,7 +496,9 @@ The manifest validator should enforce:
 - all configured paths are relative repository paths
 - `default_runner` is a supported runner identifier
 - `sequential_execution` is `true` in V1
-- `approval_required_for_write_runs` is `true` in V1
+- `autonomy.mode` is one of `assisted`, `supervised_autopilot`, or `autopilot` when present
+- `approval_required_for_write_runs`, if present, is treated as a legacy compatibility flag
+- integrity policy values are booleans when present
 - hydration paths point inside `.ontology/` unless an explicit future exception is allowed
 
 ## V1 Constraints
@@ -407,6 +508,8 @@ For V1, the platform should assume:
 - a single active worker at a time
 - a long-lived project-level planner thread
 - planner-first question relay
+- autonomy defaults to `assisted`
+- supervised autopilot and autopilot may run routine write-capable research tasks without approval if role policies, budgets, and integrity gates allow it
 - both organization and project secret scopes with per-role allowlists
 - Jules as the first supported runner
 

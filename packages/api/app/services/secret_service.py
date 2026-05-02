@@ -45,6 +45,7 @@ async def resolve_secrets_for_role(project_id: str, agent_role: str) -> dict[str
     allowed_names: list[str] = policy.get("allowedSecretNames") or []
     if not allowed_names:
         return {}
+    allow_all = "*" in allowed_names
 
     all_secrets = await convex.query(
         "projectSecrets:listByProject",
@@ -53,7 +54,7 @@ async def resolve_secrets_for_role(project_id: str, agent_role: str) -> dict[str
 
     result: dict[str, str] = {}
     for secret in all_secrets:
-        if secret["keyName"] in allowed_names:
+        if allow_all or secret["keyName"] in allowed_names:
             try:
                 result[secret["keyName"]] = decrypt_secret_value(secret["encryptedValue"])
             except Exception:

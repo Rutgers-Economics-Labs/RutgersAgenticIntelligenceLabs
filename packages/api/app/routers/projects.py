@@ -50,6 +50,7 @@ from app.services.safe_publish_service import (
 )
 from app.services.secret_service import decrypt_secret_value, encrypt_secret_value, mask_secret_value
 from app.services.integrity_service import (
+    build_batch_rerun_plan,
     build_rerun_plan,
     get_integrity_repo,
     update_assumption_and_mark_stale,
@@ -253,6 +254,46 @@ class IntegrityAssumptionUpdateRequest(BaseModel):
 
 class IntegrityRerunPlanRequest(BaseModel):
     assumptionKey: str
+
+
+class IntegrityBatchRerunPlanRequest(BaseModel):
+    assumptionKeys: list[str]
+
+
+class IntegrityRecordAssumptionRequest(BaseModel):
+    assumptionKey: str
+    title: str
+    value: str
+    status: str = "valid"
+    notes: str = ""
+    affectedPaths: list[str] = []
+
+
+class IntegrityRecordSourceRequest(BaseModel):
+    sourceKey: str
+    title: str
+    url: str | None = None
+    publisher: str | None = None
+    accessDate: str | None = None
+    notes: str = ""
+
+
+class IntegrityRecordClaimRequest(BaseModel):
+    claimKey: str
+    statement: str
+    status: str = "draft"
+    evidencePaths: list[str] = []
+    sourceKeys: list[str] = []
+
+
+class IntegrityRecordLineageRequest(BaseModel):
+    artifactPath: str
+    artifactType: str
+    title: str
+    inputs: list[str] = []
+    sources: list[str] = []
+    assumptions: list[str] = []
+    claims: list[str] = []
 
 
 # Catalog projects are now managed in Convex.
@@ -1031,7 +1072,20 @@ async def apply_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPlan
         plan = build_rerun_plan(root, data.assumptionKey)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return await _apply_integrity_plan(project, root, plan)
 
+
+@router.post("/{slug}/integrity/batch-rerun-plan/apply")
+async def apply_project_integrity_batch_rerun_plan(slug: str, data: IntegrityBatchRerunPlanRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    plan = build_batch_rerun_plan(root, data.assumptionKeys)
+    return await _apply_integrity_plan(project, root, plan)
+
+
+async def _apply_integrity_plan(project: dict, root: Path, plan: dict):
     board = await planner_service.ensure_main_board(project)
     created_tasks = []
     for spec in plan["proposedTasks"]:
@@ -1050,12 +1104,54 @@ async def apply_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPlan
             agent_role=spec["agentRole"],
             repo_paths=spec["repoPaths"],
             acceptance_criteria=spec["acceptanceCriteria"],
-            runner=role_config.policy.runner.default,
-            approval_state="pending" if decision.requires_human_approval else "not_required",
+            approval_state="granted" if not decision.requires_human_approval else "pending",
         )
         created_tasks.append(task)
-    await planner_service.sync_planner_files(project, board)
-    return {"rerunPlan": plan, "tasks": created_tasks}
+    return {"tasks": created_tasks}
+
+
+@router.post("/{slug}/integrity/assumptions")
+async def record_project_integrity_assumption(slug: str, data: IntegrityRecordAssumptionRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    record = repo.upsert_assumption(data.model_dump(by_alias=True))
+    return record.model_dump(mode="json")
+
+
+@router.post("/{slug}/integrity/sources")
+async def record_project_integrity_source(slug: str, data: IntegrityRecordSourceRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    record = repo.upsert_source(data.model_dump(by_alias=True))
+    return record.model_dump(mode="json")
+
+
+@router.post("/{slug}/integrity/claims")
+async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    record = repo.upsert_claim(data.model_dump(by_alias=True))
+    return record.model_dump(mode="json")
+
+
+@router.post("/{slug}/integrity/artifacts")
+async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLineageRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    record = repo.upsert_artifact_lineage(data.model_dump(by_alias=True))
+    return record.model_dump(mode="json")
 
 
 @router.post("/{slug}/research-launch/preview")
@@ -1737,17 +1833,28 @@ async def list_active_agents(slug: str):
         active_only=True,
         limit=50,
     )
+    from app.services.session_detail_service import build_session_detail
     return {
         "agents": [
-            {
-                "sessionId": s.get("_id") or s.get("sessionId"),
-                "role": s.get("role"),
-                "runner": s.get("runner"),
-                "status": s.get("status"),
-                "title": s.get("title"),
-                "startedAt": s.get("startedAt"),
-                "taskId": s.get("taskId"),
-            }
+            (
+                lambda detail: {
+                    "sessionId": s.get("_id") or s.get("sessionId"),
+                    "role": s.get("role"),
+                    "runner": s.get("runner"),
+                    "status": s.get("status"),
+                    "title": s.get("title"),
+                    "startedAt": s.get("startedAt"),
+                    "taskId": s.get("taskId"),
+                    "currentFocus": detail.get("currentFocus"),
+                    "thinkingSummary": detail.get("thinkingSummary"),
+                    "workingOn": detail.get("workingOn"),
+                    "currentActivity": detail.get("currentActivity"),
+                }
+            )(
+                build_session_detail(s.get("sessionPath"))
+                if s.get("sessionPath") and Path(s.get("sessionPath")).exists()
+                else {}
+            )
             for s in sessions
         ]
     }

@@ -63,6 +63,26 @@ def cmd_secrets(project: rail.Project, args: argparse.Namespace):
         result = project.delete_secret(args.key)
         _print_json(result)
 
+def cmd_integrity(project: rail.Project, args: argparse.Namespace):
+    if args.integrity_command == "status":
+        results = project.integrity_status()
+        _print_json(results)
+    elif args.integrity_command == "assumptions":
+        results = project.integrity_assumptions()
+        _print_json(results)
+    elif args.integrity_command == "sources":
+        results = project.integrity_sources()
+        _print_json(results)
+    elif args.integrity_command == "claims":
+        results = project.integrity_claims()
+        _print_json(results)
+    elif args.integrity_command == "rerun":
+        if args.apply:
+            results = project.apply_integrity_rerun_plan(args.assumption_key)
+        else:
+            results = project.integrity_rerun_plan(args.assumption_key)
+        _print_json(results)
+
 def main():
     parser = argparse.ArgumentParser(prog="rail", description="RAIL platform CLI")
     parser.add_argument("--project", help="Project slug (cloud mode)")
@@ -118,6 +138,19 @@ def main():
     sd = s_subs.add_parser("delete", help="Delete a project secret")
     sd.add_argument("key", help="Secret key name")
 
+    # Integrity
+    p_integrity = subparsers.add_parser("integrity", help="Manage research integrity ledger")
+    i_subs = p_integrity.add_subparsers(dest="integrity_command")
+    
+    i_subs.add_parser("status", help="Show full integrity status")
+    i_subs.add_parser("assumptions", help="List assumptions")
+    i_subs.add_parser("sources", help="List sources")
+    i_subs.add_parser("claims", help="List claims")
+    
+    ir = i_subs.add_parser("rerun", help="Preview or apply rerun plan for an assumption")
+    ir.add_argument("assumption_key", help="The assumption that changed")
+    ir.add_argument("--apply", action="store_true", help="Actually create the rerun tasks")
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
@@ -136,6 +169,8 @@ def main():
         cmd_series(project, args)
     elif args.command == "secrets":
         cmd_secrets(project, args)
+    elif args.command == "integrity":
+        cmd_integrity(project, args)
 
 if __name__ == "__main__":
     main()

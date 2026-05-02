@@ -21,17 +21,29 @@ export function IntegrityAssumptionsPanel({
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draftValue, setDraftValue] = useState("");
   const [draftNotes, setDraftNotes] = useState("");
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [plan, setPlan] = useState<IntegrityRerunPlan | null>(null);
 
-  async function previewPlan(assumptionKey: string) {
+  const toggleSelect = (key: string) => {
+    const next = new Set(selectedKeys);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setSelectedKeys(next);
+  };
+
+  async function previewPlan(assumptionKey?: string) {
     setBusy(true);
     setMessage(null);
     try {
-      const nextPlan = await previewIntegrityRerunPlan(slug, assumptionKey);
+      const keys = assumptionKey ? [assumptionKey] : Array.from(selectedKeys);
+      if (!keys.length) return;
+      const nextPlan = keys.length === 1 
+        ? await previewIntegrityRerunPlan(slug, keys[0])
+        : await previewBatchIntegrityRerunPlan(slug, keys);
       setPlan(nextPlan);
-      setMessage(`Previewing rerun plan for ${assumptionKey}.`);
+      setMessage(`Previewing rerun plan for ${keys.length} assumption(s).`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not build rerun plan.");
     } finally {
@@ -58,13 +70,22 @@ export function IntegrityAssumptionsPanel({
     }
   }
 
-  async function applyPlan(assumptionKey: string) {
+  async function applyPlan() {
+    if (!plan) return;
     setBusy(true);
     setMessage(null);
     try {
-      const result = await applyIntegrityRerunPlan(slug, assumptionKey);
+      const keys = plan.assumptions 
+        ? plan.assumptions.map(a => a.assumption_key)
+        : plan.assumption ? [plan.assumption.assumption_key] : [];
+      
+      const result = keys.length > 1
+        ? await applyBatchIntegrityRerunPlan(slug, keys)
+        : await applyIntegrityRerunPlan(slug, keys[0]);
+        
       setPlan(result.rerunPlan);
       setMessage(`Created ${result.tasks.length} rerun tasks.`);
+      setSelectedKeys(new Set());
       router.refresh();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not create rerun tasks.");
@@ -79,9 +100,25 @@ export function IntegrityAssumptionsPanel({
 
   return (
     <div style={{ display: "grid", gap: 16 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button 
+          className="command-button" 
+          disabled={busy || selectedKeys.size === 0} 
+          onClick={() => previewPlan()}
+        >
+          Preview Rerun for {selectedKeys.size} Selected
+        </button>
+        {selectedKeys.size > 0 && (
+          <button className="command-button ghost" onClick={() => setSelectedKeys(new Set())}>
+            Clear Selection
+          </button>
+        )}
+      </div>
+
       <table className="data-table">
         <thead>
           <tr>
+            <th style={{ width: 40 }}></th>
             <th>Key</th>
             <th>Value</th>
             <th>Status</th>
@@ -93,8 +130,16 @@ export function IntegrityAssumptionsPanel({
           {assumptions.map((row) => {
             const affected = affectedMap[row.assumption_key] ?? row.affected_paths;
             const editing = editingKey === row.assumption_key;
+            const selected = selectedKeys.has(row.assumption_key);
             return (
-              <tr key={row.assumption_key}>
+              <tr key={row.assumption_key} className={selected ? "selected" : ""}>
+                <td>
+                  <input 
+                    type="checkbox" 
+                    checked={selected} 
+                    onChange={() => toggleSelect(row.assumption_key)} 
+                  />
+                </td>
                 <td>
                   <strong>{row.title}</strong>
                   <div className="mono-muted">{row.assumption_key}</div>
@@ -155,7 +200,11 @@ export function IntegrityAssumptionsPanel({
         <div className="agent-run-card" style={{ display: "grid", gap: 12 }}>
           <div>
             <strong>Rerun Plan</strong>
-            <div className="mono-muted">{plan.assumption.assumption_key}</div>
+            <div className="mono-muted">
+              {plan.assumptions 
+                ? `${plan.assumptions.length} assumptions: ${plan.assumptions.map(a => a.assumption_key).join(", ")}`
+                : plan.assumption?.assumption_key}
+            </div>
           </div>
           <div className="mono-muted">
             Affected outputs: {plan.affectedPaths.join(", ") || "—"}
@@ -173,7 +222,7 @@ export function IntegrityAssumptionsPanel({
             ))}
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button className="command-button primary" type="button" disabled={busy} onClick={() => applyPlan(plan.assumption.assumption_key)}>
+            <button className="command-button primary" type="button" disabled={busy} onClick={() => applyPlan()}>
               {busy ? "Creating" : "Create Rerun Tasks"}
             </button>
             <button className="command-button" type="button" disabled={busy} onClick={() => setPlan(null)}>

@@ -133,26 +133,62 @@ def build_rerun_plan(
     *,
     plan_root: str = "research_plan",
 ) -> dict[str, Any]:
-    repo = get_integrity_repo(project_root, plan_root=plan_root)
-    assumptions = {item.assumption_key: item for item in repo.load_assumptions()}
-    assumption = assumptions.get(assumption_key)
-    if assumption is None:
-        raise KeyError(f"Unknown assumption_key: {assumption_key}")
+    return build_batch_rerun_plan(project_root, [assumption_key], plan_root=plan_root)
 
-    affected_artifacts = repo.artifacts_for_assumption(assumption_key)
-    affected_paths = [item.artifact_path for item in affected_artifacts]
-    stale_paths = [
-        item.artifact_path for item in affected_artifacts if item.promotion_state == "stale" or item.stale_reasons
-    ]
+
+def build_batch_rerun_plan(
+    project_root: str | Path,
+    assumption_keys: list[str],
+    *,
+    plan_root: str = "research_plan",
+) -> dict[str, Any]:
+    repo = get_integrity_repo(project_root, plan_root=plan_root)
+    all_assumptions = {item.assumption_key: item for item in repo.load_assumptions()}
+
+    target_assumptions = []
+    for key in assumption_keys:
+        if key in all_assumptions:
+            target_assumptions.append(all_assumptions[key])
+        else:
+            continue
+
+    if not target_assumptions:
+        return {
+            "assumptions": [],
+            "affectedArtifacts": [],
+            "affectedPaths": [],
+            "stalePaths": [],
+            "proposedTasks": [],
+        }
+
+    # Consolidate impacts
+    all_affected_artifacts: dict[str, ArtifactLineageRecord] = {}
+    for a in target_assumptions:
+        for item in repo.artifacts_for_assumption(a.assumption_key):
+            all_affected_artifacts[item.artifact_path] = item
+
+    affected_artifacts = list(all_affected_artifacts.values())
+    affected_paths = sorted(all_affected_artifacts.keys())
+    stale_paths = sorted([
+        path for path, item in all_affected_artifacts.items()
+        if item.promotion_state == "stale" or item.stale_reasons
+    ])
+
     has_dataset = any(item.artifact_type == "dataset" for item in affected_artifacts)
     has_deliverables = any(item.artifact_type != "dataset" for item in affected_artifacts)
 
+    # Build consolidated titles
+    if len(target_assumptions) == 1:
+        scope_desc = f"assumption {target_assumptions[0].title}"
+    else:
+        scope_desc = f"{len(target_assumptions)} changed assumptions"
+
     proposed_tasks: list[dict[str, Any]] = [
         {
-            "title": f"Re-check evidence for assumption {assumption.title}",
+            "title": f"Re-check evidence for {scope_desc}",
             "description": (
-                f"Review the evidence and open questions affected by assumption `{assumption.assumption_key}` "
-                f"after its value changed to: {assumption.value}"
+                f"Review the evidence and open questions affected by: "
+                + ", ".join(f"`{a.assumption_key}`" for a in target_assumptions)
             ),
             "agentRole": "research",
             "repoPaths": ["topics", "research_plan"],
@@ -162,11 +198,12 @@ def build_rerun_plan(
             ],
         }
     ]
+
     if has_dataset:
         proposed_tasks.append(
             {
-                "title": f"Refresh datasets impacted by {assumption.title}",
-                "description": "Regenerate or validate datasets whose lineage depends on the changed assumption.",
+                "title": f"Refresh datasets impacted by {scope_desc}",
+                "description": "Regenerate or validate datasets whose lineage depends on the changed assumptions.",
                 "agentRole": "data",
                 "repoPaths": [".ontology", "topics", "research_plan"],
                 "acceptanceCriteria": [
@@ -175,11 +212,12 @@ def build_rerun_plan(
                 ],
             }
         )
+
     if has_deliverables:
         proposed_tasks.append(
             {
-                "title": f"Regenerate affected outputs for {assumption.title}",
-                "description": "Update analysis outputs and artifacts impacted by the changed assumption.",
+                "title": f"Regenerate affected outputs for {scope_desc}",
+                "description": "Update analysis outputs and artifacts impacted by the changed assumptions.",
                 "agentRole": "coding",
                 "repoPaths": ["topics", "artifacts", "research_plan"],
                 "acceptanceCriteria": [
@@ -188,9 +226,10 @@ def build_rerun_plan(
                 ],
             }
         )
+
     proposed_tasks.append(
         {
-            "title": f"Re-verify outputs affected by {assumption.title}",
+            "title": f"Re-verify outputs affected by {scope_desc}",
             "description": "Run deterministic verification and clear stale markers for rerun outputs that pass.",
             "agentRole": "health",
             "repoPaths": ["research_plan", "artifacts", "topics"],
@@ -202,7 +241,7 @@ def build_rerun_plan(
     )
 
     return {
-        "assumption": assumption.model_dump(mode="json"),
+        "assumptions": [a.model_dump(mode="json") for a in target_assumptions],
         "affectedArtifacts": [item.model_dump(mode="json") for item in affected_artifacts],
         "affectedPaths": affected_paths,
         "stalePaths": stale_paths,
@@ -223,4 +262,5 @@ __all__ = [
     "update_assumption_and_mark_stale",
     "evaluate_integrity_gate",
     "build_rerun_plan",
+    "build_batch_rerun_plan",
 ]

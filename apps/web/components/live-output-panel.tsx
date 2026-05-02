@@ -11,6 +11,14 @@ type AgentInfo = {
   status: string;
   title: string;
   startedAt?: number;
+  currentFocus?: string | null;
+  thinkingSummary?: string | null;
+  workingOn?: string | null;
+  currentActivity?: {
+    kind?: string | null;
+    label?: string | null;
+    summary?: string | null;
+  } | null;
 };
 
 type TimelineItem = Record<string, unknown>;
@@ -21,6 +29,27 @@ type SessionOutput = {
   stderrTail?: string;
   timeline?: TimelineItem[];
   currentFocus?: string | null;
+  thinkingSummary?: string | null;
+  workingOn?: string | null;
+  activeFile?: string | null;
+  activeCommand?: {
+    name?: string | null;
+    preview?: string | null;
+    timestamp?: string | null;
+    status?: string | null;
+  } | null;
+  waitingFor?: {
+    kind?: string | null;
+    summary?: string | null;
+    timestamp?: string | null;
+  } | null;
+  currentActivity?: {
+    kind?: string | null;
+    label?: string | null;
+    summary?: string | null;
+    thinkingSummary?: string | null;
+    workingOn?: string | null;
+  } | null;
 };
 
 function statusColor(s: string): string {
@@ -129,6 +158,7 @@ export function LiveOutputPanel({ slug }: { slug: string }) {
   }, [dragging]);
 
   const currentOutput = activeTab ? output[activeTab] : null;
+  const activeAgent = agents.find((agent) => agent.sessionId === activeTab) ?? null;
   const timelineItems = (currentOutput?.timeline ?? []).slice(-80);
   const stdout = currentOutput?.stdoutTail ?? "";
   const runningCount = agents.filter((a) => a.status === "running").length;
@@ -215,6 +245,7 @@ export function LiveOutputPanel({ slug }: { slug: string }) {
                   letterSpacing: "0.06em",
                   display: "flex", alignItems: "center", gap: 5,
                 }}
+                title={agent.currentFocus ?? agent.workingOn ?? agent.thinkingSummary ?? ""}
               >
                 <span style={{
                   width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
@@ -269,12 +300,48 @@ export function LiveOutputPanel({ slug }: { slug: string }) {
                 </div>
               )}
 
+              {(currentOutput?.workingOn || currentOutput?.activeFile || currentOutput?.activeCommand?.preview) && (
+                <div style={{
+                  padding: "4px 12px",
+                  background: "var(--panel)",
+                  borderBottom: "1px solid var(--border)",
+                  fontSize: 11, color: "var(--fg)",
+                }}>
+                  <span style={{ color: "var(--muted)", marginRight: 8 }}>working on</span>
+                  {currentOutput.workingOn ?? currentOutput.activeFile ?? currentOutput.activeCommand?.preview}
+                </div>
+              )}
+
+              {(currentOutput?.thinkingSummary || activeAgent?.thinkingSummary) && (
+                <div style={{
+                  padding: "4px 12px",
+                  background: "var(--panel)",
+                  borderBottom: "1px solid var(--border)",
+                  fontSize: 11, color: "var(--fg)",
+                }}>
+                  <span style={{ color: "var(--muted)", marginRight: 8 }}>thinking</span>
+                  {currentOutput?.thinkingSummary ?? activeAgent?.thinkingSummary}
+                </div>
+              )}
+
+              {currentOutput?.waitingFor?.summary && (
+                <div style={{
+                  padding: "4px 12px",
+                  background: "var(--panel)",
+                  borderBottom: "1px solid var(--border)",
+                  fontSize: 11, color: "var(--s-awaiting)",
+                }}>
+                  <span style={{ color: "var(--muted)", marginRight: 8 }}>waiting for</span>
+                  {currentOutput.waitingFor.summary}
+                </div>
+              )}
+
               {/* Timeline events */}
               {timelineItems.map((item, i) => {
-                const type = String(item.type ?? item.event_type ?? "event");
-                const msg = String(item.message ?? item.content ?? item.summary ?? item.label ?? "");
+                const type = String(item.eventType ?? item.type ?? item.event_type ?? "event");
+                const msg = String(item.summary ?? item.message ?? item.content ?? item.label ?? "");
                 const ts = item.timestamp
-                  ? new Date(Number(item.timestamp) * 1000).toLocaleTimeString("en-US", { hour12: false })
+                  ? new Date(String(item.timestamp)).toLocaleTimeString("en-US", { hour12: false })
                   : "";
                 return (
                   <div

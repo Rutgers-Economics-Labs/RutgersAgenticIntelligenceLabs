@@ -10,6 +10,7 @@ It also lists legacy surfaces that should not be extended and are candidates for
 - planner flows use the `/projects/{slug}/planner/` prefix
 - settings flows use the `/projects/{slug}/settings/` prefix
 - runner flows use the `/projects/{slug}/runner/` prefix (future)
+- research integrity flows use the `/projects/{slug}/integrity/` prefix
 - legacy config-based surfaces are frozen — no new features should target them
 
 ---
@@ -62,6 +63,18 @@ It also lists legacy surfaces that should not be extended and are candidates for
 |--------|------|---------|
 | `GET`  | `/api/v1/projects/{slug}/hydration/status` | Check hydration artifact freshness |
 | `POST` | `/api/v1/projects/{slug}/hydration/artifacts/register` | Register a new hydration artifact |
+
+### Research Integrity
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `GET` | `/api/v1/projects/{slug}/integrity/summary` | Assumptions, sources, claims, stale outputs, and verification summary |
+| `GET` | `/api/v1/projects/{slug}/integrity/assumptions` | List assumption ledger entries and affected outputs |
+| `PATCH` | `/api/v1/projects/{slug}/integrity/assumptions/{assumption_key}` | Update an assumption and mark affected outputs stale |
+| `GET` | `/api/v1/projects/{slug}/integrity/sources` | List source/provenance records |
+| `GET` | `/api/v1/projects/{slug}/integrity/claims` | List claim-to-evidence records |
+| `GET` | `/api/v1/projects/{slug}/integrity/artifact-lineage` | List artifact lineage and promotion states |
+| `POST` | `/api/v1/projects/{slug}/integrity/rerun-plan` | Propose rerun tasks for changed assumptions or stale outputs |
 
 ### Device Heartbeat
 
@@ -160,6 +173,50 @@ It also lists legacy surfaces that should not be extended and are candidates for
 | `listByProject` | query | List sessions for a project |
 | `create` | mutation | Open a new agent session |
 | `update` | mutation | Update session metadata |
+
+### `autonomyPolicies`
+
+| Export | Type | Purpose |
+|--------|------|---------|
+| `getEffectiveByProject` | query | Get cached effective autonomy policy |
+| `refreshFromManifest` | mutation | Re-read `rail.yaml` and cache the effective policy |
+
+### `assumptionIndex`
+
+| Export | Type | Purpose |
+|--------|------|---------|
+| `listByProject` | query | List assumptions and affected outputs |
+| `upsertFromRepoState` | mutation | Update cached assumption entries from repo-backed state |
+| `markAffectedOutputsStale` | mutation | Mark dependent artifacts/tasks stale after an assumption change |
+
+### `sourceIndex`
+
+| Export | Type | Purpose |
+|--------|------|---------|
+| `listByProject` | query | List source provenance records |
+| `upsertFromRepoState` | mutation | Update cached source entries from repo-backed state |
+
+### `claimIndex`
+
+| Export | Type | Purpose |
+|--------|------|---------|
+| `listByProject` | query | List claim-to-evidence records |
+| `upsertFromRepoState` | mutation | Update cached claim entries from repo-backed state |
+
+### `artifactLineageIndex`
+
+| Export | Type | Purpose |
+|--------|------|---------|
+| `listByProject` | query | List artifact lineage records |
+| `upsertFromRepoState` | mutation | Update cached lineage entries from repo-backed state |
+| `markStale` | mutation | Mark an artifact stale when dependencies change |
+
+### `verificationRuns`
+
+| Export | Type | Purpose |
+|--------|------|---------|
+| `listByProject` | query | List compact verification outcomes |
+| `record` | mutation | Record a verification run summary and blockers |
 
 ### `hydrationArtifacts`
 

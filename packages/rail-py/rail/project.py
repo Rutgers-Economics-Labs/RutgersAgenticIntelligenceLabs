@@ -75,6 +75,30 @@ class Project:
             raise RuntimeError("ontology() requires local mode or a local onto.db path")
         return OntologyView(db_path)
 
+    def integrity_status(self) -> dict:
+        """Fetch the full integrity state of the project."""
+        return self._backend.get_integrity_status(self.slug)
+
+    def integrity_assumptions(self) -> list[dict]:
+        """Fetch recorded assumptions and their status."""
+        return self._backend.get_integrity_assumptions(self.slug)
+
+    def integrity_sources(self) -> list[dict]:
+        """Fetch recorded evidence sources."""
+        return self._backend.get_integrity_sources(self.slug)
+
+    def integrity_claims(self) -> list[dict]:
+        """Fetch recorded empirical claims."""
+        return self._backend.get_integrity_claims(self.slug)
+
+    def integrity_rerun_plan(self, assumption_key: str) -> dict:
+        """Preview the rerun plan for a given assumption change."""
+        return self._backend.get_integrity_rerun_plan(self.slug, assumption_key)
+
+    def apply_integrity_rerun_plan(self, assumption_key: str) -> dict:
+        """Create rerun tasks based on the current rerun plan for an assumption change."""
+        return self._backend.apply_integrity_rerun_plan(self.slug, assumption_key)
+
     def __repr__(self):
         mode = "cloud" if hasattr(self._backend, "base_url") else "local"
         return f"Project(slug={self.slug!r}, mode={mode!r})"

@@ -44,9 +44,11 @@ The runner layer should also expose workspace lifecycle hooks:
 - `run_setup(workspace)`
 - `run_verification(workspace)`
 - `summarize_diff(workspace)`
+- `collect_integrity_metadata(workspace)`
 - `archive_workspace(workspace)`
 
 These hooks may be no-ops for hosted runners at first, but the planner contract should include them so local runners and future parallel workers do not require a new architecture.
+Integrity metadata collection should gather assumptions, provenance, claim evidence, artifact lineage, verification results, and stale-output markers produced during the run.
 
 ## Jules Runner
 
@@ -67,7 +69,7 @@ Secrets should be allowlisted per agent role.
 ### Expected Flow
 
 1. Planner creates a task
-2. User approves execution
+2. Runtime checks autonomy policy and requests human approval only when required
 3. Runner creates a Jules session
 4. Planner sends a task payload
 5. Jules returns plan/progress/events
@@ -139,6 +141,8 @@ Local CLI runners may be less interactive than hosted APIs. Their capability met
 - event streaming
 - structured tool call extraction
 - checkpoint creation
+- structured completion summaries
+- artifact lineage and integrity metadata emission
 
 ## Runner Event Model
 
@@ -155,6 +159,9 @@ All runner backends should normalize events into a common shape:
 - `file_change_detected`
 - `verification_started`
 - `verification_completed`
+- `integrity_metadata_collected`
+- `artifact_marked_stale`
+- `artifact_promoted`
 - `diff_ready`
 - `merge_blocked`
 - `completed`
@@ -190,11 +197,37 @@ After a worker finishes:
 
 1. collect changed files
 2. run deterministic verification
-3. render a diff summary
-4. list unresolved todos/blockers
-5. ask for human approval before merge, PR creation, or copying changes into the canonical branch
+3. collect assumptions, provenance, claim evidence, and artifact lineage
+4. render a diff summary
+5. list unresolved todos/blockers, including missing evidence and stale outputs
+6. apply autonomy policy before merge, PR creation, publishing, or copying changes into the canonical branch
 
-The planner should never silently merge or publish worker changes.
+The planner should never silently merge or publish worker changes unless the project autonomy policy explicitly permits the action.
+Even in autopilot mode, outputs should not be promoted to trusted artifacts unless required integrity gates pass.
+
+## Worker Completion Summary
+
+Every runner should produce or normalize a compact completion summary so the planner does not need to infer outcomes from raw logs.
+
+Suggested shape:
+
+```json
+{
+  "status": "completed",
+  "assumptions_added": [],
+  "assumptions_changed": [],
+  "sources_used": [],
+  "datasets_created": [],
+  "artifacts_created": [],
+  "claims_created": [],
+  "verification_results": [],
+  "open_questions": [],
+  "blockers": [],
+  "recommended_next_tasks": []
+}
+```
+
+If a worker cannot complete without inventing data, fabricating citations, or making unsupported claims, the normalized status should be `blocked` or `failed` with a clear reason.
 
 ## Checkpoints
 
@@ -224,18 +257,20 @@ Rules:
 
 ## Human-in-the-Loop
 
-Write-capable runs must stop before execution until a human approves:
+Write-capable runs follow the project autonomy policy.
+In assisted mode, runs should stop before execution until a human approves:
 
 - task start
 - plan approval when required by the runner
 - publish/merge action when applicable
 
 Read-only validation runs may proceed without approval.
+In supervised autopilot or autopilot mode, routine write-capable work may proceed without approval if it stays within role allowlists, budget limits, and integrity policy.
 
 ## V1 Operating Constraints
 
 - one active worker session at a time per project
 - planner remains the single human-facing role
 - runner adapters may emit vendor-specific raw events, but the app should operate on normalized events
-- publishing or merging agent changes is a separate approval checkpoint from starting a run
+- publishing or merging agent changes is separate from starting a run and follows autonomy policy
 - even with one active worker, model each write-capable run as a workspace so parallel worktrees can be added later

@@ -8,7 +8,8 @@ The guiding principle is:
 - move project truth into a Git-backed repo contract
 - keep the database lightweight and operational
 - run one worker agent at a time in V1
-- require human approval before write-capable agent execution
+- support configurable autonomy while keeping research evidence-gated
+- require human approval only at policy-defined escalation boundaries
 
 ## Keep, Remove, and Add
 
@@ -34,6 +35,8 @@ The guiding principle is:
 - a planner-first orchestration model with specialized worker roles
 - a Git-native repository contract rooted in `rail.yaml`
 - a planner-owned Kanban/task system stored in Git-visible files under `research_plan/`
+- autonomy modes that let trusted projects run in fire-and-forget mode
+- a research integrity layer for assumptions, provenance, claim evidence, and reproducibility
 - runner adapters that normalize vendor events into a shared planner control flow
 - workspace setup, run, review, and archive hooks for repeatable agent execution
 - health and auditing as a first-class role
@@ -109,7 +112,23 @@ The planner remains the only role that talks directly to the human.
 
 Conductor's useful lesson for RAIL is that workers should not edit the canonical working tree directly when they can instead work in an isolated Git workspace. In V1, RAIL may still run only one worker at a time, but each write-capable session should be modeled as a workspace with a branch, a setup step, a run/test step, a review step, and an archive/cleanup step.
 
-### 5. Presentation Layer
+### 5. Research Integrity Layer
+
+Responsible for:
+
+- recording assumptions, decisions, and methodology choices as durable project state
+- recording source provenance for every dataset, citation, API call, downloaded reference, and manual input
+- mapping important artifact/report claims to evidence files, queries, scripts, source notes, or datasets
+- tracking artifact lineage from sources and assumptions through scripts, datasets, charts, dashboards, and reports
+- marking outputs stale when an upstream assumption, source, script, or dataset changes
+- enforcing promotion gates from exploratory output to verified artifact to final deliverable
+- producing confidence/status labels such as `exploratory`, `needs_evidence`, `partially_verified`, `verified`, `stale`, and `blocked`
+- preferring deterministic reproducibility checks over LLM judgment
+
+This layer is what lets RAIL become more autonomous without becoming less trustworthy.
+Agents may explore freely inside their allowed workspaces, but outputs should not be promoted as trusted deliverables unless they have evidence, lineage, and verification metadata.
+
+### 6. Presentation Layer
 
 Responsible for:
 
@@ -121,29 +140,76 @@ Responsible for:
 
 ## V1 Execution Model
 
-The first release uses a sequential planner-controlled workflow:
+The first release uses a sequential planner-controlled workflow with configurable autonomy:
 
 1. User chats with the planner
 2. Planner writes or updates specs in `specs/`
 3. Planner writes execution plans in `research_plan/`
 4. Planner decomposes work into tasks
-5. Tasks are stored as Markdown task cards under `research_plan/tasks/`
-6. User approves the next execution step
-7. Exactly one worker agent runs in an isolated session workspace
-8. Worker questions and approval requests are relayed back to the planner
-9. Worker changes are reviewed through a diff/review step before merge or adoption
-10. Health and verification checks run
-11. Planner updates repo-backed plan/task/session files and proposes the next task
+5. Planner records initial assumptions, source requirements, and verification expectations
+6. Tasks are stored as Markdown task cards under `research_plan/tasks/`
+7. Runtime checks the configured autonomy policy for whether the next step may proceed
+8. Exactly one worker agent runs in an isolated session workspace
+9. Worker questions and approval requests are relayed back to the planner only when policy requires escalation
+10. Worker outputs include assumptions, source records, artifact lineage, and claim evidence
+11. Health and deterministic verification checks run
+12. Outputs that pass evidence gates may be promoted; failed checks become blockers or open questions
+13. Planner updates repo-backed plan/task/session files and proposes or starts the next task according to autonomy policy
+
+## Autonomy Modes
+
+RAIL should support project-level autonomy modes rather than hard-coding one approval posture for all projects.
+
+Suggested modes:
+
+- `assisted`: human approval is required before write-capable worker runs and before adoption/publish actions.
+- `supervised_autopilot`: routine write-capable research work may run automatically, but high-risk actions and low-confidence outputs require human approval.
+- `autopilot`: the planner may continue decomposing, executing, verifying, repairing, and regenerating artifacts until the research plan is complete or a policy boundary is crossed.
+
+Example manifest shape:
+
+```yaml
+autonomy:
+  mode: supervised_autopilot
+  require_human_for:
+    - publish_changes
+    - destructive_delete
+    - paid_api_over_budget
+    - missing_source_data
+    - low_confidence_claims
+    - methodology_change_with_material_effect
+  allow_without_human:
+    - plan_decomposition
+    - source_discovery
+    - data_ingestion
+    - analysis_scripts
+    - artifact_generation
+    - verification
+    - assumption_recording
+  max_runtime_minutes: 180
+  max_cost_usd: 20
+  max_retries_per_task: 3
+```
+
+Autonomy policy should be enforced before dispatch, before publishing/adoption, and before any destructive or externally visible operation.
+If a task crosses a policy boundary, it should become `blocked` or `awaiting_approval` with a clear explanation.
 
 ## Approval Gates
 
-Human approval is required before:
+Human approval is required when the configured autonomy policy requires it.
 
-- starting any write-capable worker run
+Common approval boundaries:
+
 - publishing agent-generated changes
+- destructive deletion outside ephemeral generated files
+- changing methodology in a way that materially changes conclusions
+- accepting low-confidence or partially verified claims into final artifacts
+- continuing when required source data is missing or sources materially disagree
 - promoting project-specific skills into a broader shared library
 
-Automatic deterministic checks may run without approval when they are read-only.
+In assisted mode, starting write-capable worker runs may also require approval.
+In autopilot modes, routine write-capable research work can proceed without approval if it stays inside role path allowlists and project policy limits.
+Automatic deterministic checks may run without approval.
 
 ## Internal Task Board
 
@@ -179,7 +245,7 @@ RAIL should adopt the strongest parts of Conductor's workspace model while keepi
 4. **Mirror session:** write normalized events to `session.ndjson`, commands to `commands.ndjson`, state to `state.json`, and summaries to `summary.md`.
 5. **Test workspace:** run a repo-defined verification command or run script.
 6. **Review diff:** show changed files, task acceptance status, todos, and verification results before merge.
-7. **Adopt or merge:** require human approval before publishing, merging, or copying changes into the canonical branch.
+7. **Adopt, merge, or publish:** apply autonomy policy before publishing, merging, or copying changes into the canonical branch.
 8. **Archive workspace:** clean up temporary workspaces and external resources after the durable session summary is written.
 
 V1 still enforces one active worker at a time. The workspace abstraction exists so V2 can safely allow parallel workers on separate branches/worktrees.
@@ -190,6 +256,7 @@ RAIL should support two lightweight safety mechanisms:
 
 - **Todos as blockers:** task acceptance criteria, unresolved questions, failed checks, and health-agent findings should block merge/adoption until resolved.
 - **Checkpoints:** before each planner-approved worker turn, capture a lightweight Git snapshot or private ref so the system can explain and undo changes from that turn without confusing durable project history.
+- **Evidence gates:** unsupported claims, unsourced datasets, missing lineage, failed verification, and stale assumptions should block artifact promotion.
 
 ## Key Architectural Rules
 
@@ -201,9 +268,13 @@ RAIL should support two lightweight safety mechanisms:
 - planner task state lives in Git; active execution handles live in the database
 - agents may create knowledge under `topics/`, but they may not invent top-level contracts
 - every agent write must target an allowed path based on role
+- every nontrivial dataset must have source provenance or be explicitly marked synthetic/test data
+- every final artifact must have lineage metadata and verification status
+- important report claims should map to evidence before promotion to final deliverable
+- assumption changes should mark dependent outputs stale until rerun or revalidated
 - verification should prefer deterministic checks over LLM judgment
 - write-capable workers should run in an isolated workspace/branch when possible
-- merge or adoption is separate from task execution and requires human approval
+- merge, publish, or adoption is separate from task execution and follows autonomy policy
 
 ## Out of Scope for V1
 

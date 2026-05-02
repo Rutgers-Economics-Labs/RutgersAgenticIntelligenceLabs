@@ -901,6 +901,14 @@ async def create_runner_session(
 
     api_key = await resolve_jules_api_key(project_id, secret_role) if runner_name == "jules" else None
     runner = resolve_runner_for_project(runner_name, api_key=api_key, source=jules_source)
+    allowed_secrets: dict[str, str] = {}
+    if project_id:
+        try:
+            from app.services.secret_service import resolve_secrets_for_role
+
+            allowed_secrets = await resolve_secrets_for_role(project_id, secret_role)
+        except Exception:
+            allowed_secrets = {}
 
     title = f"[{role}] {task_description[:60]}"
     running_session_id = await running_agent_service.create_running_agent(
@@ -982,6 +990,7 @@ async def create_runner_session(
         local_repo_path=str(workspace_root),
         task_description=task_description,
         allowed_paths=allowed_paths or [],
+        allowed_secrets=allowed_secrets,
         acceptance_criteria=acceptance_criteria or [],
         project_context=project_context,
         session_root=str(session_root),

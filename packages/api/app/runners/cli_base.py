@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shlex
 import shutil
 import uuid
@@ -24,6 +25,7 @@ class LocalCliSession:
     events: list[RunnerEvent] = field(default_factory=list)
     returncode: int | None = None
     session_root: str | None = None
+    env: dict[str, str] = field(default_factory=dict)
 
 
 class LocalCLIRunner(BaseRunner):
@@ -75,6 +77,17 @@ class LocalCLIRunner(BaseRunner):
             sections.append("Project context:")
             sections.append(task_payload.project_context)
 
+        if task_payload.allowed_secrets:
+            secret_names = "\n".join(f"- {name}" for name in sorted(task_payload.allowed_secrets))
+            sections.extend(
+                [
+                    "",
+                    "Available environment secrets:",
+                    secret_names,
+                    "Use these by reading environment variables; do not print or commit their values.",
+                ]
+            )
+
         return "\n".join(sections) + "\n"
 
     def _base_command_parts(self) -> list[str]:
@@ -92,9 +105,17 @@ class LocalCLIRunner(BaseRunner):
         if not isinstance(payload, dict):
             return []
 
+        cursor_events = self._derived_events_from_cursor_payload(session_id, payload)
+        if cursor_events:
+            return cursor_events
+
+        gemini_events = self._derived_events_from_gemini_payload(session_id, payload)
+        if gemini_events:
+            return gemini_events
+
         item = payload.get("item")
         if not isinstance(item, dict):
-            return []
+            return self._derived_events_from_message_payload(session_id, payload)
 
         events: list[RunnerEvent] = []
         item_type = item.get("type")
@@ -152,6 +173,261 @@ class LocalCLIRunner(BaseRunner):
                 )
         return events
 
+    def _derived_events_from_message_payload(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> list[RunnerEvent]:
+        events: list[RunnerEvent] = []
+        payload_type = payload.get("type")
+
+        if payload_type == "assistant":
+            message = payload.get("message") or {}
+            for block in message.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type == "text":
+                    text = block.get("text")
+                    if text:
+                        events.append(
+                            RunnerEvent(
+                                event_type=RunnerEventType.PROGRESS,
+                                session_id=session_id,
+                                normalized_payload={"message": text},
+                                raw_payload=payload,
+                            )
+                        )
+                elif block_type == "tool_use":
+                    tool_name = block.get("name")
+                    tool_input = block.get("input") or {}
+                    if tool_name == "Read" and tool_input.get("file_path"):
+                        events.append(
+                            RunnerEvent(
+                                event_type=RunnerEventType.PROGRESS,
+                                session_id=session_id,
+                                normalized_payload={
+                                    "message": f"Reading {tool_input.get('file_path')}",
+                                    "path": tool_input.get("file_path"),
+                                },
+                                raw_payload=payload,
+                            )
+                        )
+                    elif tool_name in {"Write", "Edit", "NotebookEdit"} and tool_input.get("file_path"):
+                        events.append(
+                            RunnerEvent(
+                                event_type=RunnerEventType.FILE_CHANGE_DETECTED,
+                                session_id=session_id,
+                                normalized_payload={
+                                    "path": tool_input.get("file_path"),
+                                    "kind": tool_name.lower(),
+                                },
+                                raw_payload=payload,
+                            )
+                        )
+                    elif tool_name == "Bash":
+                        command = tool_input.get("command")
+                        if command:
+                            events.append(
+                                RunnerEvent(
+                                    event_type=RunnerEventType.BASH_COMMAND_STARTED,
+                                    session_id=session_id,
+                                    normalized_payload={"command": command},
+                                    raw_payload=payload,
+                                )
+                            )
+        elif payload_type == "result":
+            if payload.get("subtype") == "success":
+                result = payload.get("result")
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.PROGRESS,
+                        session_id=session_id,
+                        normalized_payload={"message": result} if result else {},
+                        raw_payload=payload,
+                    )
+                )
+        return events
+
+    def _derived_events_from_cursor_payload(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> list[RunnerEvent]:
+        events: list[RunnerEvent] = []
+        payload_type = payload.get("type")
+
+        if payload_type == "assistant":
+            message = payload.get("message") or {}
+            for block in message.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    text = block.get("text")
+                    if text:
+                        events.append(
+                            RunnerEvent(
+                                event_type=RunnerEventType.PROGRESS,
+                                session_id=session_id,
+                                normalized_payload={"message": text},
+                                raw_payload=payload,
+                            )
+                        )
+            return events
+
+        if payload_type == "thinking" and payload.get("subtype") == "delta":
+            text = payload.get("text")
+            if text:
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.PROGRESS,
+                        session_id=session_id,
+                        normalized_payload={"message": text},
+                        raw_payload=payload,
+                    )
+                )
+            return events
+
+        if payload_type == "tool_call":
+            subtype = payload.get("subtype")
+            tool_call = payload.get("tool_call") or {}
+
+            if "readToolCall" in tool_call:
+                args = (tool_call.get("readToolCall") or {}).get("args") or {}
+                path = args.get("path")
+                if path:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.PROGRESS,
+                            session_id=session_id,
+                            normalized_payload={
+                                "message": f"Reading {path}",
+                                "path": path,
+                            },
+                            raw_payload=payload,
+                        )
+                    )
+                return events
+
+            if "editToolCall" in tool_call:
+                edit = tool_call.get("editToolCall") or {}
+                args = edit.get("args") or {}
+                result = edit.get("result") or {}
+                path = args.get("path") or (result.get("success") or {}).get("path")
+                stream_content = args.get("streamContent")
+                if subtype == "started" and stream_content:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.PROGRESS,
+                            session_id=session_id,
+                            normalized_payload={
+                                "message": f"Editing {path}" if path else "Editing file",
+                                "path": path,
+                            },
+                            raw_payload=payload,
+                        )
+                    )
+                if path:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.FILE_CHANGE_DETECTED,
+                            session_id=session_id,
+                            normalized_payload={"path": path, "kind": "edit"},
+                            raw_payload=payload,
+                        )
+                    )
+                return events
+
+        if payload_type == "result" and not payload.get("is_error"):
+            result = payload.get("result")
+            if result:
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.PROGRESS,
+                        session_id=session_id,
+                        normalized_payload={"message": result},
+                        raw_payload=payload,
+                    )
+                )
+            return events
+
+        return []
+
+    def _derived_events_from_gemini_payload(
+        self,
+        session_id: str,
+        payload: dict[str, Any],
+    ) -> list[RunnerEvent]:
+        events: list[RunnerEvent] = []
+        payload_type = payload.get("type")
+
+        if payload_type == "tool_use":
+            tool_name = payload.get("tool_name")
+            parameters = payload.get("parameters") or {}
+            if tool_name == "update_topic":
+                summary = parameters.get("summary") or parameters.get("strategic_intent") or parameters.get("title")
+                if summary:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.PROGRESS,
+                            session_id=session_id,
+                            normalized_payload={"message": summary},
+                            raw_payload=payload,
+                        )
+                    )
+            elif tool_name == "read_file":
+                file_path = parameters.get("file_path")
+                if file_path:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.PROGRESS,
+                            session_id=session_id,
+                            normalized_payload={
+                                "message": f"Reading {file_path}",
+                                "path": file_path,
+                            },
+                            raw_payload=payload,
+                        )
+                    )
+            elif tool_name == "write_file":
+                file_path = parameters.get("file_path")
+                if file_path:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.FILE_CHANGE_DETECTED,
+                            session_id=session_id,
+                            normalized_payload={"path": file_path, "kind": "write"},
+                            raw_payload=payload,
+                        )
+                    )
+            return events
+
+        if payload_type == "message" and payload.get("role") == "assistant":
+            content = payload.get("content")
+            if content:
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.PROGRESS,
+                        session_id=session_id,
+                        normalized_payload={"message": content},
+                        raw_payload=payload,
+                    )
+                )
+            return events
+
+        if payload_type == "result" and payload.get("status") == "success":
+            events.append(
+                RunnerEvent(
+                    event_type=RunnerEventType.COMPLETED,
+                    session_id=session_id,
+                    normalized_payload={"status": "completed"},
+                    raw_payload=payload,
+                )
+            )
+            return events
+
+        return []
+
     async def _consume_stream(
         self,
         session: LocalCliSession,
@@ -195,11 +471,33 @@ class LocalCLIRunner(BaseRunner):
         from app.services import session_files
         root = Path(session.session_root)
         if root.exists():
+            event_type_map = {
+                RunnerEventType.PROGRESS: "assistant_message",
+                RunnerEventType.BASH_COMMAND_STARTED: "tool_call",
+                RunnerEventType.BASH_COMMAND_COMPLETED: "tool_result",
+                RunnerEventType.FILE_CHANGE_DETECTED: "file_change_detected",
+                RunnerEventType.COMPLETED: "completed",
+                RunnerEventType.FAILED: "failed",
+                RunnerEventType.CANCELLED: "cancelled",
+                RunnerEventType.STATUS_CHANGED: "status_changed",
+                RunnerEventType.APPROVAL_REQUESTED: "approval_requested",
+                RunnerEventType.QUESTION_ASKED: "question_asked",
+                RunnerEventType.VERIFICATION_STARTED: "verification_started",
+                RunnerEventType.VERIFICATION_COMPLETED: "verification_completed",
+            }
+            status_map = {
+                RunnerEventType.COMPLETED: "completed",
+                RunnerEventType.FAILED: "failed",
+                RunnerEventType.CANCELLED: "cancelled",
+                RunnerEventType.STATUS_CHANGED: event.normalized_payload.get("status"),
+            }
+            normalized_payload = dict(event.normalized_payload)
             session_files.append_event(
                 root,
-                event.event_type.value,
-                content=event.normalized_payload.get("message") or event.normalized_payload.get("line") or "",
-                **event.normalized_payload
+                event_type_map.get(event.event_type, event.event_type.value),
+                content=normalized_payload.get("message") or normalized_payload.get("line") or normalized_payload.get("command") or "",
+                status=status_map.get(event.event_type),
+                **normalized_payload
             )
 
     async def _run_session(self, session: LocalCliSession) -> None:
@@ -227,6 +525,7 @@ class LocalCLIRunner(BaseRunner):
             process = await asyncio.create_subprocess_exec(
                 *session.command,
                 cwd=session.cwd,
+                env={**os.environ, **session.env},
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -277,14 +576,14 @@ class LocalCLIRunner(BaseRunner):
                 self._persist_event(session, session.events[-1])
         except Exception as exc:
             session.status = "failed"
-            session.events.append(
-                RunnerEvent(
-                    event_type=RunnerEventType.FAILED,
-                    session_id=session.session_id,
-                    normalized_payload={"error": str(exc)},
-                    raw_payload={"error": str(exc)},
-                )
+            failed_event = RunnerEvent(
+                event_type=RunnerEventType.FAILED,
+                session_id=session.session_id,
+                normalized_payload={"error": str(exc)},
+                raw_payload={"error": str(exc)},
             )
+            session.events.append(failed_event)
+            self._persist_event(session, failed_event)
 
     async def create_session(self, task_payload: TaskPayload) -> dict[str, Any]:
         self._ensure_available()
@@ -296,6 +595,7 @@ class LocalCLIRunner(BaseRunner):
             cwd=task_payload.local_repo_path,
             prompt=prompt,
             session_root=task_payload.session_root,
+            env=dict(task_payload.allowed_secrets),
         )
         session.events.append(
             RunnerEvent(

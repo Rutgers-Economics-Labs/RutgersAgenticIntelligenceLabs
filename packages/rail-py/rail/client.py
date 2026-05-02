@@ -65,3 +65,24 @@ class CloudClient:
             r = client.delete(f"{self.base_url}/projects/{project_slug}/settings/secrets/{key}", headers=self.headers)
             r.raise_for_status()
             return r.json()
+
+    def get_integrity_status(self, project_slug: str) -> dict:
+        return self.get(f"/projects/{project_slug}/integrity")
+
+    def get_integrity_assumptions(self, project_slug: str) -> list[dict]:
+        res = self.get(f"/projects/{project_slug}/integrity/assumptions")
+        return res.get("assumptions", [])
+
+    def get_integrity_sources(self, project_slug: str) -> list[dict]:
+        res = self.get(f"/projects/{project_slug}/integrity/sources")
+        return res.get("sources", [])
+
+    def get_integrity_claims(self, project_slug: str) -> list[dict]:
+        res = self.get(f"/projects/{project_slug}/integrity/claims")
+        return res.get("claims", [])
+
+    def get_integrity_rerun_plan(self, project_slug: str, assumption_key: str) -> dict:
+        return self.post(f"/projects/{project_slug}/integrity/rerun-plan", {"assumptionKey": assumption_key})
+
+    def apply_integrity_rerun_plan(self, project_slug: str, assumption_key: str) -> dict:
+        return self.post(f"/projects/{project_slug}/integrity/rerun-plan/apply", {"assumptionKey": assumption_key})

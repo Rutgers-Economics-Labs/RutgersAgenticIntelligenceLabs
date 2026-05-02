@@ -60,6 +60,39 @@ export type RunnerSessionDetail = {
   startedAt?: number | string | null;
   endedAt?: number | string | null;
   currentFocus?: string | null;
+  thinkingSummary?: string | null;
+  workingOn?: string | null;
+  activeFile?: string | null;
+  activeCommand?: {
+    name?: string | null;
+    preview?: string | null;
+    timestamp?: string | null;
+    status?: string | null;
+  } | null;
+  waitingFor?: {
+    kind?: string | null;
+    summary?: string | null;
+    timestamp?: string | null;
+  } | null;
+  currentActivity?: {
+    kind?: string | null;
+    label?: string | null;
+    summary?: string | null;
+    thinkingSummary?: string | null;
+    workingOn?: string | null;
+    activeFile?: string | null;
+    activeCommand?: {
+      name?: string | null;
+      preview?: string | null;
+      timestamp?: string | null;
+      status?: string | null;
+    } | null;
+    waitingFor?: {
+      kind?: string | null;
+      summary?: string | null;
+      timestamp?: string | null;
+    } | null;
+  } | null;
   workspacePath?: string | null;
   workspaceBranch?: string | null;
   reviewStatus?: string | null;
@@ -402,7 +435,8 @@ export type ProjectIntegrityResponse = {
 };
 
 export type IntegrityRerunPlan = {
-  assumption: AssumptionRecord;
+  assumption?: AssumptionRecord;
+  assumptions?: AssumptionRecord[];
   affectedArtifacts: ArtifactLineageRecord[];
   affectedPaths: string[];
   stalePaths: string[];

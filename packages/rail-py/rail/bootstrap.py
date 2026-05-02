@@ -273,6 +273,23 @@ Use the project skill files in `skills/` as your operating playbook. For researc
 
 Do not treat web snippets as evidence. Open and inspect the source.
 """
+        if role == "health":
+            return """# Health Agent Prompt
+
+You are the research integrity and repo health auditor for this RAIL project.
+
+Your mission is to ensure that all research outputs are auditable, verified, and grounded in evidence.
+
+## Responsibilities
+
+1.  **Integrity Auditing**: Run semantic verification between generated reports (`artifacts/`) and the evidence ledger (`research_plan/state/`).
+2.  **Repo Hygiene**: Cleanup temporary debris, broken symlinks, or redundant test artifacts.
+3.  **Dependency Tracking**: Ensure `artifact_lineage.json` is accurate and up-to-date.
+4.  **Verification Runs**: Execute `scripts/run-verification.sh` and record the results in `research_plan/state/verification_runs.json`.
+5.  **Semantic Cross-Referencing**: Use the `semantic-auditing` skill to verify that claims in artifacts are supported by the recorded sources and claims.
+
+Do not mark an artifact as verified if there is a semantic gap between the claim and the source evidence.
+"""
         return f"# {role.title()} Prompt\n\nProject-specific system guidance for the {role} role. Use relevant project skills from `skills/` before doing specialized work.\n"
     checklist_template = lambda role: f"# {role.title()} Checklist\n\n- follow repo contract\n- stay inside allowed paths\n- satisfy deterministic completion checks\n"
 
@@ -395,7 +412,42 @@ Do not treat web snippets as evidence. Open and inspect the source.
 
     starter_skills = {
         "repo-contract.md": "# Repo Contract\n\n- keep top-level structure stable\n- keep generated work inside allowed paths\n",
-        "verification.md": "# Verification\n\n- prefer deterministic checks\n- do not mark tasks done without validation\n- state what was verified and what remains uncertain\n",
+        "verification.md": textwrap.dedent(
+            """\
+            # Verification
+
+            Use this skill when validating project outputs.
+
+            ## Deterministic Verification
+            Run `scripts/run-verification.sh` to perform structural and data integrity checks. This includes row count validations, schema checks, and file existence checks.
+
+            ## Semantic Verification
+            Perform a manual (agentic) review of the content. Cross-check the "Claim Evidence" (`research_plan/claim_evidence.md`) against the final report. Ensure that no claim is made without a corresponding evidence record.
+
+            ## State Transitions
+            - If verification passes: update `artifact_lineage.json` status to `verified` or `partially_verified`.
+            - If verification fails: mark as `blocked` and record the specific failure reason in `verification_runs.json`.
+            """
+        ),
+        "semantic-auditing.md": textwrap.dedent(
+            """\
+            # Semantic Auditing
+
+            Use this skill to verify that generated reports and artifacts accurately reflect the evidence in the integrity ledger.
+
+            ## Workflow
+
+            1.  **Extract Claims**: Identify the primary empirical claims in the artifact.
+            2.  **Cross-Reference**: For each claim, find the corresponding `ClaimRecord` in `research_plan/state/claims.json`.
+            3.  **Trace Evidence**: Verify that the `evidence_paths` and `source_keys` for that claim actually support the statement made in the artifact.
+            4.  **Check for Hallucinations**: Ensure no numbers or specific findings in the report are missing from the underlying sources.
+            5.  **Audit Citations**: Confirm that every citation in the report exists in `research_plan/state/sources.json`.
+
+            ## Output
+
+            Record a `VerificationRunRecord` in `research_plan/state/verification_runs.json` with a check of type `semantic_audit`.
+            """
+        ),
         "citations.md": "# Citations\n\n- cite sources for research outputs when applicable\n- prefer source title, publisher, URL, and access date for web sources\n- distinguish primary sources from secondary summaries\n- never cite a source that was not opened or otherwise inspected\n",
         "web-research.md": textwrap.dedent(
             """\

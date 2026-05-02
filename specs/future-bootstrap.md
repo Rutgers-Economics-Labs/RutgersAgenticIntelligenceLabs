@@ -69,6 +69,8 @@ Suggested starter topics:
 - YAML style and validation
 - verification norms
 - artifact naming conventions
+- assumption/provenance/claim-evidence recording
+- artifact lineage and stale-output handling
 
 ## Initial Planner State
 
@@ -77,6 +79,8 @@ The bootstrap process should seed:
 - a long-lived planner thread in the database
 - a first board in the database
 - mirrored planner files in `research_plan/`
+- initial assumption, decision, provenance, claim-evidence, rerun, and verification ledgers
+- empty machine-readable integrity indexes under `research_plan/state/`
 
 ## V1 Constraints
 
@@ -85,5 +89,5 @@ Bootstrap should assume:
 - project-scoped secrets only
 - Jules as the default runner
 - sequential worker execution
-- human approval required for write-capable tasks
-
+- autonomy defaults to `assisted`
+- write-capable task approval follows the project autonomy policy

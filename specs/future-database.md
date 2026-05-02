@@ -23,6 +23,8 @@ The database stores operational state that Git should not own directly:
 - runner sessions and events
 - approvals
 - cost and timing metadata
+- autonomy policy status and budget tracking
+- compact indexes for assumptions, sources, claims, artifact lineage, and verification status
 
 The database should stay intentionally thin.
 Its purpose is to help the planner operate the system, not to duplicate the repository.
@@ -40,6 +42,8 @@ It should not store:
 - long-lived duplicated copies of repo files
 
 It may store compact indexes and metadata for those things when needed for UX.
+Integrity indexes in the database are caches and query accelerators.
+The durable research record should remain in Git under `research_plan/` and `artifacts/`.
 
 ## Core Tables
 
@@ -159,6 +163,11 @@ Suggested fields:
 - `depends_on_task_ids`
 - `approval_state`
 - `git_snapshot_path`
+- `assumptions_touched`
+- `sources_touched`
+- `artifacts_touched`
+- `verification_status`
+- `promotion_state`
 - `created_at`
 - `updated_at`
 
@@ -325,8 +334,154 @@ Suggested fields:
 - `path`
 - `artifact_type`
 - `title`
+- `promotion_state`
+- `verification_status`
+- `lineage_path`
 - `commit_sha`
 - `created_at`
+
+### `autonomy_policies`
+
+Purpose:
+
+- cache the effective autonomy policy for a project
+- support fast UI display of mode, budgets, and escalation boundaries
+
+Suggested fields:
+
+- `id`
+- `project_id`
+- `mode`
+- `require_human_for`
+- `allow_without_human`
+- `max_runtime_minutes`
+- `max_cost_usd`
+- `max_retries_per_task`
+- `source_manifest_path`
+- `created_at`
+- `updated_at`
+
+Notes:
+
+- `source_manifest_path` usually points to `rail.yaml`
+- the repo manifest remains the durable source of truth
+- this table may cache the last valid effective policy used by the runtime
+
+### `assumption_index`
+
+Purpose:
+
+- provide fast UI access to assumptions and affected outputs
+
+Suggested fields:
+
+- `id`
+- `project_id`
+- `assumption_key`
+- `title`
+- `value`
+- `status`
+- `source_path`
+- `affected_paths`
+- `created_at`
+- `updated_at`
+
+Notes:
+
+- `source_path` points to `research_plan/state/assumptions.json` or a Markdown ledger section
+- assumption edits should mark dependent outputs stale until rerun or revalidated
+
+### `source_index`
+
+Purpose:
+
+- provide fast UI access to source provenance records
+
+Suggested fields:
+
+- `id`
+- `project_id`
+- `source_key`
+- `source_type`
+- `title`
+- `url_or_path`
+- `retrieved_at`
+- `license`
+- `quality_status`
+- `source_path`
+- `created_at`
+- `updated_at`
+
+### `claim_index`
+
+Purpose:
+
+- provide fast UI access to report/dashboard claims and their evidence
+
+Suggested fields:
+
+- `id`
+- `project_id`
+- `claim_key`
+- `claim_text`
+- `artifact_path`
+- `evidence_paths`
+- `status`
+- `confidence`
+- `source_path`
+- `created_at`
+- `updated_at`
+
+Notes:
+
+- claims without evidence should prevent final artifact promotion
+
+### `artifact_lineage_index`
+
+Purpose:
+
+- support artifact dependency graphs and stale-output detection
+
+Suggested fields:
+
+- `id`
+- `project_id`
+- `artifact_path`
+- `promotion_state`
+- `input_paths`
+- `script_paths`
+- `source_keys`
+- `assumption_keys`
+- `claim_keys`
+- `verification_run_ids`
+- `lineage_path`
+- `created_at`
+- `updated_at`
+
+### `verification_runs`
+
+Purpose:
+
+- record compact verification outcomes for UI and policy checks
+
+Suggested fields:
+
+- `id`
+- `project_id`
+- `task_id`
+- `agent_session_id`
+- `status`
+- `checks`
+- `artifact_paths`
+- `blockers`
+- `source_path`
+- `created_at`
+- `updated_at`
+
+Notes:
+
+- detailed verification reports should still live in Git
+- failed verification should create blockers and prevent artifact promotion unless policy explicitly allows partial verification
 
 ### `repo_sync_events`
 
@@ -356,6 +511,7 @@ Suggested fields:
 - `review`
 - `done`
 - `cancelled`
+- `stale`
 
 ### Agent Session Status
 
@@ -366,6 +522,25 @@ Suggested fields:
 - `completed`
 - `failed`
 - `cancelled`
+
+### Artifact Promotion State
+
+- `exploratory`
+- `draft`
+- `needs_evidence`
+- `partially_verified`
+- `verified`
+- `stale`
+- `blocked`
+
+### Verification Status
+
+- `not_run`
+- `running`
+- `passed`
+- `failed`
+- `partial`
+- `stale`
 
 ### Approval Status
 
@@ -383,6 +558,11 @@ Suggested mirrored files:
 - `research_plan/current_plan.md`
 - `research_plan/task_board.md`
 - `research_plan/tasks/<task-slug>.md`
+- `research_plan/assumptions.md`
+- `research_plan/provenance.md`
+- `research_plan/claim_evidence.md`
+- `research_plan/verification_summary.md`
+- `research_plan/state/*.json`
 
 The DB remains authoritative for real-time execution state, but the mirrored files give users and future agents durable context.
 

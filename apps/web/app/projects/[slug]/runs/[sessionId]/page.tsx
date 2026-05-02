@@ -187,6 +187,32 @@ function RightRail({ session }: { session: any }) {
         </div>
       </div>
 
+      {(session.workingOn || session.thinkingSummary || session.waitingFor?.summary) && (
+        <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+          <div className="rail-label" style={{ marginBottom: 8 }}>Live Activity</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {session.workingOn && (
+              <div>
+                <div style={{ color: "var(--muted)", marginBottom: 2 }}>Working on</div>
+                <div style={{ color: "var(--fg)" }}>{session.workingOn}</div>
+              </div>
+            )}
+            {session.thinkingSummary && (
+              <div>
+                <div style={{ color: "var(--muted)", marginBottom: 2 }}>Thinking</div>
+                <div style={{ color: "var(--fg)" }}>{session.thinkingSummary}</div>
+              </div>
+            )}
+            {session.waitingFor?.summary && (
+              <div>
+                <div style={{ color: "var(--muted)", marginBottom: 2 }}>Waiting for</div>
+                <div style={{ color: "var(--s-awaiting)" }}>{session.waitingFor.summary}</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Workspace */}
       {(session.workspaceBranch || session.workspacePath) && (
         <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
@@ -299,11 +325,36 @@ export default async function RunDetailPage({
           borderBottom: "1px solid var(--border)",
           background: "var(--panel-alt)",
           display: "flex",
-          alignItems: "center",
-          gap: 12,
+          flexDirection: "column",
+          alignItems: "stretch",
+          gap: 8,
         }}>
-          <span className="rail-label">Focus</span>
-          <span style={{ fontSize: 13, color: "var(--fg)" }}>{session.currentFocus}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span className="rail-label">Focus</span>
+            <span style={{ fontSize: 13, color: "var(--fg)" }}>{session.currentFocus}</span>
+          </div>
+          {(session.workingOn || session.thinkingSummary || session.waitingFor?.summary) && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8 }}>
+              {session.workingOn && (
+                <div className="rail-panel" style={{ padding: 10 }}>
+                  <div className="rail-label" style={{ marginBottom: 4 }}>Working On</div>
+                  <div style={{ color: "var(--fg)", fontSize: 12 }}>{session.workingOn}</div>
+                </div>
+              )}
+              {session.thinkingSummary && (
+                <div className="rail-panel" style={{ padding: 10 }}>
+                  <div className="rail-label" style={{ marginBottom: 4 }}>Thinking</div>
+                  <div style={{ color: "var(--fg)", fontSize: 12 }}>{session.thinkingSummary}</div>
+                </div>
+              )}
+              {session.waitingFor?.summary && (
+                <div className="rail-panel" style={{ padding: 10 }}>
+                  <div className="rail-label" style={{ marginBottom: 4 }}>Waiting For</div>
+                  <div style={{ color: "var(--s-awaiting)", fontSize: 12 }}>{session.waitingFor.summary}</div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -338,6 +389,8 @@ export default async function RunDetailPage({
               ["Runner", session.runner],
               ["Task", session.taskId],
               ["Workspace", session.workspaceBranch ?? session.workspacePath],
+              ["Working On", session.workingOn],
+              ["Thinking", session.thinkingSummary],
             ].map(([label, value]) => (
               <div key={String(label)} className="rail-panel" style={{ padding: 12 }}>
                 <div className="rail-label">{label}</div>

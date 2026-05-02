@@ -210,3 +210,31 @@ class LocalEngine:
             classes.append({"name": t, "instance_count": count})
         conn.close()
         return classes
+
+    # ── Integrity ─────────────────────────────────────────────────────────────
+
+    def get_integrity_status(self, project_slug: str) -> dict:
+        from rail.integrity import ResearchIntegrityRepo
+        repo = ResearchIntegrityRepo(self.project_path)
+        return repo.load_all().model_dump(mode="json")
+
+    def get_integrity_assumptions(self, project_slug: str) -> list[dict]:
+        from rail.integrity import ResearchIntegrityRepo
+        repo = ResearchIntegrityRepo(self.project_path)
+        return [item.model_dump(mode="json") for item in repo.load_assumptions()]
+
+    def get_integrity_sources(self, project_slug: str) -> list[dict]:
+        from rail.integrity import ResearchIntegrityRepo
+        repo = ResearchIntegrityRepo(self.project_path)
+        return [item.model_dump(mode="json") for item in repo.load_sources()]
+
+    def get_integrity_claims(self, project_slug: str) -> list[dict]:
+        from rail.integrity import ResearchIntegrityRepo
+        repo = ResearchIntegrityRepo(self.project_path)
+        return [item.model_dump(mode="json") for item in repo.load_claims()]
+
+    def get_integrity_rerun_plan(self, project_slug: str, assumption_key: str) -> dict:
+        return {"error": "rerun plan generation is currently only available via cloud API"}
+
+    def apply_integrity_rerun_plan(self, project_slug: str, assumption_key: str) -> dict:
+        return {"error": "rerun plan application is currently only available via cloud API"}
