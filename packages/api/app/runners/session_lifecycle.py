@@ -756,6 +756,7 @@ async def _build_project_context(
         "## Platform Tools & Capabilities",
         "- For semantic search across the repository or documents, use `lgrep` via `run_bash`. It is much more effective than keyword-based `grep` or `find` for finding complex patterns and research context.",
         "- The `rail` CLI and package (from the private `rail-py` library) are installed and available. Use `rail search`, `rail query`, and `rail hydrate` via `run_bash` for platform operations.",
+        "- Claude Code is also permitted for local assistance when useful. If the `claude` CLI is available, you may use it to inspect, reason about, or implement project work; keep all edits inside the allowed paths for this task.",
         ""
     ]
 
@@ -1337,6 +1338,21 @@ async def _relay_question_asked(
         message_type="question",
         session_id=convex_session_id,
     )
+    from app.services.decision_service import raise_decision_event
+
+    await raise_decision_event(
+        project,
+        source="runner",
+        event_type="awaiting_input",
+        severity="needs_planner",
+        summary=f"Worker {convex_session_id} asked for input: {question_text}",
+        evidence_refs=[f"runner_session:{convex_session_id}"],
+        recommended_actions=[
+            "Answer worker if policy-safe",
+            "Ask user for sensitive or ambiguous input",
+            "Cancel or reroute worker",
+        ],
+    )
 
 
 async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEvent) -> None:
@@ -1364,6 +1380,22 @@ async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEv
         status=task_status,
         latestRunSummary=summary,
     )
+    if status in {"failed", "cancelled"}:
+        from app.services.decision_service import raise_decision_event
+
+        await raise_decision_event(
+            project,
+            source="runner",
+            event_type=f"task_{status}",
+            severity="needs_planner",
+            summary=f"Worker for task {task_id} ended with status {status}: {summary}",
+            evidence_refs=[f"task:{task_id}"],
+            recommended_actions=[
+                "Diagnose run output",
+                "Requeue task if still required",
+                "Ask user before changing methodology",
+            ],
+        )
     await planner_service.sync_planner_files(project)
 
 async def flush_live_events(session_root: Path) -> None:

@@ -7,6 +7,7 @@ from typing import Any
 
 from app.services import planner_runtime, planner_service, running_agent_service
 from app.runners import session_lifecycle
+from app.services.decision_service import list_decision_events, mark_decision_event, raise_decision_event
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,19 @@ def _update_config(project_slug: str, **kwargs):
     if project_slug not in _autopilot_configs:
         _autopilot_configs[project_slug] = {}
     _autopilot_configs[project_slug].update(kwargs)
+
+
+def _dependency_ids(task: dict[str, Any]) -> list[str]:
+    deps = task.get("dependsOnTaskIds") or []
+    return [str(dep) for dep in deps if dep]
+
+
+def _dependencies_satisfied(task: dict[str, Any], task_by_id: dict[str, dict[str, Any]]) -> bool:
+    for dep_id in _dependency_ids(task):
+        dep = task_by_id.get(dep_id)
+        if not dep or dep.get("status") != "done":
+            return False
+    return True
 
 async def start_autopilot(project_slug: str, auto_approve: bool = False):
     """
@@ -109,6 +123,23 @@ async def run_autopilot_loop(project_slug: str):
         active_worker = await running_agent_service.find_active_worker(project["_id"])
         if active_worker:
             session_id = active_worker["_id"]
+            if active_worker.get("status") == "awaiting_input":
+                await raise_decision_event(
+                    project,
+                    source="autopilot",
+                    event_type="awaiting_input",
+                    severity="needs_planner",
+                    summary=(
+                        f"Worker session {session_id} is awaiting input. "
+                        "Decide whether to answer, reroute, cancel, or ask the user."
+                    ),
+                    evidence_refs=[f"runner_session:{session_id}"],
+                    recommended_actions=[
+                        "Inspect worker question",
+                        "Answer if policy-safe",
+                        "Ask user if sensitive or ambiguous",
+                    ],
+                )
             _update_config(project_slug, last_action=f"Polling active worker session: {session_id}")
             logger.info(f"Autopilot: Waiting for worker {session_id} ({active_worker.get('role')}) to complete...")
             try:
@@ -135,13 +166,115 @@ async def run_autopilot_loop(project_slug: str):
         if all_done and tasks:
             logger.info("Autopilot: All tasks are completed. Project goal reached.")
             break
+
+        task_by_id = {str(t["_id"]): t for t in tasks}
+
+        if config.get("auto_approve"):
+            promoted: list[str] = []
+            for task in tasks:
+                status = task.get("status")
+                if status not in {"awaiting_approval", "backlog", "blocked"}:
+                    continue
+                if not _dependencies_satisfied(task, task_by_id):
+                    continue
+                if status == "awaiting_approval" and task.get("approvalState") not in {"granted", "not_required"}:
+                    continue
+                await planner_service.update_task(
+                    str(task["_id"]),
+                    project=project,
+                    status="ready",
+                    runner=task.get("runner") or "cursor_cli",
+                    approval_state="granted",
+                    latestRunSummary="Promoted by Autopilot because dependencies are satisfied.",
+                )
+                promoted.append(str(task["_id"]))
+            if promoted:
+                logger.info("Autopilot: Promoted task(s): %s", ", ".join(promoted))
+                await planner_service.sync_planner_files(project, board)
+                for event in await list_decision_events(project, status="open"):
+                    if event.type == "no_ready_tasks":
+                        await mark_decision_event(project, event._id, "handled")
+                consecutive_idle_turns = 0
+                continue
+
+        cancelled_with_dependents = [
+            t for t in tasks
+            if t.get("status") == "cancelled"
+            and any(t["_id"] in (candidate.get("dependsOnTaskIds") or []) for candidate in tasks)
+        ]
+        if cancelled_with_dependents:
+            event = await raise_decision_event(
+                project,
+                source="autopilot",
+                event_type="task_cancelled_with_dependents",
+                severity="needs_planner",
+                summary=(
+                    "A cancelled task is still required by downstream work: "
+                    + ", ".join(t["_id"] for t in cancelled_with_dependents[:5])
+                    + ". Decide whether to requeue it, replace it, or change downstream dependencies."
+                ),
+                evidence_refs=[f"task:{t['_id']}" for t in cancelled_with_dependents[:5]],
+                recommended_actions=[
+                    "Requeue required cancelled task",
+                    "Create replacement task",
+                    "Ask user whether to skip dependency",
+                ],
+            )
+            if config.get("auto_approve"):
+                for task in cancelled_with_dependents:
+                    await planner_service.update_task(
+                        str(task["_id"]),
+                        project=project,
+                        status="ready",
+                        runner=task.get("runner") or "cursor_cli",
+                        approval_state="granted",
+                        latestRunSummary="Requeued by Autopilot because downstream tasks still depend on it.",
+                    )
+                await mark_decision_event(project, event._id, "handled")
+                await planner_service.sync_planner_files(project, board)
+                consecutive_idle_turns = 0
+                continue
             
         # Check if we have ready tasks that weren't launched
         ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
+        if ready_tasks:
+            cancelled_task_ids = {str(t["_id"]) for t in tasks if t.get("status") == "cancelled"}
+            for event in await list_decision_events(project, status="open"):
+                referenced_cancelled = [
+                    ref.removeprefix("task:")
+                    for ref in event.evidenceRefs
+                    if ref.startswith("task:")
+                ]
+                if event.type == "no_ready_tasks":
+                    await mark_decision_event(project, event._id, "handled")
+                elif (
+                    event.type == "task_cancelled_with_dependents"
+                    and referenced_cancelled
+                    and not any(task_id in cancelled_task_ids for task_id in referenced_cancelled)
+                ):
+                    await mark_decision_event(project, event._id, "handled")
         
         if not ready_tasks:
             consecutive_idle_turns += 1
             logger.info(f"Autopilot: No ready tasks. Idle turns: {consecutive_idle_turns}")
+            unfinished = [t for t in tasks if t.get("status") not in {"done", "cancelled"}]
+            if unfinished:
+                await raise_decision_event(
+                    project,
+                    source="autopilot",
+                    event_type="no_ready_tasks",
+                    severity="needs_planner",
+                    summary=(
+                        f"No ready tasks are available, but {len(unfinished)} unfinished task(s) remain. "
+                        "Decide whether dependencies are satisfied, tasks should be promoted, or the user is needed."
+                    ),
+                    evidence_refs=[f"task:{t['_id']}" for t in unfinished[:8]],
+                    recommended_actions=[
+                        "Promote dependency-satisfied backlog tasks",
+                        "Create missing prerequisite task",
+                        "Ask user for project direction",
+                    ],
+                )
             if consecutive_idle_turns >= 3:
                 logger.info("Autopilot: Stalled or finished (3 consecutive idle turns). Stopping.")
                 break

@@ -492,11 +492,13 @@ class LocalCLIRunner(BaseRunner):
                 RunnerEventType.STATUS_CHANGED: event.normalized_payload.get("status"),
             }
             normalized_payload = dict(event.normalized_payload)
+            explicit_status = status_map.get(event.event_type)
+            normalized_payload.pop("status", None)
             session_files.append_event(
                 root,
                 event_type_map.get(event.event_type, event.event_type.value),
                 content=normalized_payload.get("message") or normalized_payload.get("line") or normalized_payload.get("command") or "",
-                status=status_map.get(event.event_type),
+                status=explicit_status,
                 **normalized_payload
             )
 
