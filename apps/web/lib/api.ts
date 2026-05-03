@@ -1,6 +1,7 @@
 import {
   CommandCenter,
   CatalogActivationResponse,
+  DashboardResponse,
   HydrationStatus,
   HydrationRerunResponse,
   OntologyClassesResponse,
@@ -253,6 +254,10 @@ export async function fetchOntologyInstances(
   });
   if (options.search) query.append("search", options.search);
   return getJson(`/ontology/classes/${className}/instances?${query.toString()}`);
+}
+
+export async function generateDashboard(slug: string): Promise<DashboardResponse> {
+  return postJson<DashboardResponse>(`/projects/${slug}/dashboard/generate`, {});
 }
 
 export async function fetchOntologyGraph(

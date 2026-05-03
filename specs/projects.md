@@ -16,32 +16,26 @@ Every project has:
 
 ---
 
-## GitHub Repository Layout
+## Repository Layout & Discovery
 
-Every project repo follows this convention:
+The platform supports two layout modes: **Standard Convention** and **Manifest-Defined**.
 
+### Standard Convention
+By default, the platform looks for project components in these locations:
+- **Ontology**: `.ontology/ontology.yaml` or `.ontology/ontologies/{slug}.yaml`
+- **API Sources**: `.ontology/sources/*.yaml` or `configs/apis/*.yaml`
+- **Pipelines**: `.ontology/pipelines/*.yaml` or `configs/pipelines/*.yaml`
+- **Transforms**: `transforms/*.py`
+
+### Manifest-Defined (`rail.yaml`)
+For complex projects, the `rail.yaml` manifest can explicitly map components to non-standard paths. This allows agents to organize files into deep subdirectories while maintaining platform compatibility.
+
+```yaml
+components:
+  ontology: "specs/domain_ontology.yaml"
+  sources_dir: "data/connectors"
+  pipelines_dir: "workflows/hydration"
 ```
-{project-slug}/
-  rail.yaml                    # project manifest — describes this project
-  ontology/
-    extension.yaml             # project-specific OWL classes and properties
-  configs/
-    apis/
-      {source-slug}.yaml       # one file per data source config
-    pipelines/
-      {pipeline-slug}.yaml     # one file per pipeline config
-  transforms/
-    {module}.py                # DataFrame transform functions
-  analysis/
-    {plugin}.py                # analysis plugins (analyze(onto, **kwargs) interface)
-  agents/
-    config.yaml                # domain agent configuration
-  .github/
-    workflows/
-      rail-sync.yml            # push webhook trigger
-```
-
-The platform reads from and writes to all files under this structure. Users may also work with these files directly on their local machine using `rail-py`.
 
 ---
 

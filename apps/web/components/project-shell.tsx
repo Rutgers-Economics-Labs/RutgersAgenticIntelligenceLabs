@@ -7,19 +7,20 @@ import { CommandPalette } from "@/components/command-palette";
 import { LiveOutputPanel } from "@/components/live-output-panel";
 
 const NAV = [
-  { label: "Overview",     suffix: "",           key: "overview"  },
-  { label: "Zen Mode",     suffix: "/zen",       key: "zen"       },
-  { label: "Agent & Plan", suffix: "/agent",     key: "agent"     },
-  { label: "Launch",       suffix: "/launch",    key: "launch"    },
-  { label: "Runs",         suffix: "/runs",      key: "sessions"  },
-  { label: "Review",       suffix: "/review",    key: "review"    },
-  { label: "Skills",       suffix: "/skills",    key: "skills"    },
-  { label: "Sources",      suffix: "/sources",   key: "sources"   },
-  { label: "Artifacts",    suffix: "/artifacts", key: "artifacts" },
-  { label: "Integrity",    suffix: "/integrity", key: "integrity" },
-  { label: "Repo",         suffix: "/repo",      key: "repo"      },
-  { label: "Ontology",     suffix: "/ontology",  key: "ontology"  },
-  { label: "Settings",     suffix: "/settings",  key: "settings"  },
+  { label: "Overview",     suffix: "",             key: "overview"   },
+  { label: "Zen Mode",     suffix: "/zen",         key: "zen"        },
+  { label: "Dashboard",    suffix: "/dashboard",   key: "dashboard"  },
+  { label: "Agent & Plan", suffix: "/agent",       key: "agent"      },
+  { label: "Launch",       suffix: "/launch",      key: "launch"     },
+  { label: "Runs",         suffix: "/runs",        key: "sessions"   },
+  { label: "Review",       suffix: "/review",      key: "review"     },
+  { label: "Skills",       suffix: "/skills",      key: "skills"     },
+  { label: "Sources",      suffix: "/sources",     key: "sources"    },
+  { label: "Artifacts",    suffix: "/artifacts",   key: "artifacts"  },
+  { label: "Integrity",    suffix: "/integrity",   key: "integrity"  },
+  { label: "Repo",         suffix: "/repo",        key: "repo"       },
+  { label: "Ontology",     suffix: "/ontology",    key: "ontology"   },
+  { label: "Settings",     suffix: "/settings",    key: "settings"   },
 ];
 
 const REPO_SHORTCUTS = [

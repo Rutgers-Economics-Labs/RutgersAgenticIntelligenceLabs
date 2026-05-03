@@ -54,9 +54,12 @@ A cached response is returned if the file exists and `cache` is not `false` in t
 
 ### Response parsing (`_to_dataframe`)
 
-- If `response_path` is set, extracts `raw[response_path]` before parsing.
-- `census_array`: `raw[0]` is the header row; `raw[1:]` are data rows → `pd.DataFrame(raw[1:], columns=raw[0])`.
-- `json`: if `raw` is a list → `pd.DataFrame(raw)`; otherwise → `pd.DataFrame([raw])`.
+- **Nested Key Support**: If `response_path` is set, the engine traverses the raw response using dot-notation (e.g., `features.attributes`).
+    - If a path segment points to a list of dictionaries, the engine automatically flattens the result by extracting the remaining path from every element in that list.
+- **Formats**:
+    - `census_array`: `raw[0]` is the header row; `raw[1:]` are data rows → `pd.DataFrame(raw[1:], columns=raw[0])`.
+    - `json`: if `raw` is a list → `pd.DataFrame(raw)`; otherwise → `pd.DataFrame([raw])`.
+- **Extensibility**: Non-standard formats (PDF, Parquet, SQL) are handled via **Source Handler Plugins** (see `specs/plugins.md`).
 
 ### Field mapping (`_apply_fields`)
 

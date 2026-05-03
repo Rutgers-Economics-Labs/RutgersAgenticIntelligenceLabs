@@ -1,3 +1,18 @@
+export type DashboardPanel = {
+  id: string;
+  title: string;
+  description?: string;
+  width?: "full" | "half";
+  height?: number;
+  html: string;
+};
+
+export type DashboardResponse = {
+  panels: DashboardPanel[];
+  projectName: string;
+  slug: string;
+};
+
 export type PlannerMessage = {
   role: string;
   content: string;

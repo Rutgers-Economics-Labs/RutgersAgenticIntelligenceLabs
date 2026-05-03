@@ -122,7 +122,14 @@ def load_agent_prompts(content: str, project_root: Path) -> tuple[str, str]:
 ALLOWED_TOP_LEVEL_API_FIELDS = {
     "name", "type", "url", "path", "params", "headers", "response_format",
     "response_path", "fields", "foreach", "cache_ttl", "extends", "fields_append",
-    "description", "version", "tags", "slug", "isPublic", "cache", "drop_na", "storage_key", "javascript", "extraction_mode", "pages"
+    "description", "version", "tags", "slug", "isPublic", "cache", "drop_na",
+    "storage_key", "javascript", "extraction_mode", "pages",
+    # metadata sandbox — ignored by engine, safe for agent/researcher notes
+    "meta",
+    # column contract for hallucination prevention
+    "schema_contract",
+    # connection fields for sql_mirror handler
+    "connection_string", "query", "table",
 }
 
 def _validate_api(spec: dict) -> list[str]:
@@ -138,8 +145,14 @@ def _validate_api(spec: dict) -> list[str]:
         errors.append("Missing required field: name")
     if "type" not in spec and not is_extends:
         errors.append("Missing required field: type")
-    elif "type" in spec and spec["type"] not in ("api", "csv", "excel", "uploaded", "scrape", "pdf", "docx"):
-        errors.append(f"Invalid type '{spec['type']}': must be api, csv, excel, uploaded, scrape, pdf, or docx")
+    elif "type" in spec and spec["type"] not in (
+        "api", "http_json", "csv", "excel", "uploaded", "scrape",
+        "pdf", "docx", "parquet", "sql_mirror",
+    ):
+        errors.append(
+            f"Invalid type '{spec['type']}': must be one of "
+            "api, http_json, csv, excel, uploaded, scrape, pdf, docx, parquet, sql_mirror"
+        )
 
     if spec.get("type") == "api":
         if "url" not in spec and not is_extends:
@@ -158,6 +171,16 @@ def _validate_api(spec: dict) -> list[str]:
     if spec.get("type") in ("csv", "excel") and not is_extends:
         if "path" not in spec:
             errors.append(f"Missing required field: path (required for type: {spec['type']})")
+
+    if spec.get("type") == "parquet" and not is_extends:
+        if "path" not in spec and "url" not in spec and "storage_key" not in spec:
+            errors.append("type: parquet requires exactly one of path, url, or storage_key")
+
+    if spec.get("type") == "sql_mirror" and not is_extends:
+        if "connection_string" not in spec:
+            errors.append("type: sql_mirror requires connection_string")
+        if "query" not in spec and "table" not in spec:
+            errors.append("type: sql_mirror requires either query or table")
 
     if spec.get("type") == "uploaded" and not is_extends:
         has_path = "path" in spec
@@ -223,7 +246,12 @@ def _validate_ontology(spec: dict) -> tuple[list[str], list[str]]:
 
 
 PIPELINE_ALLOWED_MODES = {"full", "incremental"}
-ALLOWED_TOP_LEVEL_PIPELINE_FIELDS = {"ontology", "steps", "hydration_mode", "schedule", "post_hydration_transforms", "output_owl", "db", "duckdb"}
+ALLOWED_TOP_LEVEL_PIPELINE_FIELDS = {
+    "ontology", "steps", "hydration_mode", "schedule", "post_hydration_transforms",
+    "output_owl", "db", "duckdb",
+    # metadata sandbox — ignored by engine, safe for agent/researcher notes
+    "meta",
+}
 
 def _validate_agent(spec: dict) -> list[str]:
     errors = []

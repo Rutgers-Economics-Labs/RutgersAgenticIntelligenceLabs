@@ -106,6 +106,54 @@ Returns the original DataFrame unchanged if `fips` is not a column.
 
 ---
 
+## Source Handler Plugins
+
+Source Handler plugins live in `handlers/{type_name}.py` (relative to `packages/engine/`). They extend the engine to new data types without modifying `api_runner.py`.
+
+`api_runner.py` scans `handlers/` at call time and registers any file that exports a `fetch` function. The `RAIL_HANDLER_DIR` env var overrides the default location (`packages/engine/handlers/`).
+
+### Adding a New Handler
+
+Create `handlers/my_type.py`:
+
+```python
+def fetch(spec: dict, **kwargs) -> pd.DataFrame:
+    ...
+```
+
+Then reference it in an API config YAML as `type: my_type`.
+
+### Handler Function Signature
+
+`def fetch(spec: dict, **kwargs) -> pd.DataFrame`
+
+- **spec**: The fully resolved API config dict (env vars substituted, `extends` merged).
+- **kwargs**: May include `resolved_data` dict from prior pipeline steps.
+- **Return**: A pandas DataFrame.
+
+### Built-in Handlers (in `api_runner.py`)
+
+These types are built into the engine and do not require plugin files:
+
+| Type | Alias | Description |
+|------|-------|-------------|
+| `api` | `http_json` | HTTP GET with optional foreach, caching, response_path traversal |
+| `csv` | — | `pd.read_csv(path)` |
+| `excel` | — | `pd.read_excel(path)` |
+| `uploaded` | — | Local artifact (CSV / Excel / JSON) written by the storage service |
+| `scrape` | — | HTML table extraction via BeautifulSoup |
+| `pdf` | — | PDF table extraction via pdfplumber |
+| `docx` | — | DOCX table extraction via python-docx |
+
+### Plugin Handlers (in `handlers/`)
+
+| Type | File | Description |
+|------|------|-------------|
+| `parquet` | `handlers/parquet.py` | Local path, URL download, or S3 key |
+| `sql_mirror` | `handlers/sql_mirror.py` | SQLAlchemy connection string + query/table |
+
+---
+
 ## Analysis Plugins
 
 ### Location and Discovery

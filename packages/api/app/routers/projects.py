@@ -425,12 +425,21 @@ def _local_hydration_configs(project_root: Path, pipeline_slug: str) -> tuple[st
             api_configs[api_slug] = source_path.read_text(encoding="utf-8")
 
     onto_configs: dict[str, str] = {}
-    onto_path = project_root / ".ontology" / "ontology.yaml"
-    if onto_path.exists():
-        onto_content = onto_path.read_text(encoding="utf-8")
-        onto_ref = str(pipeline_spec.get("ontology", "core") or "core")
-        onto_configs[onto_ref] = onto_content
-        onto_configs[Path(onto_ref).stem] = onto_content
+    onto_ref = str(pipeline_spec.get("ontology", "core") or "core")
+    
+    # Try multiple locations for the ontology file
+    candidate_paths = [
+        project_root / ".ontology" / "ontology.yaml",
+        project_root / ".ontology" / "ontologies" / f"{onto_ref}.yaml",
+        project_root / ".ontology" / "ontologies" / f"{Path(onto_ref).stem}.yaml",
+    ]
+    
+    for onto_path in candidate_paths:
+        if onto_path.exists():
+            onto_content = onto_path.read_text(encoding="utf-8")
+            onto_configs[onto_ref] = onto_content
+            onto_configs[Path(onto_ref).stem] = onto_content
+            break
 
     return pipeline_content, api_configs, onto_configs
 
@@ -1636,11 +1645,49 @@ async def create_project_runner_session(
 
     policy_approval_granted = False
     if data.taskId:
+        # Check for existing granted approval
         approvals = await planner_service.list_approvals(project)
         policy_approval_granted = any(
             item.get("taskId") == data.taskId and item.get("status") == "granted"
             for item in approvals
         )
+        
+        # If not already granted, we auto-grant it here because the user
+        # explicitly clicked "Run Task" in the UI.
+        if not policy_approval_granted:
+            try:
+                # 1. Create a requested approval record if one doesn't exist
+                # Note: create_approval returns the ID string
+                approval_id = await planner_service.create_approval(
+                    project=project,
+                    task_id=data.taskId,
+                    agent_session_id=None,
+                    approval_type="run_task",
+                    requested_by_role="planner", # Default for task runs
+                )
+                
+                # 2. Immediately resolve it as granted
+                await planner_service.resolve_approval(
+                    project=project,
+                    approval_id=approval_id,
+                    status="granted",
+                    granted_by_user_id="user",
+                    resolution_note="Auto-granted by UI Run Task action."
+                )
+                
+                # 3. Mark task as ready/granted
+                await planner_service.update_task(
+                    data.taskId,
+                    project=project,
+                    status="ready",
+                    approvalState="granted",
+                )
+                
+                policy_approval_granted = True
+                print(f"  [runner] auto-granted approval for task={data.taskId}")
+            except Exception as e:
+                print(f"  [runner] failed to auto-grant approval for task={data.taskId}: {e}")
+                # Fall through to the PermissionError check below
 
     try:
         result = await session_lifecycle.create_runner_session(

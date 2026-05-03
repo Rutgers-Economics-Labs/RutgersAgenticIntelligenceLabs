@@ -6,6 +6,19 @@ There are three kinds of YAML configuration files: API source configs, the ontol
 
 ---
 
+## Common Fields
+
+All configuration types (API, Ontology, Pipeline) support a top-level **`meta`** block. This block is ignored by the engine and validation logic, providing a "safe sandbox" for agents and researchers to store notes, status flags, and descriptions.
+
+```yaml
+meta:
+  readiness: "needs_review"
+  source_notes: "This URL might change quarterly"
+  agent_intent: "Linking population to municipality"
+```
+
+---
+
 ## API Source Config (`configs/apis/*.yaml`)
 
 Defines one data source. The filename stem is the API name used to reference the source in pipeline steps and `foreach` clauses.
@@ -15,10 +28,11 @@ Defines one data source. The filename stem is the API name used to reference the
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Must match the filename stem. Used as the key in `resolved_data` and as the base for cache filenames. |
-| `type` | string | yes | `api`, `csv`, or `excel` |
+| `type` | string | yes | `api` (or `http_json`), `csv`, `excel`, `uploaded`, `scrape`, `pdf`, `docx`, `parquet`, `sql_mirror` |
 | `extends` | string | no | Slug of a shared connector template in the Convex `connectorTemplates` table. When present, the template is fetched and deep-merged with this config before hydration. This config's fields override the template's. See `specs/connectors.md`. |
 | `fields` | list | no | Column mapping rules (see below). If absent, the raw columns are passed through unchanged. |
 | `fields_append` | list | no | Additional field entries to append to the template's `fields` list after merging. Only meaningful when `extends` is set. If `fields` is also present, it replaces the template's list entirely; `fields_append` then appends to the replacement. |
+| `schema_contract` | list | no | (Optional) Explicit list of allowed column names and types. If provided, coding agents are prohibited from referencing columns not present in this list to prevent hallucinations. |
 
 ### `type: api`
 
@@ -27,7 +41,7 @@ Defines one data source. The filename stem is the API name used to reference the
 | `url` | string | yes | HTTP endpoint. `${VAR_NAME}` tokens are replaced with environment variables. |
 | `params` | map | no | Query parameters appended to the request. `${VAR_NAME}` tokens are resolved from environment variables. |
 | `response_format` | string | yes | `json` or `census_array` |
-| `response_path` | string | no | If set, extracts `raw[response_path]` from the JSON response before parsing (e.g., `observations` for FRED responses). |
+| `response_path` | string | no | If set, traverses the raw response using dot-notation (e.g., `features.attributes`) before parsing. |
 | `cache` | boolean | default `true` | Cache the HTTP response to `cache/`. Set `false` to always re-fetch. |
 | `drop_na` | boolean | no | If `true`, drop rows with any NaN values after field mapping. |
 | `foreach` | map | no | Iterate over a parent dataset (see below). |
@@ -48,6 +62,26 @@ Defines one data source. The filename stem is the API name used to reference the
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `path` | string | yes | Path to the Excel file, read with `pd.read_excel()`. |
+
+### `type: parquet`
+
+Reads a Parquet file. Handled by the `handlers/parquet.py` plugin.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `path` | string | one of | Local path to a `.parquet` file. |
+| `url` | string | one of | Remote URL — downloaded and cached by SHA1 hash. |
+| `storage_key` | string | one of | S3 key (`s3://bucket/key`) or local artifact path written by `storage_service`. |
+
+### `type: sql_mirror`
+
+Connects to an external database via SQLAlchemy and fetches a query result. Handled by the `handlers/sql_mirror.py` plugin.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `connection_string` | string | yes | SQLAlchemy URL (e.g. `postgresql://user:pass@host/db`). Use `${ENV_VAR}` for secrets. |
+| `query` | string | one of | Raw SQL query string. |
+| `table` | string | one of | Table name — equivalent to `SELECT * FROM {table}`. |
 
 ### `foreach`
 

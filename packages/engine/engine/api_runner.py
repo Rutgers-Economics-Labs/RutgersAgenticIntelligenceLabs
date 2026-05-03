@@ -2,6 +2,7 @@
 Generic API/CSV runner that reads configs/apis/*.yaml and returns DataFrames.
 No domain knowledge — all field names, endpoints, and transforms come from YAML.
 """
+import importlib.util
 import json
 import os
 import re
@@ -17,6 +18,9 @@ from engine.scrape_runner import fetch_html as _fetch_scraped_html
 
 CACHE_DIR = Path(os.environ.get("RAIL_CACHE_DIR", "cache"))
 API_CONFIG_DIR = Path(os.environ.get("RAIL_API_CONFIG_DIR", "configs/apis"))
+# handlers/ directory: project-level override via env var, else engine package default
+HANDLER_DIR = Path(os.environ.get("RAIL_HANDLER_DIR",
+    str(Path(__file__).parent.parent / "handlers")))
 
 
 def _load_spec(api_name):
@@ -78,7 +82,22 @@ def _http_fetch(spec, extra_params=None):
 def _to_dataframe(raw, response_format, response_path=None):
     """Normalize raw API response to a DataFrame."""
     if response_path:
-        raw = raw[response_path]
+        for part in response_path.split("."):
+            if isinstance(raw, dict):
+                raw = raw.get(part)
+            elif isinstance(raw, list) and part.isdigit():
+                raw = raw[int(part)]
+            elif isinstance(raw, list):
+                # Flatten: e.g. "features.attributes" on a list of features
+                raw = [item.get(part) for item in raw if isinstance(item, dict)]
+            else:
+                raw = None
+            if raw is None:
+                break
+    
+    if raw is None:
+        return pd.DataFrame()
+
     if response_format == "census_array":
         return pd.DataFrame(raw[1:], columns=raw[0])
     if response_format == "json":
@@ -254,6 +273,7 @@ def _handle_api(api_name, spec, resolved_data):
 
 SOURCE_HANDLERS = {
     "api": _handle_api,
+    "http_json": _handle_api,  # alias
     "csv": _handle_csv,
     "excel": _handle_excel,
     "uploaded": _handle_uploaded,
@@ -261,6 +281,27 @@ SOURCE_HANDLERS = {
     "pdf": _handle_document,
     "docx": _handle_document,
 }
+
+
+def _load_external_handlers() -> dict:
+    """Scan handlers/ directory for source handler plugins (files with a fetch() function)."""
+    if not HANDLER_DIR.is_dir():
+        return {}
+    handlers = {}
+    for path in sorted(HANDLER_DIR.glob("*.py")):
+        if path.stem.startswith("_"):
+            continue
+        try:
+            mod_spec = importlib.util.spec_from_file_location(path.stem, path)
+            mod = importlib.util.module_from_spec(mod_spec)
+            mod_spec.loader.exec_module(mod)
+            if hasattr(mod, "fetch"):
+                # wrap fetch(spec, **kwargs) into the internal (api_name, spec, resolved_data) shape
+                _fetch_fn = mod.fetch
+                handlers[path.stem] = lambda name, s, rd, fn=_fetch_fn: fn(s, resolved_data=rd)
+        except Exception as e:
+            print(f"  [warn] Failed to load handler '{path.stem}': {e}")
+    return handlers
 
 
 def fetch_api(api_name, resolved_data=None):
@@ -274,7 +315,8 @@ def fetch_api(api_name, resolved_data=None):
     resolved_data = resolved_data or {}
     src_type = spec.get("type", "api")
 
-    handler = SOURCE_HANDLERS.get(src_type)
+    all_handlers = {**SOURCE_HANDLERS, **_load_external_handlers()}
+    handler = all_handlers.get(src_type)
     if not handler:
         raise ValueError(f"Unknown source type '{src_type}' for API '{api_name}'")
 

@@ -99,11 +99,11 @@ All reads proxy to Convex queries; all writes validate YAML first, then call Con
 | POST | `/scrape-preview` | `{url: str, table_selector?: str, javascript?: bool, encoding?: str}` | `{columns, rows, rowCount}` |
 | POST | `/doc-preview` | `{storage_key: str, extraction_mode: str, pages?: str}` | `{columns, rows, rowCount, source_text?}` |
 
-**API configs** (`/apis`, `/apis/{slug}`): GET list, POST create, GET one, PUT update, DELETE delete.
+**API configs** (`/apis`, `/apis/{slug}`): GET list, POST create, GET one, PUT update, DELETE delete. Supports the `meta` block for passthrough metadata and `schema_contract` for hallucination prevention.
 
-**Ontology configs** (`/ontologies`, `/ontologies/{slug}`): same CRUD shape.
+**Ontology configs** (`/ontologies`, `/ontologies/{slug}`): same CRUD shape. Supports the `meta` block.
 
-**Pipeline configs** (`/pipelines`, `/pipelines/{slug}`): same CRUD shape. On create/update, `referencedApiSlugs` is extracted from `steps[*].api` fields.
+**Pipeline configs** (`/pipelines`, `/pipelines/{slug}`): same CRUD shape. Supports the `meta` block. On create/update, `referencedApiSlugs` is extracted from `steps[*].api` fields.
 
 ### `/api/v1/jobs` — `app/routers/jobs.py`
 
