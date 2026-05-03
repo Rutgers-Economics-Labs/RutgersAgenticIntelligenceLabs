@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ReactNode, useEffect, useState } from "react";
 import { AgentMonitor } from "@/components/agent-monitor";
 import { CommandPalette } from "@/components/command-palette";
+import { FloatingPlannerChat } from "@/components/floating-planner-chat";
 import { LiveOutputPanel } from "@/components/live-output-panel";
 
 const NAV = [
@@ -234,6 +235,8 @@ export function ProjectShell({
             <span className="rail-label">{slug}</span>
           </div>
         </header>
+
+        <FloatingPlannerChat slug={slug} section={section} />
 
         {/* Content + optional right rail */}
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
