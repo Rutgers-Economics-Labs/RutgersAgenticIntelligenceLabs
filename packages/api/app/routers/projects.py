@@ -405,6 +405,28 @@ def _configured_pipeline_slug(project: dict, project_root: Path, requested: str 
     return resolve_pipeline_slug(project, project_root)
 
 
+def _project_catalog_score(project: dict) -> tuple[int, int, int, int, float]:
+    return (
+        1 if project.get("status") == "hydrated" else 0,
+        1 if project.get("gitRepoUrl") else 0,
+        1 if project.get("github") else 0,
+        1 if project.get("localRepoPath") else 0,
+        float(project.get("updatedAt") or project.get("_creationTime") or 0),
+    )
+
+
+def _dedupe_projects_for_catalog(projects: list[dict]) -> list[dict]:
+    best_by_slug: dict[str, dict] = {}
+    for project in projects:
+        slug = str(project.get("slug") or "").strip()
+        if not slug:
+            continue
+        current = best_by_slug.get(slug)
+        if current is None or _project_catalog_score(project) > _project_catalog_score(current):
+            best_by_slug[slug] = project
+    return list(best_by_slug.values())
+
+
 def _local_hydration_configs(project_root: Path, pipeline_slug: str) -> tuple[str, dict[str, str], dict[str, str]] | None:
     pipeline_path = project_root / ".ontology" / "pipelines" / f"{pipeline_slug}.yaml"
     if not pipeline_path.exists():
@@ -515,7 +537,7 @@ async def create_project(data: CreateProjectRequest):
 
 @router.get("")
 async def list_projects_catalog():
-    projects = await convex.query("projects:list", {}) or []
+    projects = _dedupe_projects_for_catalog(await convex.query("projects:list", {}) or [])
     rows = []
     for project in projects:
         try:
