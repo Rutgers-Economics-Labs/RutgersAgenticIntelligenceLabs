@@ -1,0 +1,19 @@
+name: doge-government-payments-and-savings-analysis-pipeline
+ontology: doge-government-payments-and-savings-analysis-ontology
+steps:
+  - name: load_doge_government_payments_openapi
+    api: doge-government-payments-and-savings-analysis-openapi
+    class: PaymentStatisticsBucket
+    uri: http://rail.rutgers.edu/ontology/doge-government-payments-and-savings-analysis#OpenAPI_{api_version}
+  - name: load_doge_government_payments
+    api: doge-government-payments-and-savings-analysis-payments
+    class: PaymentRecord
+    uri: http://rail.rutgers.edu/ontology/doge-government-payments-and-savings-analysis#Payment_{generated_unique_award_id}
+  - name: load_doge_government_payment_statistics
+    api: doge-government-payments-and-savings-analysis-payment-statistics
+    class: PaymentStatisticsBucket
+    uri: http://rail.rutgers.edu/ontology/doge-government-payments-and-savings-analysis#PaymentStats_{count}
+  - name: load_doge_government_savings
+    api: doge-government-payments-and-savings-analysis-savings
+    class: SavingsRecord
+    uri: http://rail.rutgers.edu/ontology/doge-government-payments-and-savings-analysis#Savings_{agency}_{date}

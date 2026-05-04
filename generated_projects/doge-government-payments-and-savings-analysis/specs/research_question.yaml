@@ -1,0 +1,41 @@
+title: DOGE Government Payments and Savings Analysis
+objective: Assess what the live DOGE API can currently reveal about payment
+  activity, stated justifications for spending, and reported efficiency savings.
+audience: Journalists, policy researchers, transparency advocates, and public
+  finance analysts.
+causal_questions:
+  - How concentrated are currently exposed DOGE payment records across agencies
+    and recipient organizations?
+  - What patterns appear in recipient and agency justifications for payments?
+  - To what extent can DOGE savings feeds be compared with payment activity
+    without overstating linkage or coverage?
+outcomes:
+  - Payment counts
+  - Payment amount distributions
+  - Agency activity rankings
+  - Recipient frequency rankings
+  - Savings feed coverage summary
+units_of_analysis:
+  - Payment line items
+  - Agencies
+  - Recipient organizations
+  - Savings records
+geographies:
+  - United States federal government
+time_windows:
+  - Current API-observed reporting window
+methods:
+  - API schema review
+  - Descriptive statistics
+  - Exploratory text analysis
+  - Cross-source validation
+deliverables:
+  - Source inventory
+  - Endpoint profile
+  - Exploratory metrics
+  - Research memo
+controls:
+  - Endpoint type
+  - Observation date
+  - Agency name
+  - Organization name
