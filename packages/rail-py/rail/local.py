@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -123,8 +124,6 @@ class LocalEngine:
         Skips execution and returns status="reused" when a valid local artifact
         already exists unless *force* is True.
         """
-        from engine.pipeline_runner import run_pipeline
-
         manifest = self.manifest
 
         # ── Default hydration target resolution ───────────────────────────────
@@ -177,8 +176,15 @@ class LocalEngine:
             tmp_path = Path(tmp.name)
 
         try:
+            from engine.pipeline_runner import run_pipeline
+            previous_api_config_dir = os.environ.get("RAIL_API_CONFIG_DIR")
+            os.environ["RAIL_API_CONFIG_DIR"] = str(self.project_path / manifest.hydration.sources_dir)
             run_pipeline(str(tmp_path))
         finally:
+            if previous_api_config_dir is None:
+                os.environ.pop("RAIL_API_CONFIG_DIR", None)
+            else:
+                os.environ["RAIL_API_CONFIG_DIR"] = previous_api_config_dir
             tmp_path.unlink(missing_ok=True)
 
         # Record meta for future reuse checks

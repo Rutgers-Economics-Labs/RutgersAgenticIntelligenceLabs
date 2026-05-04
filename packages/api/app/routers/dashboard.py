@@ -1,6 +1,5 @@
 """
-AI dashboard generation: given a project's research brief + DuckDB schema,
-prompt the LLM to produce self-contained HTML panels that query live data.
+AI dashboard generation and curated dashboard loading.
 """
 import json
 import logging
@@ -14,10 +13,6 @@ from app.services.llm_service import complete
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["dashboard"])
-
-# ---------------------------------------------------------------------------
-# System prompt
-# ---------------------------------------------------------------------------
 
 _SYSTEM = """You are a data visualization expert generating an interactive stakeholder dashboard.
 The dashboard accompanies a policy research paper and will be read by policymakers and the public.
@@ -61,18 +56,37 @@ Prefer concise SQL — avoid JOINs unless necessary.
 """
 
 
-# ---------------------------------------------------------------------------
-# Endpoint
-# ---------------------------------------------------------------------------
-
-@router.post("/{slug}/dashboard/generate")
-async def generate_dashboard(slug: str):
-    # 1. Project record
+@router.get("/{slug}/dashboard")
+async def get_dashboard(slug: str):
     project = await convex.query("projects:getBySlug", {"slug": slug})
     if not project:
         raise HTTPException(404, "Project not found")
 
-    # 2. DuckDB schema
+    panels = _load_curated_panels(project)
+    if panels is None:
+        raise HTTPException(404, "No curated dashboard found for project")
+
+    return {
+        "panels": panels,
+        "projectName": project.get("name", slug),
+        "slug": slug,
+    }
+
+
+@router.post("/{slug}/dashboard/generate")
+async def generate_dashboard(slug: str):
+    project = await convex.query("projects:getBySlug", {"slug": slug})
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    curated = _load_curated_panels(project)
+    if curated is not None:
+        return {
+            "panels": curated,
+            "projectName": project.get("name", slug),
+            "slug": slug,
+        }
+
     if not sql_service.is_ready():
         raise HTTPException(
             503,
@@ -85,10 +99,7 @@ async def generate_dashboard(slug: str):
             "DuckDB schema is empty — run hydration to populate the database.",
         )
 
-    # 3. Research brief from disk
     brief_text = _load_brief(project)
-
-    # 4. Call LLM
     user_msg = (
         f"DuckDB Schema:\n{schema_ddl}\n\n"
         f"Research Brief:\n{brief_text[:8000]}\n\n"
@@ -104,13 +115,9 @@ async def generate_dashboard(slug: str):
     )
 
     raw = (response.choices[0].message.content or "").strip()
-
-    # Strip any accidental markdown fences
     if raw.startswith("```"):
         lines = raw.splitlines()
-        raw = "\n".join(
-            line for line in lines if not line.strip().startswith("```")
-        ).strip()
+        raw = "\n".join(line for line in lines if not line.strip().startswith("```")).strip()
 
     try:
         panels = json.loads(raw)
@@ -125,9 +132,24 @@ async def generate_dashboard(slug: str):
     }
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+def _load_curated_panels(project: dict) -> list[dict] | None:
+    local_repo = project.get("localRepoPath")
+    if not local_repo:
+        return None
+    candidates = [
+        Path(local_repo) / "research" / "dashboard_panels.json",
+        Path(local_repo) / "research" / "dashboard" / "panels.json",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, list):
+                return data
+    return None
+
 
 def _load_brief(project: dict) -> str:
     local_repo = project.get("localRepoPath")
@@ -138,10 +160,10 @@ def _load_brief(project: dict) -> str:
             "research_brief.md",
             "README.md",
         ]:
-            p = Path(local_repo) / candidate
-            if p.is_file():
+            path = Path(local_repo) / candidate
+            if path.is_file():
                 try:
-                    return p.read_text(encoding="utf-8", errors="replace")
+                    return path.read_text(encoding="utf-8", errors="replace")
                 except OSError:
                     continue
     return (

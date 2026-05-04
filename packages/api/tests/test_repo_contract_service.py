@@ -35,7 +35,7 @@ def test_manifest_updates_reads_linked_sources_and_pipeline():
             - fred_unemployment
         agents:
           roles_dir: "agents"
-          default_runner: "jules"
+          default_runner: "codex_cli"
           sequential_execution: true
           approval_required_for_write_runs: true
           planner_thread_mode: "project"
@@ -100,7 +100,7 @@ def test_render_manifest_preserves_existing_sections():
           hydration_mode: "incremental"
         agents:
           roles_dir: "agents"
-          default_runner: "jules"
+          default_runner: "codex_cli"
           sequential_execution: true
           approval_required_for_write_runs: true
           planner_thread_mode: "project"

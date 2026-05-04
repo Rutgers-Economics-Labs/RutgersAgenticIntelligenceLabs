@@ -58,7 +58,7 @@ VALID_AGENT_YAML = textwrap.dedent("""\
     role: data
     label: Data Agent
     purpose: Hydrate the ontology
-    runner: jules
+    runner: codex_cli
     permissions:
       write: ["artifacts"]
     completion:
@@ -177,7 +177,7 @@ class TestConfigVerificationHook:
 
     def test_missing_required_field_fails(self, tmp_path):
         # rail.yaml missing "agents" field
-        content = VALID_RAIL_YAML.replace("agents:\n  roles_dir: agents\n", "")
+        content = VALID_RAIL_YAML.replace('agents:\n  roles_dir: "agents"\n', "")
         f = tmp_path / "rail.yaml"
         f.write_text(content, encoding="utf-8")
         result = self.hook.run({"file_path": str(f), "file_type": "rail.yaml"})
@@ -211,6 +211,41 @@ class TestConfigVerificationHook:
         f.write_text(VALID_RAIL_YAML, encoding="utf-8")
         result = self.hook.run({"file_path": str(f)})  # no file_type — inferred
         assert result.passed, result.failures
+
+    def test_valid_source_config_passes(self, tmp_path):
+        source = tmp_path / "sources" / "qcew.yaml"
+        source.parent.mkdir(parents=True)
+        source.write_text(textwrap.dedent("""\
+            name: qcew
+            type: csv
+            path: topics/data/raw/qcew/file.csv
+            description: Public QCEW source
+            fields:
+              - source: area_fips
+                alias: county_fips
+        """), encoding="utf-8")
+        result = self.hook.run({"file_path": str(source)})
+        assert result.passed, result.failures
+
+    def test_placeholder_source_config_fails(self, tmp_path):
+        source = tmp_path / "sources" / "placeholder.yaml"
+        source.parent.mkdir(parents=True)
+        source.write_text(textwrap.dedent("""\
+            name: placeholder
+            type: api
+            url: https://example.com/review-required
+            description: |
+              Draft source for review
+              Readiness: missing_auth_or_manual
+            fields:
+              - source: id
+                alias: id
+        """), encoding="utf-8")
+        result = self.hook.run({"file_path": str(source)})
+        assert not result.passed
+        failure_names = [c.name for c in result.failures]
+        assert "source_not_placeholder_url" in failure_names
+        assert "source_not_review_required" in failure_names
 
 
 # ---------------------------------------------------------------------------

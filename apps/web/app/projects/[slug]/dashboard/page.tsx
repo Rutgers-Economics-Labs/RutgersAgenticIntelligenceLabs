@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useParams } from "next/navigation";
 import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
 import { VizPanel } from "@/components/viz-panel";
-import { generateDashboard } from "@/lib/api";
+import { fetchDashboard, generateDashboard } from "@/lib/api";
 import type { DashboardPanel } from "@/lib/types";
 
 export default function DashboardPage() {
@@ -14,6 +14,27 @@ export default function DashboardPage() {
   const [projectName, setProjectName] = useState<string>("");
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadCuratedDashboard() {
+      try {
+        const result = await fetchDashboard(slug);
+        if (!cancelled && result) {
+          setPanels(result.panels);
+          setProjectName(result.projectName);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(String(err));
+        }
+      }
+    }
+    void loadCuratedDashboard();
+    return () => {
+      cancelled = true;
+    };
+  }, [slug]);
 
   const handleGenerate = useCallback(async () => {
     setGenerating(true);

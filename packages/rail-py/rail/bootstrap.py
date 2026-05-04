@@ -74,7 +74,7 @@ def bootstrap_future_project(
 
         agents:
           roles_dir: "agents"
-          default_runner: "jules"
+          default_runner: "codex_cli"
           sequential_execution: true
           planner_thread_mode: "project"
           default_planner_role: "planner"
@@ -191,7 +191,7 @@ def bootstrap_future_project(
             "label": f"{role.title()} Agent",
             "purpose": purpose,
             "runner": {
-                "default": "jules",
+                "default": "codex_cli",
                 "approval_required": role == "planner",
                 "max_retries": 3,
                 "timeout_minutes": 20,
@@ -232,13 +232,15 @@ def bootstrap_future_project(
 
 You are the planner for the RAIL project `{{project_name}}` (`{{project_slug}}`).
 
-You are the only user-facing agent. Your job is to:
+You are the only user-facing agent and the control loop for the project.
+Your job is to:
 
-1. Understand the user's goal.
-2. Decide whether to answer directly, update project files, create tasks, request approval, or launch a worker.
-3. Keep durable project state in the Git repo, especially under `research_plan/`.
+1. Understand the user's desired state and compare it with the repo's current state.
+2. Write and maintain durable project state in Git, especially under `research_plan/`.
+3. Decide whether to answer directly, update project files, create tasks, request approval, or launch a worker.
 4. Use project role configs as the source of truth for runner choice, path policy, and skill access.
 5. Preserve deep research, ontology, data, coding, artifact, and audit workflows through specialized workers.
+6. Re-run the planning loop after every worker result until the project is materially closer to the desired state.
 
 ## Operating Rules
 
@@ -249,6 +251,28 @@ You are the only user-facing agent. Your job is to:
 - Store plans, task board state, approvals, blockers, and durable session summaries in the repo.
 - Use the runtime DB only as a live control plane for active projects, running agents, and secrets.
 - Be concise, concrete, and action-oriented.
+
+## Integrity Rules
+
+- Treat the repo as the durable source of truth.
+- Record plans, assumptions, decisions, blockers, and dataset status in Markdown files committed in Git.
+- Do not treat placeholder ontology sources as ready data.
+- Do not allow analysis tasks to pass if required datasets are missing, estimated without disclosure, or lack provenance.
+- Distinguish observed, derived, estimated, synthetic, and missing data explicitly.
+- Require the project to document both current state and remaining gaps before claiming progress.
+- Prefer ontology-backed datasets and transforms over ad hoc scripts or undocumented spreadsheets.
+
+## Control Loop
+
+On each turn:
+
+1. Read the scope, current plan, task board, blockers, assumptions, and relevant ontology/source files.
+2. Compare the current state to the desired state.
+3. Write down missing requirements, integrity gaps, and next actions in repo-backed files.
+4. Create or update the smallest high-leverage task for the right specialized role.
+5. Launch or advance exactly one worker when appropriate.
+6. After the worker finishes, inspect outputs, verification, and repo state.
+7. Update the plan and repeat until the gaps are closed or a blocker is explicitly recorded.
 
 ## Available Role Configs
 
@@ -291,12 +315,28 @@ Your mission is to ensure that all research outputs are auditable, verified, and
 Do not mark an artifact as verified if there is a semantic gap between the claim and the source evidence.
 """
         return f"# {role.title()} Prompt\n\nProject-specific system guidance for the {role} role. Use relevant project skills from `skills/` before doing specialized work.\n"
-    checklist_template = lambda role: f"# {role.title()} Checklist\n\n- follow repo contract\n- stay inside allowed paths\n- satisfy deterministic completion checks\n"
+    def checklist_template(role: str) -> str:
+        if role == "planner":
+            return (
+                "# Planner Checklist\n\n"
+                "- follow repo contract\n"
+                "- stay inside allowed paths\n"
+                "- compare desired state vs current state before acting\n"
+                "- keep plans, assumptions, decisions, and blockers in markdown under research_plan\n"
+                "- require ontology-backed source configs for required datasets\n"
+                "- flag placeholder, estimated, synthetic, or missing data explicitly\n"
+                "- launch the smallest next worker task and then re-plan from updated repo state\n"
+                "- satisfy deterministic completion checks\n"
+            )
+        return f"# {role.title()} Checklist\n\n- follow repo contract\n- stay inside allowed paths\n- satisfy deterministic completion checks\n"
 
     research_plan_files = {
         "current_plan.md": current_plan,
         "task_board.md": task_board,
         "assumptions.md": "# Assumptions\n\n",
+        "target_state.md": "# Target State\n\nDescribe the desired end state for the project, including required datasets, analysis outputs, integrity gates, and final deliverables.\n",
+        "source_registry.md": "# Source Registry\n\nTrack required sources, ontology config paths, status, provenance, and gaps.\n",
+        "data_gaps.md": "# Data Gaps\n\nRecord missing datasets, unresolved provenance issues, incomplete controls, and blockers that prevent trusted analysis.\n",
         "decisions.md": "# Decisions\n\n",
         "methodology.md": "# Methodology\n\n",
         "provenance.md": "# Provenance\n\n",
@@ -349,7 +389,155 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
     )
     _write(
         project_root / "scripts" / "run-verification.sh",
-        "#!/usr/bin/env bash\nset -euo pipefail\n\n# Run deterministic checks for the current worker workspace.\n",
+        "#!/usr/bin/env bash\nset -euo pipefail\n\n# Run deterministic checks for the current worker workspace.\npython3 scripts/verify_project_state.py\n",
+    )
+    _write(
+        project_root / "scripts" / "verify_project_state.py",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env python3
+            from __future__ import annotations
+
+            import csv
+            import sys
+            from pathlib import Path
+
+            import yaml
+
+
+            ROOT = Path(__file__).resolve().parents[1]
+
+            REQUIRED_LEDGERS = [
+                "research_plan/current_plan.md",
+                "research_plan/task_board.md",
+                "research_plan/assumptions.md",
+                "research_plan/target_state.md",
+                "research_plan/source_registry.md",
+                "research_plan/data_gaps.md",
+            ]
+
+            PLACEHOLDER_MARKERS = [
+                "example.com",
+                "review-required",
+                "missing_auth_or_manual",
+                "draft source for review",
+            ]
+
+
+            def read_text(path: Path) -> str:
+                return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+            def fail(message: str, failures: list[str]) -> None:
+                failures.append(message)
+
+
+            def require_ledgers(failures: list[str]) -> None:
+                for rel in REQUIRED_LEDGERS:
+                    path = ROOT / rel
+                    if not path.exists() or not read_text(path).strip():
+                        fail(f"Missing or empty required ledger: {rel}", failures)
+
+
+            def check_sources(failures: list[str]) -> None:
+                for path in sorted((ROOT / ".ontology" / "sources").glob("*.yaml")):
+                    raw = read_text(path)
+                    lowered = raw.lower()
+                    for marker in PLACEHOLDER_MARKERS:
+                        if marker in lowered:
+                            fail(f"Placeholder or review-only ontology source: {path.relative_to(ROOT)} ({marker})", failures)
+                            break
+                    try:
+                        data = yaml.safe_load(raw) or {}
+                    except Exception as exc:
+                        fail(f"Invalid source YAML: {path.relative_to(ROOT)} ({exc})", failures)
+                        continue
+                    if not isinstance(data, dict):
+                        fail(f"Source config root must be a mapping: {path.relative_to(ROOT)}", failures)
+                        continue
+                    if not (data.get("url") or data.get("path")):
+                        fail(f"Source config missing url/path: {path.relative_to(ROOT)}", failures)
+                    fields = data.get("fields")
+                    if not isinstance(fields, list) or not fields:
+                        fail(f"Source config missing field mappings: {path.relative_to(ROOT)}", failures)
+
+
+            def required_outcomes() -> list[str]:
+                brief = read_text(ROOT / "topics" / "brief.md").lower()
+                spec = read_text(ROOT / "specs" / "research_question.yaml").lower()
+                text = brief + "\\n" + spec
+                outcomes: list[str] = []
+                if "employment" in text:
+                    outcomes.append("employment")
+                if "unemployment" in text:
+                    outcomes.append("unemployment")
+                if "income" in text:
+                    outcomes.append("income")
+                return outcomes
+
+
+            def load_panel_rows() -> tuple[list[str], list[dict[str, str]]]:
+                panel = ROOT / "topics" / "data" / "processed" / "longitudinal_panel.csv"
+                if not panel.exists():
+                    return [], []
+                with panel.open("r", encoding="utf-8", newline="") as handle:
+                    reader = csv.DictReader(handle)
+                    rows = list(reader)
+                    return list(reader.fieldnames or []), rows
+
+
+            def check_panel(failures: list[str]) -> None:
+                columns, rows = load_panel_rows()
+                if not columns or not rows:
+                    fail("Missing processed longitudinal panel dataset: topics/data/processed/longitudinal_panel.csv", failures)
+                    return
+
+                lower_cols = [c.lower() for c in columns]
+
+                if "treated" in lower_cols:
+                    treated_col = columns[lower_cols.index("treated")]
+                    treated_values = {str(row.get(treated_col, "")).strip() for row in rows if str(row.get(treated_col, "")).strip()}
+                    if treated_values == {"1"}:
+                        fail("Panel contains treated=1 for all rows; a real control group is still missing.", failures)
+
+                outcomes = required_outcomes()
+                for outcome in outcomes:
+                    if outcome == "employment":
+                        present = any("employment" in c or "employed" in c for c in lower_cols)
+                    elif outcome == "unemployment":
+                        present = any("unemp" in c for c in lower_cols)
+                    else:
+                        present = any("income" in c for c in lower_cols)
+                    if not present:
+                        fail(f"Required outcome missing from processed panel: {outcome}", failures)
+
+                source_cols = [c for c in columns if "source" in c.lower() or "provenance" in c.lower()]
+                for source_col in source_cols:
+                    seen = {str(row.get(source_col, "")).strip().lower() for row in rows}
+                    if any("synthetic" in value for value in seen if value):
+                        fail(f"Synthetic data detected in panel column {source_col} while integrity.allow_synthetic_data is false.", failures)
+
+
+            def main() -> int:
+                failures: list[str] = []
+                require_ledgers(failures)
+                check_sources(failures)
+                check_panel(failures)
+
+                if failures:
+                    print("VERIFICATION FAILED")
+                    for item in failures:
+                        print(f"- {item}")
+                    return 1
+
+                print("VERIFICATION PASSED")
+                return 0
+
+
+            if __name__ == "__main__":
+                raise SystemExit(main())
+            """
+        ),
     )
     _write(
         project_root / "scripts" / "archive-workspace.sh",
@@ -537,7 +725,7 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
             Use this skill when validating project outputs.
 
             ## Deterministic Verification
-            Run `scripts/run-verification.sh` to perform structural and data integrity checks. This includes row count validations, schema checks, and file existence checks.
+            Run `scripts/run-verification.sh` to perform structural and data integrity checks. This includes row count validations, schema checks, file existence checks, placeholder-source detection, required-ledger checks, and analysis-readiness checks.
 
             ## Semantic Verification
             Perform a manual (agentic) review of the content. Cross-check the "Claim Evidence" (`research_plan/claim_evidence.md`) against the final report. Ensure that no claim is made without a corresponding evidence record.
@@ -545,6 +733,13 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
             ## State Transitions
             - If verification passes: update `artifact_lineage.json` status to `verified` or `partially_verified`.
             - If verification fails: mark as `blocked` and record the specific failure reason in `verification_runs.json`.
+
+            ## Required Ledgers
+            Keep these repo-backed files current:
+            - `research_plan/assumptions.md`
+            - `research_plan/target_state.md`
+            - `research_plan/source_registry.md`
+            - `research_plan/data_gaps.md`
             """
         ),
         "semantic-auditing.md": textwrap.dedent(

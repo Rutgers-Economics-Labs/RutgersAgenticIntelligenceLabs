@@ -260,6 +260,19 @@ export async function generateDashboard(slug: string): Promise<DashboardResponse
   return postJson<DashboardResponse>(`/projects/${slug}/dashboard/generate`, {});
 }
 
+export async function fetchDashboard(slug: string): Promise<DashboardResponse | null> {
+  const response = await fetch(`${API_ROOT}/projects/${slug}/dashboard`, {
+    cache: "no-store",
+  });
+  if (response.status === 404) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(`API /projects/${slug}/dashboard failed: ${response.status}`);
+  }
+  return response.json() as Promise<DashboardResponse>;
+}
+
 export async function fetchOntologyGraph(
   projectId: string,
   options: { limit?: number } = {}
@@ -270,4 +283,3 @@ export async function fetchOntologyGraph(
   });
   return getJson(`/ontology/graph?${query.toString()}`);
 }
-

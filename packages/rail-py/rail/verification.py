@@ -67,8 +67,8 @@ class ConfigVerificationHook(VerificationHook):
     _REQUIRED_FIELDS: dict[str, list[str]] = {
         "rail.yaml": ["version", "project", "paths", "hydration", "agents"],
         "agent": ["role", "label", "purpose", "runner", "permissions", "completion"],
-        "source": ["id", "connector"],
-        "pipeline": ["slug", "ontology"],
+        "source": [],
+        "pipeline": [],
     }
 
     def run(self, context: dict[str, Any]) -> VerificationResult:
@@ -101,6 +101,11 @@ class ConfigVerificationHook(VerificationHook):
             present = f in raw
             checks.append(CheckResult(f"field_{f}", present, "" if present else f"missing required field: {f!r}"))
 
+        if file_type == "source":
+            self._validate_source_config(raw, checks)
+        elif file_type == "pipeline":
+            self._validate_pipeline_config(raw, checks)
+
         # Path fields must be repo-relative
         repo_root = context.get("repo_root")
         if repo_root and isinstance(raw.get("paths"), dict):
@@ -111,6 +116,52 @@ class ConfigVerificationHook(VerificationHook):
 
         passed = all(c.passed for c in checks)
         return VerificationResult(self.name, passed, checks)
+
+    def _validate_source_config(self, raw: dict[str, Any], checks: list[CheckResult]) -> None:
+        name_present = isinstance(raw.get("name"), str) and bool(raw.get("name", "").strip())
+        source_type_present = isinstance(raw.get("type"), str) and bool(raw.get("type", "").strip())
+        checks.append(CheckResult("field_name", name_present, "" if name_present else "missing required field: 'name'"))
+        checks.append(CheckResult("field_type", source_type_present, "" if source_type_present else "missing required field: 'type'"))
+
+        description = str(raw.get("description") or "")
+        placeholder_url = str(raw.get("url") or "")
+        path_value = str(raw.get("path") or "")
+        fields = raw.get("fields")
+
+        review_required = "review-required" in placeholder_url or "missing_auth_or_manual" in description
+        example_placeholder = "example.com" in placeholder_url
+        has_access_target = bool(placeholder_url.strip() or path_value.strip())
+        fields_valid = isinstance(fields, list) and len(fields) > 0
+
+        checks.append(CheckResult(
+            "source_has_access_target",
+            has_access_target,
+            "" if has_access_target else "source must declare a real url or local path",
+        ))
+        checks.append(CheckResult(
+            "source_not_placeholder_url",
+            not example_placeholder,
+            "" if not example_placeholder else "placeholder example.com source url is not allowed",
+        ))
+        checks.append(CheckResult(
+            "source_not_review_required",
+            not review_required,
+            "" if not review_required else "source is still marked review-required or missing-auth/manual",
+        ))
+        checks.append(CheckResult(
+            "source_has_fields",
+            fields_valid,
+            "" if fields_valid else "source must declare at least one field mapping",
+        ))
+
+    def _validate_pipeline_config(self, raw: dict[str, Any], checks: list[CheckResult]) -> None:
+        name_present = isinstance(raw.get("name"), str) and bool(raw.get("name", "").strip())
+        ontology_present = isinstance(raw.get("ontology"), str) and bool(raw.get("ontology", "").strip())
+        steps = raw.get("steps")
+        steps_valid = isinstance(steps, list) and len(steps) > 0
+        checks.append(CheckResult("field_name", name_present, "" if name_present else "missing required field: 'name'"))
+        checks.append(CheckResult("field_ontology", ontology_present, "" if ontology_present else "missing required field: 'ontology'"))
+        checks.append(CheckResult("pipeline_has_steps", steps_valid, "" if steps_valid else "pipeline must declare at least one step"))
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +265,11 @@ class ExecutionVerificationHook(VerificationHook):
         checks.append(CheckResult("execution_succeeded", bool(ok), "" if ok else "execution had a fatal error"))
 
         allowed_roots: list[str] = context.get("allowed_write_roots") or []
-        for p in context.get("expected_output_paths") or []:
+        expected_outputs: list[str] = context.get("expected_output_paths") or []
+        if not expected_outputs:
+            checks.append(CheckResult("no_outputs_declared", False, "no expected_output_paths declared — required for coding tasks"))
+
+        for p in expected_outputs:
             exists = Path(p).exists()
             checks.append(CheckResult(f"output_exists:{p}", exists, "" if exists else f"missing output: {p!r}"))
             if exists and allowed_roots:
@@ -224,9 +279,6 @@ class ExecutionVerificationHook(VerificationHook):
                     f"output_in_allowed_root:{p}", in_allowed,
                     "" if in_allowed else f"{p!r} is outside declared write roots"
                 ))
-
-        if not checks:
-            checks.append(CheckResult("no_outputs_declared", False, "no expected_output_paths declared — required for coding tasks"))
 
         passed = all(c.passed for c in checks)
         return VerificationResult(self.name, passed, checks)
@@ -255,7 +307,11 @@ class ArtifactVerificationHook(VerificationHook):
         checks: list[CheckResult] = []
 
         allowed_roots: list[str] = context.get("allowed_write_roots") or []
-        for p in context.get("artifact_paths") or []:
+        artifact_paths: list[str] = context.get("artifact_paths") or []
+        if not artifact_paths:
+            checks.append(CheckResult("no_artifacts_declared", False, "no artifact_paths declared — required for artifact tasks"))
+
+        for p in artifact_paths:
             path = Path(p)
             exists = path.exists()
             checks.append(CheckResult(f"artifact_exists:{p}", exists, "" if exists else f"missing artifact: {p!r}"))
@@ -280,9 +336,6 @@ class ArtifactVerificationHook(VerificationHook):
             "manifest_updated", bool(manifest_updated),
             "" if manifest_updated else "artifact index/manifest was not updated"
         ))
-
-        if not checks:
-            checks.append(CheckResult("no_artifacts_declared", False, "no artifact_paths declared — required for artifact tasks"))
 
         passed = all(c.passed for c in checks)
         return VerificationResult(self.name, passed, checks)

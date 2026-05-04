@@ -53,7 +53,7 @@ async def test_sync_repo_changes_prefers_current_layout_and_updates_manifest():
     project = {"_id": "project-1", "slug": "sad", "pipelineConfigSlug": "nj-hydration"}
     async def get_file(_repo: str, path: str, ref: str = "after") -> str:
         if path == "rail.yaml":
-            return "version: 1\nproject:\n  name: NJ Data\n  slug: sad\n  default_branch: main\nhydration:\n  ontology_file: .ontology/ontologies/core.yaml\n  sources_dir: .ontology/sources\n  pipelines_dir: .ontology/pipelines\n  default_pipeline: nj-hydration\n  linked_sources:\n    - census_states\nagents:\n  roles_dir: agents\n  default_runner: jules\n  sequential_execution: true\n  approval_required_for_write_runs: true\n  planner_thread_mode: project\n  default_planner_role: planner\nfrontend:\n  topic_index_mode: filesystem\n  artifact_index_mode: filesystem\n"
+            return "version: 1\nproject:\n  name: NJ Data\n  slug: sad\n  default_branch: main\nhydration:\n  ontology_file: .ontology/ontologies/core.yaml\n  sources_dir: .ontology/sources\n  pipelines_dir: .ontology/pipelines\n  default_pipeline: nj-hydration\n  linked_sources:\n    - census_states\nagents:\n  roles_dir: agents\n  default_runner: codex_cli\n  sequential_execution: true\n  approval_required_for_write_runs: true\n  planner_thread_mode: project\n  default_planner_role: planner\nfrontend:\n  topic_index_mode: filesystem\n  artifact_index_mode: filesystem\n"
         return "name: census_states\n"
 
     mutation = AsyncMock()

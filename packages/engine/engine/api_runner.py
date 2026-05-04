@@ -16,15 +16,25 @@ import yaml
 from engine.scrape_runner import extract_table as _extract_scraped_table
 from engine.scrape_runner import fetch_html as _fetch_scraped_html
 
-CACHE_DIR = Path(os.environ.get("RAIL_CACHE_DIR", "cache"))
-API_CONFIG_DIR = Path(os.environ.get("RAIL_API_CONFIG_DIR", "configs/apis"))
-# handlers/ directory: project-level override via env var, else engine package default
-HANDLER_DIR = Path(os.environ.get("RAIL_HANDLER_DIR",
-    str(Path(__file__).parent.parent / "handlers")))
+def _cache_dir() -> Path:
+    return Path(os.environ.get("RAIL_CACHE_DIR", "cache"))
+
+
+def _api_config_dir() -> Path:
+    return Path(os.environ.get("RAIL_API_CONFIG_DIR", "configs/apis"))
+
+
+def _handler_dir() -> Path:
+    return Path(
+        os.environ.get(
+            "RAIL_HANDLER_DIR",
+            str(Path(__file__).parent.parent / "handlers"),
+        )
+    )
 
 
 def _load_spec(api_name):
-    path = API_CONFIG_DIR / f"{api_name}.yaml"
+    path = _api_config_dir() / f"{api_name}.yaml"
     with open(path) as f:
         raw = yaml.safe_load(f)
     return _resolve_env_vars(raw)
@@ -42,8 +52,9 @@ def _resolve_env_vars(obj):
 
 
 def _cache_path(key):
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return CACHE_DIR / f"{key}.json"
+    cache_dir = _cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir / f"{key}.json"
 
 
 def _http_fetch(spec, extra_params=None):
@@ -105,6 +116,25 @@ def _to_dataframe(raw, response_format, response_path=None):
             return pd.DataFrame(raw)
         return pd.DataFrame([raw])
     return pd.DataFrame(raw)
+
+
+def _extract_by_response_path(raw, response_path=None):
+    if response_path is None:
+        return raw
+    if response_path == "":
+        return raw
+    for part in response_path.split("."):
+        if isinstance(raw, dict):
+            raw = raw.get(part)
+        elif isinstance(raw, list) and part.isdigit():
+            raw = raw[int(part)]
+        elif isinstance(raw, list):
+            raw = [item.get(part) for item in raw if isinstance(item, dict)]
+        else:
+            raw = None
+        if raw is None:
+            break
+    return raw
 
 
 def _apply_fields(df, fields_spec):
@@ -265,8 +295,38 @@ def _handle_api(api_name, spec, resolved_data):
 
         df = pd.concat(frames, ignore_index=True)
     else:
-        raw = _http_fetch(spec)
-        df = _to_dataframe(raw, response_format, response_path)
+        pagination = spec.get("pagination", {})
+        if pagination.get("enabled"):
+            if response_format != "json":
+                raise ValueError("Pagination is currently only supported for json response_format")
+            if not response_path:
+                raise ValueError(f"Paginated source '{api_name}' requires response_path")
+
+            page_param = pagination.get("page_param", "page")
+            per_page_param = pagination.get("per_page_param", "per_page")
+            per_page = pagination.get("per_page", spec.get("params", {}).get(per_page_param, 100))
+            start_page = int(pagination.get("start_page", 1))
+            total_pages_path = pagination.get("total_pages_path", "meta.pages")
+
+            first_raw = _http_fetch(spec, extra_params={page_param: start_page, per_page_param: per_page})
+            total_pages = _extract_by_response_path(first_raw, total_pages_path)
+            total_pages = int(total_pages or 1)
+
+            rows = _extract_by_response_path(first_raw, response_path) or []
+            if not isinstance(rows, list):
+                raise ValueError(f"Paginated source '{api_name}' response_path did not resolve to a list")
+
+            for page in range(start_page + 1, total_pages + 1):
+                chunk_raw = _http_fetch(spec, extra_params={page_param: page, per_page_param: per_page})
+                chunk_rows = _extract_by_response_path(chunk_raw, response_path) or []
+                if not isinstance(chunk_rows, list):
+                    raise ValueError(f"Paginated source '{api_name}' page {page} did not resolve to a list")
+                rows.extend(chunk_rows)
+
+            df = _to_dataframe(rows, response_format, None)
+        else:
+            raw = _http_fetch(spec)
+            df = _to_dataframe(raw, response_format, response_path)
 
     return df
 
@@ -285,10 +345,11 @@ SOURCE_HANDLERS = {
 
 def _load_external_handlers() -> dict:
     """Scan handlers/ directory for source handler plugins (files with a fetch() function)."""
-    if not HANDLER_DIR.is_dir():
+    handler_dir = _handler_dir()
+    if not handler_dir.is_dir():
         return {}
     handlers = {}
-    for path in sorted(HANDLER_DIR.glob("*.py")):
+    for path in sorted(handler_dir.glob("*.py")):
         if path.stem.startswith("_"):
             continue
         try:

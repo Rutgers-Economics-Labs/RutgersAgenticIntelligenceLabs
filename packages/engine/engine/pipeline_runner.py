@@ -5,16 +5,10 @@ No domain knowledge — all mapping is declared in the YAML.
 import os
 import re
 import yaml
-from owlready2 import World, FunctionalProperty
-
-from engine.ontology_builder import load_ontology
-from engine.api_runner import fetch_api
-from engine.transform_runner import run_dataframe_transform, run_ontology_transform
-import duckdb
-import pandas as pd
 
 
 _SAFE_CHARS_RE = re.compile(r"[^A-Za-z0-9_\-.]")
+FunctionalProperty = None
 
 def _sanitize(value):
     """Make a string safe to use as an OWL local name (no spaces, etc.)."""
@@ -48,7 +42,7 @@ def _set_data_property(individual, prop_name, prop, raw_value):
     except (ValueError, TypeError):
         value = str(raw_value)
 
-    if issubclass(prop, FunctionalProperty):
+    if FunctionalProperty is not None and issubclass(prop, FunctionalProperty):
         setattr(individual, prop_name, value)
     else:
         current = getattr(individual, prop_name, []) or []
@@ -58,7 +52,7 @@ def _set_data_property(individual, prop_name, prop, raw_value):
 
 def _set_object_property(individual, prop_name, prop, target):
     """Set an object property (list or scalar depending on functional)."""
-    if issubclass(prop, FunctionalProperty):
+    if FunctionalProperty is not None and issubclass(prop, FunctionalProperty):
         setattr(individual, prop_name, target)
     else:
         current = getattr(individual, prop_name, []) or []
@@ -80,6 +74,15 @@ def _get_or_create(onto, onto_class, uri, cache):
 
 
 def run_pipeline(pipeline_path):
+    global FunctionalProperty
+    from owlready2 import World, FunctionalProperty as OwlreadyFunctionalProperty
+    from engine.ontology_builder import load_ontology
+    from engine.api_runner import fetch_api
+    from engine.transform_runner import run_dataframe_transform, run_ontology_transform
+    import duckdb
+    import pandas as pd
+
+    FunctionalProperty = OwlreadyFunctionalProperty
     print(f"[pipeline] Loading pipeline YAML: {pipeline_path}")
     with open(pipeline_path) as f:
         pipeline = yaml.safe_load(f)

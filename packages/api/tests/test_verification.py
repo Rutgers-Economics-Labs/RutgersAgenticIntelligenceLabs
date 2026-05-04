@@ -161,7 +161,7 @@ class TestConfigVerificationHook:
             "role": "data",
             "label": "Data Agent",
             "purpose": "Ingest data",
-            "runner": "jules",
+            "runner": "codex_cli",
             "permissions": {"write": ["artifacts/"]},
             "completion": {"criteria": []},
         }
@@ -177,6 +177,35 @@ class TestConfigVerificationHook:
         result = self.hook.run({"file_path": str(p)})
         assert not result.passed
         assert any(c.name == "is_mapping" for c in result.failures)
+
+    def test_valid_source_config_passes(self, tmp_path):
+        p = tmp_path / "sources" / "source.yaml"
+        p.parent.mkdir(parents=True)
+        p.write_text(yaml.dump({
+            "name": "qcew",
+            "type": "csv",
+            "path": "topics/data/raw/qcew/file.csv",
+            "description": "Public source",
+            "fields": [{"source": "area_fips", "alias": "county_fips"}],
+        }))
+        result = self.hook.run({"file_path": str(p)})
+        assert result.passed, [c.message for c in result.failures]
+
+    def test_placeholder_source_config_fails(self, tmp_path):
+        p = tmp_path / "sources" / "source.yaml"
+        p.parent.mkdir(parents=True)
+        p.write_text(yaml.dump({
+            "name": "placeholder",
+            "type": "api",
+            "url": "https://example.com/review-required",
+            "description": "Draft source for review\nReadiness: missing_auth_or_manual",
+            "fields": [{"source": "id", "alias": "id"}],
+        }))
+        result = self.hook.run({"file_path": str(p)})
+        assert not result.passed
+        failure_names = [c.name for c in result.failures]
+        assert "source_not_placeholder_url" in failure_names
+        assert "source_not_review_required" in failure_names
 
 
 # ---------------------------------------------------------------------------

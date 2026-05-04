@@ -85,7 +85,7 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
         },
         "agents": {
             "roles_dir": "agents",
-            "default_runner": "jules",
+            "default_runner": "codex_cli",
             "sequential_execution": True,
             "approval_required_for_write_runs": True,
             "planner_thread_mode": "project",

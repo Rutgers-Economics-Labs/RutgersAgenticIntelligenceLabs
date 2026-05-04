@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
+import shutil
 import time
 from pathlib import Path
 from typing import Any, AsyncGenerator
+from uuid import uuid4
 
 from app.services import llm_service, planner_service
 from app.services import running_agent_service
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy, is_write_capable
+from app.core.config import settings
 from app.services.integrity_service import evaluate_integrity_gate
 from app.services.role_runtime_service import (
     load_role_runtime_config,
@@ -259,6 +263,173 @@ def _planner_tools() -> list[dict[str, Any]]:
             },
         },
     ]
+
+
+def _planner_tools_with_project_tools() -> list[dict[str, Any]]:
+    return [
+        *_planner_tools(),
+        *__import__("app.routers.project_agent", fromlist=["PROJECT_TOOLS_MERGED"]).PROJECT_TOOLS_MERGED,
+    ]
+
+
+def _planner_messages(
+    project: dict[str, Any],
+    user_message: str,
+    history: list[dict[str, str]] | None,
+) -> list[dict[str, Any]]:
+    role_summaries = [summarize_role_config(item) for item in list_role_runtime_configs(project)]
+    skills = read_project_skills(project)
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": _planner_system_prompt(project, role_summaries, skills)},
+    ]
+    for item in history or []:
+        messages.append({"role": item["role"], "content": item["content"]})
+    messages.append({"role": "user", "content": user_message})
+    return messages
+
+
+def _planner_uses_codex_cli(project: dict[str, Any]) -> bool:
+    try:
+        config = load_role_runtime_config(project, "planner")
+    except Exception:
+        return False
+    return config.policy.runner.default == "codex_cli"
+
+
+def _build_codex_planner_prompt(
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+) -> str:
+    return (
+        "You are the planner agent for a RAIL project. "
+        "You must decide whether to respond directly or request internal planner tool calls.\n\n"
+        "Respond with exactly one JSON object and no markdown fences.\n"
+        'Use this schema: {"assistant_message":"string","tool_calls":[{"name":"tool_name","arguments":{}}]}\n'
+        "Rules:\n"
+        "- Always include both keys.\n"
+        "- If no tool call is needed, return an empty tool_calls array.\n"
+        "- Only use tool names that appear in AVAILABLE_TOOLS.\n"
+        "- Arguments must be valid JSON objects and should match the tool schemas.\n"
+        "- After tool results are added to the conversation, use them before deciding on more work.\n"
+        "- Keep assistant_message concise and user-facing.\n\n"
+        f"AVAILABLE_TOOLS:\n{json.dumps(tools, indent=2, default=str)}\n\n"
+        f"CONVERSATION:\n{json.dumps(messages, indent=2, default=str)}\n"
+    )
+
+
+async def _run_codex_cli_once(
+    *,
+    prompt: str,
+    cwd: Path | None,
+) -> str:
+    command = (settings.codex_cli_command or "codex").strip()
+    executable = shlex.split(command)[0] if command else ""
+    if not executable or shutil.which(executable) is None:
+        raise RuntimeError(
+            f"Codex CLI is not available. Configure CODEX_CLI_COMMAND or install '{executable or 'codex'}'."
+        )
+    args = [
+        *shlex.split(command),
+        "exec",
+        "--skip-git-repo-check",
+        "--full-auto",
+        "--json",
+    ]
+    if cwd is not None:
+        args.extend(["--cd", str(cwd)])
+    args.append(prompt)
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"Codex CLI planner run failed with exit code {proc.returncode}: "
+            f"{stderr.decode('utf-8', errors='replace')[:4000]}"
+        )
+    return stdout.decode("utf-8", errors="replace")
+
+
+def _extract_codex_assistant_fragments(raw_output: str) -> list[str]:
+    fragments: list[str] = []
+    for raw_line in raw_output.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            fragments.append(line)
+            continue
+        if not isinstance(payload, dict):
+            continue
+        item = payload.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            text = item.get("text") or item.get("message")
+            if text:
+                fragments.append(str(text))
+            continue
+        if payload.get("type") == "message" and payload.get("role") == "assistant":
+            content = payload.get("content")
+            if content:
+                fragments.append(str(content))
+            continue
+        if payload.get("type") == "result":
+            result = payload.get("result")
+            if isinstance(result, str) and result.strip():
+                fragments.append(result)
+    return fragments
+
+
+def _parse_codex_planner_response(raw_output: str) -> dict[str, Any]:
+    fragments = _extract_codex_assistant_fragments(raw_output)
+    for text in reversed(fragments):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            return payload
+    combined = "\n".join(fragment.strip() for fragment in fragments if fragment.strip()).strip()
+    if combined:
+        return {"assistant_message": combined, "tool_calls": []}
+    fallback = raw_output.strip()
+    return {"assistant_message": fallback, "tool_calls": []}
+
+
+async def _codex_planner_step(
+    *,
+    project: dict[str, Any],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+) -> tuple[str, list[dict[str, Any]]]:
+    root = planner_service.project_root_from_record(project)
+    raw_output = await _run_codex_cli_once(
+        prompt=_build_codex_planner_prompt(messages, tools),
+        cwd=root,
+    )
+    payload = _parse_codex_planner_response(raw_output)
+    assistant_text = str(payload.get("assistant_message") or "").strip()
+    tool_calls: list[dict[str, Any]] = []
+    for index, call in enumerate(payload.get("tool_calls") or []):
+        if not isinstance(call, dict):
+            continue
+        name = str(call.get("name") or "").strip()
+        if not name:
+            continue
+        arguments = call.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        tool_calls.append(
+            {
+                "id": f"codex-tool-{uuid4().hex[:8]}-{index}",
+                "name": name,
+                "args": arguments,
+            }
+        )
+    return assistant_text, tool_calls
 
 
 async def _git_commit_and_push(project: dict[str, Any], message: str = "chore(planner): sync plan files") -> None:
@@ -594,19 +765,8 @@ async def stream_planner_turn(
       {"type": "tool_result",  "id": str, "name": str, "result": any}
       {"type": "done",         "assistant_message": str, "tasks": list}
     """
-    role_summaries = [summarize_role_config(item) for item in list_role_runtime_configs(project)]
-    skills = read_project_skills(project)
-    all_tools = [
-        *_planner_tools(),
-        *__import__("app.routers.project_agent", fromlist=["PROJECT_TOOLS_MERGED"]).PROJECT_TOOLS_MERGED,
-    ]
-
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _planner_system_prompt(project, role_summaries, skills)},
-    ]
-    for item in history or []:
-        messages.append({"role": item["role"], "content": item["content"]})
-    messages.append({"role": "user", "content": user_message})
+    all_tools = _planner_tools_with_project_tools()
+    messages = _planner_messages(project, user_message, history)
 
     if persist:
         await planner_service.append_planner_message(
@@ -616,52 +776,88 @@ async def stream_planner_turn(
     assistant_text = ""
     all_tool_calls_log: list[dict] = []   # for agent_log.jsonl
 
-    for _ in range(PLANNER_MAX_TURNS):
-        turn_tool_calls: list[dict] = []
-        turn_text = ""
-
-        async for event in llm_service.stream_agent(messages, all_tools, model=model):
-            if event["type"] == "text_delta":
-                turn_text += event["content"]
-                yield event
-            elif event["type"] == "tool_call":
-                turn_tool_calls.append(event)
-                yield event
-
-        if turn_text:
-            assistant_text = turn_text
-
-        # Build assistant message to append to history
-        raw_tool_calls = [
-            {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": json.dumps(tc["args"])}}
-            for tc in turn_tool_calls
-        ] if turn_tool_calls else None
-        messages.append({
-            "role": "assistant",
-            "content": turn_text or None,
-            "tool_calls": raw_tool_calls,
-        })
-
-        if not turn_tool_calls:
-            break
-
-        # Execute each tool and stream results
-        for tc in turn_tool_calls:
-            try:
-                result = await _execute_planner_tool(project, tc["name"], tc["args"])
-            except Exception as exc:
-                result = {"error": str(exc)}
-            yield {"type": "tool_result", "id": tc["id"], "name": tc["name"], "result": result}
+    if _planner_uses_codex_cli(project):
+        for _ in range(PLANNER_MAX_TURNS):
+            assistant_text, turn_tool_calls = await _codex_planner_step(
+                project=project,
+                messages=messages,
+                tools=all_tools,
+            )
+            if assistant_text:
+                yield {"type": "text_delta", "content": assistant_text}
+            raw_tool_calls = [
+                {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": json.dumps(tc["args"])}}
+                for tc in turn_tool_calls
+            ] if turn_tool_calls else None
             messages.append({
-                "role": "tool",
-                "tool_call_id": tc["id"],
-                "content": json.dumps(result, default=str),
+                "role": "assistant",
+                "content": assistant_text or None,
+                "tool_calls": raw_tool_calls,
             })
-            all_tool_calls_log.append({
-                "name": tc["name"],
-                "args": tc["args"],
-                "result": result,
+            if not turn_tool_calls:
+                break
+            for tc in turn_tool_calls:
+                yield {"type": "tool_call", "id": tc["id"], "name": tc["name"], "args": tc["args"]}
+                try:
+                    result = await _execute_planner_tool(project, tc["name"], tc["args"])
+                except Exception as exc:
+                    result = {"error": str(exc)}
+                yield {"type": "tool_result", "id": tc["id"], "name": tc["name"], "result": result}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": json.dumps(result, default=str),
+                })
+                all_tool_calls_log.append({
+                    "name": tc["name"],
+                    "args": tc["args"],
+                    "result": result,
+                })
+    else:
+        for _ in range(PLANNER_MAX_TURNS):
+            turn_tool_calls: list[dict] = []
+            turn_text = ""
+
+            async for event in llm_service.stream_agent(messages, all_tools, model=model):
+                if event["type"] == "text_delta":
+                    turn_text += event["content"]
+                    yield event
+                elif event["type"] == "tool_call":
+                    turn_tool_calls.append(event)
+                    yield event
+
+            if turn_text:
+                assistant_text = turn_text
+
+            raw_tool_calls = [
+                {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": json.dumps(tc["args"])}}
+                for tc in turn_tool_calls
+            ] if turn_tool_calls else None
+            messages.append({
+                "role": "assistant",
+                "content": turn_text or None,
+                "tool_calls": raw_tool_calls,
             })
+
+            if not turn_tool_calls:
+                break
+
+            for tc in turn_tool_calls:
+                try:
+                    result = await _execute_planner_tool(project, tc["name"], tc["args"])
+                except Exception as exc:
+                    result = {"error": str(exc)}
+                yield {"type": "tool_result", "id": tc["id"], "name": tc["name"], "result": result}
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc["id"],
+                    "content": json.dumps(result, default=str),
+                })
+                all_tool_calls_log.append({
+                    "name": tc["name"],
+                    "args": tc["args"],
+                    "result": result,
+                })
 
     board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
@@ -673,10 +869,19 @@ async def stream_planner_turn(
             "content": "Please write a concise summary of everything you just did and the current state of the project.",
         })
         summary_text = ""
-        async for event in llm_service.stream_agent(messages, [], model=model):
-            if event["type"] == "text_delta":
-                summary_text += event["content"]
-                yield event
+        if _planner_uses_codex_cli(project):
+            summary_text, _ = await _codex_planner_step(
+                project=project,
+                messages=messages,
+                tools=[],
+            )
+            if summary_text:
+                yield {"type": "text_delta", "content": summary_text}
+        else:
+            async for event in llm_service.stream_agent(messages, [], model=model):
+                if event["type"] == "text_delta":
+                    summary_text += event["content"]
+                    yield event
         assistant_text = summary_text.strip() or (
             f"Done. {len(tasks)} task(s) on the board." if tasks else "Planner turn complete."
         )
@@ -703,14 +908,8 @@ async def run_planner_turn(
     model: str | None = None,
     persist: bool = True,
 ) -> dict[str, Any]:
-    role_summaries = [summarize_role_config(item) for item in list_role_runtime_configs(project)]
-    skills = read_project_skills(project)
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": _planner_system_prompt(project, role_summaries, skills)},
-    ]
-    for item in history or []:
-        messages.append({"role": item["role"], "content": item["content"]})
-    messages.append({"role": "user", "content": user_message})
+    messages = _planner_messages(project, user_message, history)
+    all_tools = _planner_tools_with_project_tools()
 
     if persist:
         await planner_service.append_planner_message(
@@ -722,43 +921,73 @@ async def run_planner_turn(
 
     assistant_text = ""
     for _ in range(PLANNER_MAX_TURNS):
-        response = await llm_service.complete(
-            messages=messages,
-            model=model,
-            tools=[*_planner_tools(), *__import__("app.routers.project_agent", fromlist=["PROJECT_TOOLS_MERGED"]).PROJECT_TOOLS_MERGED],
-        )
-        message = response.choices[0].message
-        tool_calls = getattr(message, "tool_calls", None) or []
-        assistant_text = message.content or assistant_text
-        messages.append(
-            {
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [
-                    {
-                        "id": call.id,
-                        "type": "function",
-                        "function": {
-                            "name": call.function.name,
-                            "arguments": call.function.arguments,
-                        },
-                    }
-                    for call in tool_calls
-                ] if tool_calls else None,
-            }
-        )
+        if _planner_uses_codex_cli(project):
+            assistant_text, tool_calls = await _codex_planner_step(
+                project=project,
+                messages=messages,
+                tools=all_tools,
+            )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_text or None,
+                    "tool_calls": [
+                        {
+                            "id": call["id"],
+                            "type": "function",
+                            "function": {
+                                "name": call["name"],
+                                "arguments": json.dumps(call["args"]),
+                            },
+                        }
+                        for call in tool_calls
+                    ] if tool_calls else None,
+                }
+            )
+        else:
+            response = await llm_service.complete(
+                messages=messages,
+                model=model,
+                tools=all_tools,
+            )
+            message = response.choices[0].message
+            tool_calls = getattr(message, "tool_calls", None) or []
+            assistant_text = message.content or assistant_text
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": call.id,
+                            "type": "function",
+                            "function": {
+                                "name": call.function.name,
+                                "arguments": call.function.arguments,
+                            },
+                        }
+                        for call in tool_calls
+                    ] if tool_calls else None,
+                }
+            )
         if not tool_calls:
             break
         for call in tool_calls:
-            try:
-                args = json.loads(call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                args = {"_raw": call.function.arguments}
-            result = await _execute_planner_tool(project, call.function.name, args)
+            if _planner_uses_codex_cli(project):
+                args = call["args"]
+                result = await _execute_planner_tool(project, call["name"], args)
+                tool_call_id = call["id"]
+            else:
+                try:
+                    args = json.loads(call.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {"_raw": call.function.arguments}
+                result = await _execute_planner_tool(project, call.function.name, args)
+                tool_call_id = call.id
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": call.id,
+                    "tool_call_id": tool_call_id,
                     "content": json.dumps(result, default=str),
                 }
             )

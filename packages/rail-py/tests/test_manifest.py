@@ -39,7 +39,7 @@ MINIMAL_RAIL_YAML = textwrap.dedent(
 
     agents:
       roles_dir: "agents"
-      default_runner: "jules"
+      default_runner: "codex_cli"
       sequential_execution: true
       planner_thread_mode: "project"
       default_planner_role: "planner"

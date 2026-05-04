@@ -32,7 +32,7 @@ hydration:
   pipelines_dir: ".ontology/pipelines"
 agents:
   roles_dir: "agents"
-  default_runner: "jules"
+  default_runner: "codex_cli"
   sequential_execution: true
   approval_required_for_write_runs: true
   planner_thread_mode: "project"
