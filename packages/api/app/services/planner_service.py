@@ -152,6 +152,7 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
         "approvalState": meta.get("approval_state") or None,
         "priority": meta.get("priority") or None,
         "runner": meta.get("runner") or None,
+        "blockerCategory": meta.get("blocker_category") or None,
         "gitSnapshotPath": str(path.relative_to(path.parents[2])),
         "latestRunSummary": meta.get("latest_run_summary") or "Not started",
     }
@@ -187,6 +188,8 @@ def _render_task_markdown(task: dict[str, Any]) -> str:
         meta["priority"] = task["priority"]
     if task.get("runner"):
         meta["runner"] = task["runner"]
+    if task.get("blockerCategory"):
+        meta["blocker_category"] = task["blockerCategory"]
     frontmatter = yaml.safe_dump(meta, sort_keys=False).strip()
     description = (task.get("description") or "").strip()
     body = "## Description\n\n" + (description or "No description provided.") + "\n"
@@ -230,6 +233,7 @@ async def create_task(
         "priority": priority,
         "agentRole": agent_role,
         "runner": runner,
+        "blockerCategory": None,
         "repoPaths": repo_paths or [],
         "acceptanceCriteria": acceptance_criteria or [],
         "dependsOnTaskIds": depends_on_task_ids or [],
@@ -258,6 +262,8 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
         "status": "status",
         "priority": "priority",
         "runner": "runner",
+        "blockerCategory": "blockerCategory",
+        "blocker_category": "blockerCategory",
         "agent_role": "agentRole",
         "agentRole": "agentRole",
         "repoPaths": "repoPaths",
@@ -453,9 +459,11 @@ async def sync_planner_files(project: dict, board: dict | None = None) -> None:
     _write_file(plan_root / "blockers.md", _render_blockers(root))
     
 async def git_sync(project: dict, message: str = "chore: sync workspace") -> bool:
-    """Commit and push any changes in the project repo to GitHub."""
+    """Publish current repo-root changes through the GitHub App workflow."""
     import logging
     import asyncio
+    from app.services.safe_publish_service import publish_repo_files, record_publish_failure, record_publish_success
+
     log = logging.getLogger(__name__)
     root = project_root_from_record(project)
     if root is None or not root.is_dir():
@@ -463,38 +471,36 @@ async def git_sync(project: dict, message: str = "chore: sync workspace") -> boo
     if not (root / ".git").is_dir():
         return False
     try:
-        # Check if there are changes
         status_proc = await asyncio.create_subprocess_shell(
             "git status --porcelain",
             cwd=str(root),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await status_proc.communicate()
-        if not stdout.strip():
-            # No changes to sync, but we should push just in case local is ahead
-            push_proc = await asyncio.create_subprocess_shell(
-                "git push",
-                cwd=str(root),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await push_proc.communicate()
-            return True
-
-        # Add, commit, and push
-        cmd = f'git add -A && git commit -m "{message}" && git push'
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=45)
-        if proc.returncode != 0:
-            log.warning(f"git sync failed: {stdout.decode()}")
+        stdout, stderr = await status_proc.communicate()
+        if status_proc.returncode != 0:
+            log.warning("git status failed during connector sync: %s", stderr.decode())
             return False
+        changed_paths: list[str] = []
+        for line in stdout.decode().splitlines():
+            if not line.strip():
+                continue
+            path = line[3:].strip() if len(line) > 3 else line.strip()
+            if path:
+                changed_paths.append(path)
+        if not changed_paths:
+            return True
+        result = await publish_repo_files(
+            project,
+            repo_root=root,
+            changed_paths=changed_paths,
+            commit_message=message,
+        )
+        if project.get("_id"):
+            await record_publish_success(project["_id"], result)
         return True
     except Exception as exc:
-        log.warning(f"git sync error: {exc}")
+        log.warning("connector git sync error: %s", exc)
+        if project.get("_id"):
+            await record_publish_failure(project["_id"], str(exc))
         return False

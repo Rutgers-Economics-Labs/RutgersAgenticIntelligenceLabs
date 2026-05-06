@@ -46,6 +46,24 @@ def test_session_files_skip_malformed_jsonl(tmp_path: Path):
     assert events[0]["type"] == "assistant_message"
 
 
+def test_session_summary_includes_publish_metadata(tmp_path: Path):
+    root = session_files.ensure_session_root(tmp_path, "coding", "sess-publish")
+    session_files.update_state(
+        root,
+        status="completed",
+        publish_status="published",
+        publish_strategy="github_app_commit",
+        publish_commit_sha="abc123",
+    )
+    session_files.refresh_summary(root)
+
+    summary = (root / "summary.md").read_text(encoding="utf-8")
+
+    assert "publish_status: `published`" in summary
+    assert "publish_strategy: `github_app_commit`" in summary
+    assert "publish_commit_sha: `abc123`" in summary
+
+
 def test_append_command_reuses_idempotency_key(tmp_path: Path):
     root = session_files.ensure_session_root(tmp_path, "coding", "sess-3")
 

@@ -175,6 +175,8 @@ async def run_autopilot_loop(project_slug: str):
                 status = task.get("status")
                 if status not in {"awaiting_approval", "backlog", "blocked"}:
                     continue
+                if status == "blocked" and task.get("blockerCategory") == "publish_failure":
+                    continue
                 if not _dependencies_satisfied(task, task_by_id):
                     continue
                 if status == "awaiting_approval" and task.get("approvalState") not in {"granted", "not_required"}:

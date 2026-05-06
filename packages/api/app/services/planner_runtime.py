@@ -433,24 +433,15 @@ async def _codex_planner_step(
 
 
 async def _git_commit_and_push(project: dict[str, Any], message: str = "chore(planner): sync plan files") -> None:
-    """Commit and push any changes the planner wrote to the project repo."""
+    """Publish planner-written repo changes through the connector workflow."""
     import logging
     log = logging.getLogger(__name__)
-    root = planner_service.project_root_from_record(project)
-    if root is None or not root.is_dir():
-        return
-    if not (root / ".git").is_dir():
-        return
     try:
-        proc = await asyncio.create_subprocess_shell(
-            f'git add -A && git diff --cached --quiet || git commit -m "{message}" && git push 2>&1 || true',
-            cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=30)
+        ok = await planner_service.git_sync(project, message)
+        if not ok:
+            log.warning("planner connector publish returned false for %s", project.get("slug"))
     except Exception as exc:
-        log.warning("planner git push failed for %s: %s", root, exc)
+        log.warning("planner connector publish failed for %s: %s", project.get("slug"), exc)
 
 
 async def _run_shell(command: str, cwd: Path) -> dict[str, Any]:

@@ -272,6 +272,9 @@ def _render_summary(events: list[dict[str, Any]], state: dict[str, Any]) -> str:
     review_status = state.get("review_status") or "pending"
     workspace_path = state.get("workspace_path") or "none"
     workspace_branch = state.get("workspace_branch") or "none"
+    publish_status = state.get("publish_status") or "not_started"
+    publish_strategy = state.get("publish_strategy") or "none"
+    publish_commit_sha = state.get("publish_commit_sha") or "none"
     completion_summary = normalize_completion_summary(
         state.get("completion_summary"),
         status=status,
@@ -285,6 +288,9 @@ def _render_summary(events: list[dict[str, Any]], state: dict[str, Any]) -> str:
         f"- review_status: `{review_status}`",
         f"- workspace_path: `{workspace_path}`",
         f"- workspace_branch: `{workspace_branch}`",
+        f"- publish_status: `{publish_status}`",
+        f"- publish_strategy: `{publish_strategy}`",
+        f"- publish_commit_sha: `{publish_commit_sha}`",
         "",
         "## Recent Events",
         "",

@@ -94,6 +94,7 @@ def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path):
         session_lifecycle._finalize_workspace_review(
             convex_session_id="sess-1",
             session={"role": "coding"},
+            project={"slug": "workspace-project", "defaultBranch": "main"},
             project_root=tmp_path,
             session_root=session_root,
             base_branch="main",
@@ -227,6 +228,7 @@ def test_finalize_workspace_review_normalizes_completion_summary_and_mirrors_sta
         session_lifecycle._finalize_workspace_review(
             convex_session_id="sess-2",
             session={"role": "research", "taskId": "task-123"},
+            project={"slug": "completion-project", "defaultBranch": "main"},
             project_root=tmp_path,
             session_root=session_root,
             base_branch="main",
@@ -339,3 +341,189 @@ def test_create_runner_session_allows_write_run_after_policy_approval(tmp_path: 
     )
 
     assert result["status"] == "running"
+
+
+def test_finalize_workspace_review_records_connector_publish_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    bootstrap_future_project(tmp_path, name="Publish Project")
+    verify_script = tmp_path / "scripts" / "run-verification.sh"
+    verify_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho 'verification ok'\n", encoding="utf-8")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "research", "sess-publish")
+    workspace_root, workspace_branch, workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "research",
+        "sess-publish",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    asyncio.run(
+        session_lifecycle._run_workspace_setup(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            session_id="sess-publish",
+            role="research",
+            base_branch="main",
+            workspace_branch=workspace_branch,
+            workspace_config=workspace_config,
+        )
+    )
+    (workspace_root / "artifacts").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "artifacts" / "memo.md").write_text("# Memo\n", encoding="utf-8")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    async def _publish(*args, **kwargs):
+        return {
+            "published": True,
+            "strategy": "github_app_commit",
+            "commit_sha": "deadbeef",
+            "branch": "main",
+            "changed": True,
+            "files": [{"path": "artifacts/memo.md", "changed": True}],
+            "skipped_files": [],
+        }
+
+    publish_results: list[dict] = []
+
+    async def _record_success(project_id: str, result: dict[str, object]) -> None:
+        publish_results.append({"project_id": project_id, **result})
+
+    monkeypatch.setattr(session_lifecycle, "publish_repo_files", _publish)
+    monkeypatch.setattr(session_lifecycle, "record_publish_success", _record_success)
+    monkeypatch.setattr(session_lifecycle, "record_publish_failure", lambda *args, **kwargs: asyncio.sleep(0))
+
+    project = {
+        "_id": "project-1",
+        "slug": "publish-project",
+        "defaultBranch": "main",
+        "github": "Rutgers-Economics-Labs/RAIL-doge-government-payments-and-savings-ana",
+    }
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-publish",
+            session={"role": "research", "taskId": "task-123"},
+            project=project,
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    summary = (session_root / "summary.md").read_text(encoding="utf-8")
+
+    assert state["publish_status"] == "published"
+    assert state["publish_commit_sha"] == "deadbeef"
+    assert state["publish_changed_files"] == ["artifacts/memo.md"]
+    assert "publish_commit_sha: `deadbeef`" in summary
+    assert publish_results[0]["project_id"] == "project-1"
+
+
+def test_finalize_workspace_review_blocks_task_on_publish_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    bootstrap_future_project(tmp_path, name="Blocked Publish Project")
+    verify_script = tmp_path / "scripts" / "run-verification.sh"
+    verify_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho 'verification ok'\n", encoding="utf-8")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-fail")
+    workspace_root, workspace_branch, workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "data",
+        "sess-fail",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    asyncio.run(
+        session_lifecycle._run_workspace_setup(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            session_id="sess-fail",
+            role="data",
+            base_branch="main",
+            workspace_branch=workspace_branch,
+            workspace_config=workspace_config,
+        )
+    )
+    (workspace_root / "research").mkdir(parents=True, exist_ok=True)
+    (workspace_root / "research" / "notes.md").write_text("# Notes\n", encoding="utf-8")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    async def _raise_publish(*args, **kwargs):
+        raise RuntimeError("connector auth failed")
+
+    async def _record_failure(project_id: str, message: str) -> None:
+        failures.append((project_id, message))
+
+    async def _update_task(task_id: str, *, project: dict, **fields):
+        task_updates.append({"task_id": task_id, **fields})
+        return {"_id": task_id, **fields}
+
+    async def _decision(*args, **kwargs):
+        decisions.append(kwargs)
+        return None
+
+    async def _task_record(project: dict, task_id: str | None):
+        return {"_id": task_id, "repoPaths": ["research"]}
+
+    task_updates: list[dict[str, object]] = []
+    decisions: list[dict[str, object]] = []
+    failures: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(session_lifecycle, "publish_repo_files", _raise_publish)
+    monkeypatch.setattr(session_lifecycle, "record_publish_failure", _record_failure)
+    monkeypatch.setattr(session_lifecycle, "record_publish_success", lambda *args, **kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(session_lifecycle, "raise_decision_event", _decision)
+    monkeypatch.setattr(session_lifecycle, "_task_record", _task_record)
+
+    project = {
+        "_id": "project-2",
+        "slug": "blocked-publish-project",
+        "defaultBranch": "main",
+        "github": "Rutgers-Economics-Labs/RAIL-doge-government-payments-and-savings-ana",
+    }
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-fail",
+            session={"role": "data", "taskId": "task-publish"},
+            project=project,
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+
+    assert state["publish_status"] == "failed"
+    assert state["review_status"] == "needs_changes"
+    assert failures == [("project-2", "connector auth failed")]
+    assert task_updates[0]["status"] == "blocked"
+    assert task_updates[0]["blockerCategory"] == "publish_failure"
+    assert decisions[0]["event_type"] == "publish_failed"

@@ -28,8 +28,16 @@ from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy
 from app.services.convex_client import convex
+from app.services.decision_service import raise_decision_event
 from app.services.integrity_service import evaluate_integrity_gate
+from app.services.repo_contract_service import infer_github_repo
 from app.services.role_runtime_service import load_role_runtime_config
+from app.services.safe_publish_service import (
+    is_repo_publish_path_allowed,
+    publish_repo_files,
+    record_publish_failure,
+    record_publish_success,
+)
 from rail.manifest import load_manifest
 
 
@@ -275,6 +283,122 @@ async def _list_changed_files(workspace_root: Path) -> list[str]:
             else:
                 changed.append(path)
     return changed
+
+
+def _copy_workspace_files_to_project(
+    *,
+    project_root: Path,
+    workspace_root: Path,
+    relative_paths: list[str],
+    allowed_paths: list[str] | None = None,
+) -> list[str]:
+    copied: list[str] = []
+    for relative_path in relative_paths:
+        if not is_repo_publish_path_allowed(relative_path, allowed_paths=allowed_paths):
+            continue
+        source = (workspace_root / relative_path).resolve()
+        if not source.exists() or not source.is_file():
+            continue
+        try:
+            source.relative_to(workspace_root.resolve())
+        except ValueError:
+            continue
+        target = (project_root / relative_path).resolve()
+        try:
+            target.relative_to(project_root.resolve())
+        except ValueError:
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        copied.append(relative_path)
+    return copied
+
+
+async def _task_record(project: dict[str, Any], task_id: str | None) -> dict[str, Any] | None:
+    if not task_id:
+        return None
+    board = await planner_service.ensure_main_board(project)
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
+    for task in tasks:
+        if str(task.get("_id")) == str(task_id):
+            return task
+    return None
+
+
+async def _publish_completed_session_outputs(
+    *,
+    project: dict[str, Any],
+    session: dict[str, Any],
+    project_root: Path,
+    workspace_root: Path,
+    session_root: Path,
+    changed_files: list[str],
+) -> dict[str, Any]:
+    if not infer_github_repo(project.get("github") or project.get("gitRepoUrl")):
+        session_files.update_state(
+            session_root,
+            publish_status="skipped",
+            publish_strategy="github_app_commit",
+            publish_branch=project.get("defaultBranch") or "main",
+            publish_error="",
+        )
+        session_files.append_event(
+            session_root,
+            "publish_completed",
+            content="Connector publish skipped because the project is not linked to a GitHub repository.",
+            status=session_files.read_state(session_root).get("status"),
+        )
+        return {
+            "published": False,
+            "strategy": "github_app_commit",
+            "commit_sha": None,
+            "branch": project.get("defaultBranch") or "main",
+            "changed": False,
+            "files": [],
+            "skipped_files": changed_files,
+        }
+    task = await _task_record(project, session.get("taskId"))
+    allowed_paths = (task or {}).get("repoPaths") or None
+    mirrored = _copy_workspace_files_to_project(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        relative_paths=changed_files,
+        allowed_paths=allowed_paths,
+    )
+    commit_message = (
+        f"chore({session.get('role') or 'agent'}): publish task {session.get('taskId') or session.get('title') or 'session outputs'}"
+    )
+    result = await publish_repo_files(
+        project,
+        repo_root=project_root,
+        changed_paths=mirrored,
+        commit_message=commit_message,
+        allowed_paths=allowed_paths,
+    )
+    session_files.update_state(
+        session_root,
+        publish_status="published" if result.get("published") else "skipped",
+        publish_strategy=result.get("strategy") or "github_app_commit",
+        publish_branch=result.get("branch"),
+        publish_commit_sha=result.get("commit_sha"),
+        publish_changed_files=[item.get("path") for item in result.get("files") or [] if item.get("path")],
+        publish_skipped_files=result.get("skipped_files") or [],
+        publish_error="",
+    )
+    session_files.append_event(
+        session_root,
+        "publish_completed",
+        content=(
+            f"Connector publish {'updated' if result.get('changed') else 'checked'} "
+            f"{len(result.get('files') or [])} file(s) on `{result.get('branch')}`."
+        ),
+        commit_sha=result.get("commit_sha"),
+        branch=result.get("branch"),
+        status=session_files.read_state(session_root).get("status"),
+    )
+    if project.get("_id"):
+        await record_publish_success(project["_id"], result)
+    return result
 
 
 def _collect_runner_summary_from_events(session_root: Path, status: str) -> dict[str, Any]:
@@ -674,6 +798,7 @@ async def _finalize_workspace_review(
     *,
     convex_session_id: str,
     session: dict[str, Any],
+    project: dict[str, Any],
     project_root: Path,
     session_root: Path,
     base_branch: str,
@@ -688,6 +813,7 @@ async def _finalize_workspace_review(
     review_status = state.get("review_status") or "pending"
     terminal_status = state.get("status")
     config = _workspace_config(project_root)
+    changed_files = await _list_changed_files(workspace_root)
 
     if terminal_status == "completed" and state.get("verification_status") not in {"passed", "failed", "skipped"}:
         verification = await _run_workspace_verification(
@@ -704,6 +830,35 @@ async def _finalize_workspace_review(
     elif terminal_status in {"failed", "cancelled"}:
         review_status = "needs_changes"
 
+    publish_error: str | None = None
+    if terminal_status == "completed":
+        try:
+            await _publish_completed_session_outputs(
+                project=project,
+                session=session,
+                project_root=project_root,
+                workspace_root=workspace_root,
+                session_root=session_root,
+                changed_files=changed_files,
+            )
+        except Exception as exc:
+            publish_error = str(exc)
+            review_status = "needs_changes"
+            session_files.update_state(
+                session_root,
+                publish_status="failed",
+                publish_strategy="github_app_commit",
+                publish_error=publish_error,
+            )
+            session_files.append_event(
+                session_root,
+                "publish_failed",
+                content=publish_error,
+                status=session_files.read_state(session_root).get("status"),
+            )
+            if project.get("_id"):
+                await record_publish_failure(project["_id"], publish_error)
+
     summary = await _normalize_completion_summary(
         project_root=project_root,
         workspace_root=workspace_root,
@@ -713,6 +868,11 @@ async def _finalize_workspace_review(
         status=terminal_status or "unknown",
         role=session.get("role") or "agent",
     )
+    if publish_error:
+        summary["blockers"] = _dedupe((summary.get("blockers") or []) + [f"Connector publish failed: {publish_error}"])
+        summary["recommended_next_tasks"] = _dedupe(
+            (summary.get("recommended_next_tasks") or []) + ["Fix connector-backed publish failure before re-running autopilot."]
+        )
     _copy_workspace_state_indexes(project_root, workspace_root)
     _sync_completion_summary_to_integrity_indexes(
         project_root=project_root,
@@ -723,6 +883,32 @@ async def _finalize_workspace_review(
     session_files.update_state(session_root, review_status=review_status)
     session_files.update_state(session_root, completion_summary=summary)
     session_files.refresh_summary(session_root)
+
+    if publish_error and session.get("taskId"):
+        await planner_service.update_task(
+            str(session.get("taskId")),
+            project=project,
+            status="blocked",
+            blockerCategory="publish_failure",
+            latestRunSummary=f"Connector publish failed for session {convex_session_id}: {publish_error}",
+        )
+        await raise_decision_event(
+            project,
+            source="runner",
+            event_type="publish_failed",
+            severity="needs_planner",
+            summary=f"Connector publish failed for task {session.get('taskId')}: {publish_error}",
+            evidence_refs=[
+                f"task:{session.get('taskId')}",
+                f"runner_session:{convex_session_id}",
+                f"session_state:{session_root / 'state.json'}",
+            ],
+            recommended_actions=[
+                "Fix connector authentication or path policy",
+                "Retry the task only after publish succeeds",
+                "Inspect session summary and publish metadata",
+            ],
+        )
 
 
 
@@ -1216,6 +1402,7 @@ async def ingest_session_events(
                 await _finalize_workspace_review(
                     convex_session_id=convex_session_id,
                     session=session,
+                    project=project or {},
                     project_root=project_root,
                     session_root=root,
                     base_branch=(project or {}).get("defaultBranch") or "main",

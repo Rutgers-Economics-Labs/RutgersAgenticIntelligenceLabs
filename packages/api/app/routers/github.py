@@ -9,6 +9,7 @@ from app.services.repo_contract_service import (
     parse_config_path,
 )
 from app.services.safe_publish_service import record_publish_success
+from app.services.safe_publish_service import is_repo_publish_path_allowed
 
 router = APIRouter(prefix="/github", tags=["github"])
 
@@ -33,18 +34,9 @@ async def publish_to_github(req: PublishRequest):
         raise HTTPException(422, f"Unsupported publish strategy: {req.strategy}")
 
     # Validate all paths are within allowed directories
-    ALLOWED_PREFIXES = [
-        "configs/apis/",
-        "configs/pipelines/",
-        "configs/ontology/",
-        ".ontology/ontologies/",
-        ".ontology/pipelines/",
-        ".ontology/sources/",
-        "rail.yaml",
-    ]
     for f in req.files:
         path = f["path"]
-        if not (path == "rail.yaml" or any(path.startswith(p) for p in ALLOWED_PREFIXES)):
+        if not is_repo_publish_path_allowed(path):
             raise HTTPException(422, f"Path not allowed: {path}")
         if ".." in path:
             raise HTTPException(422, f"Path traversal not allowed: {path}")
