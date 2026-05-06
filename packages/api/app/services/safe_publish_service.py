@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 import time
 from typing import Any
@@ -42,6 +43,7 @@ DEFAULT_REPO_SKIP_PREFIXES = (
     ".rail/",
     "__pycache__/",
 )
+log = logging.getLogger(__name__)
 
 
 async def should_auto_publish(project: dict[str, Any]) -> bool:
@@ -183,19 +185,25 @@ async def publish_manifest(project: dict[str, Any]) -> dict[str, Any]:
 
 
 async def record_publish_success(project_id: str, publish_result: dict[str, Any]) -> None:
-    await convex.mutation("projects:updateById", {
-        "projectId": project_id,
-        "lastPublishedCommitSha": publish_result.get("commit_sha"),
-        "lastPublishedAt": int(time.time() * 1000),
-        "lastPublishError": "",
-    })
+    try:
+        await convex.mutation("projects:updateById", {
+            "projectId": project_id,
+            "lastPublishedCommitSha": publish_result.get("commit_sha"),
+            "lastPublishedAt": int(time.time() * 1000),
+            "lastPublishError": "",
+        })
+    except Exception as exc:
+        log.warning("Skipping project publish success metadata update for %s: %s", project_id, exc)
 
 
 async def record_publish_failure(project_id: str, message: str) -> None:
-    await convex.mutation("projects:updateById", {
-        "projectId": project_id,
-        "lastPublishError": message,
-    })
+    try:
+        await convex.mutation("projects:updateById", {
+            "projectId": project_id,
+            "lastPublishError": message,
+        })
+    except Exception as exc:
+        log.warning("Skipping project publish failure metadata update for %s: %s", project_id, exc)
 
 
 async def rollback_project_update(project_id: str, previous: dict[str, Any]) -> None:

@@ -527,3 +527,63 @@ def test_finalize_workspace_review_blocks_task_on_publish_failure(tmp_path: Path
     assert task_updates[0]["status"] == "blocked"
     assert task_updates[0]["blockerCategory"] == "publish_failure"
     assert decisions[0]["event_type"] == "publish_failed"
+
+
+def test_get_runner_session_forces_final_ingest_for_terminal_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = session_files.ensure_session_root(tmp_path, "coding", "sess-terminal")
+    session_files.update_state(
+        root,
+        status="running",
+        review_status="pending",
+        workspace_path=str(tmp_path / "workspace"),
+        workspace_branch="coding-sess-terminal",
+    )
+
+    async def _get_running_agent(session_id: str):
+        return {
+            "_id": session_id,
+            "status": "running",
+            "runner": "codex_cli",
+            "role": "coding",
+            "externalSessionId": "external-1",
+            "sessionPath": str(root),
+            "projectId": "project-1",
+        }
+
+    async def _update_running_agent(session_id: str, **fields):
+        return None
+
+    class _FakeRunner:
+        async def get_session(self, external_id: str):
+            return {"status": "completed", "normalized_status": "completed"}
+
+    ingest_calls: list[str] = []
+
+    async def _ingest(session_id: str, *, project_id: str | None = None):
+        ingest_calls.append(session_id)
+        session_files.update_state(
+            root,
+            status="completed",
+            publish_status="published",
+            publish_strategy="github_app_commit",
+            publish_commit_sha="abc123",
+            verification_status="passed",
+        )
+        return []
+
+    monkeypatch.setattr(running_agent_service, "get_running_agent", _get_running_agent)
+    monkeypatch.setattr(running_agent_service, "update_running_agent", _update_running_agent)
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+    monkeypatch.setattr(session_lifecycle, "ingest_session_events", _ingest)
+
+    result = asyncio.run(
+        session_lifecycle.get_runner_session(
+            "sess-terminal",
+            sync_from_runner=True,
+            project_id="project-1",
+        )
+    )
+
+    assert ingest_calls == ["sess-terminal"]
+    assert result["fileState"]["publish_status"] == "published"
+    assert result["fileState"]["publish_commit_sha"] == "abc123"

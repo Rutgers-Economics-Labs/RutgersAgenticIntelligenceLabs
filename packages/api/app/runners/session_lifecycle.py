@@ -1267,6 +1267,38 @@ async def get_runner_session(
             result["runnerInfo"] = runner_info
             result["status"] = new_status
             result["pr_url"] = runner_info.get("pr_url")
+            if root and root.exists() and new_status in TERMINAL_STATUSES:
+                file_state = session_files.read_state(root)
+                needs_finalization = (
+                    file_state.get("status") not in TERMINAL_STATUSES
+                    or file_state.get("publish_status") in {None, "", "not_started"}
+                    or file_state.get("verification_status") not in {"passed", "failed", "skipped"}
+                )
+                if needs_finalization:
+                    try:
+                        await ingest_session_events(convex_session_id, project_id=project_id)
+                    except Exception:
+                        pass
+                    refreshed_state = session_files.read_state(root)
+                    still_needs_finalization = (
+                        refreshed_state.get("publish_status") in {None, "", "not_started"}
+                        or refreshed_state.get("verification_status") not in {"passed", "failed", "skipped"}
+                        or refreshed_state.get("review_status") == "pending"
+                    )
+                    if still_needs_finalization:
+                        project = await _load_project(project_id or session.get("projectId"), session.get("projectSlug"))
+                        project_root = _project_root(project or {})
+                        if project_root is not None:
+                            await _finalize_workspace_review(
+                                convex_session_id=convex_session_id,
+                                session=session,
+                                project=project or {},
+                                project_root=project_root,
+                                session_root=root,
+                                base_branch=(project or {}).get("defaultBranch") or "main",
+                            )
+                    result["fileState"] = session_files.read_state(root)
+                    result["summaryPath"] = str(root / "summary.md")
         except Exception as exc:
             result["syncError"] = str(exc)
     return result
