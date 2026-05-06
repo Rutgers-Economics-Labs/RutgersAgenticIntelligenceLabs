@@ -1,4 +1,5 @@
 import {
+  AutopilotStatus,
   CommandCenter,
   CatalogActivationResponse,
   DashboardResponse,
@@ -7,6 +8,7 @@ import {
   OntologyClassesResponse,
   PlannerBoard,
   PlannerHome,
+  PlannerTaskDraft,
   ProjectCatalogResponse,
   ProjectArtifact,
   ProjectApprovals,
@@ -70,6 +72,41 @@ export async function fetchPlannerHome(slug: string): Promise<PlannerHome> {
 
 export async function fetchPlannerBoard(slug: string): Promise<PlannerBoard> {
   return getJson<PlannerBoard>(`/projects/${slug}/planner/board`);
+}
+
+export async function fetchAutopilotStatus(slug: string): Promise<AutopilotStatus> {
+  return getJson<AutopilotStatus>(`/projects/${slug}/autopilot/status`);
+}
+
+export async function toggleProjectAutopilot(
+  slug: string,
+  payload: { enabled: boolean; autoApprove: boolean },
+): Promise<{ status: string; slug: string; autoApprove?: boolean }> {
+  return postJson(`/projects/${slug}/autopilot`, payload);
+}
+
+export async function createPlannerTask(
+  slug: string,
+  payload: PlannerTaskDraft,
+): Promise<Record<string, unknown>> {
+  return postJson(`/projects/${slug}/planner/tasks`, payload);
+}
+
+export async function updatePlannerTask(
+  slug: string,
+  taskId: string,
+  payload: Partial<PlannerTaskDraft> & { status?: string },
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${API_ROOT}/projects/${slug}/planner/tasks/${encodeURIComponent(taskId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`API /projects/${slug}/planner/tasks/${taskId} failed: ${response.status}`);
+  }
+  return response.json();
 }
 
 export async function fetchPlannerThread(slug: string): Promise<{ threadId: string; messages: unknown[] }> {

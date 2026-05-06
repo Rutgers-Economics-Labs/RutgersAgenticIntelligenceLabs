@@ -1,4 +1,4 @@
-import { redirect } from "next/navigation";
+import { PlannerWorkbench } from "@/components/planner-workbench";
 
 export default async function PlannerPage({
   params
@@ -6,5 +6,5 @@ export default async function PlannerPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  redirect(`/projects/${slug}/agent`);
+  return <PlannerWorkbench slug={slug} />;
 }

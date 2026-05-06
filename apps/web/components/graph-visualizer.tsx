@@ -120,7 +120,9 @@ export function GraphVisualizer({ nodes: initialNodes, links: initialLinks }: Gr
       node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
     });
 
-    return () => simulation.stop();
+    return () => {
+      simulation.stop();
+    };
   }, [initialNodes, initialLinks]);
 
   return (

@@ -9,6 +9,7 @@ const SECTION_STARTERS: Record<string, string> = {
   overview:  "What's the current status of this project and what should I focus on?",
   zen:       "Give me a quick status update on this project.",
   dashboard: "Walk me through what the dashboard visualizations are showing.",
+  planner:   "What are the next planner actions I should take, and is autopilot in a healthy state?",
   agent:     "What's the current research plan and what tasks are next?",
   launch:    "What should I know before launching a new research workflow?",
   sessions:  "What's the current state of the agent runs and are any stuck?",

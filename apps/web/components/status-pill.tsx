@@ -31,6 +31,7 @@ const COLORS: Record<string, { bg: string; color: string; border: string }> = {
   rejected:         { bg: "color-mix(in srgb, var(--s-blocked) 10%, transparent)", color: "var(--s-blocked)", border: "color-mix(in srgb, var(--s-blocked) 30%, transparent)" },
   supported:        { bg: "color-mix(in srgb, var(--s-running) 12%, transparent)", color: "var(--s-running)", border: "color-mix(in srgb, var(--s-running) 35%, transparent)" },
   unsupported:      { bg: "color-mix(in srgb, var(--s-blocked) 10%, transparent)", color: "var(--s-blocked)", border: "color-mix(in srgb, var(--s-blocked) 30%, transparent)" },
+  info:             { bg: "var(--panel-alt)", color: "var(--fg)", border: "var(--border)" },
 };
 
 const FALLBACK = { bg: "transparent", color: "var(--muted)", border: "var(--border)" };

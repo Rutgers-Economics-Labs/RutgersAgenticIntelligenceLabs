@@ -272,7 +272,7 @@ export default function ZenModePage() {
                       </div>
                       {item.action && (
                         <button className="flex-shrink-0 px-3 py-1 bg-[var(--panel-alt)] border border-[var(--border)] font-mono text-[10px] font-bold uppercase tracking-wider hover:bg-[var(--border)]">
-                          {item.action.label}
+                          {String(item.action.label ?? "action")}
                         </button>
                       )}
                     </div>

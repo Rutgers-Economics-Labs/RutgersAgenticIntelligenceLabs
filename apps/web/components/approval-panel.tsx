@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { resolveApproval } from "@/lib/api";
 import { StatusPill } from "@/components/status-pill";
 
@@ -23,6 +23,10 @@ export function ApprovalPanel({
   const [items, setItems] = useState(approvals);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setItems(approvals);
+  }, [approvals]);
 
   async function act(approvalId: string, status: "granted" | "rejected") {
     setError(null);

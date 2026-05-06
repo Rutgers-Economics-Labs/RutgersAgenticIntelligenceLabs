@@ -33,6 +33,37 @@ export type PlannerTask = {
   latestRunSummary?: string | null;
 };
 
+export type PlannerApproval = {
+  _id?: string;
+  taskId?: string | null;
+  agentSessionId?: string | null;
+  approvalType?: string | null;
+  status?: string | null;
+  requestedByRole?: string | null;
+  grantedByUserId?: string | null;
+  requestedAt?: string | null;
+  resolvedAt?: string | null;
+  resolutionNote?: string | null;
+};
+
+export type AutopilotStatus = {
+  enabled: boolean;
+  autoApprove: boolean;
+};
+
+export type PlannerTaskDraft = {
+  title: string;
+  description: string;
+  status?: string;
+  agentRole: string;
+  repoPaths?: string[];
+  acceptanceCriteria?: string[];
+  dependsOnTaskIds?: string[];
+  priority?: string | null;
+  runner?: string | null;
+  approvalState?: string | null;
+};
+
 export type ReviewSummary = {
   workspacePath?: string | null;
   workspaceBranch?: string | null;
@@ -210,7 +241,7 @@ export type HydrationRerunResponse = {
 };
 
 export type ProjectApprovals = {
-  approvals: Array<Record<string, unknown>>;
+  approvals: PlannerApproval[];
 };
 
 export type RepoEntry = {
@@ -501,7 +532,7 @@ export type ResearchLaunchPreview = {
 export type PlannerBoard = {
   board: Record<string, unknown>;
   tasks: PlannerTask[];
-  approvals: Array<Record<string, unknown>>;
+  approvals: PlannerApproval[];
   blockersPath?: string | null;
   sessions?: RunnerSession[];
 };

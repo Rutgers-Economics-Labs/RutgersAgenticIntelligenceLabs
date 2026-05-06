@@ -2,7 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { applyIntegrityRerunPlan, previewIntegrityRerunPlan, updateIntegrityAssumption } from "@/lib/api";
+import {
+  applyBatchIntegrityRerunPlan,
+  applyIntegrityRerunPlan,
+  previewBatchIntegrityRerunPlan,
+  previewIntegrityRerunPlan,
+  updateIntegrityAssumption,
+} from "@/lib/api";
 import { AssumptionRecord, ArtifactLineageRecord, IntegrityRerunPlan } from "@/lib/types";
 import { buildAffectedArtifactMap } from "@/lib/integrity";
 import { StatusPill } from "@/components/status-pill";
