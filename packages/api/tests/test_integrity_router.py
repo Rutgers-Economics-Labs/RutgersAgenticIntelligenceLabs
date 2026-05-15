@@ -527,6 +527,7 @@ async def test_api_acceptance_conflicting_source_blocks_promotion(client, convex
     blocked_source_resp = await client.patch(
         "/api/v1/projects/integrity-router-project/integrity/sources/context-doc-345",
         json={
+            "impactLevel": "high",
             "qualityStatus": "blocked",
             "qualityNotes": "Conflicts with the audited upstream dataset.",
         },
@@ -534,6 +535,7 @@ async def test_api_acceptance_conflicting_source_blocks_promotion(client, convex
 
     assert blocked_source_resp.status_code == 200
     assert blocked_source_resp.json()["source"]["quality_status"] == "blocked"
+    assert blocked_source_resp.json()["source"]["impact_level"] == "high"
 
     promote_resp = await client.post(
         "/api/v1/projects/integrity-router-project/integrity/artifacts/promote",
@@ -770,11 +772,13 @@ async def test_record_integrity_source_and_claim_accept_api_payload_shape(client
             "accessDate": "2026-05-14T00:00:00Z",
             "accessMethod": "api",
             "freshnessStatus": "fresh",
+            "impactLevel": "high",
         },
     )
     assert source_resp.status_code == 200
     assert source_resp.json()["source_key"] == "bls-laus"
     assert source_resp.json()["sourceState"]["isFresh"] is True
+    assert source_resp.json()["impact_level"] == "high"
 
     claim_resp = await client.post(
         "/api/v1/projects/integrity-router-project/integrity/claims",

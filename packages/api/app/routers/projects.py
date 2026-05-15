@@ -50,9 +50,22 @@ from app.services.safe_publish_service import (
 )
 from app.services.secret_service import decrypt_secret_value, encrypt_secret_value, mask_secret_value
 from app.services.integrity_service import (
+    apply_source_freshness_policy,
+    apply_reproducibility_rerun,
     build_batch_rerun_plan,
     build_rerun_plan,
+    evaluate_default_integrity_benchmark_corpus,
+    get_artifact_detail,
+    list_claim_summaries,
+    list_source_summaries,
+    get_source_detail,
+    get_integrity_dependency_graph,
     get_integrity_repo,
+    get_claim_detail,
+    get_stale_dependency_graph,
+    hybrid_retrieve,
+    promote_artifact,
+    update_source_and_mark_stale,
     update_assumption_and_mark_stale,
 )
 from app.services.role_runtime_service import load_role_runtime_config
@@ -273,6 +286,24 @@ class IntegrityAssumptionUpdateRequest(BaseModel):
     affectedPaths: list[str] | None = None
 
 
+class IntegritySourceUpdateRequest(BaseModel):
+    title: str | None = None
+    sourceType: str | None = None
+    url: str | None = None
+    urlOrPath: str | None = None
+    publisher: str | None = None
+    origin: str | None = None
+    accessDate: str | None = None
+    acquiredAt: str | None = None
+    accessMethod: str | None = None
+    freshnessStatus: str | None = None
+    impactLevel: str | None = None
+    qualityStatus: str | None = None
+    provenance: dict | None = None
+    qualityNotes: str | None = None
+    notes: str | None = None
+
+
 class IntegrityRerunPlanRequest(BaseModel):
     assumptionKey: str
 
@@ -285,36 +316,80 @@ class IntegrityRecordAssumptionRequest(BaseModel):
     assumptionKey: str
     title: str
     value: str
-    status: str = "valid"
+    status: str = "active"
     notes: str = ""
     affectedPaths: list[str] = []
 
 
 class IntegrityRecordSourceRequest(BaseModel):
     sourceKey: str
+    sourceType: str = "document"
     title: str
     url: str | None = None
+    urlOrPath: str | None = None
     publisher: str | None = None
+    origin: str | None = None
     accessDate: str | None = None
+    acquiredAt: str | None = None
+    accessMethod: str | None = None
+    freshnessStatus: str = "unknown"
+    impactLevel: str = "normal"
+    qualityStatus: str = "candidate"
+    provenance: dict = {}
+    qualityNotes: str | None = None
     notes: str = ""
 
 
 class IntegrityRecordClaimRequest(BaseModel):
     claimKey: str
     statement: str
+    artifactPath: str | None = None
     status: str = "draft"
     evidencePaths: list[str] = []
+    evidenceChunkKeys: list[str] = []
     sourceKeys: list[str] = []
+    contradictsClaimKeys: list[str] = []
+    evidenceKind: str | None = None
+    caveats: list[str] = []
+    openQuestions: list[str] = []
+    confidence: float | None = None
 
 
 class IntegrityRecordLineageRequest(BaseModel):
     artifactPath: str
     artifactType: str
     title: str
+    promotionState: str = "draft"
+    reproducibilityMode: str | None = None
     inputs: list[str] = []
+    scripts: list[str] = []
+    verificationCommands: list[str] = []
     sources: list[str] = []
     assumptions: list[str] = []
     claims: list[str] = []
+    verificationRuns: list[str] = []
+
+
+class IntegrityReproducibilityRerunRequest(BaseModel):
+    outputs: dict[str, str] = {}
+    runId: str = "rerun-verification"
+    scope: str = "health"
+
+
+class IntegrityFreshnessEvaluationRequest(BaseModel):
+    asOf: str | None = None
+
+
+class IntegrityArtifactPromotionRequest(BaseModel):
+    artifactPath: str
+    targetState: str
+
+
+def _csv_query_param(value: str | None) -> list[str] | None:
+    if not value:
+        return None
+    parsed = [item.strip() for item in value.split(",") if item.strip()]
+    return parsed or None
 
 
 # Catalog projects are now managed in Convex.
@@ -1106,8 +1181,54 @@ async def get_project_integrity_sources(slug: str):
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
-    repo = get_integrity_repo(root)
-    return {"sources": [item.model_dump(mode="json") for item in repo.load_sources()]}
+    return {"sources": list_source_summaries(root)}
+
+
+@router.get("/{slug}/integrity/sources/{source_key}")
+async def get_project_integrity_source_detail(slug: str, source_key: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    try:
+        return get_source_detail(root, source_key)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.patch("/{slug}/integrity/sources/{source_key}")
+async def patch_project_integrity_source(slug: str, source_key: str, data: IntegritySourceUpdateRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    changes = {
+        key: value
+        for key, value in {
+            "title": data.title,
+            "source_type": data.sourceType,
+            "url_or_path": data.urlOrPath or data.url,
+            "origin": data.origin or data.publisher,
+            "acquired_at": data.acquiredAt or data.accessDate,
+            "access_method": data.accessMethod,
+            "freshness_status": data.freshnessStatus,
+            "impact_level": data.impactLevel,
+            "quality_status": data.qualityStatus,
+            "provenance": data.provenance,
+            "quality_notes": data.qualityNotes,
+            "notes": data.notes,
+        }.items()
+        if value is not None
+    }
+    try:
+        updated, claims, artifacts = update_source_and_mark_stale(root, source_key, changes)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "source": updated.model_dump(mode="json"),
+        "affectedClaims": [item.model_dump(mode="json") for item in claims],
+        "affectedArtifacts": [item.model_dump(mode="json") for item in artifacts],
+    }
 
 
 @router.get("/{slug}/integrity/claims")
@@ -1116,8 +1237,19 @@ async def get_project_integrity_claims(slug: str):
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
-    repo = get_integrity_repo(root)
-    return {"claims": [item.model_dump(mode="json") for item in repo.load_claims()]}
+    return {"claims": list_claim_summaries(root)}
+
+
+@router.get("/{slug}/integrity/claims/{claim_key}")
+async def get_project_integrity_claim_detail(slug: str, claim_key: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    try:
+        return get_claim_detail(root, claim_key)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/{slug}/integrity/lineage")
@@ -1128,6 +1260,106 @@ async def get_project_integrity_lineage(slug: str):
         raise HTTPException(status_code=404, detail="Project repo not found")
     repo = get_integrity_repo(root)
     return {"artifactLineage": [item.model_dump(mode="json") for item in repo.load_artifact_lineage()]}
+
+
+@router.get("/{slug}/integrity/artifact-lineage")
+async def get_project_integrity_artifact_lineage(slug: str):
+    return await get_project_integrity_lineage(slug)
+
+
+@router.get("/{slug}/integrity/artifacts/{artifact_path:path}")
+async def get_project_integrity_artifact_detail(slug: str, artifact_path: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    try:
+        return get_artifact_detail(root, artifact_path, manifest=load_manifest(root))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{slug}/integrity/graph")
+async def get_project_integrity_dependency_graph(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    return get_integrity_dependency_graph(root)
+
+
+@router.get("/{slug}/integrity/stale-graph")
+async def get_project_integrity_stale_graph(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    return get_stale_dependency_graph(root)
+
+
+@router.get("/{slug}/integrity/verification-runs")
+async def get_project_integrity_verification_runs(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    runs = [item.model_dump(mode="json") for item in repo.load_verification_runs()]
+    status_counts: dict[str, int] = {}
+    loop_type_counts: dict[str, int] = {}
+    for row in runs:
+        status = str(row.get("status") or "pending")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        loop_type = str(row.get("loop_type") or "analysis_reproducibility")
+        loop_type_counts[loop_type] = loop_type_counts.get(loop_type, 0) + 1
+    return {
+        "verificationRuns": runs,
+        "summary": {
+            "count": len(runs),
+            "statusCounts": status_counts,
+            "loopTypeCounts": loop_type_counts,
+        },
+    }
+
+
+@router.get("/{slug}/integrity/benchmark")
+async def get_project_integrity_benchmark(slug: str, retrieval_limit: int = Query(10, ge=1, le=100, alias="retrievalLimit")):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    return evaluate_default_integrity_benchmark_corpus(root, retrieval_limit=retrieval_limit)
+
+
+@router.get("/{slug}/integrity/retrieve")
+async def get_project_integrity_retrieval(
+    slug: str,
+    q: str = Query(..., min_length=1),
+    limit: int = Query(10, ge=1, le=100),
+    artifact_types: str | None = Query(None, alias="artifactTypes"),
+    claim_statuses: str | None = Query(None, alias="claimStatuses"),
+    source_freshness: str | None = Query(None, alias="sourceFreshness"),
+    date_from: str | None = Query(None, alias="dateFrom"),
+    date_to: str | None = Query(None, alias="dateTo"),
+    include_stale: bool = Query(False, alias="includeStale"),
+    include_blocked: bool = Query(False, alias="includeBlocked"),
+):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    return hybrid_retrieve(
+        root,
+        q,
+        limit=limit,
+        artifact_types=_csv_query_param(artifact_types),
+        claim_statuses=_csv_query_param(claim_statuses),
+        source_freshness=_csv_query_param(source_freshness),
+        date_from=date_from,
+        date_to=date_to,
+        include_stale=include_stale,
+        include_blocked=include_blocked,
+    )
 
 
 @router.post("/{slug}/integrity/rerun-plan")
@@ -1166,6 +1398,44 @@ async def apply_project_integrity_batch_rerun_plan(slug: str, data: IntegrityBat
     return await _apply_integrity_plan(project, root, plan)
 
 
+@router.post("/{slug}/integrity/reproducibility-rerun")
+async def apply_project_integrity_reproducibility_rerun(slug: str, data: IntegrityReproducibilityRerunRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    return apply_reproducibility_rerun(
+        root,
+        data.outputs,
+        run_id=data.runId,
+        scope=data.scope,
+    )
+
+
+@router.post("/{slug}/integrity/freshness-evaluate")
+async def apply_project_integrity_freshness_evaluation(slug: str, data: IntegrityFreshnessEvaluationRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    return apply_source_freshness_policy(root, as_of=data.asOf)
+
+
+@router.post("/{slug}/integrity/artifacts/promote")
+async def apply_project_integrity_artifact_promotion(slug: str, data: IntegrityArtifactPromotionRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    manifest = load_manifest(root)
+    try:
+        return promote_artifact(root, manifest, data.artifactPath, target_state=data.targetState)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 async def _apply_integrity_plan(project: dict, root: Path, plan: dict):
     board = await planner_service.ensure_main_board(project)
     created_tasks = []
@@ -1198,7 +1468,16 @@ async def record_project_integrity_assumption(slug: str, data: IntegrityRecordAs
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
     repo = get_integrity_repo(root)
-    record = repo.upsert_assumption(data.model_dump(by_alias=True))
+    record = repo.upsert_assumption(
+        {
+            "assumption_key": data.assumptionKey,
+            "title": data.title,
+            "value": data.value,
+            "status": data.status,
+            "notes": data.notes,
+            "affected_paths": data.affectedPaths,
+        }
+    )
     return record.model_dump(mode="json")
 
 
@@ -1209,8 +1488,24 @@ async def record_project_integrity_source(slug: str, data: IntegrityRecordSource
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
     repo = get_integrity_repo(root)
-    record = repo.upsert_source(data.model_dump(by_alias=True))
-    return record.model_dump(mode="json")
+    record = repo.upsert_source(
+        {
+            "source_key": data.sourceKey,
+            "source_type": data.sourceType,
+            "title": data.title,
+            "url_or_path": data.urlOrPath or data.url or "",
+            "origin": data.origin or data.publisher,
+            "acquired_at": data.acquiredAt or data.accessDate,
+            "access_method": data.accessMethod,
+            "freshness_status": data.freshnessStatus,
+            "impact_level": data.impactLevel,
+            "provenance": data.provenance,
+            "quality_notes": data.qualityNotes,
+            "quality_status": data.qualityStatus,
+            "notes": data.notes,
+        }
+    )
+    return next(item for item in list_source_summaries(root) if item["source_key"] == record.source_key)
 
 
 @router.post("/{slug}/integrity/claims")
@@ -1220,8 +1515,23 @@ async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRe
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
     repo = get_integrity_repo(root)
-    record = repo.upsert_claim(data.model_dump(by_alias=True))
-    return record.model_dump(mode="json")
+    record = repo.upsert_claim(
+        {
+            "claim_key": data.claimKey,
+            "claim_text": data.statement,
+            "artifact_path": data.artifactPath,
+            "status": data.status,
+            "evidence_paths": data.evidencePaths,
+            "evidence_chunk_keys": data.evidenceChunkKeys,
+            "source_keys": data.sourceKeys,
+            "contradicts_claim_keys": data.contradictsClaimKeys,
+            "evidence_kind": data.evidenceKind,
+            "caveats": data.caveats,
+            "open_questions": data.openQuestions,
+            "confidence": data.confidence,
+        }
+    )
+    return next(item for item in list_claim_summaries(root) if item["claim_key"] == record.claim_key)
 
 
 @router.post("/{slug}/integrity/artifacts")
@@ -1231,7 +1541,22 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
     repo = get_integrity_repo(root)
-    record = repo.upsert_artifact_lineage(data.model_dump(by_alias=True))
+    record = repo.upsert_artifact_lineage(
+        {
+            "artifact_path": data.artifactPath,
+            "artifact_type": data.artifactType,
+            "title": data.title,
+            "promotion_state": data.promotionState,
+            "reproducibility_mode": data.reproducibilityMode,
+            "inputs": data.inputs,
+            "scripts": data.scripts,
+            "verification_commands": data.verificationCommands,
+            "sources": data.sources,
+            "assumptions": data.assumptions,
+            "claims": data.claims,
+            "verification_runs": data.verificationRuns,
+        }
+    )
     return record.model_dump(mode="json")
 
 
