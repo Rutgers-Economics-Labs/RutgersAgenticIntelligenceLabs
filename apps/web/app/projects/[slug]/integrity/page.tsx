@@ -5,7 +5,7 @@ import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { IntegrityAssumptionsPanel } from "@/components/integrity-assumptions-panel";
-import { getArtifactTrustDisplay, getSourceFreshnessDisplay, getWorkflowDisplaySections } from "@/lib/integrity-ui";
+import { buildIntegrityPageModel } from "@/lib/integrity-page";
 
 function RepoLink({ slug, path, label }: { slug: string; path: string; label?: string }) {
   return (
@@ -26,7 +26,7 @@ export default async function IntegrityPage({
 }) {
   const { slug } = await params;
   const { indexes, summary, staleOutputs, agentWorkflow } = await fetchProjectIntegrity(slug);
-  const workflowSections = getWorkflowDisplaySections(agentWorkflow);
+  const { sourceRows, artifactRows, workflowSections } = buildIntegrityPageModel({ indexes, summary, staleOutputs, agentWorkflow });
 
   const rightRail = (
     <div>
@@ -83,25 +83,20 @@ export default async function IntegrityPage({
                 </tr>
               </thead>
               <tbody>
-                {indexes.sources.map((row) => {
-                  const freshness = getSourceFreshnessDisplay({
-                    freshnessStatus: row.freshness_status,
-                    qualityStatus: row.quality_status,
-                    sourceState: row.sourceState,
-                  });
+                {sourceRows.map((row) => {
                   return (
-                    <tr key={row.source_key}>
+                    <tr key={row.sourceKey}>
                       <td>
                         <strong>{row.title}</strong>
-                        <div className="mono-muted">{row.url_or_path}</div>
+                        <div className="mono-muted">{row.urlOrPath}</div>
                       </td>
-                      <td>{row.source_type}</td>
-                      <td><StatusPill value={row.quality_status} /></td>
+                      <td>{row.sourceType}</td>
+                      <td><StatusPill value={row.qualityStatus} /></td>
                       <td>
-                        <StatusPill value={freshness.label} />
-                        <div className="mono-muted">{freshness.detail}</div>
+                        <StatusPill value={row.freshness.label} />
+                        <div className="mono-muted">{row.freshness.detail}</div>
                       </td>
-                      <td className="mono-muted"><RepoLink slug={slug} path={row.source_path} /></td>
+                      <td className="mono-muted"><RepoLink slug={slug} path={row.sourcePath} /></td>
                     </tr>
                   );
                 })}
@@ -159,26 +154,20 @@ export default async function IntegrityPage({
                 </tr>
               </thead>
               <tbody>
-                {indexes.artifact_lineage.map((row) => {
-                  const trust = getArtifactTrustDisplay({
-                    trustState: row.trustState,
-                    promotionState: row.promotion_state,
-                    verificationStatus: row.verificationStatus,
-                    staleReasons: row.stale_reasons,
-                  });
+                {artifactRows.map((row) => {
                   return (
-                    <tr key={row.artifact_path}>
+                    <tr key={row.artifactPath}>
                       <td>
                         <strong>{row.title}</strong>
-                        <div className="mono-muted">{row.artifact_path}</div>
+                        <div className="mono-muted">{row.artifactPath}</div>
                       </td>
                       <td>
-                        <StatusPill value={trust.label} />
-                        <div className="mono-muted">{trust.detail}</div>
+                        <StatusPill value={row.trust.label} />
+                        <div className="mono-muted">{row.trust.detail}</div>
                       </td>
-                      <td><StatusPill value={row.promotion_state} /></td>
+                      <td><StatusPill value={row.promotionState} /></td>
                       <td className="mono-muted">{row.inputs.join(", ") || "—"}</td>
-                      <td className="mono-muted">{row.verification_runs.join(", ") || "—"}</td>
+                      <td className="mono-muted">{row.verificationRuns.join(", ") || row.verificationStatus}</td>
                     </tr>
                   );
                 })}
