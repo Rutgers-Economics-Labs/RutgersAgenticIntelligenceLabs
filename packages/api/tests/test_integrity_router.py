@@ -832,7 +832,10 @@ async def test_integrity_retrieval_endpoint_returns_explicit_and_semantic_result
                 "artifact_path": "artifacts/report.md",
                 "artifact_type": "report",
                 "title": "Labor Report",
-                "promotion_state": "verified",
+                "promotion_state": "draft",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
                 "sources": [
                     "research_plan/state/sources.json#bls-laus",
                     "research_plan/state/sources.json#lead-note",
@@ -841,6 +844,17 @@ async def test_integrity_retrieval_endpoint_returns_explicit_and_semantic_result
                     "research_plan/state/claims.json#claim-supported",
                     "research_plan/state/claims.json#claim-lead",
                 ],
+                "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "checks": [],
+                "artifact_paths": ["artifacts/report.md"],
             }
         ]
     )
@@ -876,6 +890,16 @@ async def test_integrity_retrieval_endpoint_returns_explicit_and_semantic_result
     claim_results = {item["recordKey"]: item for item in payload["results"] if item["recordType"] == "claim"}
     assert claim_results["claim-supported"]["resultType"] == "explicit_evidence"
     assert claim_results["claim-lead"]["resultType"] == "semantic_suggestion"
+
+    promote_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts/promote",
+        json={"artifactPath": "artifacts/report.md", "targetState": "partially_verified"},
+    )
+
+    assert promote_resp.status_code == 200
+    promote_payload = promote_resp.json()
+    assert promote_payload["status"] == "blocked"
+    assert "claim-lead" in promote_payload["gate"]["blockingClaims"]
 
 
 async def test_source_detail_endpoint_returns_chunks(client, convex_mock, tmp_path):
