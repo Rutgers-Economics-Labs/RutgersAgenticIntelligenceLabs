@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from app.services.integrity_service import load_integrity_indexes
+from app.services.integrity_service import load_integrity_indexes, summarize_agent_workflow_health
 
 
 TEXT_PREVIEW_LIMIT = 80_000
@@ -69,6 +69,12 @@ WORKFLOW_PRESETS: dict[str, dict[str, Any]] = {
         "role": "artifact",
         "skills": ["data-provenance", "verification"],
         "outputs": ["artifacts/data_workbook.csv", "artifacts/dashboard.md"],
+    },
+    "integrity_review": {
+        "label": "Integrity review",
+        "role": "health",
+        "skills": ["verification", "data-provenance"],
+        "outputs": ["research_plan/review/health_report.md", "research_plan/review/blockers.md"],
     },
 }
 
@@ -197,6 +203,8 @@ def _source_row_from_candidate(item: dict[str, Any], path: str) -> dict[str, Any
 def list_project_sources(project: dict) -> dict[str, Any]:
     root = project_root(project)
     rows: dict[str, dict[str, Any]] = {}
+    indexes = _project_integrity_indexes(project)
+    repo_sources = {row.source_key: row for row in (indexes.sources if indexes is not None else [])}
 
     graph_sources = root / "research_plan" / "graph" / "sources.yaml"
     if graph_sources.exists():
@@ -231,17 +239,49 @@ def list_project_sources(project: dict) -> dict[str, Any]:
         else:
             rows[row["id"]] = row
 
+    for source_key, source in repo_sources.items():
+        state = _source_state(source)
+        existing = rows.get(source_key)
+        if existing:
+            existing["freshnessStatus"] = source.freshness_status
+            existing["qualityStatus"] = source.quality_status
+            existing["sourceState"] = state
+            existing["publisher"] = existing.get("publisher") or str(source.origin or "unknown")
+            existing["provider"] = existing.get("provider") or str(source.source_type or "unknown")
+        else:
+            rows[source_key] = {
+                "id": source_key,
+                "name": source.title,
+                "publisher": str(source.origin or "unknown"),
+                "provider": str(source.source_type or "unknown"),
+                "status": _safe_status(source.quality_status, "validated"),
+                "accessMethod": str(source.access_method or source.source_type or "unknown"),
+                "geography": "",
+                "timeCoverage": "",
+                "updateFrequency": "",
+                "keyFields": list(source.provenance.get("fields") or []),
+                "qualityNotes": str(source.quality_notes or source.notes or ""),
+                "linkedFiles": [source.source_path],
+                "freshnessStatus": source.freshness_status,
+                "qualityStatus": source.quality_status,
+                "sourceState": state,
+            }
+
     notes_path = root / "topics" / "source_notes.md"
     source_notes = _read(notes_path, 40_000) if notes_path.exists() else ""
     status_counts: dict[str, int] = {}
+    freshness_counts: dict[str, int] = {}
     for row in rows.values():
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
+        freshness = str(row.get("freshnessStatus") or "unknown")
+        freshness_counts[freshness] = freshness_counts.get(freshness, 0) + 1
 
     return {
         "sources": list(rows.values()),
         "summary": {
             "count": len(rows),
             "statusCounts": status_counts,
+            "freshnessCounts": freshness_counts,
             "notesPath": _rel(notes_path, root) if notes_path.exists() else None,
         },
         "notes": source_notes,
@@ -299,6 +339,128 @@ def _reference_key(reference: str) -> str:
     return reference.split("#", 1)[-1].strip()
 
 
+def _claim_needs_evidence(claim: dict[str, Any]) -> bool:
+    status = str(claim.get("status") or "draft")
+    evidence_kind = claim.get("evidence_kind")
+    has_evidence = bool(claim.get("evidence_paths") or claim.get("source_keys") or claim.get("evidence_chunk_keys"))
+    return (
+        status in {"draft", "unsupported", "needs_evidence", "stale", "conflicted"}
+        or (status == "supported" and not has_evidence)
+        or (status == "supported" and evidence_kind == "semantic_suggestion")
+    )
+
+
+def _build_agent_workflow_summary(
+    assumptions: list[dict[str, Any]],
+    sources: list[dict[str, Any]],
+    claims: list[dict[str, Any]],
+    artifact_lineage: list[dict[str, Any]],
+    verification_runs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    source_by_key = {str(item.get("source_key")): item for item in sources}
+    claim_by_key = {str(item.get("claim_key")): item for item in claims}
+
+    datasets_missing_provenance = [
+        row["artifact_path"]
+        for row in artifact_lineage
+        if row.get("artifact_type") == "dataset"
+        and (
+            not row.get("sources")
+            or any(
+                not (source_by_key.get(_reference_key(reference), {}).get("provenance") or {})
+                for reference in row.get("sources") or []
+            )
+        )
+    ]
+    analysis_missing_lineage = [
+        row["artifact_path"]
+        for row in artifact_lineage
+        if row.get("artifact_type") != "dataset"
+        and not (row.get("inputs") and row.get("scripts"))
+    ]
+    analysis_missing_verification = [
+        row["artifact_path"]
+        for row in artifact_lineage
+        if row.get("artifact_type") != "dataset"
+        and not row.get("verification_runs")
+        and row.get("reproducibility_mode") not in {"manual", "non_reproducible"}
+    ]
+    unsupported_claim_keys = {row["claim_key"] for row in claims if _claim_needs_evidence(row)}
+    artifacts_with_unsupported_claims = [
+        row["artifact_path"]
+        for row in artifact_lineage
+        if {
+            _reference_key(reference)
+            for reference in row.get("claims") or []
+        }.intersection(unsupported_claim_keys)
+    ]
+    stale_source_keys = [
+        row["source_key"]
+        for row in sources
+        if row.get("freshness_status") in {"needs_refresh", "stale"}
+    ]
+    reproducibility_gaps = [
+        row["artifact_path"]
+        for row in artifact_lineage
+        if row.get("artifact_type") != "dataset"
+        and row.get("reproducibility_mode") is None
+        and not (row.get("inputs") and row.get("scripts"))
+    ]
+    missing_evidence_claims = sorted(unsupported_claim_keys)
+    verification_failures = [
+        row["run_id"]
+        for row in verification_runs
+        if row.get("status") in {"failed", "blocked"}
+    ]
+
+    def _status(blockers: list[str]) -> str:
+        return "blocked" if blockers else "ready"
+
+    return {
+        "research": {
+            "status": _status([]),
+            "requirements": [
+                "Separate facts, interpretations, and open questions in research outputs.",
+                "Record caveats for non-final empirical claims.",
+            ],
+        },
+        "data": {
+            "status": _status(datasets_missing_provenance),
+            "datasetsMissingProvenance": datasets_missing_provenance,
+            "requirements": [
+                "Datasets must retain source provenance and freshness metadata.",
+            ],
+        },
+        "coding": {
+            "status": _status(sorted(set(analysis_missing_lineage + analysis_missing_verification))),
+            "artifactsMissingLineage": analysis_missing_lineage,
+            "artifactsMissingVerification": analysis_missing_verification,
+            "requirements": [
+                "Analysis outputs must declare inputs and scripts.",
+                "Deterministic analyses must carry verification runs before handoff.",
+            ],
+        },
+        "artifact": {
+            "status": _status(artifacts_with_unsupported_claims),
+            "artifactsWithUnsupportedClaims": artifacts_with_unsupported_claims,
+            "requirements": [
+                "Artifact narratives must preserve evidence links.",
+                "Artifacts with unsupported claims cannot be treated as trusted.",
+            ],
+        },
+        "health": {
+            "status": _status(sorted(set(missing_evidence_claims + stale_source_keys + reproducibility_gaps + verification_failures))),
+            "missingEvidenceClaims": missing_evidence_claims,
+            "staleSources": stale_source_keys,
+            "reproducibilityGaps": reproducibility_gaps,
+            "failedVerificationRuns": verification_failures,
+            "requirements": [
+                "Detect missing evidence, stale sources, and reproducibility gaps.",
+            ],
+        },
+    }
+
+
 def _artifact_verification_status(path: str, lineage: Any | None, verification_runs: list[Any]) -> str:
     if lineage and lineage.promotion_state == "stale":
         return "stale"
@@ -330,7 +492,29 @@ def _artifact_verification_status(path: str, lineage: Any | None, verification_r
     return "unverified"
 
 
+def _source_state(row: Any) -> dict[str, Any]:
+    freshness_status = str(getattr(row, "freshness_status", "unknown") or "unknown")
+    quality_status = str(getattr(row, "quality_status", "candidate") or "candidate")
+    return {
+        "freshnessStatus": freshness_status,
+        "qualityStatus": quality_status,
+        "isFresh": freshness_status == "fresh" and quality_status not in {"blocked", "rejected"},
+        "isStale": freshness_status == "stale",
+        "needsRefresh": freshness_status == "needs_refresh",
+        "isBlocked": quality_status in {"blocked", "rejected"},
+    }
+
+
+def _artifact_trust_state(promotion_state: str, verification_status: str, stale_reasons: list[str]) -> dict[str, bool]:
+    return {
+        "isTrusted": promotion_state == "verified" and verification_status == "passed" and not stale_reasons,
+        "isBlocked": promotion_state in {"blocked", "needs_evidence"},
+        "isStale": promotion_state == "stale" or bool(stale_reasons),
+    }
+
+
 def list_project_integrity(project: dict) -> dict[str, Any]:
+    root = project_root(project)
     indexes = _project_integrity_indexes(project)
     if indexes is None:
         empty = {
@@ -345,6 +529,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
             "summary": {
                 "assumptionCount": 0,
                 "sourceCount": 0,
+                "sourceFreshnessCounts": {},
                 "claimCount": 0,
                 "artifactCount": 0,
                 "staleArtifactCount": 0,
@@ -352,27 +537,46 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
                 "verificationStatusCounts": {},
                 "promotionStateCounts": {},
             },
+            "agentWorkflow": _build_agent_workflow_summary([], [], [], [], []),
             "staleOutputs": [],
         }
 
     assumptions = [row.model_dump(mode="json") for row in indexes.assumptions]
-    sources = [row.model_dump(mode="json") for row in indexes.sources]
+    sources = []
+    for row in indexes.sources:
+        payload = row.model_dump(mode="json")
+        payload["sourceState"] = _source_state(row)
+        sources.append(payload)
     claims = [row.model_dump(mode="json") for row in indexes.claims]
-    artifact_lineage = [row.model_dump(mode="json") for row in indexes.artifact_lineage]
+    artifact_lineage = []
+    for row in indexes.artifact_lineage:
+        payload = row.model_dump(mode="json")
+        verification_status = _artifact_verification_status(row.artifact_path, row, indexes.verification_runs)
+        payload["verificationStatus"] = verification_status
+        payload["trustState"] = _artifact_trust_state(row.promotion_state, verification_status, list(row.stale_reasons))
+        artifact_lineage.append(payload)
     verification_runs = [row.model_dump(mode="json") for row in indexes.verification_runs]
 
     promotion_state_counts: dict[str, int] = {}
     verification_status_counts: dict[str, int] = {}
+    source_freshness_counts: dict[str, int] = {}
+    for row in indexes.sources:
+        source_freshness_counts[row.freshness_status] = source_freshness_counts.get(row.freshness_status, 0) + 1
     for row in indexes.artifact_lineage:
         promotion_state_counts[row.promotion_state] = promotion_state_counts.get(row.promotion_state, 0) + 1
         status = _artifact_verification_status(row.artifact_path, row, indexes.verification_runs)
         verification_status_counts[status] = verification_status_counts.get(status, 0) + 1
 
-    stale_outputs = [
-        row.model_dump(mode="json")
-        for row in indexes.artifact_lineage
-        if row.promotion_state == "stale" or row.stale_reasons
-    ]
+    stale_outputs = []
+    for row in indexes.artifact_lineage:
+        if row.promotion_state != "stale" and not row.stale_reasons:
+            continue
+        payload = row.model_dump(mode="json")
+        verification_status = _artifact_verification_status(row.artifact_path, row, indexes.verification_runs)
+        payload["verificationStatus"] = verification_status
+        payload["trustState"] = _artifact_trust_state(row.promotion_state, verification_status, list(row.stale_reasons))
+        stale_outputs.append(payload)
+    agent_workflow = summarize_agent_workflow_health(root)
 
     return {
         "indexes": {
@@ -385,6 +589,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
         "summary": {
             "assumptionCount": len(assumptions),
             "sourceCount": len(sources),
+            "sourceFreshnessCounts": source_freshness_counts,
             "claimCount": len(claims),
             "artifactCount": len(artifact_lineage),
             "staleArtifactCount": len(stale_outputs),
@@ -392,6 +597,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
             "verificationStatusCounts": verification_status_counts,
             "promotionStateCounts": promotion_state_counts,
         },
+        "agentWorkflow": agent_workflow,
         "staleOutputs": stale_outputs,
     }
 
@@ -410,6 +616,10 @@ def list_project_artifacts(project: dict) -> dict[str, Any]:
             stat = path.stat()
             rel_path = _rel(path, root)
             lineage = lineage_by_path.get(rel_path)
+            promotion_state = lineage.promotion_state if lineage else "exploratory"
+            verification_status = _artifact_verification_status(rel_path, lineage, verification_runs)
+            stale_reasons = list(lineage.stale_reasons) if lineage else []
+            trust_state = _artifact_trust_state(promotion_state, verification_status, stale_reasons)
             artifacts.append(
                 {
                     "name": path.name,
@@ -419,15 +629,16 @@ def list_project_artifacts(project: dict) -> dict[str, Any]:
                     "modifiedAt": int(stat.st_mtime * 1000),
                     "previewable": _artifact_type(path) in {"markdown", "table", "structured", "image", "html"},
                     "preview": _preview_artifact(path),
-                    "promotionState": lineage.promotion_state if lineage else "exploratory",
-                    "verificationStatus": _artifact_verification_status(rel_path, lineage, verification_runs),
+                    "promotionState": promotion_state,
+                    "verificationStatus": verification_status,
+                    "trustState": trust_state,
                     "assumptions": list(lineage.assumptions) if lineage else [],
                     "sources": list(lineage.sources) if lineage else [],
                     "claims": list(lineage.claims) if lineage else [],
                     "inputs": list(lineage.inputs) if lineage else [],
                     "scripts": list(lineage.scripts) if lineage else [],
                     "verificationRuns": list(lineage.verification_runs) if lineage else [],
-                    "staleReasons": list(lineage.stale_reasons) if lineage else [],
+                    "staleReasons": stale_reasons,
                     "generatedAt": lineage.generated_at if lineage else None,
                 }
             )
@@ -448,6 +659,8 @@ def list_project_artifacts(project: dict) -> dict[str, Any]:
             "promotionStateCounts": promotion_counts,
             "verificationStatusCounts": verification_counts,
             "staleCount": sum(1 for artifact in artifacts if artifact["promotionState"] == "stale"),
+            "trustedCount": sum(1 for artifact in artifacts if artifact["trustState"]["isTrusted"]),
+            "blockedCount": sum(1 for artifact in artifacts if artifact["trustState"]["isBlocked"]),
         },
     }
 
@@ -482,6 +695,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     sources = list_project_sources(project)
     skills = list_project_skills(project)
     artifacts = list_project_artifacts(project)
+    integrity = list_project_integrity(project)
 
     status_counts: dict[str, int] = {}
     for task in tasks:
@@ -514,6 +728,11 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         "recentArtifacts": artifacts["artifacts"][:6],
         "sourceSummary": sources["summary"],
         "skillSummary": skills["summary"],
+        "integritySummary": {
+            "staleArtifactCount": integrity["summary"]["staleArtifactCount"],
+            "sourceFreshnessCounts": integrity["summary"]["sourceFreshnessCounts"],
+            "agentWorkflow": integrity["agentWorkflow"],
+        },
         "repoHealth": {
             "hasLocalRepo": bool(project.get("localRepoPath")),
             "hasRailYaml": bool(project.get("localRepoPath") and (Path(project["localRepoPath"]) / "rail.yaml").exists()),
@@ -544,6 +763,21 @@ def build_launch_preview(project: dict, payload: dict[str, Any]) -> dict[str, An
     outputs = sorted({output for preset in presets for output in preset["outputs"]})
     tasks = []
     for idx, preset in enumerate(presets, start=1):
+        acceptance_criteria = [
+            "Findings are saved to the expected repo paths",
+            "Sources are cited for factual claims",
+            "Open questions and caveats are recorded",
+        ]
+        if preset["role"] == "research":
+            acceptance_criteria.append("Facts, interpretations, and open questions are separated explicitly.")
+        elif preset["role"] == "data":
+            acceptance_criteria.append("Datasets preserve provenance and freshness metadata before handoff.")
+        elif preset["role"] == "coding":
+            acceptance_criteria.append("Analysis outputs declare inputs, scripts, and verification commands.")
+        elif preset["role"] == "artifact":
+            acceptance_criteria.append("Artifacts preserve evidence links and avoid unsupported trusted narratives.")
+        elif preset["role"] == "health":
+            acceptance_criteria.append("Missing evidence, stale sources, and reproducibility gaps are reported explicitly.")
         tasks.append(
             {
                 "title": f"{preset['label']}: {question[:80] or project.get('name', 'Research Project')}",
@@ -563,11 +797,7 @@ def build_launch_preview(project: dict, payload: dict[str, Any]) -> dict[str, An
                 "agentRole": preset["role"],
                 "status": "awaiting_approval" if approval_before_writes else "ready",
                 "repoPaths": preset["outputs"],
-                "acceptanceCriteria": [
-                    "Findings are saved to the expected repo paths",
-                    "Sources are cited for factual claims",
-                    "Open questions and caveats are recorded",
-                ],
+                "acceptanceCriteria": acceptance_criteria,
             }
         )
 

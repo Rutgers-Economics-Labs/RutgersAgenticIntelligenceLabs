@@ -7,6 +7,9 @@ from pathlib import Path
 RAIL_PY_ROOT = Path(__file__).parents[2] / "rail-py"
 if str(RAIL_PY_ROOT) not in sys.path:
     sys.path.insert(0, str(RAIL_PY_ROOT))
+API_ROOT = Path(__file__).parents[1]
+if str(API_ROOT) not in sys.path:
+    sys.path.insert(0, str(API_ROOT))
 
 
 def _write(path: Path, content: str) -> None:
@@ -65,6 +68,7 @@ sources:
     "source_type": "dataset",
     "title": "PJM hourly load",
     "url_or_path": "https://example.com/pjm.csv",
+    "freshness_status": "fresh",
     "quality_status": "validated",
     "source_path": "research_plan/state/sources.json"
   }
@@ -128,19 +132,33 @@ sources:
 
     assert skills["summary"]["count"] == 1
     assert skills["skills"][0]["usedBy"] == ["research"]
-    assert sources["summary"]["count"] == 2
-    assert {row["id"] for row in sources["sources"]} == {"pjm", "noaa"}
+    assert sources["summary"]["count"] == 3
+    assert {row["id"] for row in sources["sources"]} == {"pjm", "noaa", "pjm-hourly-load"}
+    repo_source = next(row for row in sources["sources"] if row["id"] == "pjm-hourly-load")
+    assert repo_source["sourceState"]["isFresh"] is True
+    assert sources["summary"]["freshnessCounts"]["fresh"] == 1
     assert artifacts["summary"]["count"] == 1
     assert artifacts["artifacts"][0]["preview"]["content"].startswith("# Summary")
     assert artifacts["artifacts"][0]["promotionState"] == "verified"
     assert artifacts["artifacts"][0]["verificationStatus"] == "passed"
+    assert artifacts["artifacts"][0]["trustState"]["isTrusted"] is True
+    assert artifacts["artifacts"][0]["trustState"]["isBlocked"] is False
+    assert artifacts["artifacts"][0]["trustState"]["isStale"] is False
     assert artifacts["artifacts"][0]["assumptions"] == ["research_plan/state/assumptions.json#baseline-window"]
+    assert artifacts["summary"]["trustedCount"] == 1
+    assert artifacts["summary"]["blockedCount"] == 0
     assert integrity["summary"]["assumptionCount"] == 1
     assert integrity["summary"]["sourceCount"] == 1
+    assert integrity["summary"]["sourceFreshnessCounts"]["fresh"] == 1
     assert integrity["summary"]["claimCount"] == 1
     assert integrity["summary"]["artifactCount"] == 1
     assert integrity["summary"]["verificationRunCount"] == 1
     assert integrity["summary"]["promotionStateCounts"]["verified"] == 1
+    assert integrity["indexes"]["sources"][0]["sourceState"]["isFresh"] is True
+    assert integrity["indexes"]["artifact_lineage"][0]["verificationStatus"] == "passed"
+    assert integrity["indexes"]["artifact_lineage"][0]["trustState"]["isTrusted"] is True
+    assert integrity["agentWorkflow"]["research"]["requirements"]
+    assert integrity["agentWorkflow"]["health"]["status"] == "ready"
 
 
 def test_launch_preview_and_approval_create_repo_tasks(tmp_path: Path):
@@ -160,3 +178,174 @@ def test_launch_preview_and_approval_create_repo_tasks(tmp_path: Path):
     assert len(result["tasks"]) == 2
     assert (tmp_path / "research_plan" / "tasks").is_dir()
     assert (tmp_path / "research_plan" / "approvals").is_dir()
+
+
+def test_integrity_summary_surfaces_role_specific_blockers(tmp_path: Path):
+    from app.services import command_center_service
+
+    _write(
+        tmp_path / "research_plan" / "state" / "sources.json",
+        """[
+  {
+    "source_key": "stale-source",
+    "source_type": "dataset",
+    "title": "Stale Source",
+    "url_or_path": "https://example.com/stale.csv",
+    "freshness_status": "stale",
+    "quality_status": "validated",
+    "provenance": {"text": "Old extract."},
+    "source_path": "research_plan/state/sources.json"
+  }
+]
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "state" / "claims.json",
+        """[
+  {
+    "claim_key": "claim-001",
+    "claim_text": "A claim without evidence.",
+    "artifact_path": "artifacts/report.md",
+    "status": "needs_evidence",
+    "source_path": "research_plan/state/claims.json",
+    "caveats": []
+  }
+]
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "state" / "artifact_lineage.json",
+        """[
+  {
+    "artifact_path": "topics/analysis.csv",
+    "artifact_type": "dataset",
+    "title": "Analysis Dataset",
+    "promotion_state": "draft",
+    "sources": [],
+    "stale_reasons": []
+  },
+  {
+    "artifact_path": "artifacts/report.md",
+    "artifact_type": "report",
+    "title": "Report",
+    "promotion_state": "draft",
+    "claims": ["research_plan/state/claims.json#claim-001"],
+    "inputs": [],
+    "scripts": [],
+    "verification_runs": [],
+    "stale_reasons": []
+  }
+]
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "state" / "verification_runs.json",
+        """[
+  {
+    "run_id": "run-001",
+    "status": "failed",
+    "checks": [],
+    "artifact_paths": ["artifacts/report.md"],
+    "blockers": [],
+    "source_path": "research_plan/state/verification_runs.json"
+  }
+]
+""",
+    )
+
+    integrity = command_center_service.list_project_integrity(_project(tmp_path))
+
+    assert integrity["agentWorkflow"]["data"]["status"] == "blocked"
+    assert "topics/analysis.csv" in integrity["agentWorkflow"]["data"]["datasetsMissingProvenance"]
+    assert "topics/analysis.csv" in integrity["agentWorkflow"]["data"]["datasetsMissingFreshness"]
+    assert integrity["agentWorkflow"]["coding"]["status"] == "blocked"
+    assert "artifacts/report.md" in integrity["agentWorkflow"]["coding"]["artifactsMissingLineage"]
+    assert integrity["agentWorkflow"]["artifact"]["status"] == "blocked"
+    assert "artifacts/report.md" in integrity["agentWorkflow"]["artifact"]["artifactsWithUnsupportedClaims"]
+    assert integrity["agentWorkflow"]["health"]["status"] == "blocked"
+    assert "claim-001" in integrity["agentWorkflow"]["health"]["missingEvidenceClaims"]
+    assert "stale-source" in integrity["agentWorkflow"]["health"]["staleSources"]
+    assert "run-001" in integrity["agentWorkflow"]["health"]["failedVerificationRuns"]
+
+
+def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):
+    from app.services import command_center_service
+
+    _write(
+        tmp_path / "research_plan" / "state" / "sources.json",
+        """[
+  {
+    "source_key": "stale-source",
+    "source_type": "dataset",
+    "title": "Stale Source",
+    "url_or_path": "https://example.com/stale.csv",
+    "freshness_status": "stale",
+    "quality_status": "validated",
+    "source_path": "research_plan/state/sources.json"
+  }
+]
+""",
+    )
+
+    sources = command_center_service.list_project_sources(_project(tmp_path))
+    row = next(item for item in sources["sources"] if item["id"] == "stale-source")
+
+    assert row["freshnessStatus"] == "stale"
+    assert row["sourceState"]["isStale"] is True
+    assert sources["summary"]["freshnessCounts"]["stale"] == 1
+
+
+def test_artifact_listing_surfaces_blocked_and_stale_trust_states(tmp_path: Path):
+    from app.services import command_center_service
+
+    _write(tmp_path / "artifacts" / "blocked.md", "# Blocked\n")
+    _write(tmp_path / "artifacts" / "stale.md", "# Stale\n")
+    _write(
+        tmp_path / "research_plan" / "state" / "artifact_lineage.json",
+        """[
+  {
+    "artifact_path": "artifacts/blocked.md",
+    "artifact_type": "report",
+    "title": "Blocked",
+    "promotion_state": "needs_evidence",
+    "stale_reasons": ["claim_needs_evidence:claim-001"]
+  },
+  {
+    "artifact_path": "artifacts/stale.md",
+    "artifact_type": "report",
+    "title": "Stale",
+    "promotion_state": "stale",
+    "stale_reasons": ["source_changed:sample"]
+  }
+]
+""",
+    )
+
+    artifacts = command_center_service.list_project_artifacts(_project(tmp_path))
+    by_path = {item["path"]: item for item in artifacts["artifacts"]}
+
+    assert by_path["artifacts/blocked.md"]["trustState"]["isBlocked"] is True
+    assert by_path["artifacts/blocked.md"]["trustState"]["isTrusted"] is False
+    assert by_path["artifacts/stale.md"]["trustState"]["isStale"] is True
+    assert artifacts["summary"]["blockedCount"] == 1
+
+
+def test_build_launch_preview_adds_role_specific_acceptance_contracts(tmp_path: Path):
+    from app.services import command_center_service
+
+    project = _project(tmp_path)
+    preview = command_center_service.build_launch_preview(
+        project,
+        {
+            "researchQuestion": "What changed in regional grid costs?",
+            "workflowPresets": ["feasibility_memo", "data_pipeline", "econometric_model", "technical_report", "integrity_review"],
+            "approvalBeforeWrites": False,
+        },
+    )
+
+    tasks = {item["agentRole"]: item for item in preview["agentWorkBreakdown"]}
+    assert "Facts, interpretations, and open questions are separated explicitly." in tasks["research"]["acceptanceCriteria"]
+    assert "Datasets preserve provenance and freshness metadata before handoff." in tasks["data"]["acceptanceCriteria"]
+    assert "Analysis outputs declare inputs, scripts, and verification commands." in tasks["coding"]["acceptanceCriteria"]
+    assert "Artifacts preserve evidence links and avoid unsupported trusted narratives." in tasks["artifact"]["acceptanceCriteria"]
+    assert "Missing evidence, stale sources, and reproducibility gaps are reported explicitly." in tasks["health"]["acceptanceCriteria"]

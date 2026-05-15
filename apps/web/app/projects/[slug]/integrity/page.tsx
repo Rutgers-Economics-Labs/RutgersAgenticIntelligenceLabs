@@ -5,6 +5,7 @@ import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { IntegrityAssumptionsPanel } from "@/components/integrity-assumptions-panel";
+import { getArtifactTrustDisplay, getSourceFreshnessDisplay, getWorkflowDisplaySections } from "@/lib/integrity-ui";
 
 function RepoLink({ slug, path, label }: { slug: string; path: string; label?: string }) {
   return (
@@ -24,7 +25,8 @@ export default async function IntegrityPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { indexes, summary, staleOutputs } = await fetchProjectIntegrity(slug);
+  const { indexes, summary, staleOutputs, agentWorkflow } = await fetchProjectIntegrity(slug);
+  const workflowSections = getWorkflowDisplaySections(agentWorkflow);
 
   const rightRail = (
     <div>
@@ -35,6 +37,22 @@ export default async function IntegrityPage({
         <InlineStatus label="artifacts" value={summary.artifactCount} />
         <InlineStatus label="verification" value={summary.verificationRunCount} />
         <InlineStatus label="stale" value={summary.staleArtifactCount} />
+      </SectionCard>
+      <SectionCard eyebrow="Source Freshness" noPad>
+        {Object.entries(summary.sourceFreshnessCounts ?? {}).map(([status, count]) => (
+          <InlineStatus key={status} label={status.replaceAll("_", " ")} value={count} />
+        ))}
+      </SectionCard>
+      <SectionCard eyebrow="Agent Workflow" noPad>
+        {workflowSections.map((section) => (
+          <div key={section.key} className="approval-row">
+            <div>
+              <div style={{ fontWeight: 600, color: "var(--fg)" }}>{section.label}</div>
+              <div className="mono-muted">{section.blockerCount ? `${section.blockerCount} blockers` : "ready"}</div>
+            </div>
+            <StatusPill value={section.status} />
+          </div>
+        ))}
       </SectionCard>
     </div>
   );
@@ -60,21 +78,33 @@ export default async function IntegrityPage({
                   <th>Source</th>
                   <th>Type</th>
                   <th>Quality</th>
+                  <th>Freshness</th>
                   <th>Path</th>
                 </tr>
               </thead>
               <tbody>
-                {indexes.sources.map((row) => (
-                  <tr key={row.source_key}>
-                    <td>
-                      <strong>{row.title}</strong>
-                      <div className="mono-muted">{row.url_or_path}</div>
-                    </td>
-                    <td>{row.source_type}</td>
-                    <td><StatusPill value={row.quality_status} /></td>
-                    <td className="mono-muted"><RepoLink slug={slug} path={row.source_path} /></td>
-                  </tr>
-                ))}
+                {indexes.sources.map((row) => {
+                  const freshness = getSourceFreshnessDisplay({
+                    freshnessStatus: row.freshness_status,
+                    qualityStatus: row.quality_status,
+                    sourceState: row.sourceState,
+                  });
+                  return (
+                    <tr key={row.source_key}>
+                      <td>
+                        <strong>{row.title}</strong>
+                        <div className="mono-muted">{row.url_or_path}</div>
+                      </td>
+                      <td>{row.source_type}</td>
+                      <td><StatusPill value={row.quality_status} /></td>
+                      <td>
+                        <StatusPill value={freshness.label} />
+                        <div className="mono-muted">{freshness.detail}</div>
+                      </td>
+                      <td className="mono-muted"><RepoLink slug={slug} path={row.source_path} /></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           ) : (
@@ -122,28 +152,59 @@ export default async function IntegrityPage({
               <thead>
                 <tr>
                   <th>Artifact</th>
+                  <th>Trust</th>
                   <th>Promotion</th>
                   <th>Inputs</th>
                   <th>Verification</th>
                 </tr>
               </thead>
               <tbody>
-                {indexes.artifact_lineage.map((row) => (
-                  <tr key={row.artifact_path}>
-                    <td>
-                      <strong>{row.title}</strong>
-                      <div className="mono-muted">{row.artifact_path}</div>
-                    </td>
-                    <td><StatusPill value={row.promotion_state} /></td>
-                    <td className="mono-muted">{row.inputs.join(", ") || "—"}</td>
-                    <td className="mono-muted">{row.verification_runs.join(", ") || "—"}</td>
-                  </tr>
-                ))}
+                {indexes.artifact_lineage.map((row) => {
+                  const trust = getArtifactTrustDisplay({
+                    trustState: row.trustState,
+                    promotionState: row.promotion_state,
+                    verificationStatus: row.verificationStatus,
+                    staleReasons: row.stale_reasons,
+                  });
+                  return (
+                    <tr key={row.artifact_path}>
+                      <td>
+                        <strong>{row.title}</strong>
+                        <div className="mono-muted">{row.artifact_path}</div>
+                      </td>
+                      <td>
+                        <StatusPill value={trust.label} />
+                        <div className="mono-muted">{trust.detail}</div>
+                      </td>
+                      <td><StatusPill value={row.promotion_state} /></td>
+                      <td className="mono-muted">{row.inputs.join(", ") || "—"}</td>
+                      <td className="mono-muted">{row.verification_runs.join(", ") || "—"}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           ) : (
             <EmptyStateRow text="No artifact lineage records recorded yet." />
           )}
+        </div>
+      </SectionCard>
+
+      <SectionCard eyebrow="Agent Workflow Blockers" noPad>
+        <div id="workflow" className="integrity-section">
+          {workflowSections.map((section) => (
+            <div key={section.key} className="split-row">
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <strong>{section.label}</strong>
+                  <StatusPill value={section.status} />
+                </div>
+                <div className="mono-muted">
+                  {section.blockerCount ? section.blockers.join(", ") : "No blockers detected from repo-backed integrity state."}
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       </SectionCard>
 

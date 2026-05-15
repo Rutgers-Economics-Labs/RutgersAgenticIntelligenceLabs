@@ -325,17 +325,61 @@ export type CommandCenter = {
   sourceSummary: {
     count: number;
     statusCounts: Record<string, number>;
+    freshnessCounts?: Record<string, number>;
     notesPath?: string | null;
   };
   skillSummary: {
     count: number;
     agentRolesWithSkillAccess: string[];
   };
+  integritySummary?: {
+    staleArtifactCount: number;
+    sourceFreshnessCounts: Record<string, number>;
+    agentWorkflow: AgentWorkflowSummary;
+  };
   repoHealth: {
     hasLocalRepo: boolean;
     hasRailYaml: boolean;
     hasResearchPlan: boolean;
   };
+};
+
+export type SourceState = {
+  freshnessStatus: string;
+  qualityStatus: string;
+  isFresh: boolean;
+  isStale: boolean;
+  needsRefresh: boolean;
+  isBlocked: boolean;
+};
+
+export type ArtifactTrustState = {
+  isTrusted: boolean;
+  isBlocked: boolean;
+  isStale: boolean;
+};
+
+export type AgentWorkflowSection = {
+  status: string;
+  requirements: string[];
+  datasetsMissingProvenance?: string[];
+  datasetsMissingFreshness?: string[];
+  artifactsMissingLineage?: string[];
+  artifactsMissingVerificationCommands?: string[];
+  artifactsMissingVerification?: string[];
+  artifactsWithUnsupportedClaims?: string[];
+  missingEvidenceClaims?: string[];
+  staleSources?: string[];
+  reproducibilityGaps?: string[];
+  failedVerificationRuns?: string[];
+};
+
+export type AgentWorkflowSummary = {
+  research: AgentWorkflowSection;
+  data: AgentWorkflowSection;
+  coding: AgentWorkflowSection;
+  artifact: AgentWorkflowSection;
+  health: AgentWorkflowSection;
 };
 
 export type AssumptionRecord = {
@@ -355,9 +399,14 @@ export type SourceRecord = {
   source_type: string;
   title: string;
   url_or_path: string;
+  origin?: string | null;
+  access_method?: string | null;
+  freshness_status: string;
+  provenance?: Record<string, unknown>;
   retrieved_at?: string | null;
   license?: string | null;
   quality_status: "candidate" | "validated" | "blocked" | "rejected";
+  sourceState?: SourceState;
   source_path: string;
   notes?: string | null;
   created_at?: string | null;
@@ -388,6 +437,8 @@ export type ArtifactLineageRecord = {
   assumptions: string[];
   claims: string[];
   verification_runs: string[];
+  verificationStatus?: string;
+  trustState?: ArtifactTrustState;
   stale_reasons: string[];
   stale_marked_at?: string | null;
   generated_at?: string | null;
@@ -438,6 +489,9 @@ export type ProjectSource = {
   keyFields: unknown;
   qualityNotes: string;
   linkedFiles: string[];
+  freshnessStatus?: string;
+  qualityStatus?: string;
+  sourceState?: SourceState;
 };
 
 export type ProjectArtifact = {
@@ -449,6 +503,7 @@ export type ProjectArtifact = {
   previewable: boolean;
   promotionState?: string;
   verificationStatus?: string;
+  trustState?: ArtifactTrustState;
   assumptions?: string[];
   sources?: string[];
   claims?: string[];
@@ -470,6 +525,7 @@ export type ProjectIntegrityResponse = {
   summary: {
     assumptionCount: number;
     sourceCount: number;
+    sourceFreshnessCounts: Record<string, number>;
     claimCount: number;
     artifactCount: number;
     staleArtifactCount: number;
@@ -477,6 +533,7 @@ export type ProjectIntegrityResponse = {
     verificationStatusCounts: Record<string, number>;
     promotionStateCounts: Record<string, number>;
   };
+  agentWorkflow: AgentWorkflowSummary;
   staleOutputs: ArtifactLineageRecord[];
 };
 
