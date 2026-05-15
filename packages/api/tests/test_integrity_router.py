@@ -548,7 +548,108 @@ async def test_api_acceptance_conflicting_source_blocks_promotion(client, convex
     integrity_resp = await client.get("/api/v1/projects/integrity-router-project/integrity")
     assert integrity_resp.status_code == 200
     by_path = {item["artifact_path"]: item for item in integrity_resp.json()["indexes"]["artifact_lineage"]}
+    assert by_path["artifacts/report.md"]["promotion_state"] == "blocked"
     assert by_path["artifacts/report.md"]["trustState"]["isBlocked"] is True
+    assert by_path["artifacts/report.md"]["trustState"]["isTrusted"] is False
+
+
+async def test_api_acceptance_missing_lineage_prevents_verification(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    artifact_path = root / "artifacts" / "report.md"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("# Report\n", encoding="utf-8")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") == "projects:getById":
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        if payload.get("path") == "projects:getBySlug":
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    def _mutation(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") == "context:create":
+            return httpx.Response(200, json={"value": "doc-456"})
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    convex_mock.post("/api/mutation").mock(side_effect=_mutation)
+
+    context_resp = await client.post(
+        "/api/v1/context/text",
+        json={
+            "name": "Regional Queue Brief",
+            "content": "Interconnection queue delays increased because congestion worsened after 2021.",
+            "project_id": "project-id",
+        },
+    )
+    assert context_resp.status_code == 200
+
+    claim_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/claims",
+        json={
+            "claimKey": "claim-001",
+            "statement": "Queue delays increased after 2021.",
+            "artifactPath": "artifacts/report.md",
+            "status": "supported",
+            "evidencePaths": ["topics/analysis/queue_notes.md"],
+            "sourceKeys": ["context-doc-456"],
+            "evidenceKind": "direct",
+        },
+    )
+    assert claim_resp.status_code == 200
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "draft",
+            "sources": ["research_plan/state/sources.json#context-doc-456"],
+            "claims": ["research_plan/state/claims.json#claim-001"],
+        },
+    )
+    assert artifact_resp.status_code == 200
+
+    promote_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts/promote",
+        json={"artifactPath": "artifacts/report.md", "targetState": "partially_verified"},
+    )
+
+    assert promote_resp.status_code == 200
+    payload = promote_resp.json()
+    assert payload["status"] == "blocked"
+    assert "artifacts/report.md" in payload["gate"]["blockingArtifacts"]
+
+    integrity_resp = await client.get("/api/v1/projects/integrity-router-project/integrity")
+    assert integrity_resp.status_code == 200
+    by_path = {item["artifact_path"]: item for item in integrity_resp.json()["indexes"]["artifact_lineage"]}
+    assert by_path["artifacts/report.md"]["promotion_state"] == "draft"
+    assert by_path["artifacts/report.md"]["trustState"]["isTrusted"] is False
 
 
 async def test_project_integrity_response_includes_normalized_source_and_trust_state(client, convex_mock, tmp_path):
