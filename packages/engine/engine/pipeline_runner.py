@@ -235,6 +235,9 @@ def _export_to_duckdb(world, onto, duckdb_path):
     Creates one table per class, with columns for each data property.
     This enables high-performance analytical queries and GIS spatial joins.
     """
+    import duckdb
+    import pandas as pd
+
     print(f"\n[export] Mirroring to DuckDB: {duckdb_path}")
     if os.path.exists(duckdb_path):
         os.remove(duckdb_path)

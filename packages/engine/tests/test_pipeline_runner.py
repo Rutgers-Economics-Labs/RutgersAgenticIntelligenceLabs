@@ -5,6 +5,7 @@ No network calls; uses a tiny inline YAML config and a synthetic DataFrame.
 import sys
 import os
 import tempfile
+from datetime import date
 from pathlib import Path
 import pytest
 import yaml
@@ -16,6 +17,7 @@ if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 
 from engine.pipeline_runner import _sanitize, _resolve, run_pipeline
+from engine.api_runner import _apply_fields
 
 
 # ── unit helpers ──────────────────────────────────────────────────────────────
@@ -51,6 +53,20 @@ def test_resolve_unknown_placeholder_left_as_is():
     assert result == "{unknown}"
 
 
+def test_apply_fields_supports_constant_computed_date_scalars():
+    df = pd.DataFrame({"club": ["A", "B"]})
+    result = _apply_fields(
+        df,
+        [
+            {"source": "club", "alias": "club_name"},
+            {"alias": "snapshot_date", "computed": date(2024, 9, 2)},
+        ],
+    )
+
+    assert result["club_name"].tolist() == ["A", "B"]
+    assert result["snapshot_date"].tolist() == ["2024-09-02", "2024-09-02"]
+
+
 # ── integration: minimal pipeline run ────────────────────────────────────────
 
 MINIMAL_ONTOLOGY = """
@@ -72,6 +88,7 @@ MINIMAL_PIPELINE = """
 ontology: {onto_path}
 output_owl: {output_owl}
 db: {db_path}
+duckdb: {duckdb_path}
 steps:
   - name: load_items
     api: items
@@ -118,6 +135,7 @@ def minimal_pipeline_dir(tmp_path, monkeypatch):
     # Paths for outputs
     output_owl = str(tmp_path / "out.owl")
     db_path = str(tmp_path / "onto.db")
+    duckdb_path = str(tmp_path / "onto.duckdb")
 
     # Write the pipeline YAML
     pipeline_yaml = tmp_path / "pipeline.yaml"
@@ -125,6 +143,7 @@ def minimal_pipeline_dir(tmp_path, monkeypatch):
         onto_path=str(onto_path),
         output_owl=output_owl,
         db_path=db_path,
+        duckdb_path=duckdb_path,
     ))
 
     # Point api_runner at our temp API config dir
@@ -140,6 +159,7 @@ def minimal_pipeline_dir(tmp_path, monkeypatch):
         "pipeline_path": str(pipeline_yaml),
         "db_path": db_path,
         "output_owl": output_owl,
+        "duckdb_path": duckdb_path,
     }
 
 
@@ -157,6 +177,7 @@ def test_run_pipeline_creates_outputs(minimal_pipeline_dir):
     run_pipeline(minimal_pipeline_dir["pipeline_path"])
     assert Path(minimal_pipeline_dir["db_path"]).exists()
     assert Path(minimal_pipeline_dir["output_owl"]).exists()
+    assert Path(minimal_pipeline_dir["duckdb_path"]).exists()
 
 
 def test_run_pipeline_populates_individuals(minimal_pipeline_dir):
@@ -216,6 +237,18 @@ SCRAPE_HTML = """
 </html>
 """
 
+CSV_API_YAML = """
+name: items
+type: api
+url: https://example.com/items.csv
+response_format: csv
+fields:
+  - source: name
+    alias: name
+  - source: code
+    alias: code
+"""
+
 PDF_API_YAML = """
 name: items
 type: pdf
@@ -239,11 +272,13 @@ def test_run_pipeline_with_scrape_source(tmp_path, monkeypatch):
 
     output_owl = str(tmp_path / "out.owl")
     db_path = str(tmp_path / "onto.db")
+    duckdb_path = str(tmp_path / "onto.duckdb")
     pipeline_yaml = tmp_path / "pipeline.yaml"
     pipeline_yaml.write_text(MINIMAL_PIPELINE.format(
         onto_path=str(onto_path),
         output_owl=output_owl,
         db_path=db_path,
+        duckdb_path=duckdb_path,
     ))
 
     monkeypatch.setenv("RAIL_API_CONFIG_DIR", str(api_dir))
@@ -267,6 +302,103 @@ def test_run_pipeline_with_scrape_source(tmp_path, monkeypatch):
     assert len(items) == 2
     names = {getattr(i, "hasName", None) for i in items}
     assert names == {"Delta", "Epsilon"}
+
+
+def test_run_pipeline_with_remote_csv_api_source(tmp_path, monkeypatch):
+    onto_path = tmp_path / "ontology.yaml"
+    onto_path.write_text(MINIMAL_ONTOLOGY)
+
+    api_dir = tmp_path / "apis"
+    api_dir.mkdir()
+    (api_dir / "items.yaml").write_text(CSV_API_YAML)
+
+    output_owl = str(tmp_path / "out.owl")
+    db_path = str(tmp_path / "onto.db")
+    duckdb_path = str(tmp_path / "onto.duckdb")
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(MINIMAL_PIPELINE.format(
+        onto_path=str(onto_path),
+        output_owl=output_owl,
+        db_path=db_path,
+        duckdb_path=duckdb_path,
+    ))
+
+    monkeypatch.setenv("RAIL_API_CONFIG_DIR", str(api_dir))
+    monkeypatch.setenv("RAIL_CACHE_DIR", str(tmp_path / "cache"))
+
+    import importlib
+    import engine.api_runner
+    importlib.reload(engine.api_runner)
+
+    response = MagicMock()
+    response.text = "name,code\nAjax,AJX\nBenfica,SLB\n"
+    response.raise_for_status.return_value = None
+
+    with patch("engine.api_runner.requests.request", return_value=response):
+        run_pipeline(str(pipeline_yaml))
+
+    w = _open_db(db_path)
+    onto = w.get_ontology("http://example.org/test_minimal.owl").load()
+    item_cls = next((c for c in onto.classes() if c.name == "Item"), None)
+    items = list(item_cls.instances())
+    assert len(items) == 2
+    assert {getattr(i, "hasName", None) for i in items} == {"Ajax", "Benfica"}
+    assert {getattr(i, "hasCode", None) for i in items} == {"AJX", "SLB"}
+
+
+def test_run_pipeline_with_remote_csv_source_type_uses_requests_timeout(tmp_path, monkeypatch):
+    onto_path = tmp_path / "ontology.yaml"
+    onto_path.write_text(MINIMAL_ONTOLOGY)
+
+    api_dir = tmp_path / "apis"
+    api_dir.mkdir()
+    (api_dir / "items.yaml").write_text(
+        """
+name: items
+type: csv
+path: https://example.com/items.csv
+fields:
+  - source: name
+    alias: name
+  - source: code
+    alias: code
+"""
+    )
+
+    output_owl = str(tmp_path / "out.owl")
+    db_path = str(tmp_path / "onto.db")
+    duckdb_path = str(tmp_path / "onto.duckdb")
+    pipeline_yaml = tmp_path / "pipeline.yaml"
+    pipeline_yaml.write_text(
+        MINIMAL_PIPELINE.format(
+            onto_path=str(onto_path),
+            output_owl=output_owl,
+            db_path=db_path,
+            duckdb_path=duckdb_path,
+        )
+    )
+
+    monkeypatch.setenv("RAIL_API_CONFIG_DIR", str(api_dir))
+    monkeypatch.setenv("RAIL_CACHE_DIR", str(tmp_path / "cache"))
+
+    import importlib
+    import engine.api_runner
+    importlib.reload(engine.api_runner)
+
+    response = MagicMock()
+    response.text = "name,code\nAjax,AJX\nBenfica,SLB\n"
+    response.raise_for_status.return_value = None
+
+    with patch("engine.api_runner.requests.get", return_value=response) as mock_get:
+        run_pipeline(str(pipeline_yaml))
+
+    mock_get.assert_called_once_with("https://example.com/items.csv", timeout=30)
+
+    w = _open_db(db_path)
+    onto = w.get_ontology("http://example.org/test_minimal.owl").load()
+    item_cls = next((c for c in onto.classes() if c.name == "Item"), None)
+    items = list(item_cls.instances())
+    assert len(items) == 2
 
 
 def test_run_pipeline_with_javascript_scrape_source(tmp_path, monkeypatch):
