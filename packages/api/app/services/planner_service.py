@@ -130,6 +130,23 @@ def _task_root(project_root: Path) -> Path:
     return project_root / "research_plan" / "tasks"
 
 
+def _task_dedupe_key(task: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(task.get("title") or "").strip().lower(),
+        str(task.get("agentRole") or task.get("agent_role") or "").strip().lower(),
+    )
+
+
+def _task_preference_key(task: dict[str, Any], path: Path) -> tuple[int, int, float]:
+    meta, _ = _split_frontmatter(_read_text(path))
+    has_explicit_task_id = 1 if meta.get("task_id") else 0
+    return (
+        has_explicit_task_id,
+        len(str(task.get("_id") or "")),
+        path.stat().st_mtime,
+    )
+
+
 def _task_to_runtime(path: Path) -> dict[str, Any]:
     meta, body = _split_frontmatter(_read_text(path))
     title = meta.get("title") or path.stem.replace("-", " ").title()
@@ -139,20 +156,26 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
     description = body.strip()
     if description.startswith("## Description"):
         description = description[len("## Description"):].lstrip("\n").strip()
+    status = meta.get("status", "backlog")
+    approval_state = meta.get("approval_state") or None
+    blocker_category = meta.get("blocker_category") or None
+    if status in {"done", "cancelled"}:
+        approval_state = None
+        blocker_category = None
     return {
         "_id": task_id,
         "boardId": "main",
         "title": title,
         "description": description,
-        "status": meta.get("status", "backlog"),
+        "status": status,
         "agentRole": meta.get("assigned_role") or meta.get("agent_role") or "planner",
         "repoPaths": meta.get("related_files") or [],
         "acceptanceCriteria": meta.get("acceptance_criteria") or [],
         "dependsOnTaskIds": meta.get("dependencies") or [],
-        "approvalState": meta.get("approval_state") or None,
+        "approvalState": approval_state,
         "priority": meta.get("priority") or None,
         "runner": meta.get("runner") or None,
-        "blockerCategory": meta.get("blocker_category") or None,
+        "blockerCategory": blocker_category,
         "gitSnapshotPath": str(path.relative_to(path.parents[2])),
         "latestRunSummary": meta.get("latest_run_summary") or "Not started",
     }
@@ -167,8 +190,19 @@ async def list_tasks(board_id: str, *, project: dict | None = None) -> list[dict
     task_dir = _task_root(root)
     if not task_dir.is_dir():
         return []
-    tasks = [_task_to_runtime(path) for path in sorted(task_dir.glob("*.md"))]
-    return tasks
+    chosen: dict[tuple[str, str], tuple[dict[str, Any], Path]] = {}
+    fallback: list[tuple[dict[str, Any], Path]] = []
+    for path in sorted(task_dir.glob("*.md")):
+        task = _task_to_runtime(path)
+        key = _task_dedupe_key(task)
+        if key == ("", ""):
+            fallback.append((task, path))
+            continue
+        existing = chosen.get(key)
+        if existing is None or _task_preference_key(task, path) > _task_preference_key(existing[0], existing[1]):
+            chosen[key] = (task, path)
+    tasks = [item[0] for item in chosen.values()] + [item[0] for item in fallback]
+    return sorted(tasks, key=lambda item: str(item.get("_id") or ""))
 
 
 def _render_task_markdown(task: dict[str, Any]) -> str:
@@ -255,7 +289,9 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
     if not path.exists():
         return None
     task = _task_to_runtime(path)
-    patch = {k: v for k, v in fields.items() if v is not None}
+    # Keep explicit None values so callers can clear stale metadata like
+    # blockerCategory or approvalState after a task is recovered.
+    patch = dict(fields)
     mapping = {
         "title": "title",
         "description": "description",

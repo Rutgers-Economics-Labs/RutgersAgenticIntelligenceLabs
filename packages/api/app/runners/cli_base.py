@@ -5,11 +5,27 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from app.runners.base import BaseRunner, RunnerEvent, RunnerEventType, TaskPayload
+
+RUNNER_STATE_DIRNAME = ".runner"
+
+
+def runner_runtime_paths(session_root: str) -> dict[str, Path]:
+    root = Path(session_root) / RUNNER_STATE_DIRNAME
+    return {
+        "root": root,
+        "stdout": root / "stdout.log",
+        "stderr": root / "stderr.log",
+        "exit_code": root / "exit_code.txt",
+        "pid": root / "pid.txt",
+        "command": root / "command.json",
+    }
 
 
 @dataclass
@@ -26,6 +42,7 @@ class LocalCliSession:
     returncode: int | None = None
     session_root: str | None = None
     env: dict[str, str] = field(default_factory=dict)
+    pid: int | None = None
 
 
 class LocalCLIRunner(BaseRunner):
@@ -591,6 +608,8 @@ class LocalCLIRunner(BaseRunner):
         self._ensure_available()
         prompt = self._build_prompt(task_payload)
         session_id = f"{self.runner_name}_{uuid.uuid4().hex[:12]}"
+        if not task_payload.session_root:
+            raise RuntimeError(f"{self.runner_name} runner requires a session_root")
         session = LocalCliSession(
             session_id=session_id,
             command=self._command_args(prompt, task_payload),
@@ -599,15 +618,48 @@ class LocalCLIRunner(BaseRunner):
             session_root=task_payload.session_root,
             env=dict(task_payload.allowed_secrets),
         )
-        session.events.append(
-            RunnerEvent(
-                event_type=RunnerEventType.SESSION_CREATED,
-                session_id=session_id,
-                normalized_payload={"runner": self.runner_name},
+        runtime_paths = runner_runtime_paths(task_payload.session_root)
+        runtime_paths["root"].mkdir(parents=True, exist_ok=True)
+        for key in ("stdout", "stderr"):
+            runtime_paths[key].write_text("", encoding="utf-8")
+        for key in ("exit_code", "pid"):
+            if runtime_paths[key].exists():
+                runtime_paths[key].unlink()
+        runtime_paths["command"].write_text(
+            json.dumps(
+                {
+                    "session_id": session_id,
+                    "runner": self.runner_name,
+                    "command": session.command,
+                    "cwd": session.cwd,
+                },
+                indent=2,
             )
+            + "\n",
+            encoding="utf-8",
         )
+        stdout_handle = runtime_paths["stdout"].open("a", encoding="utf-8")
+        stderr_handle = runtime_paths["stderr"].open("a", encoding="utf-8")
+        wrapped_command = (
+            f"{shlex.join(session.command)}; "
+            f"rc=$?; printf '%s\\n' \"$rc\" > {shlex.quote(str(runtime_paths['exit_code']))}; "
+            "exit $rc"
+        )
+        process = subprocess.Popen(  # noqa: S602
+            ["/bin/sh", "-lc", wrapped_command],
+            cwd=session.cwd,
+            env={**os.environ, **session.env},
+            stdin=subprocess.DEVNULL,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            text=True,
+            start_new_session=True,
+        )
+        stdout_handle.close()
+        stderr_handle.close()
+        session.pid = process.pid
+        runtime_paths["pid"].write_text(f"{process.pid}\n", encoding="utf-8")
         self._sessions[session_id] = session
-        asyncio.create_task(self._run_session(session))
         return {
             "session_id": session_id,
             "status": "running",
@@ -615,6 +667,7 @@ class LocalCLIRunner(BaseRunner):
             "raw": {
                 "command": session.command,
                 "cwd": session.cwd,
+                "pid": process.pid,
             },
         }
 

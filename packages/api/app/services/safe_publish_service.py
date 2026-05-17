@@ -63,7 +63,13 @@ def commit_message_for_manifest(slug: str) -> str:
 
 
 def normalize_repo_publish_path(path: str) -> str:
-    normalized = path.strip().replace("\\", "/").lstrip("./")
+    normalized = path.strip().replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
+    if normalized.startswith("/"):
+        normalized = normalized.lstrip("/")
     while "//" in normalized:
         normalized = normalized.replace("//", "/")
     return normalized
@@ -185,25 +191,14 @@ async def publish_manifest(project: dict[str, Any]) -> dict[str, Any]:
 
 
 async def record_publish_success(project_id: str, publish_result: dict[str, Any]) -> None:
-    try:
-        await convex.mutation("projects:updateById", {
-            "projectId": project_id,
-            "lastPublishedCommitSha": publish_result.get("commit_sha"),
-            "lastPublishedAt": int(time.time() * 1000),
-            "lastPublishError": "",
-        })
-    except Exception as exc:
-        log.warning("Skipping project publish success metadata update for %s: %s", project_id, exc)
+    # The current Convex project schema does not accept publish metadata
+    # fields yet, so keep this as a no-op instead of emitting noisy failed
+    # mutations during otherwise successful publish flows.
+    _ = (project_id, publish_result, time.time())
 
 
 async def record_publish_failure(project_id: str, message: str) -> None:
-    try:
-        await convex.mutation("projects:updateById", {
-            "projectId": project_id,
-            "lastPublishError": message,
-        })
-    except Exception as exc:
-        log.warning("Skipping project publish failure metadata update for %s: %s", project_id, exc)
+    _ = (project_id, message)
 
 
 async def rollback_project_update(project_id: str, previous: dict[str, Any]) -> None:
@@ -218,10 +213,6 @@ async def rollback_project_update(project_id: str, previous: dict[str, Any]) -> 
         "apiConfigSlugs": previous.get("apiConfigSlugs") or [],
         "pipelineConfigSlug": previous.get("pipelineConfigSlug"),
         "status": previous.get("status"),
-        "creationStatus": previous.get("creationStatus"),
-        "briefHash": previous.get("briefHash"),
-        "researchGraphSummary": previous.get("researchGraphSummary"),
-        "sourceReadinessCounts": previous.get("sourceReadinessCounts"),
         "lastJobId": previous.get("lastJobId"),
         "activeOntologyDbPath": previous.get("activeOntologyDbPath"),
         "activeOntologyOwlPath": previous.get("activeOntologyOwlPath"),
@@ -229,10 +220,6 @@ async def rollback_project_update(project_id: str, previous: dict[str, Any]) -> 
         "activeOntologyEmbeddingsPath": previous.get("activeOntologyEmbeddingsPath"),
         "github": previous.get("github"),
         "defaultBranch": previous.get("defaultBranch"),
-        "githubSyncMode": previous.get("githubSyncMode") or "manual",
-        "lastPublishedCommitSha": previous.get("lastPublishedCommitSha"),
-        "lastPublishedAt": previous.get("lastPublishedAt"),
-        "lastPublishError": previous.get("lastPublishError"),
         "ontologyTemplates": previous.get("ontologyTemplates"),
         "agentModel": previous.get("agentModel"),
         "agentAllowedActions": previous.get("agentAllowedActions"),

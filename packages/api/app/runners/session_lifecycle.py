@@ -17,19 +17,22 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import subprocess
 import time
 from asyncio.subprocess import PIPE
 from pathlib import Path
 from typing import Any
 
 from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
+from app.runners.cli_base import LocalCLIRunner, runner_runtime_paths
 from app.runners.factory import RunnerFactory
 from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy
 from app.services.convex_client import convex
 from app.services.decision_service import raise_decision_event
-from app.services.integrity_service import evaluate_integrity_gate
+from app.services.integrity_service import evaluate_integrity_gate, summarize_agent_workflow_health
 from app.services.repo_contract_service import infer_github_repo
 from app.services.role_runtime_service import load_role_runtime_config
 from app.services.safe_publish_service import (
@@ -69,11 +72,19 @@ STATE_INDEX_FILE_NAMES = (
     "assumptions.json",
     "sources.json",
     "claims.json",
+    "source_candidates.json",
+    "claim_candidates.json",
+    "entity_candidates.json",
+    "conflicts.json",
     "artifact_lineage.json",
     "verification_runs.json",
 )
+MERGED_STATE_INDEX_FILE_NAMES = {"artifact_lineage.json", "verification_runs.json"}
 DATASET_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".parquet", ".xlsx", ".xls"}
 ARTIFACT_SUFFIXES = {".md", ".pdf", ".png", ".svg", ".jpg", ".jpeg", ".html", ".htm", ".pptx", ".docx"}
+SCRIPT_LINEAGE_SUFFIXES = {".py", ".sh", ".sql", ".ipynb", ".r", ".js", ".ts", ".tsx", ".jsx"}
+_VERIFICATION_PATH_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.(?:ya?ml|csv|tsv|jsonl?|parquet|xlsx?|md|pdf|png|svg|jpe?g|html?|py|sh))")
+LOCAL_CLI_RUNNERS = {"claude_code", "codex_cli", "gemini_cli", "cursor_cli"}
 
 
 async def resolve_jules_api_key(project_id: str | None, agent_role: str = "data") -> str:
@@ -118,6 +129,47 @@ def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | Non
 def _project_root(project_record: dict[str, Any]) -> Path | None:
     path = project_record.get("localRepoPath")
     return Path(path).resolve() if path else None
+
+
+def _resolve_session_root_path(
+    session: dict[str, Any],
+    *,
+    project_root: Path | None = None,
+) -> Path | None:
+    session_path = session.get("sessionPath")
+    if session_path:
+        candidate = Path(session_path)
+        if candidate.exists():
+            return candidate
+
+    session_id = session.get("_id") or session.get("sessionId")
+    role = session.get("role")
+    if project_root is None or not session_id:
+        return None
+
+    if role:
+        candidate = session_files.session_root(project_root, role, session_id)
+        if candidate.exists():
+            return candidate
+
+    sessions_root = project_root / "research_plan" / "sessions"
+    if sessions_root.exists():
+        for candidate in sessions_root.glob(f"*/{session_id}"):
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _session_task_id(session: dict[str, Any], session_root: Path | None = None) -> str | None:
+    task_id = session.get("taskId")
+    if task_id:
+        return str(task_id)
+    if session_root and session_root.exists():
+        state = session_files.read_state(session_root)
+        fallback = state.get("task_id")
+        if fallback:
+            return str(fallback)
+    return None
 
 
 def _scrub_secrets(data: Any) -> Any:
@@ -212,6 +264,54 @@ def _dedupe(values: list[Any]) -> list[Any]:
     return deduped
 
 
+def _path_in_scopes(path_text: str, scopes: list[str]) -> bool:
+    normalized = path_text.strip().lstrip("./")
+    if not normalized:
+        return False
+    for scope in scopes:
+        candidate = str(scope or "").strip().lstrip("./").rstrip("/")
+        if not candidate:
+            continue
+        if normalized == candidate or normalized.startswith(f"{candidate}/"):
+            return True
+    return False
+
+
+def _verification_failure_paths(state: dict[str, Any]) -> list[str]:
+    text = "\n".join(
+        str(part or "")
+        for part in (
+            state.get("verification_stdout_tail"),
+            state.get("verification_stderr_tail"),
+        )
+    )
+    if not text:
+        return []
+    matches = [match.strip().lstrip("./") for match in _VERIFICATION_PATH_RE.findall(text)]
+    return _dedupe([match for match in matches if match])
+
+
+def _verification_failures_outside_task_scope(
+    *,
+    state: dict[str, Any],
+    task: dict[str, Any] | None,
+    changed_files: list[str],
+) -> bool:
+    paths = _verification_failure_paths(state)
+    if not paths:
+        return False
+    scopes = [str(item) for item in (task or {}).get("repoPaths") or [] if item]
+    if not scopes:
+        return False
+    changed = [str(item).strip().lstrip("./") for item in changed_files if item]
+    for path_text in paths:
+        if _path_in_scopes(path_text, scopes):
+            return False
+        if changed and path_text in changed:
+            return False
+    return True
+
+
 def _load_json_array(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -229,6 +329,8 @@ def _copy_workspace_state_indexes(project_root: Path, workspace_root: Path) -> N
     workspace_state_root = workspace_root / "research_plan" / "state"
     project_state_root.mkdir(parents=True, exist_ok=True)
     for file_name in STATE_INDEX_FILE_NAMES:
+        if file_name in MERGED_STATE_INDEX_FILE_NAMES:
+            continue
         source = workspace_state_root / file_name
         if not source.exists():
             continue
@@ -357,7 +459,7 @@ async def _publish_completed_session_outputs(
             "files": [],
             "skipped_files": changed_files,
         }
-    task = await _task_record(project, session.get("taskId"))
+    task = await _task_record(project, _session_task_id(session, session_root))
     allowed_paths = (task or {}).get("repoPaths") or None
     mirrored = _copy_workspace_files_to_project(
         project_root=project_root,
@@ -472,9 +574,13 @@ async def _normalize_completion_summary(
     verification_status = session_files.read_state(session_root).get("verification_status")
     verification_result = {
         "run_id": f"{session_id}-verification",
+        "scope": role,
+        "loop_type": "analysis_reproducibility",
         "status": "passed" if verification_status == "passed" else "failed" if verification_status == "failed" else "pending",
         "task_id": task_id,
         "agent_session_id": session_id,
+        "artifacts_checked": _dedupe(artifacts_created + datasets_created),
+        "claims_checked": _dedupe(claim_added),
         "artifact_paths": _dedupe(artifacts_created + datasets_created),
         "checks": [
             {
@@ -506,48 +612,175 @@ async def _normalize_completion_summary(
 def _sync_completion_summary_to_integrity_indexes(
     *,
     project_root: Path,
+    workspace_root: Path,
     summary: dict[str, Any],
     session_id: str,
     task_id: str | None,
+    role: str | None = None,
+    verification_command: str | None = None,
+    changed_files: list[str] | None = None,
 ) -> None:
     repo = get_integrity_repo(project_root)
-    existing_artifacts = {item.artifact_path for item in repo.load_artifact_lineage()}
+    existing_artifact_index = {item.artifact_path: item for item in repo.load_artifact_lineage()}
+    workspace_repo = get_integrity_repo(workspace_root)
+    workspace_artifact_index = {item.artifact_path: item for item in workspace_repo.load_artifact_lineage()}
+    changed_files = [path for path in (changed_files or []) if not path.startswith("research_plan/state/")]
+    script_candidates = sorted(
+        {
+            path
+            for path in changed_files
+            if Path(path).suffix.lower() in SCRIPT_LINEAGE_SUFFIXES
+        }
+    )
+    source_refs = [
+        f"research_plan/state/sources.json#{source_key}"
+        for source_key in (summary.get("sources_used") or [])
+    ]
+    assumption_refs = [
+        f"research_plan/state/assumptions.json#{assumption_key}"
+        for assumption_key in (summary.get("assumptions_added") or [])
+    ]
+    claim_refs = [
+        f"research_plan/state/claims.json#{claim_key}"
+        for claim_key in (summary.get("claims_created") or [])
+    ]
     for artifact_path in summary.get("artifacts_created") or []:
-        if artifact_path in existing_artifacts:
-            continue
         suffix = Path(artifact_path).suffix.lower()
         artifact_type = "dataset" if suffix in DATASET_SUFFIXES else "report" if suffix == ".md" else "artifact"
+        existing_lineage = existing_artifact_index.get(artifact_path)
+        workspace_lineage = workspace_artifact_index.get(artifact_path)
+        inferred_inputs = sorted(
+            {
+                path
+                for path in changed_files
+                if path != artifact_path and path not in (summary.get("datasets_created") or [])
+            }
+        )
+        inferred_scripts = sorted(
+            {
+                path
+                for path in script_candidates
+                if path == artifact_path or path.startswith(f"{Path(artifact_path).parent.as_posix()}/")
+            }
+        )
+        inputs = (
+            list(workspace_lineage.inputs)
+            if workspace_lineage and workspace_lineage.inputs
+            else list(existing_lineage.inputs)
+            if existing_lineage and existing_lineage.inputs
+            else inferred_inputs
+        )
+        scripts = (
+            list(workspace_lineage.scripts)
+            if workspace_lineage and workspace_lineage.scripts
+            else list(existing_lineage.scripts)
+            if existing_lineage and existing_lineage.scripts
+            else inferred_scripts
+        )
+        verification_commands = (
+            list(workspace_lineage.verification_commands)
+            if workspace_lineage is not None
+            else list(existing_lineage.verification_commands)
+            if existing_lineage and existing_lineage.verification_commands
+            else [verification_command] if verification_command and artifact_type != "dataset" else []
+        )
+        sources = (
+            list(workspace_lineage.sources)
+            if workspace_lineage is not None
+            else list(existing_lineage.sources)
+            if existing_lineage and existing_lineage.sources
+            else source_refs
+        )
+        assumptions = (
+            list(workspace_lineage.assumptions)
+            if workspace_lineage is not None
+            else list(existing_lineage.assumptions)
+            if existing_lineage and existing_lineage.assumptions
+            else assumption_refs
+        )
+        claims = (
+            list(workspace_lineage.claims)
+            if workspace_lineage is not None
+            else list(existing_lineage.claims)
+            if existing_lineage and existing_lineage.claims
+            else claim_refs
+        )
+        verification_runs = (
+            list(workspace_lineage.verification_runs)
+            if workspace_lineage is not None
+            else list(existing_lineage.verification_runs)
+            if existing_lineage and existing_lineage.verification_runs
+            else [f"research_plan/state/verification_runs.json#{session_id}-verification"]
+        )
         repo.upsert_artifact_lineage(
             {
                 "artifact_path": artifact_path,
                 "artifact_type": artifact_type,
                 "title": Path(artifact_path).name,
-                "promotion_state": "draft",
-                "verification_runs": [f"research_plan/state/verification_runs.json#{session_id}-verification"],
+                "promotion_state": (
+                    existing_lineage.promotion_state
+                    if existing_lineage and existing_lineage.promotion_state != "draft"
+                    else "draft"
+                ),
+                "reproducibility_mode": (
+                    workspace_lineage.reproducibility_mode
+                    if workspace_lineage and workspace_lineage.reproducibility_mode is not None
+                    else existing_lineage.reproducibility_mode
+                    if existing_lineage
+                    else None
+                ),
+                "inputs": inputs,
+                "scripts": scripts,
+                "verification_commands": verification_commands,
+                "sources": sources,
+                "assumptions": assumptions,
+                "claims": claims,
+                "verification_runs": verification_runs,
             }
         )
-        existing_artifacts.add(artifact_path)
+        existing_artifact_index[artifact_path] = next(
+            item for item in repo.load_artifact_lineage() if item.artifact_path == artifact_path
+        )
     for dataset_path in summary.get("datasets_created") or []:
-        if dataset_path in existing_artifacts:
-            continue
+        existing_lineage = existing_artifact_index.get(dataset_path)
         repo.upsert_artifact_lineage(
             {
                 "artifact_path": dataset_path,
                 "artifact_type": "dataset",
                 "title": Path(dataset_path).name,
-                "promotion_state": "draft",
-                "verification_runs": [f"research_plan/state/verification_runs.json#{session_id}-verification"],
+                "promotion_state": (
+                    existing_lineage.promotion_state
+                    if existing_lineage and existing_lineage.promotion_state != "draft"
+                    else "draft"
+                ),
+                "sources": list(existing_lineage.sources) if existing_lineage and existing_lineage.sources else source_refs,
+                "verification_runs": sorted(
+                    {
+                        *(
+                            list(existing_lineage.verification_runs)
+                            if existing_lineage and existing_lineage.verification_runs
+                            else []
+                        ),
+                        f"research_plan/state/verification_runs.json#{session_id}-verification",
+                    }
+                ),
             }
         )
-        existing_artifacts.add(dataset_path)
+        existing_artifact_index[dataset_path] = next(
+            item for item in repo.load_artifact_lineage() if item.artifact_path == dataset_path
+        )
     for result in summary.get("verification_results") or []:
         repo.upsert_verification_run(
             {
                 "run_id": result.get("run_id") or f"{session_id}-verification",
+                "scope": result.get("scope") or role,
+                "loop_type": result.get("loop_type") or "analysis_reproducibility",
                 "task_id": task_id,
                 "agent_session_id": session_id,
                 "status": result.get("status") or "pending",
                 "checks": result.get("checks") or [],
+                "artifacts_checked": result.get("artifacts_checked") or result.get("artifact_paths") or [],
+                "claims_checked": result.get("claims_checked") or [],
                 "artifact_paths": result.get("artifact_paths") or [],
                 "blockers": result.get("blockers") or [],
             }
@@ -577,6 +810,286 @@ def _tail_output(text: str, limit: int = 1200) -> str:
     if len(value) <= limit:
         return value
     return value[-limit:]
+
+
+async def _ensure_workspace_rail_cli(project_root: Path, workspace_root: Path) -> dict[str, Any]:
+    local_package = (project_root / ".." / ".." / "packages" / "rail-py").resolve()
+    if local_package.is_dir():
+        return await _run_process(["pip", "install", "--quiet", "-e", str(local_package)], cwd=workspace_root)
+    return await _run_process(
+        [
+            "pip",
+            "install",
+            "--quiet",
+            "git+https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs.git#subdirectory=packages/rail-py",
+        ],
+        cwd=workspace_root,
+    )
+
+
+def _find_file_backed_session_root(project_root: Path | None, session_id: str) -> Path | None:
+    if project_root is None:
+        return None
+    sessions_root = project_root / "research_plan" / "sessions"
+    if not sessions_root.exists():
+        return None
+    for candidate in sessions_root.glob(f"*/{session_id}"):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _process_is_running(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:
+        state = subprocess.run(
+            ["ps", "-o", "state=", "-p", str(pid)],
+            check=False,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if state.startswith("Z"):
+            return False
+    except Exception:
+        pass
+    return True
+
+
+def _read_log_delta(path: Path, offset: int) -> tuple[int, list[str]]:
+    if not path.exists():
+        return offset, []
+    with path.open("rb") as handle:
+        handle.seek(max(offset, 0))
+        chunk = handle.read()
+        new_offset = handle.tell()
+    if not chunk:
+        return new_offset, []
+    text = chunk.decode("utf-8", errors="replace")
+    lines = [line.rstrip("\n") for line in text.splitlines()]
+    return new_offset, lines
+
+
+def _read_exit_code(path: Path) -> int | None:
+    if not path.exists():
+        return None
+    raw = path.read_text(encoding="utf-8").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return 1
+
+
+async def _ingest_local_cli_runner_events(
+    *,
+    convex_session_id: str,
+    session: dict[str, Any],
+    root: Path,
+) -> dict[str, Any]:
+    state = session_files.read_state(root)
+    runtime = runner_runtime_paths(str(root))
+    runner_name = session.get("runner", "codex_cli")
+    runner = resolve_runner_for_project(runner_name)
+    if not isinstance(runner, LocalCLIRunner):
+        raise RuntimeError(f"Runner {runner_name} is not a local CLI runner")
+
+    external_id = session.get("externalSessionId") or state.get("external_session_id") or convex_session_id
+    stdout_offset = int(state.get("runner_stdout_offset") or 0)
+    stderr_offset = int(state.get("runner_stderr_offset") or 0)
+    new_stdout_offset, stdout_lines = _read_log_delta(runtime["stdout"], stdout_offset)
+    new_stderr_offset, stderr_lines = _read_log_delta(runtime["stderr"], stderr_offset)
+
+    for text in stdout_lines:
+        progress = RunnerEvent(
+            event_type=RunnerEventType.PROGRESS,
+            session_id=str(external_id),
+            normalized_payload={"stream": "stdout", "line": text},
+            raw_payload={"line": text},
+            debug_visibility=False,
+        )
+        session_files.append_event(
+            root,
+            "assistant_message",
+            content=text,
+            stream="stdout",
+            line=text,
+            runner_event_type=progress.event_type.value,
+            debug_visibility=progress.debug_visibility,
+        )
+        await _relay_runner_event(convex_session_id, session, progress)
+        for event in runner._derived_events_from_stdout_line(str(external_id), text):
+            file_event_type = EVENT_TYPE_MAP.get(event.event_type.value, "status_changed")
+            payload = _event_payload(event)
+            status = STATUS_MAP.get(event.event_type.value)
+            if status:
+                payload["status"] = status
+            session_files.append_event(root, file_event_type, **payload)
+            if status:
+                _sync_file_status(root, status)
+                if status == "completed":
+                    session_files.update_state(root, review_status="review")
+                elif status in {"failed", "cancelled"}:
+                    session_files.update_state(root, review_status="needs_changes")
+            await _relay_runner_event(convex_session_id, session, event)
+
+    for text in stderr_lines:
+        progress = RunnerEvent(
+            event_type=RunnerEventType.PROGRESS,
+            session_id=str(external_id),
+            normalized_payload={"stream": "stderr", "line": text},
+            raw_payload={"line": text},
+            debug_visibility=False,
+        )
+        session_files.append_event(
+            root,
+            "assistant_message",
+            content=text,
+            stream="stderr",
+            line=text,
+            runner_event_type=progress.event_type.value,
+            debug_visibility=progress.debug_visibility,
+        )
+        await _relay_runner_event(convex_session_id, session, progress)
+
+    session_files.update_state(
+        root,
+        runner_stdout_offset=new_stdout_offset,
+        runner_stderr_offset=new_stderr_offset,
+    )
+
+    state = session_files.read_state(root)
+    returncode = _read_exit_code(runtime["exit_code"])
+    if state.get("status") not in TERMINAL_STATUSES and returncode is not None:
+        completion = RunnerEvent(
+            event_type=RunnerEventType.BASH_COMMAND_COMPLETED,
+            session_id=str(external_id),
+            normalized_payload={"returncode": returncode},
+        )
+        terminal = RunnerEvent(
+            event_type=RunnerEventType.COMPLETED if returncode == 0 else RunnerEventType.FAILED,
+            session_id=str(external_id),
+            normalized_payload={"returncode": returncode},
+        )
+        for event in (completion, terminal):
+            file_event_type = EVENT_TYPE_MAP.get(event.event_type.value, "status_changed")
+            payload = _event_payload(event)
+            status = STATUS_MAP.get(event.event_type.value)
+            if status:
+                payload["status"] = status
+            session_files.append_event(root, file_event_type, **payload)
+            if status:
+                _sync_file_status(root, status)
+                session_files.update_state(
+                    root,
+                    review_status="review" if status == "completed" else "needs_changes",
+                    runner_returncode=returncode,
+                    runner_pid=int(runtime["pid"].read_text(encoding="utf-8").strip() or "0")
+                    if runtime["pid"].exists()
+                    else None,
+                )
+            await _relay_runner_event(convex_session_id, session, event)
+        state = session_files.read_state(root)
+
+    pid = None
+    if runtime["pid"].exists():
+        try:
+            pid = int(runtime["pid"].read_text(encoding="utf-8").strip() or "0")
+        except ValueError:
+            pid = None
+    status = state.get("status") or session.get("status") or "running"
+    if status not in TERMINAL_STATUSES and pid and not _process_is_running(pid) and returncode is not None:
+        status = session_files.read_state(root).get("status") or status
+    return {
+        "session_id": str(external_id),
+        "status": status,
+        "normalized_status": {
+            "completed": RunnerEventType.COMPLETED.value,
+            "failed": RunnerEventType.FAILED.value,
+            "cancelled": RunnerEventType.CANCELLED.value,
+        }.get(status, RunnerEventType.PROGRESS.value),
+        "raw": {
+            "pid": pid,
+            "stdout_path": str(runtime["stdout"]),
+            "stderr_path": str(runtime["stderr"]),
+            "exit_code_path": str(runtime["exit_code"]),
+        },
+    }
+
+
+def _validate_research_output_contract(workspace_root: Path, changed_files: list[str]) -> list[str]:
+    candidate_paths = [
+        workspace_root / rel_path
+        for rel_path in changed_files
+        if rel_path.endswith(".md")
+        and (
+            rel_path.startswith("topics/")
+            or rel_path.startswith("artifacts/")
+            or rel_path.startswith("research/findings/")
+        )
+    ]
+    if not candidate_paths:
+        return [
+            "Role workflow contract failed for `research`. No markdown findings output was produced under `topics/`, `artifacts/`, or `research/findings/`.",
+        ]
+
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace").lower()
+        has_facts = bool(re.search(r"(?m)^#{1,6}\s+facts?\b", text))
+        has_interpretation = bool(re.search(r"(?m)^#{1,6}\s+interpretation\b", text))
+        has_open_questions = bool(re.search(r"(?m)^#{1,6}\s+open questions?\b", text))
+        if has_facts and has_interpretation and has_open_questions:
+            claims_path = workspace_root / "research_plan" / "state" / "claims.json"
+            try:
+                claims_raw = json.loads(claims_path.read_text(encoding="utf-8")) if claims_path.exists() else []
+            except json.JSONDecodeError:
+                claims_raw = []
+            if isinstance(claims_raw, list) and claims_raw:
+                return []
+            return [
+                "Role workflow contract failed for `research`. Research sessions must produce at least one claim candidate in `research_plan/state/claims.json`.",
+            ]
+
+    return [
+        "Role workflow contract failed for `research`. Research markdown outputs must include `Facts`, `Interpretation`, and `Open Questions` sections.",
+    ]
+
+
+def _validate_artifact_output_contract(workspace_root: Path, changed_files: list[str]) -> list[str]:
+    candidate_paths = [
+        workspace_root / rel_path
+        for rel_path in changed_files
+        if rel_path.endswith(".md") and rel_path.startswith("artifacts/")
+    ]
+    if not candidate_paths:
+        return [
+            "Role workflow contract failed for `artifact`. No markdown artifact was produced under `artifacts/`.",
+        ]
+
+    for path in candidate_paths:
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        lowered = text.lower()
+        has_evidence_links = bool(re.search(r"(?m)^#{1,6}\s+evidence links?\b", lowered))
+        has_ledger_ref = bool(
+            re.search(r"research_plan/state/(claims|sources)\.json#[A-Za-z0-9._:-]+", text)
+        )
+        if has_evidence_links and has_ledger_ref:
+            return []
+
+    return [
+        "Role workflow contract failed for `artifact`. Artifact markdown outputs must include an `Evidence Links` section with at least one claim or source ledger reference.",
+    ]
 
 
 async def _materialize_workspace(
@@ -717,7 +1230,7 @@ async def _run_workspace_setup(
     workspace_branch: str,
     workspace_config: dict[str, Any],
 ) -> dict[str, Any]:
-    return await _run_workspace_hook(
+    result = await _run_workspace_hook(
         project_root=project_root,
         workspace_root=workspace_root,
         session_root=session_root,
@@ -730,6 +1243,33 @@ async def _run_workspace_setup(
         start_event_type="workspace_setup_started",
         complete_event_type="workspace_setup_completed",
     )
+    if result.get("status") != "passed":
+        return result
+
+    rail_result = await _ensure_workspace_rail_cli(project_root, workspace_root)
+    if rail_result["returncode"] != 0:
+        session_files.update_state(
+            session_root,
+            setup_status="failed",
+            setup_exit_code=rail_result["returncode"],
+            setup_stdout_tail=_tail_output((result.get("stdout") or "") + "\n" + (rail_result.get("stdout") or "")),
+            setup_stderr_tail=_tail_output((result.get("stderr") or "") + "\n" + (rail_result.get("stderr") or "")),
+        )
+        session_files.append_event(
+            session_root,
+            "workspace_setup_completed",
+            content="Workspace setup failed while installing rail-py.",
+            status=session_files.read_state(session_root).get("status"),
+            exit_code=rail_result["returncode"],
+        )
+        return {"status": "failed", **rail_result}
+
+    session_files.update_state(
+        session_root,
+        setup_stdout_tail=_tail_output((result.get("stdout") or "") + "\nRAIL CLI installed."),
+        setup_stderr_tail=_tail_output((result.get("stderr") or "") + ("\n" + rail_result.get("stderr") if rail_result.get("stderr") else "")),
+    )
+    return result
 
 
 async def _run_workspace_verification(
@@ -762,18 +1302,17 @@ async def archive_session_workspace(convex_session_id: str) -> dict[str, Any]:
     session = await running_agent_service.get_running_agent(convex_session_id)
     if not session:
         raise ValueError(f"Session {convex_session_id} not found")
-    session_path = session.get("sessionPath")
-    if not session_path:
-        raise RuntimeError("Session has no sessionPath")
-    session_root = Path(session_path)
-    state = session_files.read_state(session_root)
-    workspace_path = state.get("workspace_path")
-    if not workspace_path:
-        raise RuntimeError("Session has no workspace_path")
     project = await _load_project(session.get("projectId"), session.get("projectSlug"))
     project_root = _project_root(project or {})
     if project_root is None:
         raise RuntimeError("Session has no project root")
+    session_root = _resolve_session_root_path(session, project_root=project_root)
+    if session_root is None:
+        raise RuntimeError("Session has no sessionPath")
+    state = session_files.read_state(session_root)
+    workspace_path = state.get("workspace_path")
+    if not workspace_path:
+        raise RuntimeError("Session has no workspace_path")
     workspace_root = Path(workspace_path)
     workspace_branch = state.get("workspace_branch") or session.get("role") or "workspace"
     base_branch = project.get("defaultBranch") if project else "main"
@@ -830,6 +1369,13 @@ async def _finalize_workspace_review(
     elif terminal_status in {"failed", "cancelled"}:
         review_status = "needs_changes"
 
+    resolved_task_id = _session_task_id(session, session_root)
+    task_record: dict[str, Any] | None = None
+    if resolved_task_id:
+        try:
+            task_record = await _task_record(project, resolved_task_id)
+        except Exception:
+            task_record = None
     publish_error: str | None = None
     if terminal_status == "completed":
         try:
@@ -864,7 +1410,7 @@ async def _finalize_workspace_review(
         workspace_root=workspace_root,
         session_root=session_root,
         session_id=convex_session_id,
-        task_id=session.get("taskId"),
+        task_id=_session_task_id(session, session_root),
         status=terminal_status or "unknown",
         role=session.get("role") or "agent",
     )
@@ -876,17 +1422,72 @@ async def _finalize_workspace_review(
     _copy_workspace_state_indexes(project_root, workspace_root)
     _sync_completion_summary_to_integrity_indexes(
         project_root=project_root,
+        workspace_root=workspace_root,
         summary=summary,
         session_id=convex_session_id,
-        task_id=session.get("taskId"),
+        task_id=_session_task_id(session, session_root),
+        role=session.get("role") or "agent",
+        verification_command=config.get("verification_script"),
+        changed_files=changed_files,
     )
+    if terminal_status == "completed" and changed_files:
+        try:
+            get_integrity_repo(project_root).extract_candidates_from_paths(changed_files)
+        except Exception:
+            pass
+    role = session.get("role") or "agent"
+    workflow = summarize_agent_workflow_health(project_root)
+    role_health = workflow.get(role)
+    workflow_blocker_summary: str | None = None
+    role_contract_blockers: list[str] = []
+    if terminal_status == "completed" and role == "research":
+        role_contract_blockers.extend(_validate_research_output_contract(workspace_root, changed_files))
+    if terminal_status == "completed" and role == "artifact":
+        role_contract_blockers.extend(_validate_artifact_output_contract(workspace_root, changed_files))
+    if terminal_status == "completed" and isinstance(role_health, dict) and role_health.get("status") == "blocked":
+        blocker_bits: list[str] = []
+        for key, value in role_health.items():
+            if key in {"status", "requirements"}:
+                continue
+            if isinstance(value, list) and value:
+                blocker_bits.append(f"{key}: {', '.join(str(item) for item in value)}")
+        workflow_blocker_summary = (
+            f"Role workflow contract failed for `{role}`."
+            + (f" {'; '.join(blocker_bits)}" if blocker_bits else "")
+        )
+        role_contract_blockers.append(workflow_blocker_summary)
+    if terminal_status == "completed" and role_contract_blockers:
+        summary["blockers"] = _dedupe((summary.get("blockers") or []) + role_contract_blockers)
+        summary["recommended_next_tasks"] = _dedupe(
+            (summary.get("recommended_next_tasks") or []) + [f"Resolve `{role}` workflow blockers before finalizing the session."]
+        )
+        review_status = "needs_changes"
+
+    current_state = session_files.read_state(session_root)
+    if (
+        terminal_status == "completed"
+        and review_status == "needs_changes"
+        and current_state.get("verification_status") == "failed"
+        and not publish_error
+        and not role_contract_blockers
+        and _verification_failures_outside_task_scope(
+            state=current_state,
+            task=task_record,
+            changed_files=changed_files,
+        )
+    ):
+        review_status = "review"
+        summary["recommended_next_tasks"] = _dedupe(
+            (summary.get("recommended_next_tasks") or [])
+            + ["Launch a follow-up task for the remaining repo-level verification failures outside this task scope."]
+        )
+
     session_files.update_state(session_root, review_status=review_status)
     session_files.update_state(session_root, completion_summary=summary)
     session_files.refresh_summary(session_root)
-
-    if publish_error and session.get("taskId"):
+    if publish_error and resolved_task_id:
         await planner_service.update_task(
-            str(session.get("taskId")),
+            resolved_task_id,
             project=project,
             status="blocked",
             blockerCategory="publish_failure",
@@ -897,9 +1498,9 @@ async def _finalize_workspace_review(
             source="runner",
             event_type="publish_failed",
             severity="needs_planner",
-            summary=f"Connector publish failed for task {session.get('taskId')}: {publish_error}",
+            summary=f"Connector publish failed for task {resolved_task_id}: {publish_error}",
             evidence_refs=[
-                f"task:{session.get('taskId')}",
+                f"task:{resolved_task_id}",
                 f"runner_session:{convex_session_id}",
                 f"session_state:{session_root / 'state.json'}",
             ],
@@ -908,6 +1509,38 @@ async def _finalize_workspace_review(
                 "Retry the task only after publish succeeds",
                 "Inspect session summary and publish metadata",
             ],
+        )
+    elif role_contract_blockers and resolved_task_id:
+        await planner_service.update_task(
+            resolved_task_id,
+            project=project,
+            status="blocked",
+            blockerCategory="workflow_contract",
+            latestRunSummary="; ".join(role_contract_blockers),
+        )
+    elif resolved_task_id:
+        task_status = "done" if review_status == "review" else "blocked"
+        current_state = session_files.read_state(session_root)
+        verification_paths = _verification_failure_paths(current_state)
+        summary_bits: list[str] = []
+        publish_commit = current_state.get("publish_commit_sha")
+        if publish_commit:
+            summary_bits.append(f"Published commit {publish_commit}")
+        if summary.get("blockers") and review_status != "review":
+            summary_bits.append("; ".join(str(item) for item in (summary.get("blockers") or [])[:3]))
+        elif verification_paths and review_status == "review":
+            summary_bits.append(
+                "Remaining verification failures are outside this task scope: " + ", ".join(verification_paths[:4])
+            )
+        elif summary.get("recommended_next_tasks"):
+            summary_bits.append(str((summary.get("recommended_next_tasks") or [])[0]))
+        latest_summary = ". ".join(bit for bit in summary_bits if bit) or f"Session {convex_session_id} completed."
+        await planner_service.update_task(
+            resolved_task_id,
+            project=project,
+            status=task_status,
+            blockerCategory="verification_failure" if task_status == "blocked" else None,
+            latestRunSummary=latest_summary,
         )
 
 
@@ -1039,33 +1672,44 @@ async def create_runner_session(
 ) -> dict[str, Any]:
     secret_role = agent_role_for_secrets or role
 
-    if project_id:
-        active_worker = await running_agent_service.find_active_worker(project_id)
-        if active_worker:
-            raise RuntimeError(
-                f"Sequential execution enforced: worker session {active_worker['_id']} is still active"
-            )
-
     project = await _load_project(project_id, project_slug)
     project_root = _project_root(project or {})
     if project_root is None and local_repo_path:
         project_root = Path(local_repo_path).resolve()
     if project_root is None:
         raise RuntimeError("Runner sessions require a local repo path")
+    workspace_config = _workspace_config(project_root)
+
+    if project_id:
+        active_sessions = await running_agent_service.list_project_running_agents(
+            project_id,
+            active_only=True,
+            limit=50,
+        )
+        if workspace_config.get("nonconcurrent_run", True) and active_sessions:
+            active_session = active_sessions[0]
+            active_role = active_session.get("role") or "agent"
+            raise RuntimeError(
+                "Sequential execution enforced: "
+                f"{active_role} session {active_session['_id']} is still active"
+            )
 
     if project:
-        role_config = load_role_runtime_config(project, role)
-        integrity_gate = evaluate_integrity_gate(
-            role_config.project_root,
-            role_config.manifest,
-            action=activity_key_for_role(role_config.role),
-        )
-        decision = evaluate_autonomy_policy(
-            role_config.manifest,
-            action=activity_key_for_role(role_config.role),
-            write_capable=bool(allowed_paths or role_config.policy.paths.write),
-            integrity_blocked=integrity_gate["blocked"],
-        )
+        try:
+            role_config = load_role_runtime_config(project, role)
+            integrity_gate = evaluate_integrity_gate(
+                role_config.project_root,
+                role_config.manifest,
+                action=activity_key_for_role(role_config.role),
+            )
+            decision = evaluate_autonomy_policy(
+                role_config.manifest,
+                action=activity_key_for_role(role_config.role),
+                write_capable=bool(allowed_paths or role_config.policy.paths.write),
+                integrity_blocked=integrity_gate["blocked"],
+            )
+        except ValueError as exc:
+            raise RuntimeError(f"Runner launch blocked by invalid project state: {exc}") from exc
         if decision.blocked:
             detail = "; ".join(integrity_gate["reasons"]) if integrity_gate["reasons"] else decision.reason
             raise RuntimeError(detail)
@@ -1119,6 +1763,7 @@ async def create_runner_session(
     )
     session_files.update_state(
         session_root,
+        task_id=task_id,
         workspace_path=str(workspace_root),
         workspace_branch=workspace_branch,
         review_status="pending",
@@ -1235,12 +1880,57 @@ async def get_runner_session(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     session = await running_agent_service.get_running_agent(convex_session_id)
+    project = await _load_project(project_id or (session.get("projectId") if session else None), session.get("projectSlug") if session else None)
+    project_root = _project_root(project or {})
+    root = _resolve_session_root_path(session, project_root=project_root) if session else _find_file_backed_session_root(project_root, convex_session_id)
     if not session:
-        raise ValueError(f"Session {convex_session_id} not found")
+        if not root or not root.exists():
+            raise ValueError(f"Session {convex_session_id} not found")
+        state = session_files.read_state(root)
+        role = state.get("role") or root.parent.name
+        if (
+            project_root is not None
+            and state.get("status") in TERMINAL_STATUSES
+            and (
+                state.get("publish_status") in {None, "", "not_started"}
+                or state.get("verification_status") not in {"passed", "failed", "skipped"}
+                or state.get("review_status") == "pending"
+            )
+        ):
+            synthetic_session = {
+                "_id": convex_session_id,
+                "projectId": project_id,
+                "projectSlug": project.get("slug") if project else None,
+                "role": role,
+                "runner": state.get("runner") or "codex_cli",
+                "externalSessionId": state.get("external_session_id"),
+                "status": state.get("status") or "completed",
+                "taskId": _session_task_id({}, root),
+            }
+            await _finalize_workspace_review(
+                convex_session_id=convex_session_id,
+                session=synthetic_session,
+                project=project or {},
+                project_root=project_root,
+                session_root=root,
+                base_branch=(project or {}).get("defaultBranch") or "main",
+            )
+            state = session_files.read_state(root)
+        result: dict[str, Any] = {
+            "_id": convex_session_id,
+            "projectId": project_id,
+            "projectSlug": project.get("slug") if project else None,
+            "role": role,
+            "runner": state.get("runner") or "codex_cli",
+            "externalSessionId": state.get("external_session_id"),
+            "status": state.get("status") or "completed",
+            "title": state.get("title") or f"[{role}] {convex_session_id}",
+        }
+        result["fileState"] = state
+        result["summaryPath"] = str(root / "summary.md")
+        return result
 
-    result: dict[str, Any] = dict(session)
-    session_path = session.get("sessionPath")
-    root = Path(session_path) if session_path else None
+    result = dict(session)
     if root and root.exists():
         result["fileState"] = session_files.read_state(root)
         result["summaryPath"] = str(root / "summary.md")
@@ -1249,13 +1939,20 @@ async def get_runner_session(
     runner_name = session.get("runner", "jules")
     if sync_from_runner and external_id:
         try:
-            api_key = (
-                await resolve_jules_api_key(project_id or session.get("projectId"), session.get("role") or "data")
-                if runner_name == "jules"
-                else None
-            )
-            runner = resolve_runner_for_project(runner_name, api_key=api_key)
-            runner_info = await runner.get_session(external_id)
+            if runner_name in LOCAL_CLI_RUNNERS and root and root.exists():
+                runner_info = await _ingest_local_cli_runner_events(
+                    convex_session_id=convex_session_id,
+                    session=session,
+                    root=root,
+                )
+            else:
+                api_key = (
+                    await resolve_jules_api_key(project_id or session.get("projectId"), session.get("role") or "data")
+                    if runner_name == "jules"
+                    else None
+                )
+                runner = resolve_runner_for_project(runner_name, api_key=api_key)
+                runner_info = await runner.get_session(external_id)
             normalized = runner_info.get("normalized_status", "")
             new_status = STATUS_MAP.get(normalized, runner_info.get("status", "running"))
             await running_agent_service.update_running_agent(
@@ -1286,8 +1983,6 @@ async def get_runner_session(
                         or refreshed_state.get("review_status") == "pending"
                     )
                     if still_needs_finalization:
-                        project = await _load_project(project_id or session.get("projectId"), session.get("projectSlug"))
-                        project_root = _project_root(project or {})
                         if project_root is not None:
                             await _finalize_workspace_review(
                                 convex_session_id=convex_session_id,
@@ -1301,6 +1996,31 @@ async def get_runner_session(
                     result["summaryPath"] = str(root / "summary.md")
         except Exception as exc:
             result["syncError"] = str(exc)
+        finally:
+            if root and root.exists():
+                result["fileState"] = session_files.read_state(root)
+                result["summaryPath"] = str(root / "summary.md")
+    if root and root.exists():
+        file_state = session_files.read_state(root)
+        still_needs_finalization = (
+            file_state.get("status") in TERMINAL_STATUSES
+            and (
+                file_state.get("publish_status") in {None, "", "not_started"}
+                or file_state.get("verification_status") not in {"passed", "failed", "skipped"}
+                or file_state.get("review_status") == "pending"
+            )
+        )
+        if still_needs_finalization and project_root is not None:
+            await _finalize_workspace_review(
+                convex_session_id=convex_session_id,
+                session=session,
+                project=project or {},
+                project_root=project_root,
+                session_root=root,
+                base_branch=(project or {}).get("defaultBranch") or "main",
+            )
+            result["fileState"] = session_files.read_state(root)
+            result["summaryPath"] = str(root / "summary.md")
     return result
 
 
@@ -1336,8 +2056,24 @@ async def cancel_runner_session(
     project_id: str | None = None,
 ) -> dict[str, Any]:
     session = await running_agent_service.get_running_agent(convex_session_id)
+    had_runtime_session = session is not None
+    project = await _load_project(project_id or (session.get("projectId") if session else None), session.get("projectSlug") if session else None)
+    project_root = _project_root(project or {})
+    root = _resolve_session_root_path(session, project_root=project_root) if session else _find_file_backed_session_root(project_root, convex_session_id)
     if not session:
-        raise ValueError(f"Session {convex_session_id} not found")
+        if not root or not root.exists():
+            raise ValueError(f"Session {convex_session_id} not found")
+        state = session_files.read_state(root)
+        role = state.get("role") or root.parent.name
+        session = {
+            "_id": convex_session_id,
+            "projectId": project_id,
+            "projectSlug": project.get("slug") if project else None,
+            "role": role,
+            "runner": state.get("runner") or "codex_cli",
+            "externalSessionId": state.get("external_session_id"),
+            "status": state.get("status") or "running",
+        }
 
     external_id = session.get("externalSessionId")
     runner_name = session.get("runner", "jules")
@@ -1353,23 +2089,21 @@ async def cancel_runner_session(
         except Exception:
             pass
 
-    session_path = session.get("sessionPath")
-    if session_path:
-        root = Path(session_path)
-        if root.exists():
-            session_files.append_event(
-                root,
-                "cancelled",
-                content="Session cancelled by user.",
-                status="cancelled",
-            )
-            _sync_file_status(root, "cancelled")
+    if root and root.exists():
+        session_files.append_event(
+            root,
+            "cancelled",
+            content="Session cancelled by user.",
+            status="cancelled",
+        )
+        _sync_file_status(root, "cancelled")
 
-    await running_agent_service.finalize_running_agent(
-        convex_session_id,
-        status="cancelled",
-        ended_at=int(time.time() * 1000),
-    )
+    if had_runtime_session:
+        await running_agent_service.finalize_running_agent(
+            convex_session_id,
+            status="cancelled",
+            ended_at=int(time.time() * 1000),
+        )
     return {"convex_session_id": convex_session_id, "status": "cancelled"}
 
 
@@ -1387,6 +2121,24 @@ async def ingest_session_events(
         return []
 
     runner_name = session.get("runner", "jules")
+    project = await _load_project(project_id or session.get("projectId"), session.get("projectSlug"))
+    project_root = _project_root(project or {})
+    root = _resolve_session_root_path(session, project_root=project_root)
+    if runner_name in LOCAL_CLI_RUNNERS and root and root.exists():
+        info = await _ingest_local_cli_runner_events(
+            convex_session_id=convex_session_id,
+            session=session,
+            root=root,
+        )
+        state = session_files.read_state(root)
+        if state.get("status") in TERMINAL_STATUSES:
+            await running_agent_service.finalize_running_agent(
+                convex_session_id,
+                status=state["status"],
+                ended_at=int(time.time() * 1000),
+            )
+        return [{"event_type": info.get("normalized_status", "progress"), "debug_visibility": False}]
+
     api_key = (
         await resolve_jules_api_key(project_id or session.get("projectId"), session.get("role") or "data")
         if runner_name == "jules"
@@ -1394,8 +2146,6 @@ async def ingest_session_events(
     )
     runner = resolve_runner_for_project(runner_name, api_key=api_key)
     events = await runner.list_events(external_id)
-    session_path = session.get("sessionPath")
-    root = Path(session_path) if session_path else None
     state = session_files.read_state(root) if root and root.exists() else {}
     cursor = int(state.get("runner_event_cursor", 0))
     new_events = events[cursor:]
@@ -1428,8 +2178,6 @@ async def ingest_session_events(
         session_files.update_state(root, runner_event_cursor=cursor + len(new_events))
         state = session_files.read_state(root)
         if state.get("status") in TERMINAL_STATUSES:
-            project = await _load_project(session.get("projectId"), session.get("projectSlug"))
-            project_root = _project_root(project or {})
             if project_root is not None:
                 await _finalize_workspace_review(
                     convex_session_id=convex_session_id,
@@ -1460,10 +2208,11 @@ async def append_session_command(
     session = await running_agent_service.get_running_agent(convex_session_id)
     if not session:
         raise ValueError(f"Session {convex_session_id} not found")
-    session_path = session.get("sessionPath")
-    if not session_path:
+    project = await _load_project(session.get("projectId"), session.get("projectSlug"))
+    project_root = _project_root(project or {})
+    root = _resolve_session_root_path(session, project_root=project_root)
+    if root is None:
         raise RuntimeError("Session has no sessionPath")
-    root = Path(session_path)
     command = session_files.append_command(
         root,
         command_type,
@@ -1524,7 +2273,7 @@ async def _relay_approval_requested(
 
     await planner_service.create_approval(
         project=project,
-        task_id=session_record.get("taskId"),
+        task_id=_session_task_id(session_record),
         agent_session_id=convex_session_id,
         approval_type=event.normalized_payload.get("activity_key") or "run_task",
         status="pending",
@@ -1576,11 +2325,15 @@ async def _relay_question_asked(
 
 async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEvent) -> None:
     project_id = session_record.get("projectId")
-    task_id = session_record.get("taskId")
-    if not project_id or not task_id:
+    if not project_id:
         return
     project = await convex.query("projects:getById", {"projectId": project_id})
     if not project:
+        return
+    project_root = _project_root(project)
+    session_root = _resolve_session_root_path(session_record, project_root=project_root)
+    task_id = _session_task_id(session_record, session_root)
+    if not task_id:
         return
     status = STATUS_MAP.get(event.event_type.value, "done")
     task_status = {

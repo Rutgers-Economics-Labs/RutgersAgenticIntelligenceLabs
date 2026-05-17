@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from app.services import planner_runtime, planner_service, running_agent_service
 from app.runners import session_lifecycle
+from app.services.convex_client import convex
 from app.services.decision_service import list_decision_events, mark_decision_event, raise_decision_event
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,36 @@ def _dependencies_satisfied(task: dict[str, Any], task_by_id: dict[str, dict[str
         if not dep or dep.get("status") != "done":
             return False
     return True
+
+
+async def _mark_project_completed(project: dict[str, Any]) -> None:
+    project_id = project.get("_id") or project.get("projectId")
+    if not project_id:
+        return
+    local_repo_path = project.get("localRepoPath")
+    repo_root = Path(local_repo_path).resolve() if local_repo_path else None
+    derived_status = "draft"
+    if project.get("lastHydratedAt") or project.get("activeOntologyDuckdbPath") or project.get("status") == "hydrated":
+        derived_status = "hydrated"
+    elif project.get("pipelineConfigSlug"):
+        derived_status = "ready"
+    elif repo_root is not None:
+        pipeline_roots = (
+            repo_root / ".ontology" / "pipelines",
+            repo_root / "configs" / "pipelines",
+        )
+        if any(root.is_dir() and any(root.glob("*.yaml")) for root in pipeline_roots):
+            derived_status = "ready"
+    try:
+        await convex.mutation(
+            "projects:updateById",
+            {
+                "projectId": project_id,
+                "status": derived_status,
+            },
+        )
+    except Exception as exc:
+        logger.warning("Failed to mark project %s terminal status %s: %s", project.get("slug"), derived_status, exc)
 
 async def start_autopilot(project_slug: str, auto_approve: bool = False):
     """
@@ -102,6 +134,19 @@ async def run_autopilot_loop(project_slug: str):
             except Exception as e:
                 logger.error(f"Failed to auto-approve in autopilot: {e}")
 
+        board = await planner_service.ensure_main_board(project)
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
+        all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
+        if all_done and tasks:
+            logger.info("Autopilot: All tasks are completed. Project goal reached.")
+            _update_config(
+                project_slug,
+                last_action="Completed",
+                last_turn_result="All planner tasks reached terminal status.",
+            )
+            await _mark_project_completed(project)
+            break
+
         # 2. Run the planner to see what it wants to do
         _update_config(project_slug, last_action="Running Planner: Determining next task...")
         try:
@@ -158,29 +203,59 @@ async def run_autopilot_loop(project_slug: str):
                 continue
             
         # 4. Check tasks on the board to see if we are actually making progress
-        board = await planner_service.ensure_main_board(project)
-        tasks = await planner_service.list_tasks(board["_id"], project=project)
-        
         # If everything is 'done' or 'cancelled', we are finished
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
             logger.info("Autopilot: All tasks are completed. Project goal reached.")
+            _update_config(
+                project_slug,
+                last_action="Completed",
+                last_turn_result="All planner tasks reached terminal status.",
+            )
+            await _mark_project_completed(project)
             break
 
         task_by_id = {str(t["_id"]): t for t in tasks}
 
         if config.get("auto_approve"):
             promoted: list[str] = []
+            approvals = await planner_service.list_approvals(project)
             for task in tasks:
                 status = task.get("status")
-                if status not in {"awaiting_approval", "backlog", "blocked"}:
+                if status not in {"awaiting_approval", "backlog", "blocked", "ready"}:
                     continue
                 if status == "blocked" and task.get("blockerCategory") == "publish_failure":
                     continue
                 if not _dependencies_satisfied(task, task_by_id):
                     continue
-                if status == "awaiting_approval" and task.get("approvalState") not in {"granted", "not_required"}:
-                    continue
+                if task.get("approvalState") == "pending":
+                    task_id = str(task["_id"])
+                    pending_approval = next(
+                        (
+                            item
+                            for item in approvals
+                            if item.get("taskId") == task_id and item.get("status") == "pending"
+                        ),
+                        None,
+                    )
+                    if pending_approval is None:
+                        approval_id = await planner_service.create_approval(
+                            project=project,
+                            task_id=task_id,
+                            agent_session_id=None,
+                            approval_type="run_task",
+                            status="pending",
+                            requested_by_role="planner",
+                        )
+                    else:
+                        approval_id = pending_approval["_id"]
+                    await planner_service.resolve_approval(
+                        project=project,
+                        approval_id=approval_id,
+                        status="granted",
+                        granted_by_user_id="autopilot",
+                        resolution_note="Auto-approved by Autopilot because dependencies are satisfied.",
+                    )
                 await planner_service.update_task(
                     str(task["_id"]),
                     project=project,

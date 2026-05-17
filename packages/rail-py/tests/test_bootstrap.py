@@ -31,6 +31,10 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
     assert (root / "research_plan/state/assumptions.json").exists()
     assert (root / "research_plan/state/sources.json").exists()
     assert (root / "research_plan/state/claims.json").exists()
+    assert (root / "research_plan/state/source_candidates.json").exists()
+    assert (root / "research_plan/state/claim_candidates.json").exists()
+    assert (root / "research_plan/state/entity_candidates.json").exists()
+    assert (root / "research_plan/state/conflicts.json").exists()
     assert (root / "research_plan/state/artifact_lineage.json").exists()
     assert (root / "research_plan/state/verification_runs.json").exists()
     assert (root / "agents/prompts/planner.md").exists()
@@ -68,3 +72,7 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
 
     research_prompt = (root / "agents/prompts/research.md").read_text(encoding="utf-8")
     assert "Do not treat web snippets as evidence" in research_prompt
+
+    setup_script = (root / "scripts/setup-workspace.sh").read_text(encoding="utf-8")
+    assert "packages/rail-py" in setup_script
+    assert "rail --help" in setup_script

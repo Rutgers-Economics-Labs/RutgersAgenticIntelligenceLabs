@@ -349,6 +349,10 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
         "assumptions.json": "[]\n",
         "sources.json": "[]\n",
         "claims.json": "[]\n",
+        "source_candidates.json": "[]\n",
+        "claim_candidates.json": "[]\n",
+        "entity_candidates.json": "[]\n",
+        "conflicts.json": "[]\n",
         "artifact_lineage.json": "[]\n",
         "verification_runs.json": "[]\n",
     }
@@ -379,11 +383,22 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
                 "git+https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs.git#subdirectory=packages/engine"
             fi
 
+            LOCAL_RAIL_PY="$RAIL_PROJECT_ROOT/../../packages/rail-py"
+            if [ -d "$LOCAL_RAIL_PY" ]; then
+              echo "→ Installing rail-py from local path: $LOCAL_RAIL_PY"
+              pip install --quiet -e "$LOCAL_RAIL_PY"
+            else
+              echo "→ Installing rail-py from GitHub..."
+              pip install --quiet \\
+                "git+https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs.git#subdirectory=packages/rail-py"
+            fi
+
             # 2. Common data science deps used by analysis scripts
             pip install --quiet pandas requests httpx pyyaml duckdb matplotlib statsmodels scikit-learn
 
-            echo "RAIL engine installed."
+            echo "RAIL engine and CLI installed."
             python -c "import engine; print('engine ok')" 2>/dev/null || echo "Note: engine import check skipped"
+            rail --help >/dev/null 2>&1 || echo "Note: rail CLI check skipped"
             """
         ),
     )

@@ -18,6 +18,8 @@ SourceFreshnessStatus = Literal["unknown", "fresh", "needs_refresh", "stale"]
 SourceImpactLevel = Literal["low", "normal", "high", "critical"]
 ClaimStatus = Literal["draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"]
 EvidenceKind = Literal["direct", "derived", "contextual", "semantic_suggestion"]
+CandidateStatus = Literal["candidate", "promoted", "rejected"]
+ConflictStatus = Literal["open", "reviewing", "resolved", "dismissed"]
 PromotionState = Literal[
     "exploratory",
     "draft",
@@ -35,9 +37,14 @@ STATE_FILE_NAMES = {
     "assumptions": "assumptions.json",
     "sources": "sources.json",
     "claims": "claims.json",
+    "source_candidates": "source_candidates.json",
+    "claim_candidates": "claim_candidates.json",
+    "entity_candidates": "entity_candidates.json",
+    "conflicts": "conflicts.json",
     "artifact_lineage": "artifact_lineage.json",
     "verification_runs": "verification_runs.json",
     "evidence_chunks": "evidence_chunks.json",
+    "integrity_edges": "integrity_edges.json",
 }
 
 
@@ -209,6 +216,68 @@ class ClaimRecord(BaseModel):
     updated_at: str | None = None
 
 
+class SourceCandidateRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_key: str
+    title: str
+    url_or_path: str
+    source_type_hint: str = "url"
+    status: CandidateStatus = "candidate"
+    discovered_in_paths: list[str] = Field(default_factory=list)
+    snippet: str | None = None
+    related_claim_candidate_keys: list[str] = Field(default_factory=list)
+    relevance_score: float | None = Field(default=None, ge=0, le=1)
+    source_path: str = Field(default_factory=lambda: _default_source_path(STATE_FILE_NAMES["source_candidates"]))
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ClaimCandidateRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_key: str
+    claim_text: str
+    status: CandidateStatus = "candidate"
+    discovered_in_paths: list[str] = Field(default_factory=list)
+    evidence_paths: list[str] = Field(default_factory=list)
+    source_candidate_keys: list[str] = Field(default_factory=list)
+    snippet: str | None = None
+    source_path: str = Field(default_factory=lambda: _default_source_path(STATE_FILE_NAMES["claim_candidates"]))
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class EntityCandidateRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_key: str
+    name: str
+    entity_type_hint: str = "unknown"
+    status: CandidateStatus = "candidate"
+    discovered_in_paths: list[str] = Field(default_factory=list)
+    mention_count: int = Field(default=1, ge=0)
+    snippet: str | None = None
+    source_path: str = Field(default_factory=lambda: _default_source_path(STATE_FILE_NAMES["entity_candidates"]))
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
+class ConflictRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    conflict_key: str
+    left_ref: str
+    right_ref: str
+    conflict_type: str
+    status: ConflictStatus = "open"
+    explanation: str | None = None
+    recommended_resolution: str | None = None
+    source_path: str = Field(default_factory=lambda: _default_source_path(STATE_FILE_NAMES["conflicts"]))
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
 class ArtifactLineageRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -250,6 +319,56 @@ class VerificationRunRecord(BaseModel):
     updated_at: str | None = None
 
 
+def _normalize_legacy_verification_run_record(record: dict[str, Any]) -> dict[str, Any]:
+    if "run_id" in record:
+        normalized = dict(record)
+        for key in ("timestamp", "agent_role", "check_type", "command", "failures", "notes"):
+            normalized.pop(key, None)
+        return normalized
+
+    legacy_keys = {"timestamp", "agent_role", "check_type", "command", "failures", "notes"}
+    if not legacy_keys.intersection(record):
+        return record
+
+    status = str(record.get("status") or "pending")
+    scope = str(record.get("scope") or record.get("agent_role") or "verification")
+    check_type = str(record.get("check_type") or "legacy_verification")
+    timestamp = _stringify_timestamp(record.get("timestamp")) or _utc_now()
+    failures = [str(item) for item in (record.get("failures") or []) if str(item).strip()]
+    notes = str(record.get("notes") or "").strip()
+    command = str(record.get("command") or "").strip()
+    raw_key = json.dumps(record, sort_keys=True, default=str)
+    digest = hashlib.sha1(raw_key.encode("utf-8")).hexdigest()[:10]
+    normalized_check_type = "-".join(_tokenize_text(check_type)) or "legacy-verification"
+    normalized_scope = "-".join(_tokenize_text(scope)) or "verification"
+
+    details: list[str] = []
+    if notes:
+        details.append(notes)
+    details.extend(failures)
+
+    return {
+        "run_id": f"legacy-{normalized_scope}-{normalized_check_type}-{digest}",
+        "scope": scope,
+        "loop_type": "analysis_reproducibility",
+        "status": status,
+        "checks": [
+            {
+                "name": check_type,
+                "status": status,
+                "command": command or None,
+                "details": details,
+            }
+        ],
+        "artifacts_checked": [str(item) for item in (record.get("artifacts_checked") or []) if str(item).strip()],
+        "claims_checked": [str(item) for item in (record.get("claims_checked") or []) if str(item).strip()],
+        "artifact_paths": [str(item) for item in (record.get("artifact_paths") or []) if str(item).strip()],
+        "blockers": failures if status in {"failed", "blocked"} else [],
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+
+
 class EvidenceChunkRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -269,15 +388,143 @@ class EvidenceChunkRecord(BaseModel):
     updated_at: str | None = None
 
 
+class IntegrityEdgeRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    edge_key: str
+    from_id: str
+    to_id: str
+    relationship: str
+    edge_class: Literal["explicit"] = "explicit"
+    source_record_key: str | None = None
+    target_record_key: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+
 class IntegrityIndexes(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     assumptions: list[AssumptionRecord] = Field(default_factory=list)
     sources: list[SourceRecord] = Field(default_factory=list)
     claims: list[ClaimRecord] = Field(default_factory=list)
+    source_candidates: list[SourceCandidateRecord] = Field(default_factory=list)
+    claim_candidates: list[ClaimCandidateRecord] = Field(default_factory=list)
+    entity_candidates: list[EntityCandidateRecord] = Field(default_factory=list)
+    conflicts: list[ConflictRecord] = Field(default_factory=list)
     artifact_lineage: list[ArtifactLineageRecord] = Field(default_factory=list)
     verification_runs: list[VerificationRunRecord] = Field(default_factory=list)
     evidence_chunks: list[EvidenceChunkRecord] = Field(default_factory=list)
+    integrity_edges: list[IntegrityEdgeRecord] = Field(default_factory=list)
+
+
+def build_source_state(
+    source: SourceRecord,
+    *,
+    dependent_claim_count: int = 0,
+    dependent_artifact_count: int = 0,
+    chunk_count: int = 0,
+) -> dict[str, Any]:
+    quality_blocked = source.quality_status in {"blocked", "rejected"}
+    return {
+        "freshnessStatus": source.freshness_status,
+        "qualityStatus": source.quality_status,
+        "isFresh": source.freshness_status == "fresh" and not quality_blocked,
+        "isStale": source.freshness_status == "stale",
+        "needsRefresh": source.freshness_status == "needs_refresh",
+        "isBlocked": quality_blocked,
+        "dependentClaimCount": dependent_claim_count,
+        "dependentArtifactCount": dependent_artifact_count,
+        "chunkCount": chunk_count,
+    }
+
+
+def build_claim_state(
+    claim: ClaimRecord,
+    *,
+    contradictory_claim_count: int = 0,
+    source_count: int = 0,
+    chunk_count: int = 0,
+    artifact_count: int = 0,
+    verification_run_count: int = 0,
+) -> dict[str, Any]:
+    evidence_complete = bool(claim.evidence_paths or claim.source_keys or claim.evidence_chunk_keys) and claim.evidence_kind != "semantic_suggestion"
+    return {
+        "status": claim.status,
+        "evidenceComplete": evidence_complete,
+        "isExplicitEvidence": claim.status == "supported" and evidence_complete,
+        "hasContradictions": contradictory_claim_count > 0,
+        "sourceCount": source_count,
+        "chunkCount": chunk_count,
+        "artifactCount": artifact_count,
+        "verificationRunCount": verification_run_count,
+        "caveatCount": len(claim.caveats),
+        "openQuestionCount": len(claim.open_questions),
+    }
+
+
+def build_artifact_trust_summary(
+    artifact: ArtifactLineageRecord,
+    *,
+    verification_status: str,
+    artifact_blocked: bool = False,
+    gate_reasons: list[str] | None = None,
+    eligible_transitions: list[str] | None = None,
+    promotable_targets: list[str] | None = None,
+    blocking_claims: list[str] | None = None,
+    blocking_sources: list[str] | None = None,
+    blocking_artifacts: list[str] | None = None,
+    blocking_verification_runs: list[str] | None = None,
+) -> dict[str, Any]:
+    stale_reasons = list(artifact.stale_reasons)
+    artifact_stale = artifact.promotion_state == "stale" or bool(stale_reasons)
+    blocking_claims = sorted(set(blocking_claims or []))
+    blocking_sources = sorted(set(blocking_sources or []))
+    blocking_artifacts = sorted(set(blocking_artifacts or []))
+    blocking_verification_runs = sorted(set(blocking_verification_runs or []))
+    gate_reasons = list(gate_reasons or [])
+    eligible_transitions = list(eligible_transitions or [])
+    promotable_targets = list(promotable_targets or [])
+    has_evidence = bool(artifact.claims or artifact.sources)
+    has_fresh_sources = not any(reason.startswith("source_stale:") for reason in stale_reasons)
+    is_reproducible = artifact.reproducibility_mode in {"manual", "deterministic"} or bool(
+        artifact.inputs and artifact.scripts and artifact.verification_commands and artifact.verification_runs
+    )
+    is_trusted = artifact.promotion_state in {"partially_verified", "verified"} and not artifact_blocked and not artifact_stale
+    if is_trusted:
+        next_action = "Trust state is current."
+    elif artifact_blocked:
+        next_action = "Resolve blocking claims, sources, or verification runs before promotion."
+    elif artifact_stale:
+        next_action = "Rerun dependent analyses and clear stale reasons before promotion."
+    elif not has_evidence:
+        next_action = "Attach claims or sources so the artifact has explicit lineage."
+    elif not is_reproducible:
+        next_action = "Record inputs, scripts, and verification runs or mark the artifact manual."
+    elif promotable_targets:
+        next_action = f"Eligible for promotion to {promotable_targets[0]}."
+    else:
+        next_action = "Trust state is current."
+    return {
+        "currentState": artifact.promotion_state,
+        "verificationStatus": verification_status,
+        "isTrusted": is_trusted,
+        "isBlocked": artifact_blocked,
+        "isStale": artifact_stale,
+        "hasEvidence": has_evidence,
+        "hasFreshSources": has_fresh_sources,
+        "isReproducible": is_reproducible,
+        "staleReasons": stale_reasons,
+        "blockingReasons": gate_reasons if artifact_blocked else [],
+        "eligibleTransitions": eligible_transitions,
+        "promotableTargets": promotable_targets,
+        "blockingClaims": blocking_claims,
+        "blockingSources": blocking_sources,
+        "blockingArtifacts": blocking_artifacts,
+        "blockingVerificationRuns": blocking_verification_runs,
+        "recommendedNextAction": next_action,
+    }
 
 
 class ResearchIntegrityRepo:
@@ -302,6 +549,18 @@ class ResearchIntegrityRepo:
     def claims_path(self) -> Path:
         return self.state_root / STATE_FILE_NAMES["claims"]
 
+    def source_candidates_path(self) -> Path:
+        return self.state_root / STATE_FILE_NAMES["source_candidates"]
+
+    def claim_candidates_path(self) -> Path:
+        return self.state_root / STATE_FILE_NAMES["claim_candidates"]
+
+    def entity_candidates_path(self) -> Path:
+        return self.state_root / STATE_FILE_NAMES["entity_candidates"]
+
+    def conflicts_path(self) -> Path:
+        return self.state_root / STATE_FILE_NAMES["conflicts"]
+
     def artifact_lineage_path(self) -> Path:
         return self.state_root / STATE_FILE_NAMES["artifact_lineage"]
 
@@ -311,14 +570,80 @@ class ResearchIntegrityRepo:
     def evidence_chunks_path(self) -> Path:
         return self.state_root / STATE_FILE_NAMES["evidence_chunks"]
 
+    def integrity_edges_path(self) -> Path:
+        return self.state_root / STATE_FILE_NAMES["integrity_edges"]
+
+    def compiled_truth_report_path(self) -> Path:
+        return self.state_root / "compiled_truth_report.json"
+
+    def artifact_support_matrix_path(self) -> Path:
+        return self.state_root / "artifact_support_matrix.json"
+
+    def paper_alignment_report_path(self) -> Path:
+        return self.state_root / "paper_alignment_report.md"
+
+    def compiled_truth_summary_path(self) -> Path:
+        return self.state_root / "compiled_truth_report.md"
+
+    @staticmethod
+    def source_node_id(source_key: str) -> str:
+        return f"source:{source_key}"
+
+    @staticmethod
+    def claim_node_id(claim_key: str) -> str:
+        return f"claim:{claim_key}"
+
+    @staticmethod
+    def chunk_node_id(chunk_key: str) -> str:
+        return f"chunk:{chunk_key}"
+
+    @staticmethod
+    def artifact_node_id(record: ArtifactLineageRecord) -> str:
+        prefix = "dataset" if record.artifact_type == "dataset" else "artifact"
+        return f"{prefix}:{record.artifact_path}"
+
+    def load_integrity_edge_index(
+        self,
+        edges: list[IntegrityEdgeRecord] | None = None,
+    ) -> tuple[dict[str, list[IntegrityEdgeRecord]], dict[str, list[IntegrityEdgeRecord]]]:
+        outgoing: dict[str, list[IntegrityEdgeRecord]] = {}
+        incoming: dict[str, list[IntegrityEdgeRecord]] = {}
+        for edge in edges or self.load_integrity_edges():
+            outgoing.setdefault(edge.from_id, []).append(edge)
+            incoming.setdefault(edge.to_id, []).append(edge)
+        return outgoing, incoming
+
+    def neighbors_for_node(
+        self,
+        node_id: str,
+        *,
+        relationship: str | None = None,
+        direction: Literal["out", "in", "both"] = "out",
+        edges: list[IntegrityEdgeRecord] | None = None,
+    ) -> list[IntegrityEdgeRecord]:
+        outgoing, incoming = self.load_integrity_edge_index(edges)
+        selected: list[IntegrityEdgeRecord] = []
+        if direction in {"out", "both"}:
+            selected.extend(outgoing.get(node_id, []))
+        if direction in {"in", "both"}:
+            selected.extend(incoming.get(node_id, []))
+        if relationship is None:
+            return selected
+        return [edge for edge in selected if edge.relationship == relationship]
+
     def load_all(self) -> IntegrityIndexes:
         return IntegrityIndexes(
             assumptions=self.load_assumptions(),
             sources=self.load_sources(),
             claims=self.load_claims(),
+            source_candidates=self.load_source_candidates(),
+            claim_candidates=self.load_claim_candidates(),
+            entity_candidates=self.load_entity_candidates(),
+            conflicts=self.load_conflicts(),
             artifact_lineage=self.load_artifact_lineage(),
             verification_runs=self.load_verification_runs(),
             evidence_chunks=self.load_evidence_chunks(),
+            integrity_edges=self.load_integrity_edges(),
         )
 
     def rebuild_all(self) -> IntegrityIndexes:
@@ -326,16 +651,321 @@ class ResearchIntegrityRepo:
         self.write_assumptions(indexes.assumptions)
         self.write_sources(indexes.sources)
         self.write_claims(indexes.claims)
+        self.write_source_candidates(indexes.source_candidates)
+        self.write_claim_candidates(indexes.claim_candidates)
+        self.write_entity_candidates(indexes.entity_candidates)
         self.write_artifact_lineage(indexes.artifact_lineage)
         self.write_verification_runs(indexes.verification_runs)
         self.write_evidence_chunks(indexes.evidence_chunks)
-        return indexes
+        self.rebuild_conflicts()
+        self.rebuild_integrity_edges()
+        return self.load_all()
+
+    def compile_truth_report(
+        self,
+        *,
+        alignment_paths: list[str] | None = None,
+        write_files: bool = False,
+    ) -> dict[str, Any]:
+        self.ensure_files_exist()
+        self.rebuild_all()
+        indexes = self.load_all()
+
+        source_index = {item.source_key: item for item in indexes.sources}
+        claim_index = {item.claim_key: item for item in indexes.claims}
+        artifact_index = {item.artifact_path: item for item in indexes.artifact_lineage}
+        verification_index = {item.run_id: item for item in indexes.verification_runs}
+
+        source_details: list[dict[str, Any]] = []
+        claim_details: list[dict[str, Any]] = []
+        artifact_support_matrix: list[dict[str, Any]] = []
+        source_gaps: list[dict[str, Any]] = []
+
+        freshness_counts: dict[str, int] = {}
+        quality_counts: dict[str, int] = {}
+        claim_bucket_counts: dict[str, int] = {}
+        artifact_bucket_counts: dict[str, int] = {}
+
+        for source in indexes.sources:
+            dependent_claims = self.claims_for_source(source.source_key)
+            dependent_artifacts = self.artifacts_for_source(source.source_key)
+            chunk_count = len(self.chunks_for_source(source.source_key))
+            source_state = build_source_state(
+                source,
+                dependent_claim_count=len(dependent_claims),
+                dependent_artifact_count=len(dependent_artifacts),
+                chunk_count=chunk_count,
+            )
+            compiled_status = "current"
+            if source_state["isBlocked"]:
+                compiled_status = "blocked"
+            elif source_state["isStale"]:
+                compiled_status = "stale"
+            elif source_state["needsRefresh"]:
+                compiled_status = "needs_refresh"
+            source_details.append(
+                {
+                    "sourceKey": source.source_key,
+                    "title": source.title,
+                    "sourceType": source.source_type,
+                    "freshnessStatus": source.freshness_status,
+                    "qualityStatus": source.quality_status,
+                    "compiledStatus": compiled_status,
+                    "state": source_state,
+                    "qualityNotes": source.quality_notes,
+                    "provenance": source.provenance,
+                }
+            )
+            freshness_counts[source.freshness_status] = freshness_counts.get(source.freshness_status, 0) + 1
+            quality_counts[source.quality_status] = quality_counts.get(source.quality_status, 0) + 1
+            if compiled_status != "current" or source.quality_notes:
+                source_gaps.append(
+                    {
+                        "kind": "source",
+                        "sourceKey": source.source_key,
+                        "status": compiled_status,
+                        "message": source.quality_notes
+                        or f"Source is {compiled_status.replace('_', ' ')}.",
+                    }
+                )
+
+        for claim in indexes.claims:
+            artifacts = self.artifacts_for_claim(claim.claim_key)
+            chunks = self.chunks_for_claim(claim.claim_key)
+            contradictory_count = len(claim.contradicts_claim_keys)
+            verification_run_count = sum(
+                1
+                for run in indexes.verification_runs
+                if claim.claim_key in run.claims_checked
+            )
+            claim_state = build_claim_state(
+                claim,
+                contradictory_claim_count=contradictory_count,
+                source_count=len(claim.source_keys),
+                chunk_count=len(chunks),
+                artifact_count=len(artifacts),
+                verification_run_count=verification_run_count,
+            )
+            linked_sources = [source_index[key] for key in claim.source_keys if key in source_index]
+            blocked_sources = [source.source_key for source in linked_sources if source.quality_status in {"blocked", "rejected"}]
+            stale_sources = [source.source_key for source in linked_sources if source.freshness_status == "stale"]
+            if blocked_sources or claim.status == "conflicted":
+                compiled_status = "blocked"
+            elif stale_sources or claim.status == "stale":
+                compiled_status = "stale"
+            elif claim.status in {"draft", "unsupported", "needs_evidence"}:
+                compiled_status = claim.status
+            elif not claim_state["evidenceComplete"]:
+                compiled_status = "needs_evidence"
+            elif claim.evidence_kind in {"derived", "contextual"} or claim.caveats or claim.open_questions:
+                compiled_status = "partially_verified"
+            else:
+                compiled_status = "supported"
+            claim_details.append(
+                {
+                    "claimKey": claim.claim_key,
+                    "claimText": claim.claim_text,
+                    "ledgerStatus": claim.status,
+                    "compiledStatus": compiled_status,
+                    "evidenceKind": claim.evidence_kind,
+                    "confidence": claim.confidence,
+                    "sourceKeys": claim.source_keys,
+                    "evidencePaths": claim.evidence_paths,
+                    "evidenceChunkKeys": claim.evidence_chunk_keys,
+                    "artifactPaths": [artifact.artifact_path for artifact in artifacts],
+                    "caveats": claim.caveats,
+                    "openQuestions": claim.open_questions,
+                    "state": claim_state,
+                }
+            )
+            claim_bucket_counts[compiled_status] = claim_bucket_counts.get(compiled_status, 0) + 1
+            if compiled_status in {"needs_evidence", "stale", "blocked", "draft", "unsupported"} or claim.caveats or claim.open_questions:
+                source_gaps.append(
+                    {
+                        "kind": "claim",
+                        "claimKey": claim.claim_key,
+                        "status": compiled_status,
+                        "message": "; ".join([*claim.caveats, *claim.open_questions])
+                        or f"Claim is {compiled_status.replace('_', ' ')}.",
+                    }
+                )
+
+        for artifact in indexes.artifact_lineage:
+            linked_claims = [claim_index[_normalize_reference_key(ref)] for ref in artifact.claims if _normalize_reference_key(ref) in claim_index]
+            linked_sources = [source_index[_normalize_reference_key(ref)] for ref in artifact.sources if _normalize_reference_key(ref) in source_index]
+            linked_runs = [verification_index[_normalize_reference_key(ref)] for ref in artifact.verification_runs if _normalize_reference_key(ref) in verification_index]
+            blocking_claims = [
+                claim["claimKey"]
+                for claim in claim_details
+                if claim["claimKey"] in {item.claim_key for item in linked_claims}
+                and claim["compiledStatus"] in {"needs_evidence", "stale", "blocked", "draft", "unsupported"}
+            ]
+            blocking_sources = [
+                source.source_key
+                for source in linked_sources
+                if source.freshness_status == "stale" or source.quality_status in {"blocked", "rejected"}
+            ]
+            blocking_runs = [
+                run.run_id
+                for run in linked_runs
+                if run.status in {"failed", "blocked"}
+            ]
+            verification_status = "pending"
+            if blocking_runs:
+                verification_status = "blocked"
+            elif linked_runs and all(run.status == "passed" for run in linked_runs):
+                verification_status = "passed"
+            elif linked_runs and any(run.status == "failed" for run in linked_runs):
+                verification_status = "failed"
+            artifact_blocked = bool(blocking_claims or blocking_sources or blocking_runs)
+            gate_reasons = [f"claim:{key}" for key in blocking_claims]
+            gate_reasons.extend(f"source:{key}" for key in blocking_sources)
+            gate_reasons.extend(f"verification_run:{key}" for key in blocking_runs)
+            promotable_targets: list[str] = []
+            if not artifact_blocked and not artifact.stale_reasons:
+                if artifact.promotion_state in {"draft", "exploratory", "needs_evidence"}:
+                    promotable_targets.append("partially_verified")
+                elif artifact.promotion_state == "partially_verified" and verification_status == "passed":
+                    promotable_targets.append("verified")
+            trust_summary = build_artifact_trust_summary(
+                artifact,
+                verification_status=verification_status,
+                artifact_blocked=artifact_blocked,
+                gate_reasons=gate_reasons,
+                eligible_transitions=promotable_targets,
+                promotable_targets=promotable_targets,
+                blocking_claims=blocking_claims,
+                blocking_sources=blocking_sources,
+                blocking_verification_runs=blocking_runs,
+            )
+            compiled_status = artifact.promotion_state
+            if trust_summary["isBlocked"]:
+                compiled_status = "blocked"
+            elif trust_summary["isStale"]:
+                compiled_status = "stale"
+            elif artifact.promotion_state == "verified" and not trust_summary["isTrusted"]:
+                compiled_status = "partially_verified"
+            artifact_support_matrix.append(
+                {
+                    "artifactPath": artifact.artifact_path,
+                    "title": artifact.title,
+                    "artifactType": artifact.artifact_type,
+                    "compiledStatus": compiled_status,
+                    "linkedClaims": [claim.claim_key for claim in linked_claims],
+                    "linkedSources": [source.source_key for source in linked_sources],
+                    "linkedVerificationRuns": [run.run_id for run in linked_runs],
+                    "reproducibilityMode": artifact.reproducibility_mode,
+                    "trustSummary": trust_summary,
+                }
+            )
+            artifact_bucket_counts[compiled_status] = artifact_bucket_counts.get(compiled_status, 0) + 1
+            if compiled_status in {"blocked", "stale", "needs_evidence", "draft", "exploratory"}:
+                source_gaps.append(
+                    {
+                        "kind": "artifact",
+                        "artifactPath": artifact.artifact_path,
+                        "status": compiled_status,
+                        "message": trust_summary["recommendedNextAction"],
+                    }
+                )
+
+        alignment = self._build_alignment_report(
+            alignment_paths=alignment_paths or [],
+            claim_details=claim_details,
+            source_details=source_details,
+        )
+        if alignment["issues"]:
+            source_gaps.extend(
+                {
+                    "kind": "paper_alignment",
+                    "path": issue["path"],
+                    "status": issue["severity"],
+                    "message": issue["message"],
+                }
+                for issue in alignment["issues"]
+            )
+
+        project_status = "verified"
+        if artifact_bucket_counts.get("blocked"):
+            project_status = "blocked"
+        elif artifact_bucket_counts.get("stale"):
+            project_status = "stale"
+        elif artifact_bucket_counts.get("needs_evidence"):
+            project_status = "needs_evidence"
+        elif artifact_bucket_counts.get("partially_verified"):
+            project_status = "partially_verified"
+        elif artifact_bucket_counts.get("draft") or artifact_bucket_counts.get("exploratory"):
+            project_status = "draft"
+
+        claim_groups = {
+            "supported": [item for item in claim_details if item["compiledStatus"] == "supported"],
+            "partiallyVerified": [item for item in claim_details if item["compiledStatus"] == "partially_verified"],
+            "needsEvidence": [item for item in claim_details if item["compiledStatus"] == "needs_evidence"],
+            "stale": [item for item in claim_details if item["compiledStatus"] == "stale"],
+            "blocked": [item for item in claim_details if item["compiledStatus"] == "blocked"],
+            "draft": [item for item in claim_details if item["compiledStatus"] in {"draft", "unsupported"}],
+        }
+        artifact_groups = {
+            "verified": [item for item in artifact_support_matrix if item["compiledStatus"] == "verified"],
+            "partiallyVerified": [item for item in artifact_support_matrix if item["compiledStatus"] == "partially_verified"],
+            "needsEvidence": [item for item in artifact_support_matrix if item["compiledStatus"] == "needs_evidence"],
+            "stale": [item for item in artifact_support_matrix if item["compiledStatus"] == "stale"],
+            "blocked": [item for item in artifact_support_matrix if item["compiledStatus"] == "blocked"],
+            "draft": [item for item in artifact_support_matrix if item["compiledStatus"] in {"draft", "exploratory"}],
+        }
+        source_groups = {
+            "current": [item for item in source_details if item["compiledStatus"] == "current"],
+            "needsRefresh": [item for item in source_details if item["compiledStatus"] == "needs_refresh"],
+            "stale": [item for item in source_details if item["compiledStatus"] == "stale"],
+            "blocked": [item for item in source_details if item["compiledStatus"] == "blocked"],
+        }
+        candidate_summary = {
+            "sourceCandidates": [item.model_dump(mode="json") for item in indexes.source_candidates],
+            "claimCandidates": [item.model_dump(mode="json") for item in indexes.claim_candidates],
+            "entityCandidates": [item.model_dump(mode="json") for item in indexes.entity_candidates],
+        }
+        conflict_summary = [item.model_dump(mode="json") for item in indexes.conflicts]
+
+        report = {
+            "generatedAt": _utc_now(),
+            "projectRoot": str(self.project_root),
+            "summary": {
+                "projectStatus": project_status,
+                "claimCount": len(claim_details),
+                "artifactCount": len(artifact_support_matrix),
+                "sourceCount": len(source_details),
+                "sourceCandidateCount": len(indexes.source_candidates),
+                "claimCandidateCount": len(indexes.claim_candidates),
+                "entityCandidateCount": len(indexes.entity_candidates),
+                "conflictCount": len(indexes.conflicts),
+                "verificationRunCount": len(indexes.verification_runs),
+                "claimStatusCounts": claim_bucket_counts,
+                "artifactStatusCounts": artifact_bucket_counts,
+                "sourceFreshnessCounts": freshness_counts,
+                "sourceQualityCounts": quality_counts,
+                "paperAlignmentIssueCount": len(alignment["issues"]),
+            },
+            "claims": claim_groups,
+            "artifacts": artifact_groups,
+            "sources": source_groups,
+            "claimDetails": claim_details,
+            "sourceDetails": source_details,
+            "artifactSupportMatrix": artifact_support_matrix,
+            "candidates": candidate_summary,
+            "conflicts": conflict_summary,
+            "sourceGaps": source_gaps,
+            "paperAlignment": alignment,
+        }
+        if write_files:
+            self._write_compiled_truth_outputs(report)
+        return report
 
     def load_assumptions(self) -> list[AssumptionRecord]:
         return self._load_records(self.assumptions_path(), AssumptionRecord)
 
     def write_assumptions(self, records: list[AssumptionRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.assumptions_path(), records, AssumptionRecord)
+        self.rebuild_integrity_edges()
 
     def upsert_assumption(self, record: AssumptionRecord | dict[str, Any]) -> AssumptionRecord:
         stored = self._normalize_timestamps(AssumptionRecord.model_validate(record))
@@ -367,6 +997,7 @@ class ResearchIntegrityRepo:
 
     def write_sources(self, records: list[SourceRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.sources_path(), records, SourceRecord)
+        self.rebuild_integrity_edges()
 
     def upsert_source(self, record: SourceRecord | dict[str, Any]) -> SourceRecord:
         stored = self._upsert_by_key(self.load_sources, self.write_sources, SourceRecord, "source_key", record)
@@ -404,6 +1035,7 @@ class ResearchIntegrityRepo:
 
     def write_claims(self, records: list[ClaimRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.claims_path(), records, ClaimRecord)
+        self.rebuild_integrity_edges()
 
     def upsert_claim(self, record: ClaimRecord | dict[str, Any]) -> ClaimRecord:
         stored = self._upsert_by_key(self.load_claims, self.write_claims, ClaimRecord, "claim_key", record)
@@ -411,11 +1043,90 @@ class ResearchIntegrityRepo:
         self.reconcile_artifact_claim_support()
         return self.get_claim(stored.claim_key) or stored
 
+    def load_source_candidates(self) -> list[SourceCandidateRecord]:
+        return self._load_records(self.source_candidates_path(), SourceCandidateRecord)
+
+    def write_source_candidates(self, records: list[SourceCandidateRecord] | list[dict[str, Any]]) -> None:
+        self._write_records(self.source_candidates_path(), records, SourceCandidateRecord)
+
+    def upsert_source_candidate(self, record: SourceCandidateRecord | dict[str, Any]) -> SourceCandidateRecord:
+        return self._upsert_by_key(
+            self.load_source_candidates,
+            self.write_source_candidates,
+            SourceCandidateRecord,
+            "candidate_key",
+            record,
+        )
+
+    def get_source_candidate(self, candidate_key: str) -> SourceCandidateRecord | None:
+        for record in self.load_source_candidates():
+            if record.candidate_key == candidate_key:
+                return record
+        return None
+
+    def load_claim_candidates(self) -> list[ClaimCandidateRecord]:
+        return self._load_records(self.claim_candidates_path(), ClaimCandidateRecord)
+
+    def write_claim_candidates(self, records: list[ClaimCandidateRecord] | list[dict[str, Any]]) -> None:
+        self._write_records(self.claim_candidates_path(), records, ClaimCandidateRecord)
+
+    def upsert_claim_candidate(self, record: ClaimCandidateRecord | dict[str, Any]) -> ClaimCandidateRecord:
+        return self._upsert_by_key(
+            self.load_claim_candidates,
+            self.write_claim_candidates,
+            ClaimCandidateRecord,
+            "candidate_key",
+            record,
+        )
+
+    def get_claim_candidate(self, candidate_key: str) -> ClaimCandidateRecord | None:
+        for record in self.load_claim_candidates():
+            if record.candidate_key == candidate_key:
+                return record
+        return None
+
+    def load_entity_candidates(self) -> list[EntityCandidateRecord]:
+        return self._load_records(self.entity_candidates_path(), EntityCandidateRecord)
+
+    def write_entity_candidates(self, records: list[EntityCandidateRecord] | list[dict[str, Any]]) -> None:
+        self._write_records(self.entity_candidates_path(), records, EntityCandidateRecord)
+
+    def upsert_entity_candidate(self, record: EntityCandidateRecord | dict[str, Any]) -> EntityCandidateRecord:
+        return self._upsert_by_key(
+            self.load_entity_candidates,
+            self.write_entity_candidates,
+            EntityCandidateRecord,
+            "candidate_key",
+            record,
+        )
+
+    def load_conflicts(self) -> list[ConflictRecord]:
+        return self._load_records(self.conflicts_path(), ConflictRecord)
+
+    def write_conflicts(self, records: list[ConflictRecord] | list[dict[str, Any]]) -> None:
+        self._write_records(self.conflicts_path(), records, ConflictRecord)
+
+    def upsert_conflict(self, record: ConflictRecord | dict[str, Any]) -> ConflictRecord:
+        return self._upsert_by_key(
+            self.load_conflicts,
+            self.write_conflicts,
+            ConflictRecord,
+            "conflict_key",
+            record,
+        )
+
+    def get_conflict(self, conflict_key: str) -> ConflictRecord | None:
+        for record in self.load_conflicts():
+            if record.conflict_key == conflict_key:
+                return record
+        return None
+
     def load_artifact_lineage(self) -> list[ArtifactLineageRecord]:
         return self._load_records(self.artifact_lineage_path(), ArtifactLineageRecord)
 
     def write_artifact_lineage(self, records: list[ArtifactLineageRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.artifact_lineage_path(), records, ArtifactLineageRecord)
+        self.rebuild_integrity_edges()
 
     def upsert_artifact_lineage(self, record: ArtifactLineageRecord | dict[str, Any]) -> ArtifactLineageRecord:
         stored = self._upsert_by_key(
@@ -436,6 +1147,7 @@ class ResearchIntegrityRepo:
 
     def write_verification_runs(self, records: list[VerificationRunRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.verification_runs_path(), records, VerificationRunRecord)
+        self.rebuild_integrity_edges()
 
     def upsert_verification_run(self, record: VerificationRunRecord | dict[str, Any]) -> VerificationRunRecord:
         return self._upsert_by_key(
@@ -451,6 +1163,159 @@ class ResearchIntegrityRepo:
 
     def write_evidence_chunks(self, records: list[EvidenceChunkRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.evidence_chunks_path(), records, EvidenceChunkRecord)
+        self.rebuild_integrity_edges()
+
+    def load_integrity_edges(self) -> list[IntegrityEdgeRecord]:
+        return self._load_records(self.integrity_edges_path(), IntegrityEdgeRecord)
+
+    def write_integrity_edges(self, records: list[IntegrityEdgeRecord] | list[dict[str, Any]]) -> None:
+        self._write_records(self.integrity_edges_path(), records, IntegrityEdgeRecord)
+
+    def rebuild_integrity_edges(self) -> list[IntegrityEdgeRecord]:
+        sources = self.load_sources()
+        assumptions = self.load_assumptions()
+        claims = self.load_claims()
+        artifacts = self.load_artifact_lineage()
+        verification_runs = self.load_verification_runs()
+        chunks = self.load_evidence_chunks()
+
+        artifact_index = {row.artifact_path: row for row in artifacts}
+        verification_run_index = {row.run_id: row for row in verification_runs}
+        assumption_index = {row.assumption_key: row for row in assumptions}
+        chunk_index = {row.chunk_key: row for row in chunks}
+        source_index = {row.source_key: row for row in sources}
+        claim_index = {row.claim_key: row for row in claims}
+
+        edges: list[IntegrityEdgeRecord] = []
+        seen: set[tuple[str, str, str]] = set()
+
+        def _add_edge(
+            from_id: str,
+            to_id: str,
+            relationship: str,
+            *,
+            source_record_key: str | None = None,
+            target_record_key: str | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> None:
+            dedupe_key = (from_id, relationship, to_id)
+            if dedupe_key in seen:
+                return
+            seen.add(dedupe_key)
+            edges.append(
+                self._ensure_record_timestamps(
+                    IntegrityEdgeRecord.model_validate(
+                        {
+                            "edge_key": f"{from_id}|{relationship}|{to_id}",
+                            "from_id": from_id,
+                            "to_id": to_id,
+                            "relationship": relationship,
+                            "edge_class": "explicit",
+                            "source_record_key": source_record_key,
+                            "target_record_key": target_record_key,
+                            "metadata": metadata or {},
+                        }
+                    )
+                )
+            )
+
+        for row in chunks:
+            _add_edge(
+                f"source:{row.source_key}",
+                f"chunk:{row.chunk_key}",
+                "chunked_as",
+                source_record_key=row.source_key,
+                target_record_key=row.chunk_key,
+                metadata={"chunkStatus": row.status, "chunkType": row.chunk_type},
+            )
+
+        for row in claims:
+            for source_key in row.source_keys:
+                _add_edge(
+                    f"source:{source_key}",
+                    f"claim:{row.claim_key}",
+                    "supports",
+                    source_record_key=source_key if source_key in source_index else row.claim_key,
+                    target_record_key=row.claim_key,
+                    metadata={"evidenceKind": row.evidence_kind or "unspecified"},
+                )
+            for chunk_key in row.evidence_chunk_keys:
+                _add_edge(
+                    f"chunk:{chunk_key}",
+                    f"claim:{row.claim_key}",
+                    "supports",
+                    source_record_key=chunk_key if chunk_key in chunk_index else row.claim_key,
+                    target_record_key=row.claim_key,
+                    metadata={"evidenceKind": row.evidence_kind or "unspecified"},
+                )
+            for other_key in row.contradicts_claim_keys:
+                _add_edge(
+                    f"claim:{row.claim_key}",
+                    f"claim:{other_key}",
+                    "contradicts",
+                    source_record_key=row.claim_key,
+                    target_record_key=other_key if other_key in claim_index else row.claim_key,
+                )
+
+        for row in artifacts:
+            artifact_id = self.artifact_node_id(row)
+            for source_ref in row.sources:
+                source_key = _normalize_reference_key(source_ref)
+                _add_edge(
+                    artifact_id,
+                    f"source:{source_key}",
+                    "derived_from",
+                    source_record_key=row.artifact_path,
+                    target_record_key=source_key if source_key in source_index else row.artifact_path,
+                )
+            for claim_ref in row.claims:
+                claim_key = _normalize_reference_key(claim_ref)
+                _add_edge(
+                    f"claim:{claim_key}",
+                    artifact_id,
+                    "supports",
+                    source_record_key=claim_key if claim_key in claim_index else row.artifact_path,
+                    target_record_key=row.artifact_path,
+                )
+            for assumption_ref in row.assumptions:
+                assumption_key = _normalize_reference_key(assumption_ref)
+                _add_edge(
+                    artifact_id,
+                    f"assumption:{assumption_key}",
+                    "depends_on",
+                    source_record_key=row.artifact_path,
+                    target_record_key=assumption_key if assumption_key in assumption_index else row.artifact_path,
+                )
+            for script_path in row.scripts:
+                _add_edge(
+                    artifact_id,
+                    f"method:{script_path}",
+                    "generated_by",
+                    source_record_key=row.artifact_path,
+                    target_record_key=script_path,
+                )
+            for run_ref in row.verification_runs:
+                run_id = _normalize_reference_key(run_ref)
+                _add_edge(
+                    artifact_id,
+                    f"verification_run:{run_id}",
+                    "verified_by",
+                    source_record_key=row.artifact_path,
+                    target_record_key=run_id if run_id in verification_run_index else row.artifact_path,
+                )
+            for input_path in row.inputs:
+                upstream = artifact_index.get(input_path)
+                if upstream is not None:
+                    _add_edge(
+                        artifact_id,
+                        self.artifact_node_id(upstream),
+                        "depends_on",
+                        source_record_key=row.artifact_path,
+                        target_record_key=upstream.artifact_path,
+                    )
+
+        self.write_integrity_edges(edges)
+        return edges
 
     def chunks_for_source(self, source_key: str) -> list[EvidenceChunkRecord]:
         return [record for record in self.load_evidence_chunks() if record.source_key == source_key]
@@ -511,6 +1376,378 @@ class ResearchIntegrityRepo:
             )
         self.write_evidence_chunks([*retained, *records])
         return records
+
+    def rebuild_conflicts(self) -> list[ConflictRecord]:
+        claims = self.load_claims()
+        existing_by_key = {item.conflict_key: item for item in self.load_conflicts()}
+        conflicts: list[ConflictRecord] = []
+        seen: set[str] = set()
+        for claim in claims:
+            for other_key in claim.contradicts_claim_keys:
+                pair = tuple(sorted((claim.claim_key, other_key)))
+                conflict_key = f"claim-conflict:{pair[0]}::{pair[1]}"
+                if conflict_key in seen:
+                    continue
+                seen.add(conflict_key)
+                existing = existing_by_key.get(conflict_key)
+                status = existing.status if existing else "open"
+                conflicts.append(
+                    self._normalize_timestamps(
+                        ConflictRecord.model_validate(
+                            {
+                                "conflict_key": conflict_key,
+                                "left_ref": f"research_plan/state/claims.json#{pair[0]}",
+                                "right_ref": f"research_plan/state/claims.json#{pair[1]}",
+                                "conflict_type": "claim_contradiction",
+                                "status": status,
+                                "explanation": (existing.explanation if existing else None)
+                                or "Two claims are marked as contradictory and need a resolution decision.",
+                                "recommended_resolution": (existing.recommended_resolution if existing else None)
+                                or "Compare methods, evidence paths, and scope; then either resolve or downgrade the affected claims.",
+                            }
+                        ),
+                        preserve_created_at=existing.created_at if existing else None,
+                    )
+                )
+        for conflict_key, existing in existing_by_key.items():
+            if conflict_key in seen:
+                continue
+            if existing.status not in {"resolved", "dismissed"}:
+                continue
+            conflicts.append(existing)
+        self.write_conflicts(conflicts)
+        return conflicts
+
+    def promote_source_candidate(
+        self,
+        candidate_key: str,
+        *,
+        source_key: str | None = None,
+        source_type: str | None = None,
+        title: str | None = None,
+        origin: str | None = None,
+        access_method: str | None = None,
+        freshness_status: SourceFreshnessStatus = "unknown",
+        quality_status: SourceQualityStatus = "validated",
+        quality_notes: str | None = None,
+        notes: str | None = None,
+        provenance: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        candidate = self.get_source_candidate(candidate_key)
+        if candidate is None:
+            raise KeyError(f"Unknown source candidate: {candidate_key}")
+
+        existing_source = next(
+            (
+                record
+                for record in self.load_sources()
+                if str(record.provenance.get("sourceCandidateKey")) == candidate_key
+                or record.url_or_path == candidate.url_or_path
+            ),
+            None,
+        )
+        promoted_source_key = source_key or (
+            existing_source.source_key if existing_source else self._record_key("source", candidate.url_or_path)
+        )
+        merged_provenance = dict(existing_source.provenance if existing_source else {})
+        merged_provenance.update(provenance or {})
+        merged_provenance.setdefault("sourceCandidateKey", candidate.candidate_key)
+        merged_provenance.setdefault("discoveredInPaths", list(candidate.discovered_in_paths))
+        merged_provenance.setdefault("promotionMethod", "candidate_promotion")
+
+        source_record = SourceRecord.model_validate(
+            {
+                "source_key": promoted_source_key,
+                "source_type": source_type or candidate.source_type_hint or (existing_source.source_type if existing_source else "document"),
+                "title": title or candidate.title or (existing_source.title if existing_source else candidate.url_or_path),
+                "url_or_path": candidate.url_or_path,
+                "origin": origin or (existing_source.origin if existing_source else candidate.url_or_path),
+                "acquired_at": existing_source.acquired_at if existing_source else None,
+                "access_method": access_method or (existing_source.access_method if existing_source else "candidate_promotion"),
+                "freshness_status": freshness_status or (existing_source.freshness_status if existing_source else "unknown"),
+                "quality_status": quality_status or (existing_source.quality_status if existing_source else "validated"),
+                "quality_notes": quality_notes if quality_notes is not None else (existing_source.quality_notes if existing_source else None),
+                "notes": notes if notes is not None else (existing_source.notes if existing_source else candidate.snippet),
+                "provenance": merged_provenance,
+                "retrieved_at": existing_source.retrieved_at if existing_source else None,
+                "license": existing_source.license if existing_source else None,
+                "impact_level": existing_source.impact_level if existing_source else "normal",
+            }
+        )
+        promoted_source = self.upsert_source(source_record)
+        updated_candidate = self.upsert_source_candidate(
+            candidate.model_copy(update={"status": "promoted"})
+        )
+        return {
+            "status": "promoted",
+            "candidate": updated_candidate.model_dump(mode="json"),
+            "source": promoted_source.model_dump(mode="json"),
+        }
+
+    def promote_claim_candidate(
+        self,
+        candidate_key: str,
+        *,
+        claim_key: str | None = None,
+        artifact_path: str | None = None,
+        status: ClaimStatus | None = None,
+        evidence_kind: EvidenceKind | None = None,
+        confidence: float | None = None,
+        source_keys: list[str] | None = None,
+        contradicts_claim_keys: list[str] | None = None,
+        caveats: list[str] | None = None,
+        open_questions: list[str] | None = None,
+    ) -> dict[str, Any]:
+        candidate = self.get_claim_candidate(candidate_key)
+        if candidate is None:
+            raise KeyError(f"Unknown claim candidate: {candidate_key}")
+
+        resolved_source_keys = sorted(set(source_keys or self._resolve_source_keys_for_claim_candidate(candidate)))
+        promoted_claim_key = claim_key or self._record_key("claim", candidate.claim_text)
+        existing_claim = self.get_claim(promoted_claim_key)
+        resolved_evidence_kind = evidence_kind or (
+            existing_claim.evidence_kind if existing_claim is not None else ("direct" if resolved_source_keys or candidate.evidence_paths else None)
+        )
+        effective_status = status or (
+            existing_claim.status
+            if existing_claim is not None
+            else (
+                "supported"
+                if resolved_evidence_kind not in {None, "semantic_suggestion"} and (resolved_source_keys or candidate.evidence_paths)
+                else "needs_evidence"
+            )
+        )
+        claim_record = ClaimRecord.model_validate(
+            {
+                "claim_key": promoted_claim_key,
+                "claim_text": existing_claim.claim_text if existing_claim is not None else candidate.claim_text,
+                "artifact_path": artifact_path if artifact_path is not None else (existing_claim.artifact_path if existing_claim is not None else None),
+                "evidence_paths": sorted(set((existing_claim.evidence_paths if existing_claim is not None else []) + list(candidate.evidence_paths))),
+                "evidence_chunk_keys": list(existing_claim.evidence_chunk_keys if existing_claim is not None else []),
+                "source_keys": sorted(set((existing_claim.source_keys if existing_claim is not None else []) + resolved_source_keys)),
+                "evidence_kind": resolved_evidence_kind,
+                "status": effective_status,
+                "confidence": confidence if confidence is not None else (existing_claim.confidence if existing_claim is not None else None),
+                "contradicts_claim_keys": sorted(set((existing_claim.contradicts_claim_keys if existing_claim is not None else []) + list(contradicts_claim_keys or []))),
+                "caveats": list(caveats if caveats is not None else (existing_claim.caveats if existing_claim is not None else [])),
+                "open_questions": list(open_questions if open_questions is not None else (existing_claim.open_questions if existing_claim is not None else [])),
+            }
+        )
+        promoted_claim = self.upsert_claim(claim_record)
+        updated_candidate = self.upsert_claim_candidate(
+            candidate.model_copy(update={"status": "promoted"})
+        )
+        unresolved_source_candidate_keys = sorted(
+            key for key in candidate.source_candidate_keys if key not in set(self._source_candidate_key_map().keys())
+        )
+        return {
+            "status": "promoted",
+            "candidate": updated_candidate.model_dump(mode="json"),
+            "claim": promoted_claim.model_dump(mode="json"),
+            "resolvedSourceKeys": resolved_source_keys,
+            "unresolvedSourceCandidateKeys": unresolved_source_candidate_keys,
+        }
+
+    def resolve_conflict(
+        self,
+        conflict_key: str,
+        *,
+        status: ConflictStatus,
+        explanation: str | None = None,
+        favored_claim_key: str | None = None,
+        demote_other_to: ClaimStatus = "superseded",
+    ) -> dict[str, Any]:
+        conflict = self.get_conflict(conflict_key)
+        if conflict is None:
+            raise KeyError(f"Unknown conflict: {conflict_key}")
+        if status not in {"resolved", "dismissed", "reviewing", "open"}:
+            raise ValueError(f"Unsupported conflict status: {status}")
+
+        updated_conflict = self.upsert_conflict(
+            conflict.model_copy(
+                update={
+                    "status": status,
+                    "explanation": explanation if explanation is not None else conflict.explanation,
+                }
+            )
+        )
+        updated_claims: list[ClaimRecord] = []
+
+        if conflict.conflict_type == "claim_contradiction" and status in {"resolved", "dismissed"}:
+            left_key = _normalize_reference_key(conflict.left_ref)
+            right_key = _normalize_reference_key(conflict.right_ref)
+            records = self.load_claims()
+            refreshed_records: list[ClaimRecord] = []
+            for record in records:
+                if record.claim_key not in {left_key, right_key}:
+                    refreshed_records.append(record)
+                    continue
+                next_status = record.status
+                if status == "resolved" and favored_claim_key:
+                    if record.claim_key == favored_claim_key:
+                        next_status = self._default_claim_status(
+                            record.evidence_paths,
+                            record.source_keys,
+                            record.evidence_chunk_keys,
+                            record.evidence_kind,
+                        )
+                    else:
+                        next_status = demote_other_to
+                elif status == "dismissed":
+                    next_status = self._default_claim_status(
+                        record.evidence_paths,
+                        record.source_keys,
+                        record.evidence_chunk_keys,
+                        record.evidence_kind,
+                    )
+                updated = record.model_copy(
+                    update={
+                        "status": next_status,
+                        "contradicts_claim_keys": [
+                            key
+                            for key in record.contradicts_claim_keys
+                            if key not in {left_key, right_key} or key == record.claim_key
+                        ],
+                    }
+                )
+                updated = self._normalize_timestamps(updated, preserve_created_at=record.created_at)
+                refreshed_records.append(updated)
+                updated_claims.append(updated)
+            self.write_claims(refreshed_records)
+            self.reconcile_artifact_claim_support()
+            self.rebuild_conflicts()
+
+        return {
+            "status": "resolved" if status in {"resolved", "dismissed"} else "updated",
+            "conflict": updated_conflict.model_dump(mode="json"),
+            "claims": [record.model_dump(mode="json") for record in updated_claims],
+        }
+
+    def extract_candidates_from_paths(
+        self,
+        relative_paths: list[str],
+        *,
+        replace_existing: bool = False,
+    ) -> dict[str, Any]:
+        source_candidates = [] if replace_existing else self.load_source_candidates()
+        claim_candidates = [] if replace_existing else self.load_claim_candidates()
+        entity_candidates = [] if replace_existing else self.load_entity_candidates()
+
+        source_index = {item.candidate_key: item for item in source_candidates}
+        claim_index = {item.candidate_key: item for item in claim_candidates}
+        entity_index = {item.candidate_key: item for item in entity_candidates}
+
+        processed_paths: list[str] = []
+        discovered_sources = 0
+        discovered_claims = 0
+        discovered_entities = 0
+
+        for rel_path in sorted(set(relative_paths)):
+            path = self.project_root / rel_path
+            if not path.exists() or not path.is_file():
+                continue
+            if path.suffix.lower() not in {".md", ".txt", ".tex", ".yaml", ".yml", ".json", ".csv"}:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                continue
+            if not text.strip():
+                continue
+            processed_paths.append(rel_path)
+
+            url_candidates = re.findall(r"https?://[^\s)\]>\"']+", text)
+            line_sources = set(url_candidates)
+            for url in sorted(line_sources):
+                candidate_key = self._candidate_key("source", url)
+                snippet = self._first_matching_line(text, url)
+                existing = source_index.get(candidate_key)
+                discovered_sources += int(existing is None)
+                source_index[candidate_key] = self._normalize_timestamps(
+                    SourceCandidateRecord.model_validate(
+                        {
+                            "candidate_key": candidate_key,
+                            "title": self._title_from_url(url),
+                            "url_or_path": url,
+                            "source_type_hint": "url",
+                            "status": existing.status if existing else "candidate",
+                            "discovered_in_paths": sorted(set((existing.discovered_in_paths if existing else []) + [rel_path])),
+                            "snippet": snippet or (existing.snippet if existing else None),
+                            "related_claim_candidate_keys": list(existing.related_claim_candidate_keys if existing else []),
+                            "relevance_score": max(existing.relevance_score or 0, self._estimate_relevance(snippet or url)) if existing else self._estimate_relevance(snippet or url),
+                        }
+                    ),
+                    preserve_created_at=existing.created_at if existing else None,
+                )
+
+            local_claim_keys: list[str] = []
+            for claim_text, snippet in self._extract_claim_candidate_texts(text):
+                candidate_key = self._candidate_key("claim", claim_text)
+                existing = claim_index.get(candidate_key)
+                discovered_claims += int(existing is None)
+                source_candidate_keys = sorted(line_sources and [self._candidate_key("source", url) for url in sorted(line_sources)] or [])
+                claim_index[candidate_key] = self._normalize_timestamps(
+                    ClaimCandidateRecord.model_validate(
+                        {
+                            "candidate_key": candidate_key,
+                            "claim_text": claim_text,
+                            "status": existing.status if existing else "candidate",
+                            "discovered_in_paths": sorted(set((existing.discovered_in_paths if existing else []) + [rel_path])),
+                            "evidence_paths": sorted(set((existing.evidence_paths if existing else []) + [rel_path])),
+                            "source_candidate_keys": sorted(set((existing.source_candidate_keys if existing else []) + source_candidate_keys)),
+                            "snippet": snippet or (existing.snippet if existing else None),
+                        }
+                    ),
+                    preserve_created_at=existing.created_at if existing else None,
+                )
+                local_claim_keys.append(candidate_key)
+
+            for phrase, count, snippet in self._extract_entity_candidates(text):
+                candidate_key = self._candidate_key("entity", phrase)
+                existing = entity_index.get(candidate_key)
+                discovered_entities += int(existing is None)
+                mention_count = max(count, existing.mention_count if existing else 0)
+                entity_index[candidate_key] = self._normalize_timestamps(
+                    EntityCandidateRecord.model_validate(
+                        {
+                            "candidate_key": candidate_key,
+                            "name": phrase,
+                            "entity_type_hint": self._entity_type_hint(phrase),
+                            "status": existing.status if existing else "candidate",
+                            "discovered_in_paths": sorted(set((existing.discovered_in_paths if existing else []) + [rel_path])),
+                            "mention_count": mention_count,
+                            "snippet": snippet or (existing.snippet if existing else None),
+                        }
+                    ),
+                    preserve_created_at=existing.created_at if existing else None,
+                )
+
+            if local_claim_keys and line_sources:
+                source_keys_for_file = [self._candidate_key("source", url) for url in sorted(line_sources)]
+                for source_key in source_keys_for_file:
+                    source = source_index.get(source_key)
+                    if source is None:
+                        continue
+                    source_index[source_key] = source.model_copy(
+                        update={
+                            "related_claim_candidate_keys": sorted(
+                                set(source.related_claim_candidate_keys + local_claim_keys)
+                            )
+                        }
+                    )
+
+        self.write_source_candidates(list(source_index.values()))
+        self.write_claim_candidates(list(claim_index.values()))
+        self.write_entity_candidates(list(entity_index.values()))
+        return {
+            "processedPaths": processed_paths,
+            "sourceCandidateCount": len(source_index),
+            "claimCandidateCount": len(claim_index),
+            "entityCandidateCount": len(entity_index),
+            "newSourceCandidates": discovered_sources,
+            "newClaimCandidates": discovered_claims,
+            "newEntityCandidates": discovered_entities,
+        }
 
     def mark_artifacts_stale_for_assumption(self, assumption_key: str) -> list[ArtifactLineageRecord]:
         changed: list[ArtifactLineageRecord] = []
@@ -937,45 +2174,96 @@ class ResearchIntegrityRepo:
         source_index = {item.source_key: item for item in indexes.sources}
         claim_index = {item.claim_key: item for item in indexes.claims}
         artifact_index = {item.artifact_path: item for item in indexes.artifact_lineage}
-
-        source_claims = {
-            source.source_key: self.claims_for_source(source.source_key)
-            for source in indexes.sources
-        }
-        source_artifacts = {
-            source.source_key: self.artifacts_for_source(source.source_key)
-            for source in indexes.sources
-        }
-        claim_artifacts = {
-            claim.claim_key: self.artifacts_for_claim(claim.claim_key)
-            for claim in indexes.claims
-        }
-
-        artifact_sources = {
-            artifact.artifact_path: [
-                source_index[key]
-                for key in {_normalize_reference_key(reference) for reference in artifact.sources}
-                if key in source_index
-            ]
-            for artifact in indexes.artifact_lineage
-        }
-        artifact_claims = {
-            artifact.artifact_path: [
-                claim_index[key]
-                for key in {_normalize_reference_key(reference) for reference in artifact.claims}
-                if key in claim_index
-            ]
-            for artifact in indexes.artifact_lineage
-        }
         chunk_index = {item.chunk_key: item for item in indexes.evidence_chunks}
-        chunk_claims = {
-            chunk.chunk_key: [
-                claim
-                for claim in indexes.claims
-                if chunk.chunk_key in claim.evidence_chunk_keys
-            ]
-            for chunk in indexes.evidence_chunks
+        artifact_node_ids = {
+            item.artifact_path: self.artifact_node_id(item)
+            for item in indexes.artifact_lineage
         }
+        edges = indexes.integrity_edges
+        outgoing_edges, incoming_edges = self.load_integrity_edge_index(edges)
+
+        def _outgoing(node_id: str, relationship: str | None = None) -> list[IntegrityEdgeRecord]:
+            selected = outgoing_edges.get(node_id, [])
+            if relationship is None:
+                return selected
+            return [edge for edge in selected if edge.relationship == relationship]
+
+        def _incoming(node_id: str, relationship: str | None = None) -> list[IntegrityEdgeRecord]:
+            selected = incoming_edges.get(node_id, [])
+            if relationship is None:
+                return selected
+            return [edge for edge in selected if edge.relationship == relationship]
+
+        source_claims: dict[str, list[ClaimRecord]] = {}
+        for source in indexes.sources:
+            claims = []
+            for edge in _outgoing(self.source_node_id(source.source_key), "supports"):
+                claim_key = edge.to_id.removeprefix("claim:")
+                claim = claim_index.get(claim_key)
+                if claim is not None:
+                    claims.append(claim)
+            source_claims[source.source_key] = claims
+
+        source_artifacts: dict[str, list[ArtifactLineageRecord]] = {}
+        for source in indexes.sources:
+            artifacts: dict[str, ArtifactLineageRecord] = {}
+            for edge in _incoming(self.source_node_id(source.source_key), "derived_from"):
+                if not edge.from_id.startswith(("artifact:", "dataset:")):
+                    continue
+                artifact_path = edge.from_id.split(":", 1)[1]
+                artifact = artifact_index.get(artifact_path)
+                if artifact is not None:
+                    artifacts[artifact.artifact_path] = artifact
+            for claim in source_claims.get(source.source_key, []):
+                for edge in _outgoing(self.claim_node_id(claim.claim_key), "supports"):
+                    if not edge.to_id.startswith(("artifact:", "dataset:")):
+                        continue
+                    artifact_path = edge.to_id.split(":", 1)[1]
+                    artifact = artifact_index.get(artifact_path)
+                    if artifact is not None:
+                        artifacts[artifact.artifact_path] = artifact
+            source_artifacts[source.source_key] = list(artifacts.values())
+
+        claim_artifacts: dict[str, list[ArtifactLineageRecord]] = {}
+        for claim in indexes.claims:
+            artifacts = []
+            for edge in _outgoing(self.claim_node_id(claim.claim_key), "supports"):
+                if not edge.to_id.startswith(("artifact:", "dataset:")):
+                    continue
+                artifact_path = edge.to_id.split(":", 1)[1]
+                artifact = artifact_index.get(artifact_path)
+                if artifact is not None:
+                    artifacts.append(artifact)
+            claim_artifacts[claim.claim_key] = artifacts
+
+        artifact_sources: dict[str, list[SourceRecord]] = {}
+        artifact_claims: dict[str, list[ClaimRecord]] = {}
+        for artifact in indexes.artifact_lineage:
+            artifact_id = artifact_node_ids[artifact.artifact_path]
+            sources = []
+            claims = []
+            for edge in _outgoing(artifact_id, "derived_from"):
+                source_key = edge.to_id.removeprefix("source:")
+                source = source_index.get(source_key)
+                if source is not None:
+                    sources.append(source)
+            for edge in _incoming(artifact_id, "supports"):
+                claim_key = edge.from_id.removeprefix("claim:")
+                claim = claim_index.get(claim_key)
+                if claim is not None:
+                    claims.append(claim)
+            artifact_sources[artifact.artifact_path] = sources
+            artifact_claims[artifact.artifact_path] = claims
+
+        chunk_claims: dict[str, list[ClaimRecord]] = {}
+        for chunk in indexes.evidence_chunks:
+            claims = []
+            for edge in _outgoing(self.chunk_node_id(chunk.chunk_key), "supports"):
+                claim_key = edge.to_id.removeprefix("claim:")
+                claim = claim_index.get(claim_key)
+                if claim is not None:
+                    claims.append(claim)
+            chunk_claims[chunk.chunk_key] = claims
 
         source_freshness_filter = set(source_freshness or [])
         claim_status_filter = set(claim_statuses or [])
@@ -1093,6 +2381,59 @@ class ResearchIntegrityRepo:
                 any(_claim_is_explicit(claim) for claim in artifact_claims.get(artifact.artifact_path, []))
                 or any(not _source_excluded(source) for source in artifact_sources.get(artifact.artifact_path, []))
             )
+
+        def _claim_support_path(claim: ClaimRecord) -> list[str] | None:
+            claim_id = self.claim_node_id(claim.claim_key)
+            for edge in _incoming(claim_id, "supports"):
+                if edge.from_id.startswith("chunk:"):
+                    chunk_key = edge.from_id.removeprefix("chunk:")
+                    chunk = chunk_index.get(chunk_key)
+                    if chunk is not None and not _chunk_excluded(chunk):
+                        return [edge.from_id, claim_id]
+                if edge.from_id.startswith("source:"):
+                    source_key = edge.from_id.removeprefix("source:")
+                    source = source_index.get(source_key)
+                    if source is not None and not _source_excluded(source):
+                        return [edge.from_id, claim_id]
+            return None
+
+        def _artifact_support_path(artifact: ArtifactLineageRecord) -> list[str] | None:
+            artifact_id = artifact_node_ids[artifact.artifact_path]
+            for edge in _incoming(artifact_id, "supports"):
+                claim_key = edge.from_id.removeprefix("claim:")
+                claim = claim_index.get(claim_key)
+                if claim is not None and _claim_is_explicit(claim):
+                    claim_path = _claim_support_path(claim)
+                    return [*claim_path, artifact_id] if claim_path else [edge.from_id, artifact_id]
+            for edge in _outgoing(artifact_id, "derived_from"):
+                source_key = edge.to_id.removeprefix("source:")
+                source = source_index.get(source_key)
+                if source is not None and not _source_excluded(source):
+                    return [artifact_id, edge.to_id]
+            return None
+
+        def _source_support_path(source: SourceRecord) -> list[str] | None:
+            source_id = self.source_node_id(source.source_key)
+            for edge in _outgoing(source_id, "supports"):
+                claim_key = edge.to_id.removeprefix("claim:")
+                claim = claim_index.get(claim_key)
+                if claim is not None and _claim_is_explicit(claim):
+                    return [source_id, edge.to_id]
+            for edge in _incoming(source_id, "derived_from"):
+                artifact_path = edge.from_id.split(":", 1)[1]
+                artifact = artifact_index.get(artifact_path)
+                if artifact is not None and not _artifact_excluded(artifact):
+                    return [edge.from_id, source_id]
+            return None
+
+        def _chunk_support_path(chunk: EvidenceChunkRecord) -> list[str] | None:
+            chunk_id = self.chunk_node_id(chunk.chunk_key)
+            for edge in _outgoing(chunk_id, "supports"):
+                claim_key = edge.to_id.removeprefix("claim:")
+                claim = claim_index.get(claim_key)
+                if claim is not None and _claim_is_explicit(claim):
+                    return [chunk_id, edge.to_id]
+            return None
 
         def _source_text(source: SourceRecord) -> str:
             provenance_bits = [
@@ -1235,6 +2576,10 @@ class ResearchIntegrityRepo:
             source_keys_value: list[str],
             claim_keys_value: list[str],
             metadata: dict[str, Any],
+            graph_path: list[str] | None = None,
+            trust_basis: str | None = None,
+            matched_node: str | None = None,
+            expanded_from: str | None = None,
         ) -> None:
             key = (record_type, record_key)
             payload = {
@@ -1249,6 +2594,14 @@ class ResearchIntegrityRepo:
                 "claimKeys": sorted(set(claim_keys_value)),
                 **metadata,
             }
+            if graph_path is not None:
+                payload["graphPath"] = graph_path
+            if trust_basis is not None:
+                payload["trustBasis"] = trust_basis
+            if matched_node is not None:
+                payload["matchedNode"] = matched_node
+            if expanded_from is not None:
+                payload["expandedFrom"] = expanded_from
             existing = results_by_key.get(key)
             if existing is None:
                 results_by_key[key] = payload
@@ -1264,6 +2617,8 @@ class ResearchIntegrityRepo:
             score = float(candidate["score"])
             if record_type == "source":
                 source = candidate["record"]
+                source_node = self.source_node_id(source.source_key)
+                source_graph_path = _source_support_path(source) or [source_node]
                 if not expand_explicit:
                     _store_result(
                         result_type="explicit_evidence" if _source_is_explicit(source) else "semantic_suggestion",
@@ -1280,6 +2635,9 @@ class ResearchIntegrityRepo:
                             "qualityStatus": source.quality_status,
                             "artifactPaths": [artifact.artifact_path for artifact in source_artifacts.get(source.source_key, []) if not _artifact_excluded(artifact)],
                         },
+                        graph_path=source_graph_path,
+                        trust_basis="graph_explicit_support" if _source_is_explicit(source) else "semantic_match_only",
+                        matched_node=source_node,
                     )
                     continue
                 if _source_is_explicit(source):
@@ -1298,10 +2656,14 @@ class ResearchIntegrityRepo:
                             "qualityStatus": source.quality_status,
                             "artifactPaths": [artifact.artifact_path for artifact in source_artifacts.get(source.source_key, []) if not _artifact_excluded(artifact)],
                         },
+                        graph_path=source_graph_path,
+                        trust_basis="matched source with persisted explicit support path",
+                        matched_node=source_node,
                     )
                     for claim in source_claims.get(source.source_key, []):
                         if not _claim_is_explicit(claim):
                             continue
+                        claim_path = [source_node, self.claim_node_id(claim.claim_key)]
                         _store_result(
                             result_type="explicit_evidence",
                             record_type="claim",
@@ -1318,10 +2680,15 @@ class ResearchIntegrityRepo:
                                 "artifactPath": claim.artifact_path,
                                 "evidencePaths": list(claim.evidence_paths),
                             },
+                            graph_path=claim_path,
+                            trust_basis="semantic match expanded through persisted source->claim edge",
+                            matched_node=source_node,
+                            expanded_from=source_node,
                         )
                     for artifact in source_artifacts.get(source.source_key, []):
                         if not _artifact_is_explicit(artifact):
                             continue
+                        artifact_path = _artifact_support_path(artifact) or [artifact_node_ids[artifact.artifact_path], source_node]
                         _store_result(
                             result_type="explicit_evidence",
                             record_type="artifact",
@@ -1337,6 +2704,10 @@ class ResearchIntegrityRepo:
                                 "artifactType": artifact.artifact_type,
                                 "promotionState": artifact.promotion_state,
                             },
+                            graph_path=artifact_path,
+                            trust_basis="semantic match expanded through persisted graph lineage",
+                            matched_node=source_node,
+                            expanded_from=source_node,
                         )
                 else:
                     _store_result(
@@ -1354,9 +2725,14 @@ class ResearchIntegrityRepo:
                             "qualityStatus": source.quality_status,
                             "artifactPaths": [artifact.artifact_path for artifact in source_artifacts.get(source.source_key, []) if not _artifact_excluded(artifact)],
                         },
+                        graph_path=[source_node],
+                        trust_basis="semantic_match_only",
+                        matched_node=source_node,
                     )
             elif record_type == "claim":
                 claim = candidate["record"]
+                claim_node = self.claim_node_id(claim.claim_key)
+                claim_graph_path = _claim_support_path(claim) or [claim_node]
                 if not expand_explicit:
                     _store_result(
                         result_type="explicit_evidence" if _claim_is_explicit(claim) else "semantic_suggestion",
@@ -1375,6 +2751,9 @@ class ResearchIntegrityRepo:
                             "evidencePaths": list(claim.evidence_paths),
                             "evidenceChunkKeys": list(claim.evidence_chunk_keys),
                         },
+                        graph_path=claim_graph_path,
+                        trust_basis="graph_explicit_support" if _claim_is_explicit(claim) else "semantic_match_only",
+                        matched_node=claim_node,
                     )
                     continue
                 if _claim_is_explicit(claim):
@@ -1394,6 +2773,9 @@ class ResearchIntegrityRepo:
                             "artifactPath": claim.artifact_path,
                             "evidencePaths": list(claim.evidence_paths),
                         },
+                        graph_path=claim_graph_path,
+                        trust_basis="matched supported claim with persisted evidence edge",
+                        matched_node=claim_node,
                     )
                     for source_key in claim.source_keys:
                         source = source_index.get(source_key)
@@ -1414,6 +2796,10 @@ class ResearchIntegrityRepo:
                                 "qualityStatus": source.quality_status,
                                 "artifactPaths": [artifact.artifact_path for artifact in source_artifacts.get(source.source_key, []) if not _artifact_excluded(artifact)],
                             },
+                            graph_path=[self.source_node_id(source.source_key), claim_node],
+                            trust_basis="semantic match expanded through persisted source->claim edge",
+                            matched_node=claim_node,
+                            expanded_from=claim_node,
                         )
                     for artifact in claim_artifacts.get(claim.claim_key, []):
                         if _artifact_excluded(artifact):
@@ -1433,6 +2819,10 @@ class ResearchIntegrityRepo:
                                 "artifactType": artifact.artifact_type,
                                 "promotionState": artifact.promotion_state,
                             },
+                            graph_path=[*claim_graph_path, artifact_node_ids[artifact.artifact_path]],
+                            trust_basis="semantic match expanded through persisted claim->artifact edge",
+                            matched_node=claim_node,
+                            expanded_from=claim_node,
                         )
                 else:
                     _store_result(
@@ -1451,9 +2841,14 @@ class ResearchIntegrityRepo:
                             "artifactPath": claim.artifact_path,
                             "evidencePaths": list(claim.evidence_paths),
                         },
+                        graph_path=[claim_node],
+                        trust_basis="semantic_match_only",
+                        matched_node=claim_node,
                     )
             elif record_type == "artifact":
                 artifact = candidate["record"]
+                artifact_node = artifact_node_ids[artifact.artifact_path]
+                artifact_graph_path = _artifact_support_path(artifact) or [artifact_node]
                 if not expand_explicit:
                     _store_result(
                         result_type="explicit_evidence" if _artifact_is_explicit(artifact) else "semantic_suggestion",
@@ -1470,6 +2865,9 @@ class ResearchIntegrityRepo:
                             "artifactType": artifact.artifact_type,
                             "promotionState": artifact.promotion_state,
                         },
+                        graph_path=artifact_graph_path,
+                        trust_basis="graph_explicit_support" if _artifact_is_explicit(artifact) else "semantic_match_only",
+                        matched_node=artifact_node,
                     )
                     continue
                 if _artifact_is_explicit(artifact):
@@ -1488,10 +2886,14 @@ class ResearchIntegrityRepo:
                             "artifactType": artifact.artifact_type,
                             "promotionState": artifact.promotion_state,
                         },
+                        graph_path=artifact_graph_path,
+                        trust_basis="matched artifact with persisted lineage path",
+                        matched_node=artifact_node,
                     )
                     for claim in artifact_claims.get(artifact.artifact_path, []):
                         if not _claim_is_explicit(claim):
                             continue
+                        claim_path = _claim_support_path(claim) or [self.claim_node_id(claim.claim_key)]
                         _store_result(
                             result_type="explicit_evidence",
                             record_type="claim",
@@ -1508,6 +2910,10 @@ class ResearchIntegrityRepo:
                                 "artifactPath": claim.artifact_path,
                                 "evidencePaths": list(claim.evidence_paths),
                             },
+                            graph_path=[*claim_path, artifact_node],
+                            trust_basis="semantic match expanded through persisted artifact claim support",
+                            matched_node=artifact_node,
+                            expanded_from=artifact_node,
                         )
                     for source in artifact_sources.get(artifact.artifact_path, []):
                         if not _source_is_explicit(source):
@@ -1527,6 +2933,10 @@ class ResearchIntegrityRepo:
                                 "qualityStatus": source.quality_status,
                                 "artifactPaths": [artifact.artifact_path for artifact in source_artifacts.get(source.source_key, []) if not _artifact_excluded(artifact)],
                             },
+                            graph_path=[artifact_node, self.source_node_id(source.source_key)],
+                            trust_basis="semantic match expanded through persisted artifact->source lineage",
+                            matched_node=artifact_node,
+                            expanded_from=artifact_node,
                         )
                 else:
                     _store_result(
@@ -1544,10 +2954,15 @@ class ResearchIntegrityRepo:
                             "artifactType": artifact.artifact_type,
                             "promotionState": artifact.promotion_state,
                         },
+                        graph_path=[artifact_node],
+                        trust_basis="semantic_match_only",
+                        matched_node=artifact_node,
                     )
             else:
                 chunk = candidate["record"]
                 source = source_index.get(chunk.source_key)
+                chunk_node = self.chunk_node_id(chunk.chunk_key)
+                chunk_graph_path = _chunk_support_path(chunk) or [chunk_node]
                 if not expand_explicit:
                     _store_result(
                         result_type="explicit_evidence" if _chunk_is_explicit(chunk) else "semantic_suggestion",
@@ -1565,6 +2980,9 @@ class ResearchIntegrityRepo:
                             "chunkType": chunk.chunk_type,
                             "sourceMetadata": chunk.metadata,
                         },
+                        graph_path=chunk_graph_path,
+                        trust_basis="graph_explicit_support" if _chunk_is_explicit(chunk) else "semantic_match_only",
+                        matched_node=chunk_node,
                     )
                     continue
                 if _chunk_is_explicit(chunk):
@@ -1584,10 +3002,14 @@ class ResearchIntegrityRepo:
                             "chunkType": chunk.chunk_type,
                             "sourceMetadata": chunk.metadata,
                         },
+                        graph_path=chunk_graph_path,
+                        trust_basis="matched chunk with persisted chunk->claim support edge",
+                        matched_node=chunk_node,
                     )
                     for claim in chunk_claims.get(chunk.chunk_key, []):
                         if not _claim_is_explicit(claim):
                             continue
+                        claim_path = [chunk_node, self.claim_node_id(claim.claim_key)]
                         _store_result(
                             result_type="explicit_evidence",
                             record_type="claim",
@@ -1605,6 +3027,10 @@ class ResearchIntegrityRepo:
                                 "evidencePaths": list(claim.evidence_paths),
                                 "evidenceChunkKeys": list(claim.evidence_chunk_keys),
                             },
+                            graph_path=claim_path,
+                            trust_basis="semantic match expanded through persisted chunk->claim edge",
+                            matched_node=chunk_node,
+                            expanded_from=chunk_node,
                         )
                         for artifact in claim_artifacts.get(claim.claim_key, []):
                             if _artifact_excluded(artifact):
@@ -1624,6 +3050,10 @@ class ResearchIntegrityRepo:
                                     "artifactType": artifact.artifact_type,
                                     "promotionState": artifact.promotion_state,
                                 },
+                                graph_path=[*claim_path, artifact_node_ids[artifact.artifact_path]],
+                                trust_basis="semantic match expanded through persisted chunk->claim->artifact path",
+                                matched_node=chunk_node,
+                                expanded_from=chunk_node,
                             )
                 else:
                     _store_result(
@@ -1642,6 +3072,9 @@ class ResearchIntegrityRepo:
                             "chunkType": chunk.chunk_type,
                             "sourceMetadata": chunk.metadata,
                         },
+                        graph_path=[chunk_node],
+                        trust_basis="semantic_match_only",
+                        matched_node=chunk_node,
                     )
 
         results = sorted(
@@ -1814,15 +3247,307 @@ class ResearchIntegrityRepo:
             raise ValueError(f"Invalid JSON in {path}: {exc}") from exc
         if not isinstance(raw, list):
             raise ValueError(f"{path} must contain a JSON array")
+        normalized_raw = raw
+        if model_cls is VerificationRunRecord:
+            normalized_raw = [
+                _normalize_legacy_verification_run_record(item) if isinstance(item, dict) else item
+                for item in raw
+            ]
         try:
-            return [model_cls.model_validate(item) for item in raw]
+            return [model_cls.model_validate(item) for item in normalized_raw]
         except ValidationError as exc:
             raise ValueError(f"Invalid integrity records in {path}: {exc}") from exc
+
+    def _candidate_key(self, prefix: str, value: str) -> str:
+        normalized = "-".join(_tokenize_text(value)[:8]) or prefix
+        digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
+        return f"{prefix}:{normalized}-{digest}"
+
+    def _record_key(self, prefix: str, value: str) -> str:
+        normalized = "-".join(_tokenize_text(value)[:8]) or prefix
+        digest = hashlib.sha1(value.encode("utf-8")).hexdigest()[:10]
+        return f"{prefix}-{normalized}-{digest}"
+
+    def _default_claim_status(
+        self,
+        evidence_paths: list[str],
+        source_keys: list[str],
+        evidence_chunk_keys: list[str],
+        evidence_kind: EvidenceKind | None,
+    ) -> ClaimStatus:
+        has_evidence = bool(evidence_paths or source_keys or evidence_chunk_keys)
+        if has_evidence and evidence_kind != "semantic_suggestion":
+            return "supported"
+        return "needs_evidence"
+
+    def _source_candidate_key_map(self) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        for source in self.load_sources():
+            candidate_key = str(source.provenance.get("sourceCandidateKey") or "")
+            if candidate_key:
+                mapping[candidate_key] = source.source_key
+        return mapping
+
+    def _resolve_source_keys_for_claim_candidate(self, candidate: ClaimCandidateRecord) -> list[str]:
+        candidate_to_source = self._source_candidate_key_map()
+        resolved = [
+            candidate_to_source[source_candidate_key]
+            for source_candidate_key in candidate.source_candidate_keys
+            if source_candidate_key in candidate_to_source
+        ]
+        return sorted(set(resolved))
+
+    def _title_from_url(self, url: str) -> str:
+        trimmed = url.split("://", 1)[-1]
+        return trimmed[:120]
+
+    def _estimate_relevance(self, text: str) -> float:
+        lowered = text.lower()
+        score = 0.2
+        for token in ("evidence", "impact", "effect", "result", "finding", "source", "dataset", "study"):
+            if token in lowered:
+                score += 0.08
+        return min(score, 1.0)
+
+    def _first_matching_line(self, text: str, needle: str) -> str | None:
+        for line in text.splitlines():
+            if needle in line:
+                return line.strip()[:400]
+        return None
+
+    def _extract_claim_candidate_texts(self, text: str) -> list[tuple[str, str]]:
+        claim_candidates: list[tuple[str, str]] = []
+        seen: set[str] = set()
+        trigger_phrases = (
+            "we find",
+            "evidence suggests",
+            "results suggest",
+            "this suggests",
+            "this indicates",
+            "appears to",
+            "is associated with",
+            "remains incomplete",
+            "should not be presented",
+        )
+        for raw_line in text.splitlines():
+            line = raw_line.strip().lstrip("-*0123456789. ").strip()
+            if len(line) < 35 or len(line) > 400:
+                continue
+            lowered = line.lower()
+            candidate_text: str | None = None
+            if lowered.startswith(("claim:", "finding:", "hypothesis:", "question:")):
+                candidate_text = line.split(":", 1)[1].strip()
+            elif any(phrase in lowered for phrase in trigger_phrases):
+                candidate_text = line
+            if not candidate_text:
+                continue
+            key = candidate_text.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            claim_candidates.append((candidate_text, raw_line.strip()[:400]))
+        return claim_candidates[:30]
+
+    def _extract_entity_candidates(self, text: str) -> list[tuple[str, int, str | None]]:
+        stop_phrases = {
+            "Current Plan",
+            "Task Board",
+            "Open Questions",
+            "Target State",
+            "Project Catalog",
+        }
+        phrase_counts: Counter[str] = Counter(
+            match.group(0).strip()
+            for match in re.finditer(r"\b[A-Z][A-Za-z0-9.&-]+(?:\s+[A-Z][A-Za-z0-9.&-]+){1,3}\b", text)
+            if match.group(0).strip() not in stop_phrases
+        )
+        ranked: list[tuple[str, int, str | None]] = []
+        for phrase, count in phrase_counts.most_common(25):
+            snippet = self._first_matching_line(text, phrase)
+            ranked.append((phrase, count, snippet))
+        return ranked
+
+    def _entity_type_hint(self, phrase: str) -> str:
+        lowered = phrase.lower()
+        if any(token in lowered for token in ("department", "agency", "bureau", "office", "university")):
+            return "organization"
+        if any(token in lowered for token in ("program", "reform", "policy", "act")):
+            return "program"
+        if any(token in lowered for token in ("county", "city", "jersey", "municipality")):
+            return "geography"
+        return "unknown"
 
     def _write_records(self, path: Path, records: list[Any], model_cls: type[BaseModel]) -> None:
         self.ensure_files_exist()
         normalized = [self._ensure_record_timestamps(model_cls.model_validate(item)).model_dump(mode="json") for item in records]
         path.write_text(json.dumps(normalized, indent=2) + "\n", encoding="utf-8")
+
+    def _write_compiled_truth_outputs(self, report: dict[str, Any]) -> None:
+        self.compiled_truth_report_path().write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        self.artifact_support_matrix_path().write_text(
+            json.dumps(report.get("artifactSupportMatrix", []), indent=2) + "\n",
+            encoding="utf-8",
+        )
+        self.paper_alignment_report_path().write_text(
+            self._render_paper_alignment_markdown(report),
+            encoding="utf-8",
+        )
+        self.compiled_truth_summary_path().write_text(
+            self._render_compiled_truth_markdown(report),
+            encoding="utf-8",
+        )
+
+    def _build_alignment_report(
+        self,
+        *,
+        alignment_paths: list[str],
+        claim_details: list[dict[str, Any]],
+        source_details: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        issues: list[dict[str, Any]] = []
+        checked_paths: list[str] = []
+        has_partial_employment = any(
+            item["claimKey"] == "claim-employment-provisional" and item["compiledStatus"] != "supported"
+            for item in claim_details
+        )
+        has_proxy_income = any("income" in item["claimKey"] and item["compiledStatus"] != "supported" for item in claim_details)
+        has_incomplete_zaf = any(
+            item["claimKey"] == "claim-observed-zaf-incomplete"
+            for item in claim_details
+        )
+        for rel_path in alignment_paths:
+            target = (self.project_root / rel_path).resolve()
+            if not target.exists():
+                continue
+            checked_paths.append(rel_path)
+            text = target.read_text(encoding="utf-8", errors="ignore")
+            lowered = text.lower()
+            hedge_pattern = r"\b(preliminary|cautious|not|rather than|qualified|provisional|incomplete|estimated|proxy|derived|suggestive)\b"
+            certainty_lines = [
+                line.strip()
+                for line in lowered.splitlines()
+                if re.search(r"\b(definitive|conclusive|settled|proves)\b", line)
+                or (" final " in f" {line} " and not re.search(hedge_pattern, line))
+            ]
+            if any(line and not re.search(hedge_pattern, line) for line in certainty_lines):
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "severity": "warning",
+                        "message": "Document uses stronger-than-supported certainty language.",
+                    }
+                )
+            zaf_lines = [line.strip() for line in lowered.splitlines() if "observed zaf" in line]
+            if has_incomplete_zaf and any(
+                line and not re.search(r"\b(incomplete|partial|estimated|benchmark|not yet|limit)\b", line)
+                for line in zaf_lines
+            ):
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "severity": "warning",
+                        "message": "Observed ZAF language appears without a nearby incompleteness qualifier.",
+                    }
+                )
+            if has_proxy_income and "median family income" in lowered and "acs" not in lowered and "proxy" not in lowered:
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "severity": "warning",
+                        "message": "Income discussion may be missing an ACS/proxy qualifier.",
+                    }
+                )
+            employment_lines = [line.strip() for line in lowered.splitlines() if "employment" in line]
+            if has_partial_employment and any(
+                re.search(r"\b(settled|definitive|conclusive)\b", line) and not re.search(hedge_pattern, line)
+                for line in employment_lines
+            ):
+                issues.append(
+                    {
+                        "path": rel_path,
+                        "severity": "warning",
+                        "message": "Employment discussion sounds more final than the current claim state.",
+                    }
+                )
+        evidence_boundaries = [
+            item["message"]
+            for item in (
+                {
+                    "message": source["qualityNotes"],
+                }
+                for source in source_details
+                if source.get("qualityNotes")
+            )
+        ]
+        return {
+            "checkedPaths": checked_paths,
+            "issues": issues,
+            "evidenceBoundaries": evidence_boundaries,
+        }
+
+    def _render_paper_alignment_markdown(self, report: dict[str, Any]) -> str:
+        alignment = report.get("paperAlignment", {})
+        lines = [
+            "# Paper Alignment Report",
+            "",
+            f"- Generated at: {report.get('generatedAt')}",
+            f"- Project status: {report.get('summary', {}).get('projectStatus', 'unknown')}",
+            "",
+            "## Checked Paths",
+        ]
+        checked_paths = alignment.get("checkedPaths", [])
+        if checked_paths:
+            lines.extend(f"- `{path}`" for path in checked_paths)
+        else:
+            lines.append("- No alignment paths were checked.")
+        lines.extend(["", "## Issues"])
+        issues = alignment.get("issues", [])
+        if issues:
+            for issue in issues:
+                lines.append(f"- [{issue.get('severity', 'info')}] `{issue.get('path')}`: {issue.get('message')}")
+        else:
+            lines.append("- No heuristic alignment issues found.")
+        return "\n".join(lines) + "\n"
+
+    def _render_compiled_truth_markdown(self, report: dict[str, Any]) -> str:
+        summary = report.get("summary", {})
+        lines = [
+            "# Compiled Truth Report",
+            "",
+            f"- Generated at: {report.get('generatedAt')}",
+            f"- Project status: {summary.get('projectStatus', 'unknown')}",
+            f"- Claims: {summary.get('claimCount', 0)}",
+            f"- Artifacts: {summary.get('artifactCount', 0)}",
+            f"- Sources: {summary.get('sourceCount', 0)}",
+            f"- Source candidates: {summary.get('sourceCandidateCount', 0)}",
+            f"- Claim candidates: {summary.get('claimCandidateCount', 0)}",
+            f"- Entity candidates: {summary.get('entityCandidateCount', 0)}",
+            f"- Conflicts: {summary.get('conflictCount', 0)}",
+            "",
+            "## Claims",
+        ]
+        for bucket in ("supported", "partiallyVerified", "needsEvidence", "stale", "blocked", "draft"):
+            entries = report.get("claims", {}).get(bucket, [])
+            lines.append(f"- {bucket}: {len(entries)}")
+        lines.extend(["", "## Artifacts"])
+        for bucket in ("verified", "partiallyVerified", "needsEvidence", "stale", "blocked", "draft"):
+            entries = report.get("artifacts", {}).get(bucket, [])
+            lines.append(f"- {bucket}: {len(entries)}")
+        lines.extend(["", "## Exploration"])
+        candidates = report.get("candidates", {})
+        lines.append(f"- source candidates: {len(candidates.get('sourceCandidates', []))}")
+        lines.append(f"- claim candidates: {len(candidates.get('claimCandidates', []))}")
+        lines.append(f"- entity candidates: {len(candidates.get('entityCandidates', []))}")
+        lines.append(f"- conflicts: {len(report.get('conflicts', []))}")
+        lines.extend(["", "## Top Gaps"])
+        gaps = report.get("sourceGaps", [])
+        if gaps:
+            for gap in gaps[:10]:
+                label = gap.get("claimKey") or gap.get("artifactPath") or gap.get("sourceKey") or gap.get("path") or "gap"
+                lines.append(f"- `{label}`: {gap.get('message')}")
+        else:
+            lines.append("- No current gaps recorded.")
+        return "\n".join(lines) + "\n"
 
     def _normalize_timestamps(self, record: Any, preserve_created_at: str | None = None) -> Any:
         now = _utc_now()
@@ -1902,11 +3627,19 @@ __all__ = [
     "ArtifactLineageRecord",
     "AssumptionRecord",
     "ClaimRecord",
+    "ClaimCandidateRecord",
+    "ConflictRecord",
+    "EntityCandidateRecord",
     "EvidenceChunkRecord",
+    "IntegrityEdgeRecord",
     "IntegrityIndexes",
     "ResearchIntegrityRepo",
     "SourceRecord",
+    "SourceCandidateRecord",
     "STATE_FILE_NAMES",
     "VerificationRunRecord",
+    "build_artifact_trust_summary",
+    "build_claim_state",
+    "build_source_state",
     "sync_sources_from_configs",
 ]
