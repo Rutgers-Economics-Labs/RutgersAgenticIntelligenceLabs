@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 AssumptionStatus = Literal["active", "needs_review", "superseded", "rejected"]
 SourceQualityStatus = Literal["candidate", "validated", "blocked", "rejected"]
 SourceFreshnessStatus = Literal["unknown", "fresh", "needs_refresh", "stale"]
+SourceAdmissibilityStatus = Literal["observed", "derived", "estimated", "synthetic", "missing"]
 SourceImpactLevel = Literal["low", "normal", "high", "critical"]
 ClaimStatus = Literal["draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"]
 EvidenceKind = Literal["direct", "derived", "contextual", "semantic_suggestion"]
@@ -87,6 +88,41 @@ def _stringify_timestamp(value: Any) -> str | None:
 
 def _default_source_path(file_name: str) -> str:
     return f"research_plan/state/{file_name}"
+
+
+def _normalize_legacy_claim_record(record: dict[str, Any]) -> dict[str, Any]:
+    if "claim_key" in record and "claim_text" in record:
+        return record
+    if "claim_id" not in record and "claim" not in record:
+        return record
+    artifact_entries = record.get("artifacts") if isinstance(record.get("artifacts"), list) else []
+    artifact_paths = [
+        str(item.get("path")).strip()
+        for item in artifact_entries
+        if isinstance(item, dict) and str(item.get("path") or "").strip()
+    ]
+    notes = str(record.get("notes") or "").strip()
+    caveats = [notes] if notes else []
+    scope = str(record.get("scope") or "").strip()
+    if scope:
+        caveats.append(f"legacy_scope:{scope}")
+    confidence_value = record.get("confidence")
+    confidence: float | None = None
+    if isinstance(confidence_value, (int, float)):
+        confidence = float(confidence_value)
+    status_value = str(record.get("status") or "").strip().lower()
+    status = status_value if status_value in {"draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"} else "needs_evidence"
+    return {
+        "claim_key": str(record.get("claim_id") or "").strip() or _normalize_reference_key(str(record.get("claim") or "legacy-claim")),
+        "claim_text": str(record.get("claim") or record.get("claim_text") or "").strip() or "Legacy claim candidate",
+        "artifact_path": artifact_paths[0] if artifact_paths else None,
+        "evidence_paths": artifact_paths,
+        "status": status,
+        "confidence": confidence,
+        "caveats": caveats,
+        "created_at": record.get("created_at"),
+        "updated_at": record.get("updated_at"),
+    }
 
 
 def _normalize_reference_key(reference: str) -> str:
@@ -184,6 +220,7 @@ class SourceRecord(BaseModel):
     acquired_at: str | None = None
     access_method: str | None = None
     freshness_status: SourceFreshnessStatus = "unknown"
+    admissibility_status: SourceAdmissibilityStatus | None = None
     impact_level: SourceImpactLevel = "normal"
     provenance: dict[str, Any] = Field(default_factory=dict)
     quality_notes: str | None = None
@@ -427,13 +464,29 @@ def build_source_state(
     chunk_count: int = 0,
 ) -> dict[str, Any]:
     quality_blocked = source.quality_status in {"blocked", "rejected"}
+    admissibility_status = source.admissibility_status
+    if admissibility_status is None:
+        provenance = source.provenance or {}
+        if provenance.get("synthetic"):
+            admissibility_status = "synthetic"
+        elif provenance.get("estimated"):
+            admissibility_status = "estimated"
+        elif provenance.get("missing"):
+            admissibility_status = "missing"
+        elif provenance.get("derived_from") or provenance.get("derivedFrom"):
+            admissibility_status = "derived"
+        else:
+            admissibility_status = "observed"
+    admissible = admissibility_status in {"observed", "derived"} and not quality_blocked
     return {
         "freshnessStatus": source.freshness_status,
         "qualityStatus": source.quality_status,
+        "admissibilityStatus": admissibility_status,
         "isFresh": source.freshness_status == "fresh" and not quality_blocked,
         "isStale": source.freshness_status == "stale",
         "needsRefresh": source.freshness_status == "needs_refresh",
         "isBlocked": quality_blocked,
+        "isAdmissible": admissible,
         "dependentClaimCount": dependent_claim_count,
         "dependentArtifactCount": dependent_artifact_count,
         "chunkCount": chunk_count,
@@ -3251,6 +3304,11 @@ class ResearchIntegrityRepo:
         if model_cls is VerificationRunRecord:
             normalized_raw = [
                 _normalize_legacy_verification_run_record(item) if isinstance(item, dict) else item
+                for item in raw
+            ]
+        elif model_cls is ClaimRecord:
+            normalized_raw = [
+                _normalize_legacy_claim_record(item) if isinstance(item, dict) else item
                 for item in raw
             ]
         try:
