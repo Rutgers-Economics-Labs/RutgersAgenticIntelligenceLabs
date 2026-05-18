@@ -148,9 +148,10 @@ def test_create_and_resolve_approval_use_repo_files(tmp_path: Path):
     )
 
     assert approval is not None
-    assert approval["status"] == "approved"
+    assert approval["status"] == "granted"
     approval_path = tmp_path / "research_plan" / "approvals" / f"{approval_id}.md"
     assert approval_path.exists()
+    assert "status: granted" in approval_path.read_text(encoding="utf-8")
     assert "Looks good." in approval_path.read_text(encoding="utf-8")
 
 

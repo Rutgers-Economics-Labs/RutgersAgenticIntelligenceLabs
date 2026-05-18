@@ -22,6 +22,14 @@ TASK_STATUSES = [
     "done",
     "cancelled",
 ]
+APPROVAL_STATUSES = [
+    "pending",
+    "granted",
+    "rejected",
+]
+LEGACY_APPROVAL_STATUS_ALIASES = {
+    "approved": "granted",
+}
 
 
 def _slugify(text: str) -> str:
@@ -29,6 +37,14 @@ def _slugify(text: str) -> str:
     text = re.sub(r"[^\w\s-]", "", text)
     text = re.sub(r"[\s_-]+", "-", text)
     return text[:80].rstrip("-") or "item"
+
+
+def _normalize_approval_status(status: str | None) -> str:
+    normalized = str(status or "pending").strip().lower()
+    normalized = LEGACY_APPROVAL_STATUS_ALIASES.get(normalized, normalized)
+    if normalized not in APPROVAL_STATUSES:
+        raise ValueError(f"Unsupported approval status: {status}")
+    return normalized
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -496,7 +512,7 @@ def _approval_to_runtime(path: Path) -> dict[str, Any]:
         "taskId": meta.get("task_id"),
         "agentSessionId": meta.get("agent_session_id"),
         "approvalType": meta.get("approval_type", "run_task"),
-        "status": meta.get("status", "pending"),
+        "status": _normalize_approval_status(meta.get("status", "pending")),
         "requestedByRole": meta.get("requested_by_role", "planner"),
         "grantedByUserId": meta.get("granted_by_user_id"),
         "requestedAt": meta.get("requested_at"),
@@ -546,6 +562,7 @@ async def create_approval(
     root = project_root_from_record(project)
     if root is None:
         raise ValueError("Project does not have a localRepoPath configured")
+    status = _normalize_approval_status(status)
     approval_id = _slugify(f"{approval_type}-{task_id or agent_session_id or session_files.utc_now_iso()}")
     approval = {
         "_id": approval_id,
@@ -576,6 +593,7 @@ async def resolve_approval(
     root = project_root_from_record(project)
     if root is None:
         return None
+    status = _normalize_approval_status(status)
     path = _approval_dir(root) / f"{approval_id}.md"
     if not path.exists():
         return None

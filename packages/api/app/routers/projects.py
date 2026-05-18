@@ -405,6 +405,7 @@ ALLOWED_EVIDENCE_KINDS = {"direct", "derived", "contextual", "semantic_suggestio
 ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially_verified", "verified", "stale", "blocked"}
 ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
 ALLOWED_TASK_APPROVAL_STATES = {"pending", "granted"}
+ALLOWED_APPROVAL_STATUSES = {"pending", "granted", "rejected", "approved"}
 
 
 def _validate_trusted_source_contract(
@@ -485,6 +486,14 @@ def _validate_planner_task_approval_state(approval_state: str | None) -> None:
         raise HTTPException(
             status_code=422,
             detail="Planner task approval state must be one of: pending, granted.",
+        )
+
+
+def _validate_approval_status(status: str | None) -> None:
+    if status not in {None, ""} and status not in ALLOWED_APPROVAL_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail="Approval status must be one of: pending, granted, rejected.",
         )
 
 
@@ -2449,6 +2458,7 @@ async def list_project_approvals(slug: str, limit: int = Query(100)):
 @router.post("/{slug}/approvals")
 async def create_project_approval(slug: str, data: ApprovalCreateRequest):
     project = await planner_service.get_project_by_slug(slug)
+    _validate_approval_status(data.status)
     approval_id = await planner_service.create_approval(
         project=project,
         task_id=data.taskId,
@@ -2466,6 +2476,7 @@ async def create_project_approval(slug: str, data: ApprovalCreateRequest):
 @router.post("/{slug}/approvals/{approval_id}/resolve")
 async def resolve_project_approval(slug: str, approval_id: str, data: ApprovalResolveRequest):
     project = await planner_service.get_project_by_slug(slug)
+    _validate_approval_status(data.status)
     approval = await planner_service.resolve_approval(
         project=project,
         approval_id=approval_id,
