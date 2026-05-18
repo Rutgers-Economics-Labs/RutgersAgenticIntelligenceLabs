@@ -204,6 +204,81 @@ async def test_record_claim_rejects_unknown_source_keys(client, convex_mock, tmp
     assert "Claim references unknown source keys: missing-source" in payload["detail"]
 
 
+async def test_record_claim_rejects_unknown_status(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/claims",
+        json={
+            "claimKey": "claim-001",
+            "statement": "This claim has an invalid status.",
+            "artifactPath": "artifacts/report.md",
+            "status": "kind-of-supported",
+        },
+    )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "Claim status must be one of" in payload["detail"]
+
+
+async def test_record_claim_rejects_unknown_evidence_kind(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/claims",
+        json={
+            "claimKey": "claim-001",
+            "statement": "This claim has an invalid evidence kind.",
+            "artifactPath": "artifacts/report.md",
+            "status": "draft",
+            "evidenceKind": "vibes",
+        },
+    )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "Claim evidence kind must be one of" in payload["detail"]
+
+
 async def test_record_claim_rejects_unknown_evidence_chunk_keys(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     repo = ResearchIntegrityRepo(root)

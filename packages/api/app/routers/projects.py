@@ -397,6 +397,8 @@ class IntegrityArtifactPromotionRequest(BaseModel):
 ALLOWED_SOURCE_ADMISSIBILITY_STATUSES = {"observed", "derived", "estimated", "synthetic", "missing"}
 ALLOWED_SOURCE_FRESHNESS_STATUSES = {"unknown", "fresh", "needs_refresh", "stale"}
 ALLOWED_SOURCE_QUALITY_STATUSES = {"candidate", "validated", "blocked", "rejected"}
+ALLOWED_CLAIM_STATUSES = {"draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"}
+ALLOWED_EVIDENCE_KINDS = {"direct", "derived", "contextual", "semantic_suggestion"}
 
 
 def _validate_trusted_source_contract(
@@ -454,10 +456,22 @@ def _validate_claim_reference_integrity(
     repo,
     *,
     project_root: Path,
+    status: str | None,
+    evidence_kind: str | None,
     evidence_paths: list[str],
     source_keys: list[str],
     evidence_chunk_keys: list[str],
 ) -> None:
+    if status not in {None, ""} and status not in ALLOWED_CLAIM_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail="Claim status must be one of: draft, supported, unsupported, needs_evidence, superseded, stale, conflicted.",
+        )
+    if evidence_kind not in {None, ""} and evidence_kind not in ALLOWED_EVIDENCE_KINDS:
+        raise HTTPException(
+            status_code=422,
+            detail="Claim evidence kind must be one of: direct, derived, contextual, semantic_suggestion.",
+        )
     missing_paths = sorted(
         {
             path
@@ -1924,6 +1938,8 @@ async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRe
     _validate_claim_reference_integrity(
         repo,
         project_root=root,
+        status=data.status,
+        evidence_kind=data.evidenceKind,
         evidence_paths=data.evidencePaths,
         source_keys=data.sourceKeys,
         evidence_chunk_keys=data.evidenceChunkKeys,
