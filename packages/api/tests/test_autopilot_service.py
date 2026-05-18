@@ -1228,6 +1228,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_task_files", lambda project_arg: asyncio.sleep(0, result={"removed": ["research_plan/tasks/old.md"]}))
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_task_session_states", lambda project_arg: asyncio.sleep(0, result={"updated": ["task-1"]}))
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_planner_metadata", lambda project_arg: asyncio.sleep(0, result={"updatedTaskIds": ["task-2"], "updatedApprovalIds": ["approval-1"]}))
+    monkeypatch.setattr(reconciliation_service, "repair_agent_secret_policy_roles", lambda project_arg: asyncio.sleep(0, result={"repairedRoles": ["coding"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_session_audits", lambda project_arg, project_root: asyncio.sleep(0, result={"repairedSessionIds": ["sess-2"]}))
     monkeypatch.setattr(
@@ -1245,6 +1246,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
         "removedTaskFiles": ["research_plan/tasks/old.md"],
         "updatedTaskIds": ["task-1", "task-2"],
         "updatedApprovalIds": ["approval-1"],
+        "repairedSecretPolicyRoles": ["coding"],
         "repairedSessionIds": ["sess-1"],
         "repairedAuditSessionIds": ["sess-2"],
         "repairedOntologyArtifact": {

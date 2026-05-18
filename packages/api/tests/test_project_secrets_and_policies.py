@@ -439,3 +439,46 @@ async def test_resolve_secrets_service_falls_back_to_legacy_role_alias(convex_mo
 
     result = await resolve_secrets_for_role(PROJECT_ID, "coding")
     assert result == {"FRED_API_KEY": "fred-abc123"}
+
+
+async def test_repair_agent_secret_policy_roles_merges_alias_policies_into_canonical(convex_mock):
+    mutations_called = []
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        path = payload.get("path")
+        if path == "agentSecretPolicies:listByProject":
+            return httpx.Response(
+                200,
+                json={
+                    "value": [
+                        POLICY_DEVELOPER_ROLE,
+                        {
+                            "_id": "policy-id-coding",
+                            "projectId": PROJECT_ID,
+                            "agentRole": "coding",
+                            "allowedSecretNames": ["CENSUS_API_KEY"],
+                        },
+                    ]
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    def _mutation(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        mutations_called.append((payload.get("path"), payload.get("args", {})))
+        return httpx.Response(200, json={"value": "ok"})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    convex_mock.post("/api/mutation").mock(side_effect=_mutation)
+
+    from app.services.reconciliation_service import repair_agent_secret_policy_roles
+
+    result = await repair_agent_secret_policy_roles(PROJECT_DOC)
+
+    assert result == {"repairedRoles": ["coding"]}
+    upsert_args = next(args for path, args in mutations_called if path == "agentSecretPolicies:upsert")
+    assert upsert_args["agentRole"] == "coding"
+    assert upsert_args["allowedSecretNames"] == ["CENSUS_API_KEY", "FRED_API_KEY"]
+    delete_args = next(args for path, args in mutations_called if path == "agentSecretPolicies:deleteByRole")
+    assert delete_args["agentRole"] == "developer"

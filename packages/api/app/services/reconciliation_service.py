@@ -4,9 +4,11 @@ from pathlib import Path
 from typing import Any
 
 from app.runners import session_lifecycle
+from app.services.convex_client import convex
 from app.services import hydration_registry_service, planner_service, running_agent_service
 from app.services.audit_service import audit_gate_status, repair_stale_session_audits
 from app.services.integrity_service import load_integrity_indexes
+from app.services.role_runtime_service import ROLE_ALIASES
 from rail.manifest import load_manifest
 
 
@@ -91,6 +93,57 @@ async def repair_active_ontology_registry_drift(project: dict[str, Any]) -> dict
         "previousDuckdbPath": active_duckdb_path,
         "nextDuckdbPath": expected_duckdb_path,
     }
+
+
+async def repair_agent_secret_policy_roles(project: dict[str, Any]) -> dict[str, Any]:
+    project_id = project.get("_id")
+    if not project_id:
+        return {"repairedRoles": []}
+
+    policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project_id}) or []
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for policy in policies:
+        raw_role = str(policy.get("agentRole") or "").strip().lower()
+        canonical_role = ROLE_ALIASES.get(raw_role, raw_role)
+        if not canonical_role or canonical_role == raw_role:
+            continue
+        grouped.setdefault(canonical_role, []).append(policy)
+
+    repaired_roles: list[str] = []
+    for canonical_role, alias_policies in grouped.items():
+        canonical_policy = next(
+            (
+                policy
+                for policy in policies
+                if str(policy.get("agentRole") or "").strip().lower() == canonical_role
+            ),
+            None,
+        )
+        merged_allowed: list[str] = []
+        sources = ([canonical_policy] if canonical_policy else []) + alias_policies
+        for policy in sources:
+            for secret_name in policy.get("allowedSecretNames") or []:
+                name = str(secret_name).strip()
+                if name and name not in merged_allowed:
+                    merged_allowed.append(name)
+
+        await convex.mutation(
+            "agentSecretPolicies:upsert",
+            {
+                "projectId": project_id,
+                "agentRole": canonical_role,
+                "allowedSecretNames": merged_allowed,
+            },
+        )
+        for policy in alias_policies:
+            raw_role = str(policy.get("agentRole") or "").strip().lower()
+            await convex.mutation(
+                "agentSecretPolicies:deleteByRole",
+                {"projectId": project_id, "agentRole": raw_role},
+            )
+        repaired_roles.append(canonical_role)
+
+    return {"repairedRoles": repaired_roles}
 
 
 async def project_reality_snapshot(
@@ -289,6 +342,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     removed_task_files: list[str] = []
     updated_task_ids: list[str] = []
     updated_approval_ids: list[str] = []
+    repaired_secret_policy_roles: list[str] = []
     repaired_session_ids: list[str] = []
     repaired_audit_session_ids: list[str] = []
     repaired_ontology_artifact: dict[str, Any] | None = None
@@ -299,6 +353,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     metadata_task_updates = [str(item) for item in (metadata_repair.get("updatedTaskIds") or []) if item]
     updated_task_ids = list(dict.fromkeys(updated_task_ids + metadata_task_updates))
     updated_approval_ids = [str(item) for item in (metadata_repair.get("updatedApprovalIds") or []) if item]
+    repaired_secret_policy_roles = [str(item) for item in ((await repair_agent_secret_policy_roles(project)).get("repairedRoles") or []) if item]
     repaired_session_ids = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
     if root is not None and root.exists():
         repaired_audit_session_ids = list((await repair_stale_session_audits(project, root)).get("repairedSessionIds") or [])
@@ -310,6 +365,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
         "removedTaskFiles": removed_task_files,
         "updatedTaskIds": updated_task_ids,
         "updatedApprovalIds": updated_approval_ids,
+        "repairedSecretPolicyRoles": repaired_secret_policy_roles,
         "repairedSessionIds": repaired_session_ids,
         "repairedAuditSessionIds": repaired_audit_session_ids,
         "repairedOntologyArtifact": repaired_ontology_artifact,
@@ -317,6 +373,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
             removed_task_files
             or updated_task_ids
             or updated_approval_ids
+            or repaired_secret_policy_roles
             or repaired_session_ids
             or repaired_audit_session_ids
             or repaired_ontology_artifact
