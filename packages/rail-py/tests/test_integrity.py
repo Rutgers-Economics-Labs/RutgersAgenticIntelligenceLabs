@@ -512,7 +512,7 @@ def test_integrity_repo_can_promote_candidates_and_resolve_conflicts(tmp_path):
 
     assert source_result["status"] == "promoted"
     assert source_result["candidate"]["status"] == "promoted"
-    assert source_result["source"]["quality_status"] == "validated"
+    assert source_result["source"]["quality_status"] == "candidate"
     assert claim_result["status"] == "promoted"
     assert claim_result["candidate"]["status"] == "promoted"
     assert claim_result["claim"]["status"] == "supported"
@@ -2310,8 +2310,24 @@ def test_local_project_can_promote_source_and_claim_candidates(tmp_path):
 
     assert source_result["mode"] == "local"
     assert source_result["source"]["source_type"] == "dataset"
+    assert source_result["source"]["quality_status"] == "candidate"
     assert claim_result["mode"] == "local"
     assert claim_result["claim"]["status"] == "supported"
+
+
+def test_promote_source_candidate_rejects_validated_without_explicit_provenance(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    note = root / "topics" / "discovery.md"
+    note.write_text(
+        "Source: https://example.com/employment-source\n",
+        encoding="utf-8",
+    )
+    repo.extract_candidates_from_paths(["topics/discovery.md"])
+    source_candidate_key = repo.load_source_candidates()[0].candidate_key
+
+    with pytest.raises(ValueError, match="Validated source promotion requires explicit provenance metadata."):
+        repo.promote_source_candidate(source_candidate_key, source_type="dataset", quality_status="validated")
 
 
 def test_promote_claim_candidate_rejects_supported_status_without_explicit_evidence(tmp_path):

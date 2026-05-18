@@ -493,6 +493,21 @@ def build_source_state(
     }
 
 
+def _has_explicit_source_promotion_provenance(provenance: dict[str, Any] | None) -> bool:
+    if not provenance:
+        return False
+    return bool(
+        provenance.get("text")
+        or provenance.get("url")
+        or provenance.get("path")
+        or provenance.get("config_path")
+        or provenance.get("retrieved_at")
+        or provenance.get("acquired_at")
+        or provenance.get("derived_from")
+        or provenance.get("derivedFrom")
+    )
+
+
 def build_claim_state(
     claim: ClaimRecord,
     *,
@@ -1502,7 +1517,7 @@ class ResearchIntegrityRepo:
         origin: str | None = None,
         access_method: str | None = None,
         freshness_status: SourceFreshnessStatus = "unknown",
-        quality_status: SourceQualityStatus = "validated",
+        quality_status: SourceQualityStatus = "candidate",
         quality_notes: str | None = None,
         notes: str | None = None,
         provenance: dict[str, Any] | None = None,
@@ -1528,6 +1543,9 @@ class ResearchIntegrityRepo:
         merged_provenance.setdefault("sourceCandidateKey", candidate.candidate_key)
         merged_provenance.setdefault("discoveredInPaths", list(candidate.discovered_in_paths))
         merged_provenance.setdefault("promotionMethod", "candidate_promotion")
+        effective_quality_status = quality_status or (existing_source.quality_status if existing_source else "candidate")
+        if effective_quality_status == "validated" and not _has_explicit_source_promotion_provenance(merged_provenance):
+            raise ValueError("Validated source promotion requires explicit provenance metadata.")
 
         source_record = SourceRecord.model_validate(
             {
@@ -1539,7 +1557,7 @@ class ResearchIntegrityRepo:
                 "acquired_at": existing_source.acquired_at if existing_source else None,
                 "access_method": access_method or (existing_source.access_method if existing_source else "candidate_promotion"),
                 "freshness_status": freshness_status or (existing_source.freshness_status if existing_source else "unknown"),
-                "quality_status": quality_status or (existing_source.quality_status if existing_source else "validated"),
+                "quality_status": effective_quality_status,
                 "quality_notes": quality_notes if quality_notes is not None else (existing_source.quality_notes if existing_source else None),
                 "notes": notes if notes is not None else (existing_source.notes if existing_source else candidate.snippet),
                 "provenance": merged_provenance,
