@@ -848,6 +848,74 @@ def _build_repair_queue(tasks: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _select_recommended_repair_task(
+    *,
+    repair_queue: dict[str, Any],
+    auditors: dict[str, Any],
+) -> dict[str, Any] | None:
+    tasks = [task for task in (repair_queue.get("tasks") or []) if isinstance(task, dict)]
+    if not tasks:
+        return None
+
+    def _first_match(*titles: str) -> dict[str, Any] | None:
+        preferred = []
+        fallback = []
+        for task in tasks:
+            title = str(task.get("title") or "")
+            if title not in titles:
+                continue
+            if str(task.get("status") or "") == "ready":
+                preferred.append(task)
+            else:
+                fallback.append(task)
+        if preferred:
+            return preferred[0]
+        if fallback:
+            return fallback[0]
+        return None
+
+    matches: list[tuple[str, str, tuple[str, ...]]] = [
+        ("session", "Resolve control-plane drift first", ("Reconcile control-plane drift and stale sessions",)),
+        ("planner", "Resolve control-plane drift first", ("Reconcile control-plane drift and stale sessions",)),
+        ("ontology", "Repair ontology readiness before downstream work", ("Repair ontology readiness blockers",)),
+        (
+            "integrity",
+            "Repair trusted-output integrity before promotion",
+            (
+                "Repair dataset provenance and freshness metadata",
+                "Repair analysis lineage and verification metadata",
+                "Repair unsupported claims and verification evidence",
+                "Refresh stale sources or rerun dependent analyses",
+                "Resolve failed verification runs before trusted promotion",
+                "Repair reproducibility metadata for trusted artifacts",
+                "Resolve inadmissible sources for trusted outputs",
+            ),
+        ),
+        ("closeout", "Clear closeout blockers before completion", ("Resolve closeout blockers",)),
+    ]
+
+    for auditor_key, reason, titles in matches:
+        auditor = auditors.get(auditor_key) or {}
+        if str(auditor.get("status") or "") != "blocked":
+            continue
+        task = _first_match(*titles)
+        if task is None:
+            continue
+        return {
+            "auditor": auditor_key,
+            "reason": reason,
+            **task,
+        }
+
+    ready_tasks = [task for task in tasks if str(task.get("status") or "") == "ready"]
+    fallback = ready_tasks[0] if ready_tasks else tasks[0]
+    return {
+        "auditor": None,
+        "reason": "Next repair task currently ready on the board",
+        **fallback,
+    }
+
+
 async def build_command_center(project: dict) -> dict[str, Any]:
     planner_service, running_agent_service = _runtime_services()
     if planner_service is None or running_agent_service is None:
@@ -873,6 +941,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
     blocker_summary = _build_blocker_summary(latest_audit=latest_audit, reality=reality, auditors=auditors)
     repair_queue = _build_repair_queue(tasks)
+    recommended_repair_task = _select_recommended_repair_task(repair_queue=repair_queue, auditors=auditors)
 
     status_counts: dict[str, int] = {}
     for task in tasks:
@@ -917,6 +986,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
         "blockerSummary": blocker_summary,
         "repairQueue": repair_queue,
+        "recommendedRepairTask": recommended_repair_task,
         "projectReality": reality,
         "auditors": auditors,
         "repoHealth": {

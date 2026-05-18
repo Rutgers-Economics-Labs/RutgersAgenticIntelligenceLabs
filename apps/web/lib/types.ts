@@ -414,6 +414,14 @@ export type CommandCenter = {
       agentRole: string;
     }>;
   };
+  recommendedRepairTask?: {
+    id: string;
+    title: string;
+    status: string;
+    agentRole: string;
+    auditor?: string | null;
+    reason?: string | null;
+  } | null;
   projectReality?: {
     hasDrift: boolean;
     duplicateTaskFileCount: number;

@@ -542,6 +542,74 @@ def test_build_command_center_surfaces_repair_queue(tmp_path: Path, monkeypatch)
     assert center["repairQueue"]["tasks"][1]["title"] == "Resolve closeout blockers"
 
 
+def test_build_command_center_recommends_matching_repair_task_for_blocked_auditor(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [
+            {
+                "_id": "task-1",
+                "title": "Repair ontology readiness blockers",
+                "status": "backlog",
+                "agentRole": "data",
+                "dependsOnTaskIds": [],
+            },
+            {
+                "_id": "task-2",
+                "title": "Resolve inadmissible sources for trusted outputs",
+                "status": "ready",
+                "agentRole": "health",
+                "dependsOnTaskIds": [],
+            },
+            {
+                "_id": "task-3",
+                "title": "Resolve closeout blockers",
+                "status": "ready",
+                "agentRole": "health",
+                "dependsOnTaskIds": [],
+            },
+        ]
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "blocked", "blockers": ["Inadmissible sources block trusted promotion."]},
+            "closeout": {"status": "blocked", "blockers": ["Closeout is blocked until integrity is repaired."]},
+        }
+
+    class _PlannerService:
+        async def ensure_main_board(self, project_arg):
+            return await _ensure_main_board(project_arg)
+
+        async def list_tasks(self, board_id: str, *, project=None):
+            return await _list_tasks(board_id, project=project)
+
+        async def list_approvals(self, project_arg):
+            return []
+
+        def project_root_from_record(self, project_arg):
+            return Path(str(project_arg["localRepoPath"]))
+
+    class _RunningAgentService:
+        async def list_project_running_agents(self, project_id, active_only=False, limit=20):
+            return []
+
+    monkeypatch.setattr(command_center_service, "_runtime_services", lambda: (_PlannerService(), _RunningAgentService()))
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["recommendedRepairTask"]["title"] == "Resolve inadmissible sources for trusted outputs"
+    assert center["recommendedRepairTask"]["status"] == "ready"
+    assert center["recommendedRepairTask"]["auditor"] == "integrity"
+    assert center["recommendedRepairTask"]["reason"] == "Repair trusted-output integrity before promotion"
+
+
 def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypatch):
     from app.services import command_center_service
 

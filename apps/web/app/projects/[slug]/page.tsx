@@ -154,6 +154,25 @@ export default async function ProjectHomePage({
       <SectionCard eyebrow="Repair Actions">
         <ReconcileProjectButton slug={slug} />
       </SectionCard>
+      <SectionCard eyebrow="Recommended Repair" noPad>
+        {center.recommendedRepairTask ? (
+          <div className="approval-row">
+            <div>
+              <div style={{ fontWeight: 600, color: "var(--fg)" }}>{center.recommendedRepairTask.title}</div>
+              <div className="mono-muted">
+                {center.recommendedRepairTask.reason ?? "Next repair task currently ready on the board"}
+              </div>
+              <div className="mono-muted">
+                {center.recommendedRepairTask.agentRole || "unassigned role"}
+                {center.recommendedRepairTask.auditor ? ` · ${center.recommendedRepairTask.auditor} auditor` : ""}
+              </div>
+            </div>
+            <StatusPill value={center.recommendedRepairTask.status} />
+          </div>
+        ) : (
+          <div className="empty-state">No repair recommendation yet.</div>
+        )}
+      </SectionCard>
       <SectionCard eyebrow="Repair Queue" noPad>
         <InlineStatus label="repair tasks" value={center.repairQueue?.count ?? 0} />
         <InlineStatus label="ready" value={center.repairQueue?.readyCount ?? 0} />
