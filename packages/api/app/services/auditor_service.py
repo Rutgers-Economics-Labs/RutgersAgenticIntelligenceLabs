@@ -10,6 +10,19 @@ from rail.manifest import load_manifest
 
 ONTOLOGY_READY_STATES = {"hydrated_on_this_device", "hydrated_on_another_device", "hydrating"}
 
+_HYDRATION_STATE_CLASSIFICATIONS: dict[str, str] = {
+    "hydrated_on_this_device": "ready",
+    "hydrating": "in_progress",
+    "hydrated_on_another_device": "ready",
+    "stale_on_this_device": "stale",
+    "not_hydrated": "not_started",
+}
+
+
+def classify_hydration_state(state: str) -> str:
+    """Map a raw hydration state string to a lifecycle phase classification."""
+    return _HYDRATION_STATE_CLASSIFICATIONS.get(str(state or "").strip(), "unavailable")
+
 
 def _is_ontology_project(project: dict[str, Any]) -> bool:
     root = project.get("localRepoPath")
@@ -118,6 +131,66 @@ def _list_final_artifact_files(project_root: Path, artifacts_root: str) -> list[
     return sorted(files)
 
 
+async def audit_ontology_health(
+    project: dict[str, Any],
+    *,
+    ontology_artifact_drift: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Return a structured ontology health result for a project.
+
+    Returns a dict with:
+      healthy (bool), state (str), stateClassification (str),
+      duckdbPath (str|None), hasPopulatedRows (bool),
+      driftReason (str|None), blockers (list[str])
+    """
+    if not _is_ontology_project(project):
+        return {
+            "healthy": True,
+            "state": "not_applicable",
+            "stateClassification": "not_applicable",
+            "duckdbPath": None,
+            "hasPopulatedRows": False,
+            "driftReason": None,
+            "blockers": [],
+        }
+
+    blockers: list[str] = []
+    state: str = "unknown"
+    duckdb_path: str | None = None
+    has_populated_rows = False
+
+    try:
+        hydration = await get_hydration_status(project=project)
+        state = str(hydration.get("state") or "unknown")
+        duckdb_path = _hydration_duckdb_path(hydration) or str(project.get("activeOntologyDuckdbPath") or "") or None
+        if not duckdb_path:
+            duckdb_path = None
+        has_populated_rows = _duckdb_has_populated_rows(duckdb_path)
+
+        if state not in ONTOLOGY_READY_STATES:
+            blockers.append(f"Ontology hydration state is `{state}`.")
+        elif not has_populated_rows:
+            blockers.append("Ontology artifact exists but does not contain populated rows.")
+    except Exception as exc:
+        state = "error"
+        blockers.append(f"Could not read hydration status: {exc}")
+
+    drift_reason: str | None = None
+    if ontology_artifact_drift and ontology_artifact_drift.get("hasDrift"):
+        drift_reason = str(ontology_artifact_drift.get("reason") or "unknown_reason")
+        blockers.append(f"Active ontology artifact pointer drift detected: {drift_reason}.")
+
+    return {
+        "healthy": len(blockers) == 0,
+        "state": state,
+        "stateClassification": classify_hydration_state(state),
+        "duckdbPath": duckdb_path,
+        "hasPopulatedRows": has_populated_rows,
+        "driftReason": drift_reason,
+        "blockers": blockers,
+    }
+
+
 async def build_auditor_statuses(
     project: dict[str, Any],
     *,
@@ -186,37 +259,15 @@ async def build_auditor_statuses(
         ],
     }
 
-    ontology_status: dict[str, Any] = {"status": "ready", "blockers": [], "state": None}
     ontology_reality = (reality.get("details") or {}).get("ontologyArtifactDrift") or {}
-    if _is_ontology_project(project):
-        try:
-            hydration = await get_hydration_status(project=project)
-            ontology_status["state"] = hydration.get("state")
-            duckdb_path = _hydration_duckdb_path(hydration) or project.get("activeOntologyDuckdbPath")
-            if hydration.get("state") not in ONTOLOGY_READY_STATES:
-                ontology_status = {
-                    "status": "blocked",
-                    "blockers": [f"Ontology hydration state is `{hydration.get('state')}`."],
-                    "state": hydration.get("state"),
-                }
-            elif not _duckdb_has_populated_rows(duckdb_path):
-                ontology_status = {
-                    "status": "blocked",
-                    "blockers": ["Ontology artifact exists but does not contain populated rows."],
-                    "state": hydration.get("state"),
-                }
-        except Exception as exc:
-            ontology_status = {"status": "blocked", "blockers": [f"Could not read hydration status: {exc}"], "state": None}
-        if ontology_reality.get("hasDrift"):
-            blockers = list(ontology_status.get("blockers") or [])
-            blockers.append(
-                f"Active ontology artifact pointer drift detected: {ontology_reality.get('reason') or 'unknown_reason'}."
-            )
-            ontology_status = {
-                "status": "blocked",
-                "blockers": blockers,
-                "state": ontology_status.get("state"),
-            }
+    health = await audit_ontology_health(project, ontology_artifact_drift=ontology_reality or None)
+    ontology_status: dict[str, Any] = {
+        "status": "ready" if health["healthy"] else "blocked",
+        "blockers": health["blockers"],
+        "state": health["state"] if health["state"] not in {"not_applicable", "unknown"} else None,
+        "stateClassification": health["stateClassification"],
+        "duckdbPath": health["duckdbPath"],
+    }
 
     integrity_status: dict[str, Any] = {"status": "ready", "blockers": []}
     closeout_status: dict[str, Any] = {"status": "ready", "blockers": []}
