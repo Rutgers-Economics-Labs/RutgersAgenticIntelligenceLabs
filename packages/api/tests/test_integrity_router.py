@@ -127,7 +127,7 @@ async def test_apply_rerun_plan_creates_tasks(client, convex_mock, tmp_path):
     assert len(payload["tasks"]) >= 2
 
 
-async def test_record_claim_downgrades_supported_status_without_explicit_evidence(client, convex_mock, tmp_path):
+async def test_record_claim_rejects_supported_status_without_explicit_evidence(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
 
     def _query(request: httpx.Request) -> httpx.Response:
@@ -160,9 +160,9 @@ async def test_record_claim_downgrades_supported_status_without_explicit_evidenc
         },
     )
 
-    assert resp.status_code == 200
+    assert resp.status_code == 422
     payload = resp.json()
-    assert payload["status"] == "needs_evidence"
+    assert "Supported claims require explicit recorded evidence" in payload["detail"]
 
 
 async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifact(client, convex_mock, tmp_path):

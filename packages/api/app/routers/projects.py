@@ -1682,6 +1682,18 @@ async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRe
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    has_explicit_evidence = bool(data.evidencePaths or data.evidenceChunkKeys or data.sourceKeys)
+    if data.status == "supported" and (
+        not has_explicit_evidence or data.evidenceKind == "semantic_suggestion"
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Supported claims require explicit recorded evidence. "
+                "Attach evidence paths, source keys, or evidence chunk keys and avoid "
+                "`semantic_suggestion` when writing trusted claims."
+            ),
+        )
     repo = get_integrity_repo(root)
     record = repo.upsert_claim(
         {
