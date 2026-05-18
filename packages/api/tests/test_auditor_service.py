@@ -101,6 +101,7 @@ frontend:
     assert result["ontology"]["status"] == "blocked"
     assert result["integrity"]["status"] == "ready"
     assert result["closeout"]["status"] == "blocked"
+    assert "1 terminal session audit(s) are stale or missing." in result["closeout"]["blockers"]
 
 
 def test_build_auditor_statuses_blocks_closeout_when_follow_up_expansion_tasks_are_missing(tmp_path: Path, monkeypatch):
@@ -395,3 +396,5 @@ frontend:
     assert result["integrity"]["status"] == "blocked"
     assert "Artifacts exist on disk without lineage records: artifacts/untracked.md." in result["integrity"]["blockers"]
     assert "Artifact lineage points to missing files: artifacts/missing.md." in result["integrity"]["blockers"]
+    assert result["closeout"]["status"] == "blocked"
+    assert "1 terminal session audit(s) are stale or missing." in result["closeout"]["blockers"]

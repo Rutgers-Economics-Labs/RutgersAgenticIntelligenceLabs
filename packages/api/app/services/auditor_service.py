@@ -234,6 +234,10 @@ async def build_auditor_statuses(
             closeout_blockers.append(f"{len(active_sessions or [])} active session(s) still exist.")
         if unfinished:
             closeout_blockers.append(f"{len(unfinished)} non-terminal task(s) remain.")
+        if reality["staleAuditSessionCount"]:
+            closeout_blockers.append(
+                f"{reality['staleAuditSessionCount']} terminal session audit(s) are stale or missing."
+            )
         if ontology_status.get("status") == "blocked":
             closeout_blockers.extend(list(ontology_status.get("blockers") or [])[:1])
         closeout_blockers.extend(_missing_follow_up_task_blockers(tasks or [], root)[:3])
