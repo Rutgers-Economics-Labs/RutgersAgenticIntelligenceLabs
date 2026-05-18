@@ -1166,6 +1166,48 @@ async def _reload_tasks_and_auditors(
     return tasks, active_worker, auditors
 
 
+async def _poll_active_worker_if_present(
+    project: dict[str, Any],
+    active_worker: dict[str, Any] | None,
+    project_slug: str,
+) -> str | None:
+    if not active_worker:
+        return None
+    session_id = active_worker["_id"]
+    if active_worker.get("status") == "awaiting_input":
+        await raise_decision_event(
+            project,
+            source="autopilot",
+            event_type="awaiting_input",
+            severity="needs_planner",
+            summary=(
+                f"Worker session {session_id} is awaiting input. "
+                "Decide whether to answer, reroute, cancel, or ask the user."
+            ),
+            evidence_refs=[f"runner_session:{session_id}"],
+            recommended_actions=[
+                "Inspect worker question",
+                "Answer if policy-safe",
+                "Ask user if sensitive or ambiguous",
+            ],
+        )
+    _update_config(project_slug, last_action=f"Polling active worker session: {session_id}")
+    logger.info("Autopilot: Waiting for worker %s (%s) to complete...", session_id, active_worker.get("role"))
+    try:
+        await session_lifecycle.poll_session_until_done(
+            session_id,
+            project_id=project["_id"],
+            max_polls=100,
+            poll_interval_seconds=5,
+        )
+        logger.info("Worker %s finished.", active_worker["_id"])
+        return "polled"
+    except Exception as exc:
+        logger.error("Error polling worker in autopilot: %s", exc)
+        await asyncio.sleep(10)
+        return "error"
+
+
 async def _mark_project_completed(project: dict[str, Any]) -> None:
     project_id = project.get("_id") or project.get("projectId")
     if not project_id:
@@ -1440,41 +1482,11 @@ async def run_autopilot_loop(project_slug: str):
 
         # 2. Check if a worker is already running before doing any new planning or launch work.
         _update_config(project_slug, last_action="Checking for active worker sessions...")
-        if active_worker:
-            session_id = active_worker["_id"]
-            if active_worker.get("status") == "awaiting_input":
-                await raise_decision_event(
-                    project,
-                    source="autopilot",
-                    event_type="awaiting_input",
-                    severity="needs_planner",
-                    summary=(
-                        f"Worker session {session_id} is awaiting input. "
-                        "Decide whether to answer, reroute, cancel, or ask the user."
-                    ),
-                    evidence_refs=[f"runner_session:{session_id}"],
-                    recommended_actions=[
-                        "Inspect worker question",
-                        "Answer if policy-safe",
-                        "Ask user if sensitive or ambiguous",
-                    ],
-                )
-            _update_config(project_slug, last_action=f"Polling active worker session: {session_id}")
-            logger.info(f"Autopilot: Waiting for worker {session_id} ({active_worker.get('role')}) to complete...")
-            try:
-                await session_lifecycle.poll_session_until_done(
-                    session_id,
-                    project_id=project["_id"],
-                    max_polls=100,
-                    poll_interval_seconds=5 # Snappier response
-                )
-                logger.info(f"Worker {active_worker['_id']} finished.")
+        poll_result = await _poll_active_worker_if_present(project, active_worker, project_slug)
+        if poll_result:
+            if poll_result == "polled":
                 consecutive_idle_turns = 0
-                continue # Re-run planner immediately after task completion
-            except Exception as e:
-                logger.error(f"Error polling worker in autopilot: {e}")
-                await asyncio.sleep(10)
-                continue
+            continue
 
         if await _launch_ready_tasks_if_available(project, tasks, auditors, project_slug):
             consecutive_idle_turns = 0
@@ -1620,8 +1632,8 @@ async def run_autopilot_loop(project_slug: str):
                 for event in await list_decision_events(project, status="open"):
                     if event.type == "no_ready_tasks":
                         await mark_decision_event(project, event._id, "handled")
+                tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
                 consecutive_idle_turns = 0
-                continue
 
         cancelled_with_dependents = [
             t for t in tasks
@@ -1671,8 +1683,14 @@ async def run_autopilot_loop(project_slug: str):
                 if requeued:
                     await mark_decision_event(project, event._id, "handled")
                     await planner_service.sync_planner_files(project, board)
+                    tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
                     consecutive_idle_turns = 0
-                    continue
+
+        poll_result = await _poll_active_worker_if_present(project, active_worker, project_slug)
+        if poll_result:
+            if poll_result == "polled":
+                consecutive_idle_turns = 0
+            continue
             
         # Check if we have ready tasks that became available after planner/promotion/requeue work.
         if await _launch_ready_tasks_if_available(project, tasks, auditors, project_slug):
