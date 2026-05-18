@@ -428,6 +428,29 @@ def _validate_trusted_source_contract(
         )
 
 
+def _validate_claim_reference_integrity(
+    repo,
+    *,
+    source_keys: list[str],
+    evidence_chunk_keys: list[str],
+) -> None:
+    known_sources = {item.source_key for item in repo.load_sources()}
+    missing_sources = sorted({key for key in source_keys if key not in known_sources})
+    if missing_sources:
+        raise HTTPException(
+            status_code=422,
+            detail="Claim references unknown source keys: " + ", ".join(missing_sources),
+        )
+
+    known_chunks = {item.chunk_key for item in repo.load_evidence_chunks()}
+    missing_chunks = sorted({key for key in evidence_chunk_keys if key not in known_chunks})
+    if missing_chunks:
+        raise HTTPException(
+            status_code=422,
+            detail="Claim references unknown evidence chunk keys: " + ", ".join(missing_chunks),
+        )
+
+
 def _csv_query_param(value: str | None) -> list[str] | None:
     if not value:
         return None
@@ -1760,6 +1783,11 @@ async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRe
             ),
         )
     repo = get_integrity_repo(root)
+    _validate_claim_reference_integrity(
+        repo,
+        source_keys=data.sourceKeys,
+        evidence_chunk_keys=data.evidenceChunkKeys,
+    )
     record = repo.upsert_claim(
         {
             "claim_key": data.claimKey,
