@@ -166,11 +166,52 @@ async def project_reality_snapshot(
             "hasDrift": False,
             "sessions": [],
         }
+        ontology_artifact_drift: dict[str, Any] = {
+            "hasDrift": False,
+            "activeDuckdbPath": str(project.get("activeOntologyDuckdbPath") or "") or None,
+            "expectedDuckdbPath": None,
+            "reason": None,
+        }
+        artifact_registry_drift: dict[str, Any] = {
+            "hasDrift": False,
+            "untrackedArtifactPaths": [],
+            "missingArtifactPaths": [],
+        }
+        secret_policy_role_drift: dict[str, Any] = {
+            "hasDrift": False,
+            "policies": [],
+        }
+        role_config_alias_drift: dict[str, Any] = {
+            "hasDrift": False,
+            "configs": [],
+        }
         try:
             status_drift = await running_agent_service.list_running_agent_status_drift(project["_id"], limit=50)
             running_agent_status_drift = {
                 "hasDrift": bool(status_drift),
                 "sessions": status_drift,
+            }
+        except Exception:
+            pass
+        try:
+            policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
+            drifted = []
+            for policy in policies:
+                raw_role = str(policy.get("agentRole") or "").strip().lower()
+                canonical_role = ROLE_ALIASES.get(raw_role, raw_role)
+                if not raw_role or canonical_role == raw_role:
+                    continue
+                drifted.append(
+                    {
+                        "policyId": str(policy.get("_id") or ""),
+                        "agentRole": raw_role,
+                        "canonicalRole": canonical_role,
+                        "allowedSecretNames": list(policy.get("allowedSecretNames") or []),
+                    }
+                )
+            secret_policy_role_drift = {
+                "hasDrift": bool(drifted),
+                "policies": drifted,
             }
         except Exception:
             pass
@@ -182,6 +223,10 @@ async def project_reality_snapshot(
             "terminalSessionIds": [],
             "activeRuntimeSessionIds": [str(item.get("_id")) for item in (active_sessions or []) if item.get("_id")],
             "runningAgentStatusDrift": running_agent_status_drift,
+            "ontologyArtifactDrift": ontology_artifact_drift,
+            "artifactRegistryDrift": artifact_registry_drift,
+            "secretPolicyRoleDrift": secret_policy_role_drift,
+            "roleConfigAliasDrift": role_config_alias_drift,
         }
 
     runtime_tasks = tasks if tasks is not None else await planner_service.list_tasks("main", project=project)

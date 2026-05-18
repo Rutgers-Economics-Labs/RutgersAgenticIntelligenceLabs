@@ -1627,7 +1627,7 @@ frontend:
     assert status["runningAgentStatusDriftCount"] == 1
 
 
-def test_project_reality_snapshot_without_repo_root_still_reports_running_agent_status_drift(monkeypatch):
+def test_project_reality_snapshot_without_repo_root_preserves_control_plane_drift_shape(monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": None}
 
     monkeypatch.setattr(
@@ -1636,6 +1636,22 @@ def test_project_reality_snapshot_without_repo_root_still_reports_running_agent_
         lambda project_id, *, limit=50: asyncio.sleep(
             0,
             result=[{"sessionId": "sess-legacy", "status": "done", "canonicalStatus": "completed"}],
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.convex,
+        "query",
+        lambda name, args: asyncio.sleep(
+            0,
+            result=[
+                {
+                    "_id": "policy-1",
+                    "agentRole": "developer",
+                    "allowedSecretNames": ["OPENAI_API_KEY"],
+                }
+            ]
+            if name == "agentSecretPolicies:listByProject"
+            else [],
         ),
     )
 
@@ -1655,8 +1671,30 @@ def test_project_reality_snapshot_without_repo_root_still_reports_running_agent_
     assert snapshot["activeRuntimeSessionIds"] == ["sess-1"]
     assert snapshot["runningAgentStatusDrift"]["hasDrift"] is True
     assert snapshot["runningAgentStatusDrift"]["sessions"][0]["sessionId"] == "sess-legacy"
+    assert snapshot["secretPolicyRoleDrift"]["hasDrift"] is True
+    assert snapshot["secretPolicyRoleDrift"]["policies"][0]["agentRole"] == "developer"
+    assert snapshot["secretPolicyRoleDrift"]["policies"][0]["canonicalRole"] == "coding"
+    assert snapshot["ontologyArtifactDrift"] == {
+        "hasDrift": False,
+        "activeDuckdbPath": None,
+        "expectedDuckdbPath": None,
+        "reason": None,
+    }
+    assert snapshot["artifactRegistryDrift"] == {
+        "hasDrift": False,
+        "untrackedArtifactPaths": [],
+        "missingArtifactPaths": [],
+    }
+    assert snapshot["roleConfigAliasDrift"] == {
+        "hasDrift": False,
+        "configs": [],
+    }
     assert status["hasDrift"] is True
     assert status["runningAgentStatusDriftCount"] == 1
+    assert status["secretPolicyRoleDriftCount"] == 1
+    assert status["ontologyArtifactDriftCount"] == 0
+    assert status["artifactRegistryDriftCount"] == 0
+    assert status["roleConfigAliasDriftCount"] == 0
 
 
 def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_path: Path, monkeypatch):
