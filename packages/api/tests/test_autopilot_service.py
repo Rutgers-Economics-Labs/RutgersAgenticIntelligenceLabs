@@ -280,6 +280,20 @@ def test_autopilot_creates_ontology_lifecycle_tasks_for_not_hydrated_project(mon
     monkeypatch.setattr(autopilot_service, "get_hydration_status", _get_hydration_status)
     monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
     monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+            },
+        ),
+    )
 
     autopilot_service._active_autopilots["soccer-project"] = True
     autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
@@ -291,6 +305,102 @@ def test_autopilot_creates_ontology_lifecycle_tasks_for_not_hydrated_project(mon
     assert "Verify hydrated ontology health before research" in created_titles
     assert "Launch ontology-backed research after hydration" in created_titles
     assert "Propose ontology-answerable follow-up questions" in created_titles
+    assert sync_calls
+
+
+def test_autopilot_creates_ontology_expansion_tasks_from_follow_up_questions(tmp_path: Path, monkeypatch):
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "status": "ready",
+        "localRepoPath": str(tmp_path),
+        "approach": "ontology-first",
+    }
+    created: list[dict] = []
+    sync_calls: list[dict] = []
+
+    (tmp_path / ".ontology").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "research_plan").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "research_plan" / "ontology_answerable_follow_up_questions.md").write_text(
+        """# Ontology-Answerable Follow-Up Questions
+
+### 1. How different would the findings look if non-top-five domestic leagues were hydrated too?
+
+- Classification: `requires_expansion`
+
+### 2. Which data source would unblock a broader wage-bill analysis?
+
+- Classification: `blocked_by_data`
+""",
+        encoding="utf-8",
+    )
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    tasks_state = [{"_id": "task-1", "title": "Existing Task", "status": "done", "dependsOnTaskIds": []}]
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return list(tasks_state)
+
+    async def _create_task(**kwargs):
+        task_id = kwargs["title"].lower().replace(" ", "-")
+        task = {
+            "_id": task_id,
+            "status": kwargs["status"],
+            "title": kwargs["title"],
+            "dependsOnTaskIds": kwargs.get("depends_on_task_ids") or [],
+        }
+        tasks_state.append(task)
+        created.append(kwargs)
+        return task
+
+    async def _sync_planner_files(*args, **kwargs):
+        sync_calls.append({"args": args, "kwargs": kwargs})
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return None
+
+    async def _run_planner_turn(**kwargs):
+        return None
+
+    async def _find_active_worker(project_id: str):
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_reconcile_ontology_lifecycle_state", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "ready", "blockers": [], "state": "hydrated_on_this_device"},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+            },
+        ),
+    )
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    created_titles = [item["title"] for item in created]
+    assert "Expand ontology coverage for: 1. How different would the findings look if non-top-five domestic leagues were hydrated too?" in created_titles
+    assert "Resolve data blocker for: 2. Which data source would unblock a broader wage-bill analysis?" in created_titles
     assert sync_calls
 
 
