@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from app.runners import session_lifecycle
 from app.services import session_files
 from app.services import running_agent_service
+from app.services import project_artifacts_service
 from app.services.role_runtime_service import load_role_runtime_config
 from rail.bootstrap import bootstrap_future_project
 from rail.integrity import ResearchIntegrityRepo
@@ -33,7 +36,7 @@ def _init_repo(root: Path) -> None:
     _git(root, "commit", "-m", "initial")
 
 
-def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path):
+def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bootstrap_future_project(tmp_path, name="Workspace Project")
     setup_script = tmp_path / "scripts" / "setup-workspace.sh"
     setup_script.write_text(
@@ -51,6 +54,11 @@ def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path):
         encoding="utf-8",
     )
     _init_repo(tmp_path)
+
+    async def _ensure_workspace_rail_cli(project_root: Path, workspace_root: Path):
+        return {"status": "passed", "returncode": 0, "stdout": "rail ok", "stderr": ""}
+
+    monkeypatch.setattr(session_lifecycle, "_ensure_workspace_rail_cli", _ensure_workspace_rail_cli)
 
     session_root = session_files.ensure_session_root(tmp_path, "coding", "sess-1")
     workspace_root, workspace_branch, workspace_config = session_lifecycle._prepare_workspace(
@@ -105,11 +113,110 @@ def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path):
     state = session_files.read_state(session_root)
     diff_text = (session_root / "diff.md").read_text(encoding="utf-8")
     verification_text = (session_root / "verification.md").read_text(encoding="utf-8")
+    audit_payload = json.loads((tmp_path / "research_plan" / "audits" / "sess-1.json").read_text(encoding="utf-8"))
+    audit_text = (tmp_path / "research_plan" / "audits" / "sess-1.md").read_text(encoding="utf-8")
 
     assert state["verification_status"] == "passed"
     assert state["review_status"] == "review"
     assert "README.md" in diff_text
     assert "status: `passed`" in verification_text
+    assert audit_payload["session"]["id"] == "sess-1"
+    assert audit_payload["session"]["verificationStatus"] == "passed"
+    assert audit_payload["planner"]["taskCounts"] == {}
+    assert audit_payload["integrity"]["action"] == "artifact_generation"
+    assert "# Post-Run Audit" in audit_text
+
+
+def test_finalize_workspace_review_writes_blocker_audit_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    bootstrap_future_project(tmp_path, name="Audit Snapshot Project")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "research", "sess-audit")
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "research",
+        "sess-audit",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+
+    artifact_path = workspace_root / "artifacts" / "draft.md"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("# Draft\n\nNo structured sections.\n", encoding="utf-8")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    async def _fake_publish_completed_session_outputs(**kwargs):
+        session_files.update_state(
+            session_root,
+            publish_status="published",
+            publish_strategy="test",
+            publish_commit_sha="abc123",
+        )
+
+    async def _fake_task_record(project: dict[str, Any], task_id: str):
+        return {
+            "_id": task_id,
+            "title": "Write research artifact",
+            "agentRole": "research",
+            "repoPaths": ["artifacts/draft.md"],
+        }
+
+    async def _fake_update_task(*args, **kwargs):
+        return None
+
+    async def _fake_run_workspace_verification(**kwargs):
+        session_files.update_state(
+            session_root,
+            verification_status="passed",
+            verification_runs=[{"run_id": "verify-1", "status": "passed"}],
+        )
+        return {"status": "passed"}
+
+    monkeypatch.setattr(session_lifecycle, "_publish_completed_session_outputs", _fake_publish_completed_session_outputs)
+    monkeypatch.setattr(session_lifecycle, "_task_record", _fake_task_record)
+    monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _fake_update_task)
+    monkeypatch.setattr(session_lifecycle, "_run_workspace_verification", _fake_run_workspace_verification)
+
+    project = {"_id": "proj-1", "slug": "audit-snapshot-project", "defaultBranch": "main", "localRepoPath": str(tmp_path)}
+    board = asyncio.run(session_lifecycle.planner_service.ensure_main_board(project))
+    asyncio.run(
+        session_lifecycle.planner_service.create_task(
+            project=project,
+            board_id=board["_id"],
+            title="Follow-up blocked task",
+            description="Needs contract repair",
+            agent_role="research",
+            status="blocked",
+        )
+    )
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-audit",
+            session={"role": "research", "taskId": "task-1"},
+            project=project,
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    audit_payload = json.loads((tmp_path / "research_plan" / "audits" / "sess-audit.json").read_text(encoding="utf-8"))
+    assert audit_payload["session"]["publishStatus"] == "published"
+    assert audit_payload["session"]["reviewStatus"] == "needs_changes"
+    assert "Role workflow contract failed" in audit_payload["currentBlocker"]
+    assert audit_payload["planner"]["taskCounts"]["blocked"] >= 1
 
 
 def test_workspace_setup_ensures_rail_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -155,6 +262,198 @@ def test_workspace_setup_ensures_rail_cli(tmp_path: Path, monkeypatch: pytest.Mo
     assert setup_result["status"] == "passed"
     assert state["setup_status"] == "passed"
     assert "RAIL CLI installed." in state["setup_stdout_tail"]
+
+
+def test_overlay_active_hydration_artifacts_into_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    bootstrap_future_project(tmp_path, name="Hydrated Workspace Project")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "research", "sess-hydrated")
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "research",
+        "sess-hydrated",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+
+    artifact_root = tmp_path / "tmp-artifacts"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    onto_db = artifact_root / "onto.db"
+    onto_duckdb = artifact_root / "onto.duckdb"
+    onto_db.write_bytes(b"onto-db-bytes\n")
+    onto_duckdb.write_bytes(b"onto-duckdb-bytes\n")
+
+    async def _fake_hydration_status(*, project: dict, pipeline_slug: str | None = None, hydration_mode: str = "full"):
+        return {
+            "state": "hydrated_on_this_device",
+            "pipelineSlug": "soccer-pipeline",
+            "hydrationMode": "full",
+            "reusableArtifact": {
+                "_id": "artifact-1",
+                "commitSha": "abc123",
+                "manifestFingerprint": "fp-1",
+                "ontologyArtifactPath": str(onto_db),
+                "duckdbArtifactPath": str(onto_duckdb),
+            },
+        }
+
+    stale_root = tmp_path / "stale-project-artifacts"
+    stale_root.mkdir(parents=True, exist_ok=True)
+    stale_db = stale_root / "onto.db"
+    stale_duckdb = stale_root / "onto.duckdb"
+    stale_db.write_bytes(b"stale-onto-db\n")
+    stale_duckdb.write_bytes(b"stale-onto-duckdb\n")
+
+    async def _fake_resolve(project_id: str):
+        return project_artifacts_service.ProjectArtifacts(
+            project_id=project_id,
+            db_path=str(stale_db),
+            owl_path=None,
+            duckdb_path=str(stale_duckdb),
+            embeddings_path=str(artifact_root / "embeddings.db"),
+        )
+
+    monkeypatch.setattr(session_lifecycle.hydration_registry_service, "get_hydration_status", _fake_hydration_status)
+    monkeypatch.setattr(session_lifecycle.project_artifacts_service, "resolve", _fake_resolve)
+
+    result = asyncio.run(
+        session_lifecycle._overlay_active_hydration_artifacts_into_workspace(
+            project={"_id": "project-1", "slug": "hydrated-workspace"},
+            workspace_root=workspace_root,
+            session_root=session_root,
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    workspace_onto_db = workspace_root / ".ontology" / "onto.db"
+    workspace_duckdb = workspace_root / ".ontology" / "onto.duckdb"
+    metadata_path = workspace_root / ".ontology" / ".rail_hydration.json"
+
+    assert result["status"] == "mirrored"
+    assert workspace_onto_db.read_bytes() == onto_db.read_bytes()
+    assert workspace_duckdb.read_bytes() == onto_duckdb.read_bytes()
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert metadata["pipelineSlug"] == "soccer-pipeline"
+    assert metadata["commitSha"] == "abc123"
+    assert metadata["mirroredFrom"]["duckdbArtifactPath"] == str(onto_duckdb)
+    assert state["workspace_hydration_status"] == "mirrored"
+    assert state["workspace_hydration_pipeline"] == "soccer-pipeline"
+
+
+def test_registering_workspace_hydration_artifact_promotes_active_project_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bootstrap_future_project(tmp_path, name="Hydration Promotion Project")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-promote")
+    ontology_root = tmp_path / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    (ontology_root / ".rail_hydration.json").write_text(
+        json.dumps({"pipeline_slug": "soccer-pipeline", "hydration_mode": "full"}),
+        encoding="utf-8",
+    )
+    (ontology_root / "onto.db").write_bytes(b"db")
+    (ontology_root / "onto.duckdb").write_bytes(b"duck")
+    (ontology_root / "populated_ontology.owl").write_text("owl", encoding="utf-8")
+
+    register_calls: list[dict[str, object]] = []
+    promote_calls: list[dict[str, object]] = []
+
+    async def _fake_register_hydration_artifact(**kwargs):
+        register_calls.append(kwargs)
+        return "artifact-123"
+
+    async def _fake_promote_project_hydration_artifact(**kwargs):
+        promote_calls.append(kwargs)
+        return None
+
+    monkeypatch.setattr(
+        "app.services.hydration_registry_service.register_hydration_artifact",
+        _fake_register_hydration_artifact,
+    )
+    monkeypatch.setattr(
+        "app.services.hydration_registry_service.promote_project_hydration_artifact",
+        _fake_promote_project_hydration_artifact,
+    )
+
+    asyncio.run(
+        session_lifecycle._maybe_register_workspace_hydration_artifact(
+            project={
+                "_id": "project-1",
+                "slug": "hydration-promotion-project",
+                "localRepoPath": str(tmp_path),
+                "manifestPath": "rail.yaml",
+            },
+            project_root=tmp_path,
+            session_root=session_root,
+            changed_files=[".ontology/onto.duckdb", ".ontology/.rail_hydration.json"],
+            role="data",
+        )
+    )
+
+    assert len(register_calls) == 1
+    assert register_calls[0]["pipeline_slug"] == "soccer-pipeline"
+    assert len(promote_calls) == 1
+    assert promote_calls[0]["project"]["_id"] == "project-1"
+    assert promote_calls[0]["ontology_artifact_path"] == str(ontology_root / "onto.db")
+    assert promote_calls[0]["duckdb_artifact_path"] == str(ontology_root / "onto.duckdb")
+
+    events = session_files.list_events(session_root)
+    assert any(
+        "promoted it as the active project ontology" in (event.get("content") or "")
+        for event in events
+    )
+
+
+def test_materialize_workspace_prefers_remote_default_branch_when_available(tmp_path: Path):
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "--bare", str(origin))
+
+    local = tmp_path / "local"
+    local.mkdir()
+    bootstrap_future_project(local, name="Remote Workspace Project")
+    _init_repo(local)
+    _git(local, "remote", "add", "origin", str(origin))
+    _git(local, "push", "-u", "origin", "main")
+
+    remote_clone = tmp_path / "remote-clone"
+    _git(tmp_path, "clone", str(origin), str(remote_clone))
+    _git(remote_clone, "config", "user.name", "Codex Test")
+    _git(remote_clone, "config", "user.email", "codex@example.com")
+    report = remote_clone / "artifacts" / "ontology_backed_baseline_findings.md"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.write_text("# Hydrated baseline\n", encoding="utf-8")
+    _git(remote_clone, "add", "artifacts/ontology_backed_baseline_findings.md")
+    _git(remote_clone, "commit", "-m", "remote baseline report")
+    _git(remote_clone, "push", "origin", "main")
+
+    session_root = session_files.ensure_session_root(local, "planner", "sess-remote")
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        local,
+        "planner",
+        "sess-remote",
+    )
+    result = asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=local,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+
+    assert result["status"] == "ready"
+    assert result["base_ref"] == "origin/main"
+    assert (workspace_root / "artifacts" / "ontology_backed_baseline_findings.md").exists()
 
 
 def test_role_aliases_resolve_repo_configs(tmp_path: Path):
@@ -305,8 +604,55 @@ def test_finalize_workspace_review_normalizes_completion_summary_and_mirrors_sta
     report_entry = next(item for item in lineage if item["artifact_path"] == "artifacts/report.md")
     assert report_entry["verification_commands"] == ["scripts/run-verification.sh"]
     dataset_entry = next(item for item in lineage if item["artifact_path"] == "topics/analysis.csv")
+    assert dataset_entry["inputs"] == ["research_plan/state/sources.json#bls-laus"]
+    assert dataset_entry["verification_commands"] == ["scripts/run-verification.sh"]
+    assert dataset_entry["assumptions"] == ["research_plan/state/assumptions.json#window-2020-2024"]
     assert dataset_entry["sources"] == ["research_plan/state/sources.json#bls-laus"]
     assert verification_runs[0]["scope"] == "research"
+
+
+def test_sync_completion_summary_to_integrity_indexes_links_datasets_to_changed_source_configs(
+    tmp_path: Path,
+):
+    bootstrap_future_project(tmp_path, name="Source Sync Project")
+    source_path = tmp_path / ".ontology" / "sources" / "sample-source.yaml"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_text(
+        "name: Sample Source\n"
+        "type: csv\n"
+        "path: .ontology/sources/sample.csv\n"
+        "description: Sample source\n"
+        "fields:\n"
+        "  - source: value\n"
+        "    alias: value\n",
+        encoding="utf-8",
+    )
+
+    session_lifecycle._sync_completion_summary_to_integrity_indexes(
+        project_root=tmp_path,
+        workspace_root=tmp_path,
+        summary={
+            "artifacts_created": [],
+            "datasets_created": ["topics/output.csv"],
+            "sources_used": [],
+            "assumptions_added": [],
+            "claims_created": [],
+            "verification_results": [],
+        },
+        session_id="sess-source-sync",
+        task_id="task-source-sync",
+        role="data",
+        verification_command="scripts/run-verification.sh",
+        changed_files=[".ontology/sources/sample-source.yaml", "topics/output.csv"],
+    )
+
+    sources = json.loads((tmp_path / "research_plan" / "state" / "sources.json").read_text(encoding="utf-8"))
+    lineage = json.loads((tmp_path / "research_plan" / "state" / "artifact_lineage.json").read_text(encoding="utf-8"))
+
+    assert any(item["source_key"] == "sample-source" for item in sources)
+    dataset_entry = next(item for item in lineage if item["artifact_path"] == "topics/output.csv")
+    assert dataset_entry["sources"] == ["research_plan/state/sources.json#sample-source"]
+    assert dataset_entry["verification_commands"] == ["scripts/run-verification.sh"]
 
 
 def test_create_runner_session_rejects_write_run_in_assisted_mode(tmp_path: Path, monkeypatch):
@@ -397,6 +743,68 @@ def test_create_runner_session_allows_write_run_after_policy_approval(tmp_path: 
     )
 
     assert result["status"] == "running"
+
+
+def test_create_runner_session_resolves_default_runner_from_project_policy(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Default Runner Project")
+    _init_repo(tmp_path)
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "default-runner-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    async def _fake_create_running_agent(**kwargs):
+        return "sess-default-runner"
+
+    async def _fake_update_running_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(
+        running_agent_service,
+        "list_project_running_agents",
+        lambda *args, **kwargs: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(running_agent_service, "create_running_agent", _fake_create_running_agent)
+    monkeypatch.setattr(running_agent_service, "update_running_agent", _fake_update_running_agent)
+    monkeypatch.setattr(session_lifecycle, "_materialize_workspace", lambda **kwargs: asyncio.sleep(0, result={"mode": "directory"}))
+    monkeypatch.setattr(session_lifecycle, "_run_workspace_setup", lambda **kwargs: asyncio.sleep(0, result={"status": "passed"}))
+    monkeypatch.setattr(session_lifecycle, "_build_project_context", lambda *args, **kwargs: asyncio.sleep(0, result=""))
+
+    seen_runner_names: list[str] = []
+
+    class _FakeRunner:
+        async def create_session(self, task_payload):
+            return {"session_id": "external-default-1", "status": "running"}
+
+    def _resolve_runner(name: str, *args, **kwargs):
+        seen_runner_names.append(name)
+        return _FakeRunner()
+
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", _resolve_runner)
+
+    result = asyncio.run(
+        session_lifecycle.create_runner_session(
+            project_id="project-1",
+            project_slug="default-runner-project",
+            task_id="task-1",
+            runner_name="default",
+            role="planner",
+            task_description="Reopen research from hydrated ontology",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            local_repo_path=str(tmp_path),
+            allowed_paths=["research_plan", "topics", "artifacts"],
+            acceptance_criteria=[],
+            policy_approval_granted=True,
+        )
+    )
+
+    assert result["status"] == "running"
+    assert seen_runner_names == ["codex_cli"]
 
 
 def test_create_runner_session_rejects_parallel_launch_when_nonconcurrent(tmp_path: Path, monkeypatch):
@@ -578,6 +986,130 @@ def test_finalize_workspace_review_records_connector_publish_metadata(tmp_path: 
     assert publish_results[0]["project_id"] == "project-1"
 
 
+def test_finalize_workspace_review_verifies_published_repo_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bootstrap_future_project(tmp_path, name="Published Verification Project")
+    _init_repo(tmp_path)
+
+    rel_path = Path(".ontology/sources/registry.yaml")
+    project_file = tmp_path / rel_path
+    project_file.parent.mkdir(parents=True, exist_ok=True)
+    project_file.write_text("name: registry\n", encoding="utf-8")
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-published-verify")
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "data",
+        "sess-published-verify",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    workspace_file = workspace_root / rel_path
+    workspace_file.parent.mkdir(parents=True, exist_ok=True)
+    workspace_file.write_text(
+        "name: registry\n"
+        "type: csv\n"
+        "path: .ontology/sources/registry.csv\n"
+        "fields:\n"
+        "  - source: slug\n"
+        "    alias: slug\n",
+        encoding="utf-8",
+    )
+    session_files.update_state(
+        session_root,
+        status="completed",
+        role="data",
+        task_id="task-verify-after-publish",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    async def _list_changed_files(_workspace_root: Path) -> list[str]:
+        return [rel_path.as_posix()]
+
+    async def _publish_completed_session_outputs(**kwargs):
+        shutil.copy2(workspace_file, project_file)
+        session_files.update_state(
+            kwargs["session_root"],
+            publish_status="published",
+            publish_strategy="github_app_commit",
+            publish_commit_sha="abc123",
+            publish_changed_files=[rel_path.as_posix()],
+        )
+
+    async def _run_workspace_verification(**kwargs):
+        text = project_file.read_text(encoding="utf-8")
+        passed = "type: csv" in text and "path:" in text and "fields:" in text
+        session_files.update_state(
+            kwargs["session_root"],
+            verification_status="passed" if passed else "failed",
+            verification_exit_code=0 if passed else 1,
+            verification_stdout_tail="verification ok" if passed else "verification failed",
+            verification_stderr_tail="",
+        )
+        return {
+            "status": "passed" if passed else "failed",
+            "returncode": 0 if passed else 1,
+            "stdout": "verification ok" if passed else "verification failed",
+            "stderr": "",
+        }
+
+    async def _normalize_completion_summary(**kwargs):
+        return {
+            "status": "completed",
+            "artifacts_created": [],
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "blockers": [],
+            "claims_created": [],
+            "datasets_created": [],
+            "open_questions": [],
+            "recommended_next_tasks": [],
+            "sources_used": [],
+            "verification_results": [],
+        }
+
+    async def _task_record(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(session_lifecycle, "_list_changed_files", _list_changed_files)
+    monkeypatch.setattr(session_lifecycle, "_publish_completed_session_outputs", _publish_completed_session_outputs)
+    monkeypatch.setattr(session_lifecycle, "_run_workspace_verification", _run_workspace_verification)
+    monkeypatch.setattr(session_lifecycle, "_normalize_completion_summary", _normalize_completion_summary)
+    monkeypatch.setattr(session_lifecycle, "_task_record", _task_record)
+    monkeypatch.setattr(session_lifecycle, "_copy_workspace_state_indexes", lambda *args, **kwargs: None)
+    monkeypatch.setattr(session_lifecycle, "_sync_completion_summary_to_integrity_indexes", lambda *args, **kwargs: None)
+    monkeypatch.setattr(session_lifecycle, "summarize_agent_workflow_health", lambda _root: {"data": {"status": "ready"}})
+    monkeypatch.setattr(session_lifecycle, "record_publish_failure", lambda *args, **kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(session_lifecycle, "record_publish_success", lambda *args, **kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(session_lifecycle.planner_service, "update_task", lambda *args, **kwargs: asyncio.sleep(0))
+
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-published-verify",
+            session={"role": "data", "taskId": "task-verify-after-publish"},
+            project={"slug": "published-verification-project", "defaultBranch": "main"},
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    assert state["publish_status"] == "published"
+    assert state["verification_status"] == "passed"
+    assert state["review_status"] == "review"
+
+
 def test_publish_completed_session_outputs_uses_file_backed_slug_task_id_for_allowed_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -646,6 +1178,180 @@ def test_publish_completed_session_outputs_uses_file_backed_slug_task_id_for_all
     assert publish_calls[0]["allowed_paths"] == [".ontology/sources"]
     assert publish_calls[0]["changed_paths"] == [source_rel]
     assert (tmp_path / source_rel).read_text(encoding="utf-8") == "name: example\n"
+
+
+def test_publish_completed_session_outputs_copies_binary_files_and_registers_hydration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bootstrap_future_project(tmp_path, name="Publish Binary Project")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-binary")
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "data",
+        "sess-binary",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    duckdb_rel = ".ontology/onto.duckdb"
+    meta_rel = ".ontology/.rail_hydration.json"
+    duckdb_path = workspace_root / duckdb_rel
+    meta_path = workspace_root / meta_rel
+    duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    duckdb_path.write_bytes(b"\x80DUCK")
+    meta_path.write_text(json.dumps({"pipeline_slug": "default", "hydration_mode": "full"}), encoding="utf-8")
+    session_files.update_state(session_root, task_id="hydrate-soccer-ontology-and-register-active-artifacts")
+
+    async def _task_record(project: dict, task_id: str | None):
+        return {"_id": task_id, "repoPaths": [".ontology"]}
+
+    async def _publish(project: dict, *, repo_root: Path, changed_paths: list[str], commit_message: str, allowed_paths=None):
+        publish_calls.append({
+            "changed_paths": changed_paths,
+            "allowed_paths": allowed_paths,
+        })
+        return {
+            "published": True,
+            "strategy": "github_app_commit",
+            "commit_sha": "cafebabe",
+            "branch": "main",
+            "changed": True,
+            "files": [{"path": duckdb_rel, "changed": True}, {"path": meta_rel, "changed": True}],
+            "skipped_files": [],
+        }
+
+    async def _record_success(*args, **kwargs):
+        return None
+
+    async def _register_hydration_artifact(**kwargs):
+        registered.append(kwargs)
+        return "artifact-123"
+
+    publish_calls: list[dict[str, object]] = []
+    registered: list[dict[str, object]] = []
+    monkeypatch.setattr(session_lifecycle, "_task_record", _task_record)
+    monkeypatch.setattr(session_lifecycle, "publish_repo_files", _publish)
+    monkeypatch.setattr(session_lifecycle, "record_publish_success", _record_success)
+    monkeypatch.setattr("app.services.hydration_registry_service.register_hydration_artifact", _register_hydration_artifact)
+
+    asyncio.run(
+        session_lifecycle._publish_completed_session_outputs(
+            project={"_id": "project-10", "slug": "publish-binary-project", "defaultBranch": "main", "github": "Rutgers-Economics-Labs/example"},
+            session={"role": "data"},
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            changed_files=[duckdb_rel, meta_rel],
+        )
+    )
+
+    assert publish_calls[0]["allowed_paths"] == [".ontology"]
+    assert (tmp_path / duckdb_rel).read_bytes() == b"\x80DUCK"
+    assert registered[0]["duckdb_artifact_path"] == str(tmp_path / duckdb_rel)
+
+
+def test_finalize_workspace_review_allows_hydration_metadata_dataset_with_synced_lineage(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bootstrap_future_project(tmp_path, name="Hydration Contract Project")
+    verify_script = tmp_path / "scripts" / "run-verification.sh"
+    verify_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho 'verification ok'\n", encoding="utf-8")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-hydration-contract")
+    workspace_root, workspace_branch, workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "data",
+        "sess-hydration-contract",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    asyncio.run(
+        session_lifecycle._run_workspace_setup(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            session_id="sess-hydration-contract",
+            role="data",
+            base_branch="main",
+            workspace_branch=workspace_branch,
+            workspace_config=workspace_config,
+        )
+    )
+
+    (workspace_root / ".ontology" / "sources").mkdir(parents=True, exist_ok=True)
+    (workspace_root / ".ontology" / "pipelines").mkdir(parents=True, exist_ok=True)
+    (workspace_root / ".ontology" / "sources" / "sample.yaml").write_text("name: Sample\n", encoding="utf-8")
+    (workspace_root / ".ontology" / "pipelines" / "default.yaml").write_text("steps:\n  - api: sample\n", encoding="utf-8")
+    (workspace_root / ".ontology" / "onto.duckdb").write_bytes(b"DUCK")
+    (workspace_root / ".ontology" / ".rail_hydration.json").write_text(
+        json.dumps({"pipeline_slug": "default", "hydration_mode": "full"}, indent=2),
+        encoding="utf-8",
+    )
+
+    session_files.update_state(
+        session_root,
+        status="completed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+        task_id="hydrate-soccer-ontology-and-register-active-artifacts",
+    )
+
+    async def _publish(project: dict, *, repo_root: Path, changed_paths: list[str], commit_message: str, allowed_paths=None):
+        return {
+            "published": False,
+            "strategy": "github_app_commit",
+            "commit_sha": "headsha",
+            "branch": "main",
+            "changed": False,
+            "files": [],
+            "skipped_files": changed_paths,
+        }
+
+    async def _register_hydration_artifact(**kwargs):
+        return "artifact-123"
+
+    async def _update_task(task_id: str, *, project: dict, **fields):
+        task_updates.append({"task_id": task_id, **fields})
+        return {"_id": task_id, **fields}
+
+    task_updates: list[dict[str, object]] = []
+    monkeypatch.setattr(session_lifecycle, "publish_repo_files", _publish)
+    monkeypatch.setattr("app.services.hydration_registry_service.register_hydration_artifact", _register_hydration_artifact)
+    monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
+
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-hydration-contract",
+            session={"role": "data", "taskId": "task-hydration"},
+            project={"_id": "project-h", "slug": "hydration-contract-project", "defaultBranch": "main", "github": "Rutgers-Economics-Labs/example"},
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    blockers = state["completion_summary"]["blockers"]
+
+    assert not any(".rail_hydration.json" in item and "datasetsMissingProvenance" in item for item in blockers)
+    assert not any(".rail_hydration.json" in item and "datasetsMissingFreshness" in item for item in blockers)
 
 
 def test_finalize_workspace_review_blocks_task_on_publish_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -2071,6 +2777,55 @@ def test_process_is_running_treats_zombies_as_not_running(monkeypatch: pytest.Mo
     assert session_lifecycle._process_is_running(12345) is False
 
 
+def test_should_retry_false_publish_failure_when_commit_and_verification_exist():
+    assert session_lifecycle._should_retry_false_publish_failure(
+        {
+            "status": "completed",
+            "publish_status": "failed",
+            "publish_commit_sha": "abc123",
+            "verification_status": "passed",
+            "review_status": "needs_changes",
+        }
+    ) is True
+
+    assert session_lifecycle._should_retry_false_publish_failure(
+        {
+            "status": "completed",
+            "publish_status": "failed",
+            "publish_commit_sha": "",
+            "verification_status": "passed",
+            "review_status": "needs_changes",
+        }
+    ) is False
+
+
+def test_relevant_workflow_blockers_filters_to_task_outputs():
+    blockers = session_lifecycle._relevant_workflow_blockers(
+        role_health={
+            "status": "blocked",
+            "datasetsMissingProvenance": [
+                ".ontology/.rail_hydration.json",
+                ".ontology/onto.duckdb",
+                ".ontology/sources/catalog.csv",
+            ],
+            "datasetsMissingFreshness": [
+                ".ontology/.rail_hydration.json",
+                ".ontology/sources/catalog.csv",
+            ],
+        },
+        changed_files=[".ontology/.rail_hydration.json", ".ontology/sources/catalog.csv", "topics/source_notes.md"],
+        summary={
+            "datasets_created": [".ontology/.rail_hydration.json", ".ontology/sources/catalog.csv"],
+            "artifacts_created": ["topics/source_notes.md"],
+        },
+    )
+
+    assert blockers == [
+        "datasetsMissingProvenance: .ontology/sources/catalog.csv",
+        "datasetsMissingFreshness: .ontology/sources/catalog.csv",
+    ]
+
+
 def test_finalize_workspace_review_blocks_artifact_task_without_evidence_links(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bootstrap_future_project(tmp_path, name="Artifact Contract Project")
     verify_script = tmp_path / "scripts" / "run-verification.sh"
@@ -2481,3 +3236,220 @@ def test_get_runner_session_finalizes_file_backed_completed_session_when_review_
     assert result["fileState"]["review_status"] == "review"
     assert result["fileState"]["verification_status"] == "passed"
     assert result["fileState"]["publish_status"] == "published"
+
+
+def test_get_runner_session_retries_post_publish_verification_for_stale_failed_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-retry-publish-verify")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        role="data",
+        runner="codex_cli",
+        review_status="needs_changes",
+        verification_status="failed",
+        publish_status="published",
+        task_id="create-platform-api-configs-for-priority-soccer-data-sources",
+    )
+
+    async def _get_running_agent(session_id: str):
+        return None
+
+    async def _load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": "project-1",
+            "slug": "soccer-project",
+            "localRepoPath": str(tmp_path),
+            "defaultBranch": "main",
+        }
+
+    finalize_calls: list[dict[str, object]] = []
+
+    async def _finalize_workspace_review(**kwargs):
+        finalize_calls.append(kwargs)
+        session_files.update_state(
+            kwargs["session_root"],
+            review_status="review",
+            verification_status="passed",
+            publish_status="published",
+        )
+
+    monkeypatch.setattr(running_agent_service, "get_running_agent", _get_running_agent)
+    monkeypatch.setattr(session_lifecycle, "_load_project", _load_project)
+    monkeypatch.setattr(session_lifecycle, "_finalize_workspace_review", _finalize_workspace_review)
+
+    result = asyncio.run(
+        session_lifecycle.get_runner_session(
+            "sess-retry-publish-verify",
+            sync_from_runner=True,
+            project_id="project-1",
+        )
+    )
+
+    assert len(finalize_calls) == 1
+    assert result["fileState"]["review_status"] == "review"
+    assert result["fileState"]["verification_status"] == "passed"
+
+
+def test_get_runner_session_retries_stale_workflow_contract_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-retry-workflow-review")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        role="data",
+        runner="codex_cli",
+        review_status="needs_changes",
+        verification_status="passed",
+        publish_status="published",
+        completion_summary={
+            "blockers": ["Role workflow contract failed for `data`. datasetsMissingProvenance: topics/data.csv"],
+        },
+        task_id="create-platform-api-configs-for-priority-soccer-data-sources",
+    )
+
+    async def _get_running_agent(session_id: str):
+        return None
+
+    async def _load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": "project-1",
+            "slug": "soccer-project",
+            "localRepoPath": str(tmp_path),
+            "defaultBranch": "main",
+        }
+
+    finalize_calls: list[dict[str, object]] = []
+
+    async def _finalize_workspace_review(**kwargs):
+        finalize_calls.append(kwargs)
+        session_files.update_state(
+            kwargs["session_root"],
+            review_status="review",
+            verification_status="passed",
+            publish_status="published",
+            completion_summary={"blockers": []},
+        )
+
+    monkeypatch.setattr(running_agent_service, "get_running_agent", _get_running_agent)
+    monkeypatch.setattr(session_lifecycle, "_load_project", _load_project)
+    monkeypatch.setattr(session_lifecycle, "_finalize_workspace_review", _finalize_workspace_review)
+
+    result = asyncio.run(
+        session_lifecycle.get_runner_session(
+            "sess-retry-workflow-review",
+            sync_from_runner=True,
+            project_id="project-1",
+        )
+    )
+
+    assert len(finalize_calls) == 1
+    assert result["fileState"]["review_status"] == "review"
+
+
+def test_get_runner_session_retries_stale_needs_changes_without_blockers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-retry-stale-review")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        role="data",
+        runner="codex_cli",
+        review_status="needs_changes",
+        verification_status="passed",
+        publish_status="published",
+        completion_summary={"blockers": []},
+        task_id="create-platform-api-configs-for-priority-soccer-data-sources",
+    )
+
+    async def _get_running_agent(session_id: str):
+        return None
+
+    async def _load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": "project-1",
+            "slug": "soccer-project",
+            "localRepoPath": str(tmp_path),
+            "defaultBranch": "main",
+        }
+
+    finalize_calls: list[dict[str, object]] = []
+
+    async def _finalize_workspace_review(**kwargs):
+        finalize_calls.append(kwargs)
+        session_files.update_state(
+            kwargs["session_root"],
+            review_status="review",
+            verification_status="passed",
+            publish_status="published",
+            completion_summary={"blockers": []},
+        )
+
+    monkeypatch.setattr(running_agent_service, "get_running_agent", _get_running_agent)
+    monkeypatch.setattr(session_lifecycle, "_load_project", _load_project)
+    monkeypatch.setattr(session_lifecycle, "_finalize_workspace_review", _finalize_workspace_review)
+
+    result = asyncio.run(
+        session_lifecycle.get_runner_session(
+            "sess-retry-stale-review",
+            sync_from_runner=True,
+            project_id="project-1",
+        )
+    )
+
+    assert len(finalize_calls) == 1
+    assert result["fileState"]["review_status"] == "review"
+
+
+def test_ingest_local_cli_runner_events_marks_exited_process_terminal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-exited")
+    session_files.update_state(
+        session_root,
+        status="running",
+        role="data",
+        runner="codex_cli",
+        review_status="pending",
+    )
+    runtime = session_root / ".runner"
+    runtime.mkdir(parents=True, exist_ok=True)
+    (runtime / "stdout.log").write_text("", encoding="utf-8")
+    (runtime / "stderr.log").write_text("", encoding="utf-8")
+    (runtime / "exit_code.txt").write_text("0\n", encoding="utf-8")
+    (runtime / "pid.txt").write_text("424242\n", encoding="utf-8")
+
+    class _FakeRunner(session_lifecycle.LocalCLIRunner):
+        runner_name = "codex_cli"
+        command = "true"
+
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+    monkeypatch.setattr(session_lifecycle, "_relay_runner_event", lambda *args, **kwargs: asyncio.sleep(0, result=None))
+    monkeypatch.setattr(session_lifecycle, "_process_is_running", lambda pid: False)
+
+    result = asyncio.run(
+        session_lifecycle._ingest_local_cli_runner_events(
+            convex_session_id="sess-exited",
+            session={
+                "_id": "sess-exited",
+                "runner": "codex_cli",
+                "externalSessionId": "codex_cli_dead",
+                "status": "running",
+            },
+            root=session_root,
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    assert result["status"] == "completed"
+    assert result["normalized_status"] == "completed"
+    assert state["status"] == "completed"
+    assert state["review_status"] == "review"
+    assert state["runner_returncode"] == 0

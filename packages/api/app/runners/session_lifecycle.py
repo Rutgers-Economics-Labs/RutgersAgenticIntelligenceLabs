@@ -15,9 +15,11 @@ The runtime DB remains a lightweight live-control plane through
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import time
 from asyncio.subprocess import PIPE
@@ -27,11 +29,13 @@ from typing import Any
 from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.cli_base import LocalCLIRunner, runner_runtime_paths
 from app.runners.factory import RunnerFactory
+from app.services.audit_service import write_post_run_audit
 from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy
 from app.services.convex_client import convex
 from app.services.decision_service import raise_decision_event
+from app.services import hydration_registry_service, project_artifacts_service
 from app.services.integrity_service import evaluate_integrity_gate, summarize_agent_workflow_health
 from app.services.repo_contract_service import infer_github_repo
 from app.services.role_runtime_service import load_role_runtime_config
@@ -42,6 +46,7 @@ from app.services.safe_publish_service import (
     record_publish_success,
 )
 from rail.manifest import load_manifest
+from rail.integrity import sync_sources_from_configs
 
 
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
@@ -68,6 +73,46 @@ EVENT_TYPE_MAP = {
     RunnerEventType.FAILED.value: "failed",
     RunnerEventType.CANCELLED.value: "cancelled",
 }
+
+
+def _should_retry_post_publish_verification(state: dict[str, Any]) -> bool:
+    return (
+        state.get("status") in TERMINAL_STATUSES
+        and state.get("publish_status") == "published"
+        and state.get("verification_status") == "failed"
+    )
+
+
+def _should_retry_workflow_contract_review(state: dict[str, Any]) -> bool:
+    blockers = state.get("completion_summary", {}).get("blockers") or []
+    return (
+        state.get("status") in TERMINAL_STATUSES
+        and state.get("publish_status") == "published"
+        and state.get("verification_status") == "passed"
+        and state.get("review_status") == "needs_changes"
+        and any("Role workflow contract failed" in str(item) for item in blockers)
+    )
+
+
+def _should_retry_stale_review_status(state: dict[str, Any]) -> bool:
+    blockers = state.get("completion_summary", {}).get("blockers") or []
+    return (
+        state.get("status") in TERMINAL_STATUSES
+        and state.get("publish_status") == "published"
+        and state.get("verification_status") in {"passed", "skipped"}
+        and state.get("review_status") == "needs_changes"
+        and not blockers
+    )
+
+
+def _should_retry_false_publish_failure(state: dict[str, Any]) -> bool:
+    return (
+        state.get("status") in TERMINAL_STATUSES
+        and state.get("publish_status") == "failed"
+        and bool(state.get("publish_commit_sha"))
+        and state.get("verification_status") in {"passed", "skipped"}
+        and state.get("review_status") == "needs_changes"
+    )
 STATE_INDEX_FILE_NAMES = (
     "assumptions.json",
     "sources.json",
@@ -85,6 +130,7 @@ ARTIFACT_SUFFIXES = {".md", ".pdf", ".png", ".svg", ".jpg", ".jpeg", ".html", ".
 SCRIPT_LINEAGE_SUFFIXES = {".py", ".sh", ".sql", ".ipynb", ".r", ".js", ".ts", ".tsx", ".jsx"}
 _VERIFICATION_PATH_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.(?:ya?ml|csv|tsv|jsonl?|parquet|xlsx?|md|pdf|png|svg|jpe?g|html?|py|sh))")
 LOCAL_CLI_RUNNERS = {"claude_code", "codex_cli", "gemini_cli", "cursor_cli"}
+INTERNAL_WORKFLOW_DATASET_PATHS = {"ontology/.rail_hydration.json"}
 
 
 async def resolve_jules_api_key(project_id: str | None, agent_role: str = "data") -> str:
@@ -124,6 +170,26 @@ def resolve_runner_for_project(runner_name: str = "jules", *, api_key: str | Non
         )
 
     return RunnerFactory.get(runner_name)
+
+
+def _normalize_runner_name_for_project(
+    runner_name: str | None,
+    *,
+    role_config: Any | None = None,
+) -> str:
+    normalized = (runner_name or "").strip()
+    if normalized and normalized != "default":
+        return normalized
+    if role_config is not None:
+        default_runner = getattr(getattr(role_config, "policy", None), "runner", None)
+        default_name = getattr(default_runner, "default", None)
+        if default_name:
+            return str(default_name)
+        manifest_default = getattr(getattr(role_config, "manifest", None), "agents", None)
+        manifest_name = getattr(manifest_default, "default_runner", None)
+        if manifest_name:
+            return str(manifest_name)
+    return "jules"
 
 
 def _project_root(project_record: dict[str, Any]) -> Path | None:
@@ -264,6 +330,17 @@ def _dedupe(values: list[Any]) -> list[Any]:
     return deduped
 
 
+def _sha256_file(path: Path) -> str | None:
+    try:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except Exception:
+        return None
+
+
 def _path_in_scopes(path_text: str, scopes: list[str]) -> bool:
     normalized = path_text.strip().lstrip("./")
     if not normalized:
@@ -310,6 +387,40 @@ def _verification_failures_outside_task_scope(
         if changed and path_text in changed:
             return False
     return True
+
+
+def _relevant_workflow_blockers(
+    *,
+    role_health: dict[str, Any],
+    changed_files: list[str],
+    summary: dict[str, Any],
+) -> list[str]:
+    relevant_paths = {
+        str(item).strip().lstrip("./")
+        for item in (
+            list(changed_files)
+            + list(summary.get("datasets_created") or [])
+            + list(summary.get("artifacts_created") or [])
+        )
+        if item
+        and str(item).strip().lstrip("./") not in INTERNAL_WORKFLOW_DATASET_PATHS
+    }
+    blocker_bits: list[str] = []
+    for key, value in role_health.items():
+        if key in {"status", "requirements"}:
+            continue
+        if isinstance(value, list):
+            relevant_items = [
+                str(item)
+                for item in value
+                if str(item).strip().lstrip("./") in relevant_paths
+                and str(item).strip().lstrip("./") not in INTERNAL_WORKFLOW_DATASET_PATHS
+            ]
+            if relevant_items:
+                blocker_bits.append(f"{key}: {', '.join(relevant_items)}")
+        elif value:
+            blocker_bits.append(f"{key}: {value}")
+    return blocker_bits
 
 
 def _load_json_array(path: Path) -> list[dict[str, Any]]:
@@ -411,9 +522,65 @@ def _copy_workspace_files_to_project(
         except ValueError:
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+        target.write_bytes(source.read_bytes())
         copied.append(relative_path)
     return copied
+
+
+async def _maybe_register_workspace_hydration_artifact(
+    *,
+    project: dict[str, Any],
+    project_root: Path,
+    session_root: Path,
+    changed_files: list[str],
+    role: str,
+) -> None:
+    if role != "data":
+        return
+    interesting = {".ontology/onto.duckdb", ".ontology/.rail_hydration.json", ".ontology/onto.db"}
+    if not any(path in interesting for path in changed_files):
+        return
+    duckdb_path = project_root / ".ontology" / "onto.duckdb"
+    hydration_meta_path = project_root / ".ontology" / ".rail_hydration.json"
+    ontology_db_path = project_root / ".ontology" / "onto.db"
+    if not duckdb_path.exists() or not hydration_meta_path.exists():
+        return
+
+    try:
+        raw_meta = json.loads(hydration_meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        raw_meta = {}
+
+    from app.services.hydration_registry_service import (
+        promote_project_hydration_artifact,
+        register_hydration_artifact,
+    )
+
+    project_doc = dict(project)
+    project_doc.setdefault("localRepoPath", str(project_root))
+    project_doc.setdefault("manifestPath", "rail.yaml")
+    if not project_doc.get("_id"):
+        return
+
+    artifact_id = await register_hydration_artifact(
+        project=project_doc,
+        pipeline_slug=str(raw_meta.get("pipeline_slug") or "default"),
+        hydration_mode=str(raw_meta.get("hydration_mode") or "full"),
+        ontology_artifact_path=str(ontology_db_path) if ontology_db_path.exists() else None,
+        duckdb_artifact_path=str(duckdb_path),
+        status="valid",
+    )
+    await promote_project_hydration_artifact(
+        project=project_doc,
+        ontology_artifact_path=str(ontology_db_path) if ontology_db_path.exists() else None,
+        duckdb_artifact_path=str(duckdb_path),
+    )
+    session_files.append_event(
+        session_root,
+        "hydration_artifact_registered",
+        content=f"Registered local hydration artifact {artifact_id} for this device and promoted it as the active project ontology.",
+        status=session_files.read_state(session_root).get("status"),
+    )
 
 
 async def _task_record(project: dict[str, Any], task_id: str | None) -> dict[str, Any] | None:
@@ -466,6 +633,13 @@ async def _publish_completed_session_outputs(
         workspace_root=workspace_root,
         relative_paths=changed_files,
         allowed_paths=allowed_paths,
+    )
+    await _maybe_register_workspace_hydration_artifact(
+        project=project,
+        project_root=project_root,
+        session_root=session_root,
+        changed_files=mirrored,
+        role=session.get("role") or "agent",
     )
     commit_message = (
         f"chore({session.get('role') or 'agent'}): publish task {session.get('taskId') or session.get('title') or 'session outputs'}"
@@ -632,10 +806,26 @@ def _sync_completion_summary_to_integrity_indexes(
             if Path(path).suffix.lower() in SCRIPT_LINEAGE_SUFFIXES
         }
     )
+    changed_source_keys = sorted(
+        {
+            Path(path).stem
+            for path in changed_files
+            if path.startswith(".ontology/sources/") and Path(path).suffix.lower() in {".yaml", ".yml"}
+        }
+    )
+    synced_sources = (
+        sync_sources_from_configs(project_root, sources_dir=".ontology/sources", source_keys=changed_source_keys)
+        if changed_source_keys
+        else []
+    )
     source_refs = [
         f"research_plan/state/sources.json#{source_key}"
         for source_key in (summary.get("sources_used") or [])
     ]
+    source_refs = _dedupe(
+        source_refs
+        + [f"research_plan/state/sources.json#{source.source_key}" for source in synced_sources]
+    )
     assumption_refs = [
         f"research_plan/state/assumptions.json#{assumption_key}"
         for assumption_key in (summary.get("assumptions_added") or [])
@@ -743,6 +933,14 @@ def _sync_completion_summary_to_integrity_indexes(
         )
     for dataset_path in summary.get("datasets_created") or []:
         existing_lineage = existing_artifact_index.get(dataset_path)
+        workspace_lineage = workspace_artifact_index.get(dataset_path)
+        inferred_scripts = sorted(
+            {
+                path
+                for path in script_candidates
+                if path == dataset_path or path.startswith(f"{Path(dataset_path).parent.as_posix()}/")
+            }
+        )
         repo.upsert_artifact_lineage(
             {
                 "artifact_path": dataset_path,
@@ -753,7 +951,48 @@ def _sync_completion_summary_to_integrity_indexes(
                     if existing_lineage and existing_lineage.promotion_state != "draft"
                     else "draft"
                 ),
-                "sources": list(existing_lineage.sources) if existing_lineage and existing_lineage.sources else source_refs,
+                "inputs": (
+                    list(workspace_lineage.inputs)
+                    if workspace_lineage and workspace_lineage.inputs
+                    else list(existing_lineage.inputs)
+                    if existing_lineage and existing_lineage.inputs
+                    else source_refs
+                ),
+                "scripts": (
+                    list(workspace_lineage.scripts)
+                    if workspace_lineage and workspace_lineage.scripts
+                    else list(existing_lineage.scripts)
+                    if existing_lineage and existing_lineage.scripts
+                    else inferred_scripts
+                ),
+                "verification_commands": (
+                    list(workspace_lineage.verification_commands)
+                    if workspace_lineage and workspace_lineage.verification_commands
+                    else list(existing_lineage.verification_commands)
+                    if existing_lineage and existing_lineage.verification_commands
+                    else [verification_command] if verification_command else []
+                ),
+                "sources": (
+                    list(workspace_lineage.sources)
+                    if workspace_lineage and workspace_lineage.sources
+                    else list(existing_lineage.sources)
+                    if existing_lineage and existing_lineage.sources
+                    else source_refs
+                ),
+                "assumptions": (
+                    list(workspace_lineage.assumptions)
+                    if workspace_lineage and workspace_lineage.assumptions
+                    else list(existing_lineage.assumptions)
+                    if existing_lineage and existing_lineage.assumptions
+                    else assumption_refs
+                ),
+                "claims": (
+                    list(workspace_lineage.claims)
+                    if workspace_lineage and workspace_lineage.claims
+                    else list(existing_lineage.claims)
+                    if existing_lineage and existing_lineage.claims
+                    else claim_refs
+                ),
                 "verification_runs": sorted(
                     {
                         *(
@@ -1005,16 +1244,26 @@ async def _ingest_local_cli_runner_events(
         except ValueError:
             pid = None
     status = state.get("status") or session.get("status") or "running"
-    if status not in TERMINAL_STATUSES and pid and not _process_is_running(pid) and returncode is not None:
-        status = session_files.read_state(root).get("status") or status
+    if status not in TERMINAL_STATUSES and returncode is not None:
+        process_running = _process_is_running(pid) if pid else False
+        if not process_running:
+            status = "completed" if returncode == 0 else "failed"
+            _sync_file_status(root, status)
+            session_files.update_state(
+                root,
+                review_status="review" if status == "completed" else "needs_changes",
+                runner_returncode=returncode,
+                runner_pid=pid,
+            )
+            state = session_files.read_state(root)
     return {
         "session_id": str(external_id),
-        "status": status,
+        "status": state.get("status") or status,
         "normalized_status": {
             "completed": RunnerEventType.COMPLETED.value,
             "failed": RunnerEventType.FAILED.value,
             "cancelled": RunnerEventType.CANCELLED.value,
-        }.get(status, RunnerEventType.PROGRESS.value),
+        }.get(state.get("status") or status, RunnerEventType.PROGRESS.value),
         "raw": {
             "pid": pid,
             "stdout_path": str(runtime["stdout"]),
@@ -1106,6 +1355,20 @@ async def _materialize_workspace(
     if not git_dir.exists():
         return {"status": "ready", "mode": "directory"}
 
+    resolved_base_ref = base_branch
+    fetch_result = await _run_process(
+        ["git", "-C", str(project_root), "fetch", "origin", base_branch],
+        cwd=project_root,
+    )
+    if fetch_result["returncode"] == 0:
+        remote_ref = f"refs/remotes/origin/{base_branch}"
+        show_ref = await _run_process(
+            ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", remote_ref],
+            cwd=project_root,
+        )
+        if show_ref["returncode"] == 0:
+            resolved_base_ref = f"origin/{base_branch}"
+
     result = await _run_process(
         [
             "git",
@@ -1117,7 +1380,7 @@ async def _materialize_workspace(
             "-b",
             workspace_branch,
             str(workspace_root),
-            base_branch,
+            resolved_base_ref,
         ],
         cwd=project_root,
     )
@@ -1131,13 +1394,19 @@ async def _materialize_workspace(
                 "add",
                 "--force",
                 str(workspace_root),
-                base_branch,
+                resolved_base_ref,
             ],
             cwd=project_root,
         )
     if result["returncode"] != 0:
         raise RuntimeError(result["stderr"].strip() or result["stdout"].strip() or "git worktree add failed")
-    return {"status": "ready", "mode": "git-worktree", "stdout": result["stdout"], "stderr": result["stderr"]}
+    return {
+        "status": "ready",
+        "mode": "git-worktree",
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+        "base_ref": resolved_base_ref,
+    }
 
 
 async def _run_workspace_hook(
@@ -1272,6 +1541,84 @@ async def _run_workspace_setup(
     return result
 
 
+async def _overlay_active_hydration_artifacts_into_workspace(
+    *,
+    project: dict[str, Any] | None,
+    workspace_root: Path,
+    session_root: Path,
+) -> dict[str, Any]:
+    if not project or not project.get("_id"):
+        return {"status": "skipped", "reason": "missing_project"}
+
+    hydration_status = await hydration_registry_service.get_hydration_status(project=project)
+    reusable = hydration_status.get("reusableArtifact") or {}
+    if hydration_status.get("state") != "hydrated_on_this_device" or not reusable:
+        return {"status": "skipped", "reason": hydration_status.get("state") or "not_hydrated"}
+
+    onto_db_source = reusable.get("ontologyArtifactPath")
+    onto_duckdb_source = reusable.get("duckdbArtifactPath")
+    if not onto_db_source or not onto_duckdb_source:
+        artifacts = await project_artifacts_service.resolve(str(project["_id"]))
+        onto_db_source = onto_db_source or artifacts.db_path
+        onto_duckdb_source = onto_duckdb_source or artifacts.duckdb_path
+    workspace_ontology_root = workspace_root / ".ontology"
+    workspace_ontology_root.mkdir(parents=True, exist_ok=True)
+
+    copies: list[dict[str, Any]] = []
+    for source_path, filename in (
+        (Path(str(onto_db_source)), "onto.db"),
+        (Path(str(onto_duckdb_source)), "onto.duckdb"),
+    ):
+        if not source_path.exists():
+            continue
+        destination = workspace_ontology_root / filename
+        shutil.copy2(source_path, destination)
+        copies.append(
+            {
+                "filename": filename,
+                "source": str(source_path),
+                "destination": str(destination),
+                "sha256": _sha256_file(destination),
+            }
+        )
+
+    metadata = {
+        "artifactId": reusable.get("_id"),
+        "projectId": project.get("_id"),
+        "projectSlug": project.get("slug"),
+        "state": hydration_status.get("state"),
+        "pipelineSlug": hydration_status.get("pipelineSlug"),
+        "hydrationMode": hydration_status.get("hydrationMode"),
+        "commitSha": reusable.get("commitSha"),
+        "manifestFingerprint": reusable.get("manifestFingerprint"),
+        "ontologyArtifactPath": str(workspace_ontology_root / "onto.db"),
+        "duckdbArtifactPath": str(workspace_ontology_root / "onto.duckdb"),
+        "mirroredFrom": {
+            "ontologyArtifactPath": reusable.get("ontologyArtifactPath"),
+            "duckdbArtifactPath": reusable.get("duckdbArtifactPath"),
+        },
+        "copiedAtMs": int(time.time() * 1000),
+    }
+    metadata_path = workspace_ontology_root / ".rail_hydration.json"
+    metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    session_files.update_state(
+        session_root,
+        workspace_hydration_status="mirrored",
+        workspace_hydration_pipeline=hydration_status.get("pipelineSlug"),
+        workspace_hydration_commit_sha=reusable.get("commitSha"),
+        workspace_hydration_duckdb=str(workspace_ontology_root / "onto.duckdb"),
+    )
+    session_files.append_event(
+        session_root,
+        "status_changed",
+        content="Mirrored active hydration artifacts into workspace `.ontology/`.",
+        status=session_files.read_state(session_root).get("status"),
+        metadata={"hydration_artifacts": copies, "pipelineSlug": hydration_status.get("pipelineSlug")},
+    )
+    return {"status": "mirrored", "files": copies, "pipelineSlug": hydration_status.get("pipelineSlug")}
+
+
 async def _run_workspace_verification(
     *,
     project_root: Path,
@@ -1353,20 +1700,7 @@ async def _finalize_workspace_review(
     terminal_status = state.get("status")
     config = _workspace_config(project_root)
     changed_files = await _list_changed_files(workspace_root)
-
-    if terminal_status == "completed" and state.get("verification_status") not in {"passed", "failed", "skipped"}:
-        verification = await _run_workspace_verification(
-            project_root=project_root,
-            workspace_root=workspace_root,
-            session_root=session_root,
-            session_id=convex_session_id,
-            role=session.get("role") or "agent",
-            base_branch=base_branch,
-            workspace_branch=workspace_branch,
-            workspace_config=config,
-        )
-        review_status = "review" if verification["status"] in {"passed", "skipped"} else "needs_changes"
-    elif terminal_status in {"failed", "cancelled"}:
+    if terminal_status in {"failed", "cancelled"}:
         review_status = "needs_changes"
 
     resolved_task_id = _session_task_id(session, session_root)
@@ -1404,6 +1738,29 @@ async def _finalize_workspace_review(
             )
             if project.get("_id"):
                 await record_publish_failure(project["_id"], publish_error)
+
+    state = session_files.read_state(session_root)
+    should_rerun_verification = terminal_status == "completed" and (
+        state.get("verification_status") not in {"passed", "failed", "skipped"}
+        or (
+            state.get("verification_status") == "failed"
+            and state.get("publish_status") == "published"
+        )
+    )
+    if should_rerun_verification:
+        verification = await _run_workspace_verification(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            session_id=convex_session_id,
+            role=session.get("role") or "agent",
+            base_branch=base_branch,
+            workspace_branch=workspace_branch,
+            workspace_config=config,
+        )
+        review_status = "review" if verification["status"] in {"passed", "skipped"} else "needs_changes"
+    elif terminal_status == "completed" and state.get("verification_status") in {"passed", "skipped"} and not publish_error:
+        review_status = "review"
 
     summary = await _normalize_completion_summary(
         project_root=project_root,
@@ -1445,17 +1802,17 @@ async def _finalize_workspace_review(
     if terminal_status == "completed" and role == "artifact":
         role_contract_blockers.extend(_validate_artifact_output_contract(workspace_root, changed_files))
     if terminal_status == "completed" and isinstance(role_health, dict) and role_health.get("status") == "blocked":
-        blocker_bits: list[str] = []
-        for key, value in role_health.items():
-            if key in {"status", "requirements"}:
-                continue
-            if isinstance(value, list) and value:
-                blocker_bits.append(f"{key}: {', '.join(str(item) for item in value)}")
-        workflow_blocker_summary = (
-            f"Role workflow contract failed for `{role}`."
-            + (f" {'; '.join(blocker_bits)}" if blocker_bits else "")
+        blocker_bits = _relevant_workflow_blockers(
+            role_health=role_health,
+            changed_files=changed_files,
+            summary=summary,
         )
-        role_contract_blockers.append(workflow_blocker_summary)
+        if blocker_bits:
+            workflow_blocker_summary = (
+                f"Role workflow contract failed for `{role}`."
+                + (f" {'; '.join(blocker_bits)}" if blocker_bits else "")
+            )
+            role_contract_blockers.append(workflow_blocker_summary)
     if terminal_status == "completed" and role_contract_blockers:
         summary["blockers"] = _dedupe((summary.get("blockers") or []) + role_contract_blockers)
         summary["recommended_next_tasks"] = _dedupe(
@@ -1485,6 +1842,15 @@ async def _finalize_workspace_review(
     session_files.update_state(session_root, review_status=review_status)
     session_files.update_state(session_root, completion_summary=summary)
     session_files.refresh_summary(session_root)
+    if terminal_status in TERMINAL_STATUSES:
+        await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id=convex_session_id,
+            session=session,
+            changed_files=changed_files,
+        )
     if publish_error and resolved_task_id:
         await planner_service.update_task(
             resolved_task_id,
@@ -1695,6 +2061,7 @@ async def create_runner_session(
             )
 
     if project:
+        role_config = None
         try:
             role_config = load_role_runtime_config(project, role)
             integrity_gate = evaluate_integrity_gate(
@@ -1715,6 +2082,9 @@ async def create_runner_session(
             raise RuntimeError(detail)
         if decision.requires_human_approval and not policy_approval_granted:
             raise PermissionError(decision.reason)
+        runner_name = _normalize_runner_name_for_project(runner_name, role_config=role_config)
+    else:
+        runner_name = _normalize_runner_name_for_project(runner_name)
 
     # Deriving Jules source from repo_url (e.g. sources/github/OWNER/REPO)
     jules_source = None
@@ -1784,6 +2154,11 @@ async def create_runner_session(
         workspace_path=str(workspace_root),
         workspace_branch=workspace_branch,
     )
+    await _overlay_active_hydration_artifacts_into_workspace(
+        project=project,
+        workspace_root=workspace_root,
+        session_root=session_root,
+    )
     setup_result = await _run_workspace_setup(
         project_root=project_root,
         workspace_root=workspace_root,
@@ -1808,6 +2183,11 @@ async def create_runner_session(
             or setup_result["stdout"].strip()
             or "Workspace setup failed"
         )
+    await _overlay_active_hydration_artifacts_into_workspace(
+        project=project,
+        workspace_root=workspace_root,
+        session_root=session_root,
+    )
     await running_agent_service.update_running_agent(running_session_id, sessionPath=str(session_root))
 
     # Build rich project context for CLI runners
@@ -1895,6 +2275,10 @@ async def get_runner_session(
                 state.get("publish_status") in {None, "", "not_started"}
                 or state.get("verification_status") not in {"passed", "failed", "skipped"}
                 or state.get("review_status") == "pending"
+                or _should_retry_post_publish_verification(state)
+                or _should_retry_workflow_contract_review(state)
+                or _should_retry_stale_review_status(state)
+                or _should_retry_false_publish_failure(state)
             )
         ):
             synthetic_session = {
@@ -1981,6 +2365,10 @@ async def get_runner_session(
                         refreshed_state.get("publish_status") in {None, "", "not_started"}
                         or refreshed_state.get("verification_status") not in {"passed", "failed", "skipped"}
                         or refreshed_state.get("review_status") == "pending"
+                        or _should_retry_post_publish_verification(refreshed_state)
+                        or _should_retry_workflow_contract_review(refreshed_state)
+                        or _should_retry_stale_review_status(refreshed_state)
+                        or _should_retry_false_publish_failure(refreshed_state)
                     )
                     if still_needs_finalization:
                         if project_root is not None:
@@ -2008,6 +2396,10 @@ async def get_runner_session(
                 file_state.get("publish_status") in {None, "", "not_started"}
                 or file_state.get("verification_status") not in {"passed", "failed", "skipped"}
                 or file_state.get("review_status") == "pending"
+                or _should_retry_post_publish_verification(file_state)
+                or _should_retry_workflow_contract_review(file_state)
+                or _should_retry_stale_review_status(file_state)
+                or _should_retry_false_publish_failure(file_state)
             )
         )
         if still_needs_finalization and project_root is not None:
