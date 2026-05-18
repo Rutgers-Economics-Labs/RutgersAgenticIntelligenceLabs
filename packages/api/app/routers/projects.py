@@ -474,11 +474,42 @@ def _normalize_integrity_reference(reference: str) -> str:
 def _validate_artifact_lineage_references(
     repo,
     *,
+    project_root: Path,
+    inputs: list[str],
+    scripts: list[str],
     sources: list[str],
     assumptions: list[str],
     claims: list[str],
     verification_runs: list[str],
 ) -> None:
+    missing_inputs = sorted(
+        {
+            path
+            for path in inputs
+            if path
+            and not (project_root / path).exists()
+        }
+    )
+    if missing_inputs:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact lineage references missing input paths: " + ", ".join(missing_inputs),
+        )
+
+    missing_scripts = sorted(
+        {
+            path
+            for path in scripts
+            if path
+            and not (project_root / path).exists()
+        }
+    )
+    if missing_scripts:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact lineage references missing script paths: " + ", ".join(missing_scripts),
+        )
+
     known_sources = {item.source_key for item in repo.load_sources()}
     missing_sources = sorted(
         {
@@ -1917,6 +1948,9 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
     repo = get_integrity_repo(root)
     _validate_artifact_lineage_references(
         repo,
+        project_root=root,
+        inputs=data.inputs,
+        scripts=data.scripts,
         sources=data.sources,
         assumptions=data.assumptions,
         claims=data.claims,
