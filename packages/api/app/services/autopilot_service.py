@@ -1005,14 +1005,14 @@ async def _ensure_control_plane_repair_tasks(
         title=task_title,
         description=(
             "Repair persistent control-plane blockers such as stale runtime sessions, duplicate task files, "
-            "or task/session state mismatches so autopilot can safely advance from audited truth."
+            "task/session state mismatches, or non-canonical secret policy role mappings so autopilot can safely advance from audited truth."
         ),
         status="ready",
         agent_role="health",
         repo_paths=["research_plan", "research_plan/state", ".ontology"],
         acceptance_criteria=[
             "stale runtime sessions are finalized or cancelled from durable session truth",
-            "duplicate task files and task/session mismatches are reconciled",
+            "duplicate task files, task/session mismatches, and secret policy role drift are reconciled",
             "session and planner auditors no longer report control-plane blockers after the repair",
         ],
         runner="codex_cli",
