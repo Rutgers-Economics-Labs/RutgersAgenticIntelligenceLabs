@@ -337,3 +337,56 @@ Concrete pipeline task.
     assert tasks[0]["runner"] == "codex_cli"
     assert tasks[0]["acceptanceCriteria"][0] == "the default soccer pipeline no longer has `steps: []`"
     assert tasks[0]["blockerCategory"] is None
+
+
+def test_reconcile_task_session_states_updates_terminal_task_from_session_truth(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "hydrate-task.md",
+        """---
+task_id: hydrate-task
+title: Hydrate task
+status: running
+assigned_role: data
+approval_state: granted
+latest_run_summary: Not started
+---
+
+## Description
+
+Hydrate the ontology.
+""",
+    )
+
+    session_root = planner_service.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    planner_service.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="hydrate-task",
+        status="completed",
+        review_status="review",
+        publish_commit_sha="abc123",
+        completion_summary={
+            "status": "completed",
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "sources_used": [],
+            "datasets_created": [],
+            "artifacts_created": [],
+            "claims_created": [],
+            "verification_results": [],
+            "open_questions": [],
+            "blockers": [],
+            "recommended_next_tasks": [],
+        },
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_session_states(project))
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert result == {"updated": ["hydrate-task"]}
+    assert tasks[0]["status"] == "done"
+    assert tasks[0]["approvalState"] is None
+    assert tasks[0]["latestRunSummary"] == "Published commit abc123"

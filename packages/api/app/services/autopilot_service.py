@@ -588,6 +588,13 @@ async def run_autopilot_loop(project_slug: str):
                 last_action="Reconciled duplicate task files",
                 last_turn_result=", ".join(repaired["removed"][:5]),
             )
+        repaired_task_states = await planner_service.reconcile_task_session_states(project)
+        if repaired_task_states.get("updated"):
+            _update_config(
+                project_slug,
+                last_action="Reconciled task states from session truth",
+                last_turn_result=", ".join(repaired_task_states["updated"][:5]),
+            )
         repaired_sessions = await _repair_stale_active_sessions(project)
         if repaired_sessions.get("repairedSessionIds"):
             _update_config(

@@ -170,6 +170,13 @@ def _task_dedupe_key(task: dict[str, Any]) -> tuple[str, str]:
     )
 
 
+def _session_task_roots(project_root: Path) -> list[Path]:
+    sessions_root = project_root / "research_plan" / "sessions"
+    if not sessions_root.is_dir():
+        return []
+    return sorted(path for path in sessions_root.glob("*/*") if path.is_dir())
+
+
 def _task_preference_key(task: dict[str, Any], path: Path) -> tuple[int, int, float]:
     meta, _ = _split_frontmatter(_read_text(path))
     has_explicit_task_id = 1 if meta.get("task_id") else 0
@@ -270,6 +277,93 @@ async def reconcile_task_files(project: dict) -> dict[str, Any]:
         removed.append(str(path.relative_to(root)))
         path.unlink()
     return {"removed": removed}
+
+
+def _terminal_task_patch_from_session_state(state: dict[str, Any], session_id: str) -> dict[str, Any] | None:
+    status = str(state.get("status") or "")
+    if status not in {"completed", "failed", "cancelled"}:
+        return None
+
+    review_status = str(state.get("review_status") or "")
+    blockers = list((state.get("completion_summary") or {}).get("blockers") or [])
+    recommended_next = list((state.get("completion_summary") or {}).get("recommended_next_tasks") or [])
+    publish_error = str(state.get("publish_error") or "").strip()
+    publish_commit = str(state.get("publish_commit_sha") or "").strip()
+
+    if status == "cancelled":
+        task_status = "cancelled"
+    elif review_status == "review":
+        task_status = "done"
+    else:
+        task_status = "blocked"
+
+    blocker_category: str | None = None
+    if task_status == "blocked":
+        if publish_error or str(state.get("publish_status") or "") == "failed":
+            blocker_category = "publish_failure"
+        elif any("Role workflow contract failed" in str(item) for item in blockers):
+            blocker_category = "workflow_contract"
+        else:
+            blocker_category = "verification_failure"
+
+    summary_bits: list[str] = []
+    if publish_commit:
+        summary_bits.append(f"Published commit {publish_commit}")
+    if blockers and task_status == "blocked":
+        summary_bits.append("; ".join(str(item) for item in blockers[:3]))
+    elif recommended_next:
+        summary_bits.append(str(recommended_next[0]))
+    latest_summary = ". ".join(bit for bit in summary_bits if bit) or f"Recovered from session {session_id}."
+
+    return {
+        "status": task_status,
+        "approvalState": None if task_status in {"done", "cancelled"} else None,
+        "blockerCategory": blocker_category,
+        "latestRunSummary": latest_summary,
+    }
+
+
+async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
+    root = project_root_from_record(project)
+    if root is None:
+        return {"updated": []}
+
+    tasks = await list_tasks("main", project=project)
+    task_by_id = {str(task.get("_id") or ""): task for task in tasks}
+    updated: list[str] = []
+
+    for session_root in _session_task_roots(root):
+        state = session_files.read_state(session_root)
+        task_id = str(state.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        task = task_by_id.get(task_id)
+        if task is None:
+            continue
+        patch = _terminal_task_patch_from_session_state(state, str(state.get("session_id") or session_root.name))
+        if patch is None:
+            continue
+        current_status = str(task.get("status") or "")
+        current_blocker = task.get("blockerCategory")
+        current_summary = str(task.get("latestRunSummary") or "")
+        needs_update = (
+            current_status != patch["status"]
+            or current_blocker != patch["blockerCategory"]
+            or current_summary != patch["latestRunSummary"]
+            or (task.get("approvalState") is not None and patch["status"] in {"done", "cancelled", "blocked"})
+        )
+        if not needs_update:
+            continue
+        await update_task(
+            task_id,
+            project=project,
+            status=patch["status"],
+            blockerCategory=patch["blockerCategory"],
+            approvalState=patch["approvalState"],
+            latestRunSummary=patch["latestRunSummary"],
+        )
+        updated.append(task_id)
+    return {"updated": updated}
 
 
 def _render_task_markdown(task: dict[str, Any]) -> str:
