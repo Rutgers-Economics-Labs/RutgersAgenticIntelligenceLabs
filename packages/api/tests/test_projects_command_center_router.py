@@ -495,7 +495,7 @@ def test_create_runner_session_normalizes_role_aliases(monkeypatch):
     polled: list[tuple[str, str]] = []
 
     async def _get_project_by_slug(slug: str):
-        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo"}
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo", "defaultBranch": "develop"}
 
     async def _create_runner_session(**kwargs):
         created.append(kwargs)
@@ -534,7 +534,7 @@ def test_create_runner_session_defaults_to_project_runner_policy(monkeypatch):
     polled: list[tuple[str, str]] = []
 
     async def _get_project_by_slug(slug: str):
-        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo"}
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo", "defaultBranch": "develop"}
 
     async def _create_runner_session(**kwargs):
         created.append(kwargs)
@@ -558,6 +558,7 @@ def test_create_runner_session_defaults_to_project_runner_policy(monkeypatch):
 
     assert response.status_code == 200
     assert created[0]["runner_name"] == "default"
+    assert created[0]["branch"] == "develop"
     assert polled == [("sess-1", "project-1")]
 
 

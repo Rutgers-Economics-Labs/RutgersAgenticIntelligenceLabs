@@ -243,7 +243,7 @@ class ProjectRunnerSessionCreateRequest(BaseModel):
     role: str
     taskDescription: str
     repoUrl: str | None = None
-    branch: str = "main"
+    branch: str | None = None
     allowedPaths: list[str] = []
     acceptanceCriteria: list[str] = []
     runnerName: str = "default"
@@ -2620,6 +2620,7 @@ async def create_project_runner_session(
     repo_url = data.repoUrl or project.get("gitRepoUrl")
     if not repo_url:
         raise HTTPException(status_code=400, detail="Project has no gitRepoUrl and none provided")
+    branch = data.branch or project.get("defaultBranch") or "main"
 
     policy_approval_granted = False
     if data.taskId:
@@ -2676,7 +2677,7 @@ async def create_project_runner_session(
             role=role,
             task_description=data.taskDescription,
             repo_url=repo_url,
-            branch=data.branch,
+            branch=branch,
             local_repo_path=project.get("localRepoPath"),
             allowed_paths=data.allowedPaths,
             acceptance_criteria=data.acceptanceCriteria,
