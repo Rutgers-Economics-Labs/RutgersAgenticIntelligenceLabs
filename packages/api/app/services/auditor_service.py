@@ -58,6 +58,52 @@ def _hydration_duckdb_path(hydration: dict[str, Any]) -> str | None:
     return None
 
 
+def _parse_ontology_follow_up_questions(project_root: Path) -> list[dict[str, Any]]:
+    path = project_root / "research_plan" / "ontology_answerable_follow_up_questions.md"
+    if not path.exists():
+        return []
+
+    questions: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = raw_line.strip()
+        if line.startswith("### "):
+            if current:
+                questions.append(current)
+            current = {"title": line[4:].strip(), "classification": None}
+            continue
+        if current is None:
+            continue
+        if line.startswith("- Classification:"):
+            marker = line.split("`")
+            if len(marker) >= 2:
+                current["classification"] = marker[1].strip()
+            else:
+                current["classification"] = line.removeprefix("- Classification:").strip()
+    if current:
+        questions.append(current)
+    return questions
+
+
+def _missing_follow_up_task_blockers(tasks: list[dict[str, Any]], project_root: Path) -> list[str]:
+    task_titles = {str(task.get("title") or "") for task in tasks}
+    blockers: list[str] = []
+    for question in _parse_ontology_follow_up_questions(project_root):
+        title = str(question.get("title") or "").strip()
+        classification = str(question.get("classification") or "").strip().lower()
+        if not title:
+            continue
+        if classification == "requires_expansion":
+            expected = f"Expand ontology coverage for: {title}"
+            if expected not in task_titles:
+                blockers.append(f"Missing ontology expansion task for follow-up question: {title}")
+        elif classification == "blocked_by_data":
+            expected = f"Resolve data blocker for: {title}"
+            if expected not in task_titles:
+                blockers.append(f"Missing data-blocker task for follow-up question: {title}")
+    return blockers
+
+
 async def build_auditor_statuses(
     project: dict[str, Any],
     *,
@@ -122,6 +168,7 @@ async def build_auditor_statuses(
             closeout_blockers.append(f"{len(unfinished)} non-terminal task(s) remain.")
         if ontology_status.get("status") == "blocked":
             closeout_blockers.extend(list(ontology_status.get("blockers") or [])[:1])
+        closeout_blockers.extend(_missing_follow_up_task_blockers(tasks or [], root)[:3])
         closeout_gate = evaluate_integrity_gate(root, manifest, action="closeout")
         if closeout_gate.get("blocked"):
             closeout_blockers.extend([str(item) for item in (closeout_gate.get("reasons") or [])[:1]])

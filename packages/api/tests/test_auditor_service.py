@@ -88,3 +88,94 @@ frontend:
     assert result["ontology"]["status"] == "blocked"
     assert result["integrity"]["status"] == "ready"
     assert result["closeout"]["status"] == "blocked"
+
+
+def test_build_auditor_statuses_blocks_closeout_when_follow_up_expansion_tasks_are_missing(tmp_path: Path, monkeypatch):
+    from app.services import auditor_service
+
+    project = {
+        "_id": "project-id",
+        "name": "Grid Study",
+        "slug": "grid-study",
+        "status": "ready",
+        "localRepoPath": str(tmp_path),
+        "approach": "ontology-first",
+    }
+    (tmp_path / ".ontology").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "research_plan").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "rail.yaml").write_text(
+        """version: 1
+project:
+  name: Grid Study
+  slug: grid-study
+  default_branch: main
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+frontend:
+  topic_index_mode: filesystem
+  artifact_index_mode: filesystem
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "research_plan" / "ontology_answerable_follow_up_questions.md").write_text(
+        """# Ontology-Answerable Follow-Up Questions
+
+### 1. Which external data source would unlock wage-bill analysis?
+
+- Classification: `blocked_by_data`
+
+### 2. How do findings change after expanding to additional regional leagues?
+
+- Classification: `requires_expansion`
+""",
+        encoding="utf-8",
+    )
+
+    async def _project_reality_status(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "hasDrift": False,
+            "duplicateTaskFileCount": 0,
+            "taskSessionMismatchCount": 0,
+            "staleRuntimeSessionCount": 0,
+            "staleAuditSessionCount": 0,
+            "terminalSessionCount": 0,
+            "activeRuntimeSessionCount": 0,
+        }
+
+    async def _get_hydration_status(*, project, pipeline_slug=None, hydration_mode="full"):
+        return {"state": "hydrated_on_this_device", "reusableArtifact": {"duckdbArtifactPath": None}, "currentDeviceArtifacts": []}
+
+    monkeypatch.setattr(auditor_service, "project_reality_status", _project_reality_status)
+    monkeypatch.setattr(auditor_service, "get_hydration_status", _get_hydration_status)
+    monkeypatch.setattr(auditor_service, "_duckdb_has_populated_rows", lambda path: True)
+    monkeypatch.setattr(
+        auditor_service,
+        "evaluate_integrity_gate",
+        lambda root, manifest, action: {"blocked": False, "reasons": []},
+    )
+
+    result = asyncio.run(
+        auditor_service.build_auditor_statuses(
+            project,
+            tasks=[{"_id": "task-1", "title": "Existing Task", "status": "done"}],
+            active_sessions=[],
+        )
+    )
+
+    assert result["closeout"]["status"] == "blocked"
+    assert "Missing data-blocker task for follow-up question: 1. Which external data source would unlock wage-bill analysis?" in result["closeout"]["blockers"]
+    assert "Missing ontology expansion task for follow-up question: 2. How do findings change after expanding to additional regional leagues?" in result["closeout"]["blockers"]
