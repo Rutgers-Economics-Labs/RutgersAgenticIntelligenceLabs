@@ -407,6 +407,7 @@ ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
 ALLOWED_TASK_APPROVAL_STATES = {"pending", "granted"}
 ALLOWED_APPROVAL_STATUSES = {"pending", "granted", "rejected", "approved"}
 ALLOWED_APPROVAL_TYPES = {"run_task"}
+ALLOWED_TASK_RUNNERS = {"default", "jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
 
 
 def _validate_trusted_source_contract(
@@ -487,6 +488,14 @@ def _validate_planner_task_approval_state(approval_state: str | None) -> None:
         raise HTTPException(
             status_code=422,
             detail="Planner task approval state must be one of: pending, granted.",
+        )
+
+
+def _validate_planner_task_runner(runner: str | None) -> None:
+    if runner not in {None, ""} and runner not in ALLOWED_TASK_RUNNERS:
+        raise HTTPException(
+            status_code=422,
+            detail="Planner task runner must be one of: default, jules, claude_code, gemini_cli, cursor_cli, codex_cli.",
         )
 
 
@@ -2220,6 +2229,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
     project = await planner_service.get_project_by_slug(slug)
     _validate_planner_task_status(data.status)
     _validate_planner_task_approval_state(data.approvalState)
+    _validate_planner_task_runner(data.runner)
     board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
         project=project,
@@ -2245,6 +2255,7 @@ async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRe
     project = await planner_service.get_project_by_slug(slug)
     _validate_planner_task_status(data.status)
     _validate_planner_task_approval_state(data.approvalState)
+    _validate_planner_task_runner(data.runner)
     board = await planner_service.ensure_main_board(project)
     await planner_service.update_task(task_id, project=project, **data.model_dump())
     await planner_service.sync_planner_files(project, board)
