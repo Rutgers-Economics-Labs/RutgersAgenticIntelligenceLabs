@@ -479,6 +479,69 @@ def test_build_command_center_surfaces_auditor_statuses(tmp_path: Path, monkeypa
     assert center["auditors"]["closeout"]["blockers"] == ["1 non-terminal task(s) remain."]
 
 
+def test_build_command_center_surfaces_repair_queue(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [
+            {
+                "_id": "task-1",
+                "title": "Repair ontology readiness blockers",
+                "status": "ready",
+                "agentRole": "data",
+                "dependsOnTaskIds": [],
+            },
+            {
+                "_id": "task-2",
+                "title": "Resolve closeout blockers",
+                "status": "running",
+                "agentRole": "health",
+                "dependsOnTaskIds": [],
+            },
+            {
+                "_id": "task-3",
+                "title": "Synthesize final report",
+                "status": "backlog",
+                "agentRole": "artifact",
+                "dependsOnTaskIds": [],
+            },
+        ]
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {}
+
+    class _PlannerService:
+        async def ensure_main_board(self, project_arg):
+            return await _ensure_main_board(project_arg)
+
+        async def list_tasks(self, board_id: str, *, project=None):
+            return await _list_tasks(board_id, project=project)
+
+        async def list_approvals(self, project_arg):
+            return []
+
+        def project_root_from_record(self, project_arg):
+            return Path(str(project_arg["localRepoPath"]))
+
+    class _RunningAgentService:
+        async def list_project_running_agents(self, project_id, active_only=False, limit=20):
+            return []
+
+    monkeypatch.setattr(command_center_service, "_runtime_services", lambda: (_PlannerService(), _RunningAgentService()))
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["repairQueue"]["count"] == 2
+    assert center["repairQueue"]["readyCount"] == 1
+    assert center["repairQueue"]["runningCount"] == 1
+    assert center["repairQueue"]["tasks"][0]["title"] == "Repair ontology readiness blockers"
+    assert center["repairQueue"]["tasks"][1]["title"] == "Resolve closeout blockers"
+
+
 def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypatch):
     from app.services import command_center_service
 

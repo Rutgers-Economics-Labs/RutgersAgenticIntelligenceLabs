@@ -402,6 +402,18 @@ export type CommandCenter = {
     reasons: string[];
     repairs: string[];
   };
+  repairQueue?: {
+    count: number;
+    readyCount: number;
+    runningCount: number;
+    byStatus: Record<string, number>;
+    tasks: Array<{
+      id: string;
+      title: string;
+      status: string;
+      agentRole: string;
+    }>;
+  };
   projectReality?: {
     hasDrift: boolean;
     duplicateTaskFileCount: number;

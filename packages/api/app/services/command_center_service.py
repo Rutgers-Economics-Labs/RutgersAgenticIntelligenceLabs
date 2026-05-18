@@ -820,6 +820,34 @@ def _build_blocker_summary(
     }
 
 
+def _build_repair_queue(tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    keywords = ("repair", "reconcile", "resolve", "refresh", "expand")
+    repair_tasks = [
+        task
+        for task in tasks
+        if any(token in str(task.get("title") or "").lower() for token in keywords)
+    ]
+    status_counts: dict[str, int] = {}
+    for task in repair_tasks:
+        status = str(task.get("status") or "backlog")
+        status_counts[status] = status_counts.get(status, 0) + 1
+    return {
+        "count": len(repair_tasks),
+        "readyCount": sum(1 for task in repair_tasks if str(task.get("status") or "") == "ready"),
+        "runningCount": sum(1 for task in repair_tasks if str(task.get("status") or "") == "running"),
+        "tasks": [
+            {
+                "id": str(task.get("_id") or ""),
+                "title": str(task.get("title") or ""),
+                "status": str(task.get("status") or "backlog"),
+                "agentRole": str(task.get("agentRole") or task.get("agent_role") or ""),
+            }
+            for task in repair_tasks[:10]
+        ],
+        "byStatus": status_counts,
+    }
+
+
 async def build_command_center(project: dict) -> dict[str, Any]:
     planner_service, running_agent_service = _runtime_services()
     if planner_service is None or running_agent_service is None:
@@ -844,6 +872,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
     blocker_summary = _build_blocker_summary(latest_audit=latest_audit, reality=reality, auditors=auditors)
+    repair_queue = _build_repair_queue(tasks)
 
     status_counts: dict[str, int] = {}
     for task in tasks:
@@ -887,6 +916,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         "recentAudits": recent_audits,
         "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
         "blockerSummary": blocker_summary,
+        "repairQueue": repair_queue,
         "projectReality": reality,
         "auditors": auditors,
         "repoHealth": {

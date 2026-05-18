@@ -154,6 +154,22 @@ export default async function ProjectHomePage({
       <SectionCard eyebrow="Repair Actions">
         <ReconcileProjectButton slug={slug} />
       </SectionCard>
+      <SectionCard eyebrow="Repair Queue" noPad>
+        <InlineStatus label="repair tasks" value={center.repairQueue?.count ?? 0} />
+        <InlineStatus label="ready" value={center.repairQueue?.readyCount ?? 0} />
+        <InlineStatus label="running" value={center.repairQueue?.runningCount ?? 0} />
+        {center.repairQueue?.tasks?.length ? center.repairQueue.tasks.map((task) => (
+          <div key={task.id || task.title} className="approval-row">
+            <div>
+              <div style={{ fontWeight: 600, color: "var(--fg)" }}>{task.title}</div>
+              <div className="mono-muted">{task.agentRole || "unassigned role"}</div>
+            </div>
+            <StatusPill value={task.status} />
+          </div>
+        )) : (
+          <div className="empty-state">No repair tasks on the board.</div>
+        )}
+      </SectionCard>
       <SectionCard eyebrow="Source Health" noPad>
         <InlineStatus label="sources" value={center.sourceSummary.count} />
         {Object.entries(center.sourceSummary.statusCounts ?? {}).map(([key, value]) => (
