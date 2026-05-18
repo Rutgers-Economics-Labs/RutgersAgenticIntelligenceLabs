@@ -338,6 +338,29 @@ def test_build_command_center_surfaces_source_admissibility_counts(tmp_path: Pat
     assert center["integritySummary"]["sourceAdmissibilityCounts"]["estimated"] == 1
 
 
+def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _project_reality_status(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "hasDrift": True,
+            "duplicateTaskFileCount": 1,
+            "taskSessionMismatchCount": 2,
+            "staleRuntimeSessionCount": 1,
+            "staleAuditSessionCount": 3,
+            "terminalSessionCount": 4,
+            "activeRuntimeSessionCount": 1,
+        }
+
+    monkeypatch.setattr(command_center_service, "project_reality_status", _project_reality_status)
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["projectReality"]["hasDrift"] is True
+    assert center["projectReality"]["taskSessionMismatchCount"] == 2
+    assert center["projectReality"]["staleAuditSessionCount"] == 3
+
+
 def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):
     from app.services import command_center_service
 

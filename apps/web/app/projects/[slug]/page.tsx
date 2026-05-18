@@ -45,6 +45,13 @@ export default async function ProjectHomePage({
         <InlineStatus label="blocked tasks" value={center.auditedTruth?.planner?.taskCounts?.blocked ?? 0} />
         <InlineStatus label="ready tasks" value={center.auditedTruth?.planner?.taskCounts?.ready ?? 0} />
       </SectionCard>
+      <SectionCard eyebrow="Reality Drift" noPad>
+        <InlineStatus label="drift" value={center.projectReality?.hasDrift ? "present" : "clear"} />
+        <InlineStatus label="task mismatches" value={center.projectReality?.taskSessionMismatchCount ?? 0} />
+        <InlineStatus label="stale runtime" value={center.projectReality?.staleRuntimeSessionCount ?? 0} />
+        <InlineStatus label="stale audits" value={center.projectReality?.staleAuditSessionCount ?? 0} />
+        <InlineStatus label="duplicate tasks" value={center.projectReality?.duplicateTaskFileCount ?? 0} />
+      </SectionCard>
       <SectionCard eyebrow="Approvals" noPad>
         <ApprovalPanel approvals={center.pendingApprovals} slug={slug} />
       </SectionCard>

@@ -363,6 +363,15 @@ export type CommandCenter = {
     };
   } | null;
   currentBlocker?: string | null;
+  projectReality?: {
+    hasDrift: boolean;
+    duplicateTaskFileCount: number;
+    taskSessionMismatchCount: number;
+    staleRuntimeSessionCount: number;
+    staleAuditSessionCount: number;
+    terminalSessionCount: number;
+    activeRuntimeSessionCount: number;
+  };
   repoHealth: {
     hasLocalRepo: boolean;
     hasRailYaml: boolean;
