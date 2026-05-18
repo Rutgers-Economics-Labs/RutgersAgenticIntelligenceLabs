@@ -2419,6 +2419,16 @@ async def list_project_secrets(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     secrets = await convex.query("projectSecrets:listByProject", {"projectId": project["_id"]}) or []
     policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
+    normalized_policies = [
+        dict(policy)
+        | {
+            "agentRole": ROLE_ALIASES.get(
+                str(policy.get("agentRole") or "").strip().lower(),
+                str(policy.get("agentRole") or ""),
+            )
+        }
+        for policy in policies
+    ]
 
     masked = []
     for item in secrets:
@@ -2436,7 +2446,7 @@ async def list_project_secrets(slug: str):
             }
         )
 
-    return {"secrets": masked, "policies": policies}
+    return {"secrets": masked, "policies": normalized_policies}
 
 
 @router.post("/{slug}/settings/secrets")
@@ -2458,7 +2468,17 @@ async def upsert_project_secret(slug: str, data: ProjectSecretUpsertRequest):
 async def list_agent_secret_policies(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
-    return {"policies": policies}
+    normalized_policies = [
+        dict(policy)
+        | {
+            "agentRole": ROLE_ALIASES.get(
+                str(policy.get("agentRole") or "").strip().lower(),
+                str(policy.get("agentRole") or ""),
+            )
+        }
+        for policy in policies
+    ]
+    return {"policies": normalized_policies}
 
 
 @router.post("/{slug}/settings/agent-secret-policies")

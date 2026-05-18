@@ -3,6 +3,7 @@ from __future__ import annotations
 from cryptography.fernet import Fernet
 
 from app.core.config import settings
+from app.services.role_runtime_service import ROLE_ALIASES
 
 
 def _fernet() -> Fernet:
@@ -26,6 +27,22 @@ def mask_secret_value(value: str) -> str:
     return f"{value[:2]}{'*' * (len(value) - 4)}{value[-2:]}"
 
 
+def _canonicalize_role(agent_role: str | None) -> str:
+    normalized = str(agent_role or "").strip().lower()
+    return ROLE_ALIASES.get(normalized, normalized)
+
+
+def _policy_lookup_roles(agent_role: str | None) -> list[str]:
+    canonical = _canonicalize_role(agent_role)
+    aliases = sorted(alias for alias, target in ROLE_ALIASES.items() if target == canonical and alias != canonical)
+    candidates = [canonical, *aliases]
+    deduped: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in deduped:
+            deduped.append(candidate)
+    return deduped
+
+
 async def resolve_secrets_for_role(project_id: str, agent_role: str) -> dict[str, str]:
     """Return decrypted secrets the given agent role is allowed to access.
 
@@ -35,10 +52,14 @@ async def resolve_secrets_for_role(project_id: str, agent_role: str) -> dict[str
     """
     from app.services.convex_client import convex
 
-    policy = await convex.query(
-        "agentSecretPolicies:getByRole",
-        {"projectId": project_id, "agentRole": agent_role},
-    )
+    policy = None
+    for role_candidate in _policy_lookup_roles(agent_role):
+        policy = await convex.query(
+            "agentSecretPolicies:getByRole",
+            {"projectId": project_id, "agentRole": role_candidate},
+        )
+        if policy:
+            break
     if not policy:
         return {}
 

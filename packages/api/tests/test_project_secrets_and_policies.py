@@ -36,6 +36,15 @@ POLICY_DATA_ROLE = {
     "updatedAt": 1000,
 }
 
+POLICY_DEVELOPER_ROLE = {
+    "_id": "policy-id-developer",
+    "projectId": PROJECT_ID,
+    "agentRole": "developer",
+    "allowedSecretNames": ["FRED_API_KEY"],
+    "createdAt": 1000,
+    "updatedAt": 1000,
+}
+
 
 def _make_encrypted_secret(key_name: str, plaintext: str) -> dict:
     fernet = Fernet(TEST_FERNET_KEY.encode())
@@ -121,6 +130,24 @@ async def test_list_agent_secret_policies(client, convex_mock):
     data = resp.json()
     assert len(data["policies"]) == 1
     assert "FRED_API_KEY" in data["policies"][0]["allowedSecretNames"]
+
+
+async def test_list_agent_secret_policies_normalizes_legacy_role_alias(client, convex_mock):
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        path = payload.get("path")
+        if path in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(200, json={"value": PROJECT_DOC})
+        if path == "agentSecretPolicies:listByProject":
+            return httpx.Response(200, json={"value": [POLICY_DEVELOPER_ROLE]})
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.get(f"/api/v1/projects/{PROJECT_SLUG}/settings/agent-secret-policies")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["policies"][0]["agentRole"] == "coding"
 
 
 # ---------------------------------------------------------------------------
@@ -387,3 +414,28 @@ async def test_resolve_secrets_service_empty_allowlist(convex_mock):
 
     result = await resolve_secrets_for_role(PROJECT_ID, "health")
     assert result == {}
+
+
+async def test_resolve_secrets_service_falls_back_to_legacy_role_alias(convex_mock):
+    """Unit test: canonical role lookup still finds legacy alias-stored policies."""
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        path = payload.get("path")
+        args = payload.get("args", {})
+        if path == "agentSecretPolicies:getByRole":
+            role = args.get("agentRole")
+            if role == "coding":
+                return httpx.Response(200, json={"value": None})
+            if role == "developer":
+                return httpx.Response(200, json={"value": POLICY_DEVELOPER_ROLE})
+            return httpx.Response(200, json={"value": None})
+        if path == "projectSecrets:listByProject":
+            return httpx.Response(200, json={"value": [FRED_SECRET, CENSUS_SECRET, OTHER_SECRET]})
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    from app.services.secret_service import resolve_secrets_for_role
+
+    result = await resolve_secrets_for_role(PROJECT_ID, "coding")
+    assert result == {"FRED_API_KEY": "fred-abc123"}
