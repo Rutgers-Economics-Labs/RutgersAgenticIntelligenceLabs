@@ -471,6 +471,14 @@ def _validate_assumption_status(status: str | None) -> None:
         )
 
 
+def _validate_planner_task_status(status: str | None) -> None:
+    if status not in {None, ""} and status not in set(planner_service.TASK_STATUSES):
+        raise HTTPException(
+            status_code=422,
+            detail="Planner task status must be one of: " + ", ".join(planner_service.TASK_STATUSES) + ".",
+        )
+
+
 def _validate_claim_reference_integrity(
     repo,
     *,
@@ -2183,6 +2191,7 @@ async def get_planner_board(slug: str):
 @router.post("/{slug}/planner/tasks")
 async def create_planner_task(slug: str, data: PlannerTaskRequest):
     project = await planner_service.get_project_by_slug(slug)
+    _validate_planner_task_status(data.status)
     board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
         project=project,
@@ -2206,6 +2215,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
 @router.patch("/{slug}/planner/tasks/{task_id}")
 async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRequest):
     project = await planner_service.get_project_by_slug(slug)
+    _validate_planner_task_status(data.status)
     board = await planner_service.ensure_main_board(project)
     await planner_service.update_task(task_id, project=project, **data.model_dump())
     await planner_service.sync_planner_files(project, board)

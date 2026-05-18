@@ -108,3 +108,42 @@ def test_create_ontology_follow_up_task_endpoint_returns_existing_task(monkeypat
     assert response.status_code == 200
     assert response.json()["created"] is False
     assert response.json()["task"]["_id"] == "existing-task"
+
+
+def test_create_planner_task_rejects_unknown_status(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/planner/tasks",
+        json={
+            "title": "Bad task",
+            "description": "Should fail",
+            "status": "almost_ready",
+            "agentRole": "data",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Planner task status must be one of" in response.json()["detail"]
+
+
+def test_update_planner_task_rejects_unknown_status(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.patch(
+        "/api/v1/projects/demo-project/planner/tasks/task-1",
+        json={"status": "almost_ready"},
+    )
+
+    assert response.status_code == 422
+    assert "Planner task status must be one of" in response.json()["detail"]
