@@ -4,13 +4,14 @@ from pathlib import Path
 from typing import Any
 
 from app.runners import session_lifecycle
+from app.runners.cli_base import runner_runtime_paths
 from app.services.convex_client import convex
 from app.services import hydration_registry_service, planner_service, running_agent_service
 from app.services.audit_service import audit_gate_status, repair_stale_session_audits
 from app.services.integrity_service import load_integrity_indexes
 from app.services import role_runtime_service
 from app.services.role_runtime_service import ROLE_ALIASES
-from rail.manifest import load_manifest
+from rail.manifest import RailManifest, load_manifest
 
 
 async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any]:
@@ -37,6 +38,86 @@ async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any
         )
         repaired.append(str(session["_id"]))
     return {"repairedSessionIds": repaired}
+
+
+async def detect_zombie_sessions(project: dict[str, Any]) -> list[str]:
+    """Return session IDs that are active in the DB but have a dead runner process on disk."""
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    if not project_root or not project_root.exists():
+        return []
+    active_sessions = await running_agent_service.list_project_running_agents(
+        project["_id"],
+        active_only=True,
+        limit=50,
+    )
+    zombie_ids: list[str] = []
+    for session in active_sessions:
+        session_root = session_lifecycle._resolve_session_root_path(session, project_root=project_root)
+        if session_root is None or not session_root.exists():
+            continue
+        state = session_lifecycle.session_files.read_state(session_root)
+        if str(state.get("status") or "") in session_lifecycle.TERMINAL_STATUSES:
+            # already terminal — handled by repair_stale_active_sessions
+            continue
+        runtime = runner_runtime_paths(str(session_root))
+        pid: int | None = None
+        if runtime["pid"].exists():
+            try:
+                pid = int(runtime["pid"].read_text(encoding="utf-8").strip() or "0")
+            except ValueError:
+                pid = None
+        if pid and not session_lifecycle._process_is_running(pid):
+            zombie_ids.append(str(session["_id"]))
+    return zombie_ids
+
+
+async def repair_zombie_sessions(project: dict[str, Any]) -> dict[str, Any]:
+    """Force-fail zombie sessions (running in DB but PID is dead) and reconcile them."""
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    if not project_root or not project_root.exists():
+        return {"repairedSessionIds": []}
+    zombie_ids = await detect_zombie_sessions(project)
+    if not zombie_ids:
+        return {"repairedSessionIds": []}
+    active_sessions = await running_agent_service.list_project_running_agents(
+        project["_id"],
+        active_only=True,
+        limit=50,
+    )
+    session_by_id = {str(s["_id"]): s for s in active_sessions}
+    repaired: list[str] = []
+    for session_id in zombie_ids:
+        session = session_by_id.get(session_id)
+        if not session:
+            continue
+        session_root = session_lifecycle._resolve_session_root_path(session, project_root=project_root)
+        if session_root and session_root.exists():
+            session_lifecycle.session_files.update_state(session_root, status="failed")
+        await running_agent_service.finalize_running_agent(session_id, status="failed")
+        repaired.append(session_id)
+    return {"repairedSessionIds": repaired}
+
+
+def check_lane_availability(
+    manifest: RailManifest,
+    active_session_count: int,
+) -> dict[str, Any]:
+    """Return whether a new worker can start per the manifest's lane policy."""
+    policy = manifest.planner.lane_policy
+    if policy == "single_active_worker":
+        available = active_session_count == 0
+        return {
+            "available": available,
+            "policy": policy,
+            "activeSessionCount": active_session_count,
+            "reason": None if available else f"Lane blocked: {active_session_count} active session(s) under single_active_worker policy.",
+        }
+    return {
+        "available": True,
+        "policy": policy,
+        "activeSessionCount": active_session_count,
+        "reason": None,
+    }
 
 
 async def repair_running_agent_status_drift(project: dict[str, Any]) -> dict[str, Any]:
@@ -304,6 +385,7 @@ async def project_reality_snapshot(
             mismatch_task_ids.append(task_id)
 
     stale_runtime_session_ids: list[str] = []
+    zombie_session_ids: list[str] = []
     for session in runtime_active_sessions:
         session_root = session_lifecycle._resolve_session_root_path(session, project_root=root)
         if session_root is None or not session_root.exists():
@@ -312,6 +394,16 @@ async def project_reality_snapshot(
         status = str(state.get("status") or "")
         if status in session_lifecycle.TERMINAL_STATUSES:
             stale_runtime_session_ids.append(str(session.get("_id") or ""))
+            continue
+        runtime = runner_runtime_paths(str(session_root))
+        pid: int | None = None
+        if runtime["pid"].exists():
+            try:
+                pid = int(runtime["pid"].read_text(encoding="utf-8").strip() or "0")
+            except ValueError:
+                pid = None
+        if pid and not session_lifecycle._process_is_running(pid):
+            zombie_session_ids.append(str(session.get("_id") or ""))
     running_agent_status_drift: dict[str, Any] = {
         "hasDrift": False,
         "sessions": [],
@@ -476,6 +568,7 @@ async def project_reality_snapshot(
         "duplicateTaskFiles": duplicate_task_files,
         "taskSessionMismatchTaskIds": mismatch_task_ids,
         "staleRuntimeSessionIds": stale_runtime_session_ids,
+        "zombieSessionIds": zombie_session_ids,
         "staleAuditSessionIds": stale_audit_session_ids,
         "terminalSessionIds": terminal_session_ids,
         "activeRuntimeSessionIds": [str(item.get("_id")) for item in runtime_active_sessions if item.get("_id")],
@@ -499,6 +592,7 @@ async def project_reality_status(
     duplicate_count = len(snapshot["duplicateTaskFiles"])
     mismatch_count = len(snapshot["taskSessionMismatchTaskIds"])
     stale_runtime_count = len(snapshot["staleRuntimeSessionIds"])
+    zombie_count = len(snapshot.get("zombieSessionIds") or [])
     stale_audit_count = len(snapshot["staleAuditSessionIds"])
     terminal_count = len(snapshot["terminalSessionIds"])
     active_runtime_count = len(snapshot["activeRuntimeSessionIds"])
@@ -516,6 +610,7 @@ async def project_reality_status(
             duplicate_count
             or mismatch_count
             or stale_runtime_count
+            or zombie_count
             or stale_audit_count
             or running_agent_status_drift_count
             or running_agent_role_drift_count
@@ -528,6 +623,7 @@ async def project_reality_status(
         "duplicateTaskFileCount": duplicate_count,
         "taskSessionMismatchCount": mismatch_count,
         "staleRuntimeSessionCount": stale_runtime_count,
+        "zombieSessionCount": zombie_count,
         "staleAuditSessionCount": stale_audit_count,
         "terminalSessionCount": terminal_count,
         "activeRuntimeSessionCount": active_runtime_count,
@@ -584,6 +680,8 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
         if item
     ]
     repaired_session_ids = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
+    repaired_zombie_session_ids = list((await repair_zombie_sessions(project)).get("repairedSessionIds") or [])
+    repaired_session_ids = list(dict.fromkeys(repaired_session_ids + repaired_zombie_session_ids))
     if root is not None and root.exists():
         repaired_audit_session_ids = list((await repair_stale_session_audits(project, root)).get("repairedSessionIds") or [])
     ontology_repair = await repair_active_ontology_registry_drift(project)
