@@ -1418,6 +1418,21 @@ Duplicate task file.
             },
         ),
     )
+    monkeypatch.setattr(
+        reconciliation_service.convex,
+        "query",
+        lambda path, args: asyncio.sleep(
+            0,
+            result=[
+                {
+                    "_id": "policy-1",
+                    "projectId": "project-1",
+                    "agentRole": "developer",
+                    "allowedSecretNames": ["FRED_API_KEY"],
+                }
+            ] if path == "agentSecretPolicies:listByProject" else None,
+        ),
+    )
 
     snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
 
@@ -1430,6 +1445,9 @@ Duplicate task file.
     assert snapshot["ontologyArtifactDrift"]["reason"] == "active_ontology_path_missing_on_disk"
     assert snapshot["ontologyArtifactDrift"]["expectedDuckdbPath"] == str(tmp_path / ".ontology" / "onto.duckdb")
     assert snapshot["artifactRegistryDrift"]["hasDrift"] is False
+    assert snapshot["secretPolicyRoleDrift"]["hasDrift"] is True
+    assert snapshot["secretPolicyRoleDrift"]["policies"][0]["agentRole"] == "developer"
+    assert snapshot["secretPolicyRoleDrift"]["policies"][0]["canonicalRole"] == "coding"
 
 
 def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path, monkeypatch):
@@ -1472,6 +1490,11 @@ def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path
         "get_hydration_status",
         lambda **kwargs: asyncio.sleep(0, result={"reusableArtifact": {}, "currentDeviceArtifacts": []}),
     )
+    monkeypatch.setattr(
+        reconciliation_service.convex,
+        "query",
+        lambda path, args: asyncio.sleep(0, result=[] if path == "agentSecretPolicies:listByProject" else None),
+    )
 
     snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
     status = asyncio.run(reconciliation_service.project_reality_status(project))
@@ -1480,6 +1503,7 @@ def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path
     assert snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"] == ["artifacts/untracked.md"]
     assert snapshot["artifactRegistryDrift"]["missingArtifactPaths"] == ["artifacts/missing.md"]
     assert status["artifactRegistryDriftCount"] == 2
+    assert status["secretPolicyRoleDriftCount"] == 0
 
 
 def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_path: Path, monkeypatch):

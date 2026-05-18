@@ -415,6 +415,7 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
             "activeRuntimeSessionCount": 1,
             "ontologyArtifactDriftCount": 1,
             "artifactRegistryDriftCount": 2,
+            "secretPolicyRoleDriftCount": 1,
             "details": {
                 "duplicateTaskFiles": ["research_plan/tasks/task-b.md"],
                 "taskSessionMismatchTaskIds": ["task-1", "task-2"],
@@ -432,6 +433,17 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
                     "hasDrift": True,
                     "untrackedArtifactPaths": ["artifacts/untracked.md"],
                     "missingArtifactPaths": ["artifacts/missing.md"],
+                },
+                "secretPolicyRoleDrift": {
+                    "hasDrift": True,
+                    "policies": [
+                        {
+                            "policyId": "policy-1",
+                            "agentRole": "developer",
+                            "canonicalRole": "coding",
+                            "allowedSecretNames": ["FRED_API_KEY"],
+                        }
+                    ],
                 },
             },
         }
@@ -455,6 +467,7 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
     assert center["projectReality"]["staleAuditSessionCount"] == 3
     assert center["projectReality"]["ontologyArtifactDriftCount"] == 1
     assert center["projectReality"]["artifactRegistryDriftCount"] == 2
+    assert center["projectReality"]["secretPolicyRoleDriftCount"] == 1
     assert center["projectReality"]["details"]["duplicateTaskFiles"] == ["research_plan/tasks/task-b.md"]
 
 
@@ -622,6 +635,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
             "staleAuditSessionCount": 1,
             "terminalSessionCount": 2,
             "activeRuntimeSessionCount": 1,
+            "secretPolicyRoleDriftCount": 1,
         }
 
     async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
@@ -647,6 +661,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert center["blockerSummary"]["headline"] == "Autopilot is waiting for audited truth."
     assert "Ontology hydration state is `not_hydrated`." in center["blockerSummary"]["reasons"]
     assert "Repair hydration or promote the correct ontology artifact before research or closeout." in center["blockerSummary"]["repairs"]
+    assert "Reconcile agent secret policies so secret access is keyed by canonical agent roles." in center["blockerSummary"]["repairs"]
 
 
 def test_build_command_center_surfaces_ontology_follow_up_classifications(tmp_path: Path, monkeypatch):

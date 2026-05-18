@@ -796,6 +796,9 @@ def _build_blocker_summary(
     if reality.get("staleAuditSessionCount"):
         reasons.append(f"{reality['staleAuditSessionCount']} terminal session audit(s) are stale or missing.")
         repairs.append("Regenerate post-run audits before autopilot advances.")
+    if reality.get("secretPolicyRoleDriftCount"):
+        reasons.append(f"{reality['secretPolicyRoleDriftCount']} agent secret policy role alias row(s) are still non-canonical.")
+        repairs.append("Reconcile agent secret policies so secret access is keyed by canonical agent roles.")
 
     if ontology.get("status") == "blocked":
         repairs.append("Repair hydration or promote the correct ontology artifact before research or closeout.")

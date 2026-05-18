@@ -286,6 +286,32 @@ async def project_reality_snapshot(
         }
     except Exception:
         pass
+    secret_policy_role_drift: dict[str, Any] = {
+        "hasDrift": False,
+        "policies": [],
+    }
+    try:
+        policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
+        drifted = []
+        for policy in policies:
+            raw_role = str(policy.get("agentRole") or "").strip().lower()
+            canonical_role = ROLE_ALIASES.get(raw_role, raw_role)
+            if not raw_role or canonical_role == raw_role:
+                continue
+            drifted.append(
+                {
+                    "policyId": str(policy.get("_id") or ""),
+                    "agentRole": raw_role,
+                    "canonicalRole": canonical_role,
+                    "allowedSecretNames": list(policy.get("allowedSecretNames") or []),
+                }
+            )
+        secret_policy_role_drift = {
+            "hasDrift": bool(drifted),
+            "policies": drifted,
+        }
+    except Exception:
+        pass
 
     return {
         "duplicateTaskFiles": duplicate_task_files,
@@ -296,6 +322,7 @@ async def project_reality_snapshot(
         "activeRuntimeSessionIds": [str(item.get("_id")) for item in runtime_active_sessions if item.get("_id")],
         "ontologyArtifactDrift": ontology_artifact_drift,
         "artifactRegistryDrift": artifact_registry_drift,
+        "secretPolicyRoleDrift": secret_policy_role_drift,
     }
 
 
@@ -315,6 +342,7 @@ async def project_reality_status(
     ontology_artifact_drift_count = 1 if snapshot.get("ontologyArtifactDrift", {}).get("hasDrift") else 0
     artifact_registry_drift = snapshot.get("artifactRegistryDrift") or {}
     artifact_registry_drift_count = len(artifact_registry_drift.get("untrackedArtifactPaths") or []) + len(artifact_registry_drift.get("missingArtifactPaths") or [])
+    secret_policy_role_drift_count = len((snapshot.get("secretPolicyRoleDrift") or {}).get("policies") or [])
 
     return {
         "hasDrift": bool(
@@ -324,6 +352,7 @@ async def project_reality_status(
             or stale_audit_count
             or ontology_artifact_drift_count
             or artifact_registry_drift_count
+            or secret_policy_role_drift_count
         ),
         "duplicateTaskFileCount": duplicate_count,
         "taskSessionMismatchCount": mismatch_count,
@@ -333,6 +362,7 @@ async def project_reality_status(
         "activeRuntimeSessionCount": active_runtime_count,
         "ontologyArtifactDriftCount": ontology_artifact_drift_count,
         "artifactRegistryDriftCount": artifact_registry_drift_count,
+        "secretPolicyRoleDriftCount": secret_policy_role_drift_count,
         "details": snapshot,
     }
 
