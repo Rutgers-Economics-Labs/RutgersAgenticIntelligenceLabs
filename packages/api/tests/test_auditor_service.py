@@ -335,6 +335,7 @@ frontend:
             "staleAuditSessionCount": 0,
             "terminalSessionCount": 0,
             "activeRuntimeSessionCount": 0,
+            "secretPolicyRoleDriftCount": 1,
             "details": {
                 "ontologyArtifactDrift": {
                     "hasDrift": True,
@@ -370,6 +371,8 @@ frontend:
 
     assert result["ontology"]["status"] == "blocked"
     assert "Active ontology artifact pointer drift detected: active_ontology_pointer_out_of_date." in result["ontology"]["blockers"]
+    assert result["planner"]["status"] == "blocked"
+    assert "1 agent secret policy role alias row(s) detected." in result["planner"]["blockers"]
     assert result["integrity"]["status"] == "blocked"
     assert "Artifacts exist on disk without lineage records: artifacts/untracked.md." in result["integrity"]["blockers"]
     assert "Artifact lineage points to missing files: artifacts/missing.md." in result["integrity"]["blockers"]
