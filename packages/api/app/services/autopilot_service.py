@@ -511,8 +511,9 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     health = workflow.get("health") or {}
     missing_evidence_claims = [str(item) for item in (health.get("missingEvidenceClaims") or []) if str(item).strip()]
     stale_sources = [str(item) for item in (health.get("staleSources") or []) if str(item).strip()]
+    failed_verification_runs = [str(item) for item in (health.get("failedVerificationRuns") or []) if str(item).strip()]
     inadmissible_sources = [str(item) for item in (health.get("inadmissibleSources") or []) if str(item).strip()]
-    if not inadmissible_sources and not missing_evidence_claims and not stale_sources:
+    if not inadmissible_sources and not missing_evidence_claims and not stale_sources and not failed_verification_runs:
         return False
 
     board = await planner_service.ensure_main_board(project)
@@ -568,6 +569,30 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
             live_titles.add(task_title)
             changed = True
 
+    if failed_verification_runs:
+        task_title = "Resolve failed verification runs before trusted promotion"
+        if task_title not in live_titles:
+            await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Repair failed or blocked verification runs before trusted promotion. "
+                    "Fix the underlying reproducibility or analysis issues, rerun verification, and record the passing result."
+                ),
+                status="ready",
+                agent_role="health",
+                repo_paths=["research_plan/state", "artifacts", "topics"],
+                acceptance_criteria=[
+                    "each failed or blocked verification run is either rerun successfully or explicitly superseded",
+                    "underlying reproducibility or analysis issues are fixed before the rerun is recorded",
+                    "trusted artifacts no longer depend on failed verification runs",
+                ],
+                runner="codex_cli",
+            )
+            live_titles.add(task_title)
+            changed = True
+
     task_title = "Resolve inadmissible sources for trusted outputs"
     if inadmissible_sources and task_title not in live_titles:
         await planner_service.create_task(
@@ -594,10 +619,11 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     if changed:
         await planner_service.sync_planner_files(project, board)
         logger.info(
-            "Autopilot: ensured integrity repair tasks for %s (claims=%s, stale_sources=%s, inadmissible_sources=%s)",
+            "Autopilot: ensured integrity repair tasks for %s (claims=%s, stale_sources=%s, failed_verification_runs=%s, inadmissible_sources=%s)",
             project.get("slug"),
             len(missing_evidence_claims),
             len(stale_sources),
+            len(failed_verification_runs),
             len(inadmissible_sources),
         )
     return changed
