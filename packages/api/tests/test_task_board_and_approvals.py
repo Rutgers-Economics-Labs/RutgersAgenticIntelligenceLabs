@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 
@@ -167,6 +168,79 @@ def test_update_task_allows_planner_done_when_planner_state_files_exist(tmp_path
     research_plan_root = tmp_path / "research_plan"
     _write(research_plan_root / "current_plan.md", "# Current Plan\n\nPlanner state exists.\n")
     _write(research_plan_root / "task_board.md", "# Task Board\n\nSnapshot exists.\n")
+
+    updated = asyncio.run(planner_service.update_task(task["_id"], project=project, status="done"))
+
+    assert updated is not None
+    assert updated["status"] == "done"
+
+
+def test_update_task_rejects_worker_done_without_reviewed_post_run_audit(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    board = asyncio.run(planner_service.ensure_main_board(project))
+    task = asyncio.run(
+        planner_service.create_task(
+            project=project,
+            board_id=board["_id"],
+            title="Write findings",
+            description="Close a research task without audited runner truth.",
+            status="review",
+            agent_role="research",
+        )
+    )
+
+    try:
+        asyncio.run(planner_service.update_task(task["_id"], project=project, status="done"))
+    except ValueError as exc:
+        assert "reviewed post-run audit exists" in str(exc)
+    else:
+        raise AssertionError("Expected worker task completion to require a reviewed post-run audit")
+
+
+def test_update_task_allows_worker_done_with_reviewed_post_run_audit(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    board = asyncio.run(planner_service.ensure_main_board(project))
+    task = asyncio.run(
+        planner_service.create_task(
+            project=project,
+            board_id=board["_id"],
+            title="Write findings",
+            description="Close a research task after a clean reviewed audit.",
+            status="review",
+            agent_role="research",
+        )
+    )
+
+    audit_root = tmp_path / "research_plan" / "audits"
+    audit_root.mkdir(parents=True, exist_ok=True)
+    (audit_root / "sess-research-1.json").write_text(
+        json.dumps(
+            {
+                "generatedAt": "2026-05-18T00:00:00Z",
+                "currentBlocker": None,
+                "session": {
+                    "id": "sess-research-1",
+                    "role": "research",
+                    "status": "completed",
+                    "reviewStatus": "review",
+                    "verificationStatus": "passed",
+                    "publishStatus": "published",
+                    "taskId": task["_id"],
+                },
+                "integrity": {
+                    "action": "artifact_generation",
+                    "blocked": False,
+                    "reasons": [],
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     updated = asyncio.run(planner_service.update_task(task["_id"], project=project, status="done"))
 

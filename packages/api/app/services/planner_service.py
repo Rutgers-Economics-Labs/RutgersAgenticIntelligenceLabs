@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -144,6 +145,54 @@ def _enforce_planner_completion_gate(*, root: Path, task: dict[str, Any], patch:
     failures = summary.failures
     reason = failures[0].message if failures else "Planner completion gate failed."
     raise ValueError(f"Planner tasks cannot be marked done until planner completion checks pass: {reason}")
+
+
+def _latest_task_audit(root: Path, task_id: str) -> dict[str, Any] | None:
+    audit_root = root / "research_plan" / "audits"
+    if not audit_root.is_dir():
+        return None
+    candidates = sorted(audit_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        session = payload.get("session") or {}
+        if str(session.get("taskId") or "").strip() != task_id:
+            continue
+        return payload
+    return None
+
+
+def _enforce_worker_completion_gate(*, root: Path, task: dict[str, Any], patch: dict[str, Any]) -> None:
+    if str(patch.get("status") or "").strip().lower() != "done":
+        return
+    role = str(task.get("agentRole") or "").strip().lower()
+    if not role or role == "planner":
+        return
+
+    audit = _latest_task_audit(root, str(task.get("_id") or ""))
+    if audit is None:
+        raise ValueError(
+            "Worker tasks cannot be marked done until a reviewed post-run audit exists for the task."
+        )
+
+    session = audit.get("session") or {}
+    integrity = audit.get("integrity") or {}
+    current_blocker = str(audit.get("currentBlocker") or "").strip()
+    review_status = str(session.get("reviewStatus") or "").strip().lower()
+    session_status = str(session.get("status") or "").strip().lower()
+    if (
+        review_status != "review"
+        or session_status not in {"completed", "failed", "cancelled"}
+        or bool(integrity.get("blocked"))
+        or bool(current_blocker)
+    ):
+        raise ValueError(
+            "Worker tasks cannot be marked done until a reviewed post-run audit clears blockers for the task."
+        )
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -615,6 +664,7 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
     if "approval_state" in patch:
         patch["approval_state"] = _normalize_task_approval_state(patch.get("approval_state"), strict=True)
     _enforce_planner_completion_gate(root=root, task=task, patch=patch)
+    _enforce_worker_completion_gate(root=root, task=task, patch=patch)
     mapping = {
         "title": "title",
         "description": "description",
