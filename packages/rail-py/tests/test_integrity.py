@@ -540,6 +540,51 @@ def test_integrity_repo_extracts_candidates_and_conflicts(tmp_path):
     assert compiled["summary"]["claimCandidateCount"] >= 2
 
 
+def test_write_conflicts_rebuilds_canonical_conflict_view(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.upsert_claim(
+        {
+            "claim_key": "claim-a",
+            "claim_text": "Retail activity improved.",
+            "status": "supported",
+            "evidence_kind": "direct",
+            "evidence_paths": ["topics/discovery.md"],
+            "contradicts_claim_keys": ["claim-b"],
+        }
+    )
+    repo.upsert_claim(
+        {
+            "claim_key": "claim-b",
+            "claim_text": "Retail activity worsened.",
+            "status": "supported",
+            "evidence_kind": "direct",
+            "evidence_paths": ["topics/discovery.md"],
+            "contradicts_claim_keys": ["claim-a"],
+        }
+    )
+    repo.reconcile_claim_conflicts()
+    repo.rebuild_conflicts()
+
+    repo.write_conflicts(
+        [
+            {
+                "conflict_key": "claim-conflict:fake::fake",
+                "left_ref": "research_plan/state/claims.json#fake",
+                "right_ref": "research_plan/state/claims.json#fake",
+                "conflict_type": "claim_contradiction",
+                "status": "resolved",
+            }
+        ]
+    )
+
+    conflict_keys = {item.conflict_key for item in repo.load_conflicts()}
+
+    assert "claim-conflict:fake::fake" not in conflict_keys
+    assert "claim-conflict:claim-a::claim-b" in conflict_keys
+
+
 def test_integrity_repo_can_promote_candidates_and_resolve_conflicts(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)
@@ -602,6 +647,22 @@ def test_integrity_repo_can_promote_candidates_and_resolve_conflicts(tmp_path):
     assert resolved_conflict.status == "resolved"
     assert repo.get_claim("claim-b").status == "superseded"
     assert repo.get_claim(claim_result["claim"]["claim_key"]).status == "supported"
+
+
+def test_upsert_conflict_rejects_unknown_conflict_key(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    with pytest.raises(KeyError, match="Unknown conflict_key: claim-conflict:fake::fake"):
+        repo.upsert_conflict(
+            {
+                "conflict_key": "claim-conflict:fake::fake",
+                "left_ref": "research_plan/state/claims.json#fake",
+                "right_ref": "research_plan/state/claims.json#fake",
+                "conflict_type": "claim_contradiction",
+                "status": "resolved",
+            }
+        )
 
 
 def test_cli_integrity_candidate_promotion_and_conflict_resolution(capsys):

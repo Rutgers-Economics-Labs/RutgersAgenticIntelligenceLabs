@@ -1423,17 +1423,26 @@ class ResearchIntegrityRepo:
     def load_conflicts(self) -> list[ConflictRecord]:
         return self._load_records(self.conflicts_path(), ConflictRecord)
 
-    def write_conflicts(self, records: list[ConflictRecord] | list[dict[str, Any]]) -> None:
+    def _persist_conflicts(self, records: list[ConflictRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.conflicts_path(), records, ConflictRecord)
 
+    def write_conflicts(self, records: list[ConflictRecord] | list[dict[str, Any]]) -> None:
+        self.rebuild_conflicts()
+
     def upsert_conflict(self, record: ConflictRecord | dict[str, Any]) -> ConflictRecord:
-        return self._upsert_by_key(
-            self.load_conflicts,
-            self.write_conflicts,
-            ConflictRecord,
-            "conflict_key",
-            record,
+        normalized = ConflictRecord.model_validate(record)
+        records = self.load_conflicts()
+        index = {item.conflict_key: item for item in records}
+        existing = index.get(normalized.conflict_key)
+        if existing is None:
+            raise KeyError(f"Unknown conflict_key: {normalized.conflict_key}")
+        merged = self._normalize_timestamps(
+            normalized,
+            preserve_created_at=existing.created_at,
         )
+        index[merged.conflict_key] = merged
+        self._persist_conflicts(list(index.values()))
+        return merged
 
     def get_conflict(self, conflict_key: str) -> ConflictRecord | None:
         for record in self.load_conflicts():
@@ -1754,9 +1763,13 @@ class ResearchIntegrityRepo:
         self.write_evidence_chunks([*retained, *records])
         return records
 
-    def rebuild_conflicts(self) -> list[ConflictRecord]:
+    def _compute_conflicts(
+        self,
+        *,
+        existing_by_key: dict[str, ConflictRecord] | None = None,
+    ) -> list[ConflictRecord]:
         claims = self.load_claims()
-        existing_by_key = {item.conflict_key: item for item in self.load_conflicts()}
+        existing_by_key = existing_by_key or {item.conflict_key: item for item in self.load_conflicts()}
         conflicts: list[ConflictRecord] = []
         seen: set[str] = set()
         for claim in claims:
@@ -1792,7 +1805,11 @@ class ResearchIntegrityRepo:
             if existing.status not in {"resolved", "dismissed"}:
                 continue
             conflicts.append(existing)
-        self.write_conflicts(conflicts)
+        return conflicts
+
+    def rebuild_conflicts(self) -> list[ConflictRecord]:
+        conflicts = self._compute_conflicts()
+        self._persist_conflicts(conflicts)
         return conflicts
 
     def promote_source_candidate(
