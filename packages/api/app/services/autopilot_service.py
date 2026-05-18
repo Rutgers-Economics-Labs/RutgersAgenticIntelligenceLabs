@@ -1565,6 +1565,7 @@ async def run_autopilot_loop(project_slug: str):
                 break
 
         task_by_id = {str(t["_id"]): t for t in tasks}
+        control_plane_gate = _control_plane_auditor_gate(auditors)
 
         if config.get("auto_approve") and not control_plane_gate.get("blocked"):
             promoted: list[str] = []
