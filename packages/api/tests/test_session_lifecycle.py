@@ -852,6 +852,85 @@ def test_create_runner_session_rejects_parallel_launch_when_nonconcurrent(tmp_pa
         )
 
 
+def test_create_runner_session_repairs_stale_active_sessions_before_nonconcurrent_block(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Sequential Project")
+    stale_root = session_files.ensure_session_root(tmp_path, "planner", "sess-planner-1")
+    session_files.update_state(stale_root, status="completed")
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "sequential-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    class _FakeRunner:
+        async def create_session(self, task_payload):
+            return {"session_id": "external-default-1", "status": "running"}
+
+    finalized: list[dict[str, Any]] = []
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(
+        running_agent_service,
+        "list_project_running_agents",
+        lambda *args, **kwargs: asyncio.sleep(
+            0,
+            result=[
+                {
+                    "_id": "sess-planner-1",
+                    "role": "planner",
+                    "status": "running",
+                }
+            ],
+        ),
+    )
+    monkeypatch.setattr(
+        running_agent_service,
+        "finalize_running_agent",
+        lambda session_id, *, status, ended_at=None: asyncio.sleep(
+            0,
+            result=finalized.append({"session_id": session_id, "status": status}),
+        ),
+    )
+    monkeypatch.setattr(
+        running_agent_service,
+        "create_running_agent",
+        lambda **kwargs: asyncio.sleep(0, result="sess-new-1"),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_materialize_workspace",
+        lambda **kwargs: asyncio.sleep(0, result={"mode": "linked-worktree"}),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_run_workspace_setup",
+        lambda **kwargs: asyncio.sleep(0, result={"status": "passed", "stdout": "", "stderr": ""}),
+    )
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+
+    result = asyncio.run(
+        session_lifecycle.create_runner_session(
+            project_id="project-1",
+            project_slug="sequential-project",
+            task_id="task-2",
+            runner_name="codex_cli",
+            role="planner",
+            task_description="Produce synthesis",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            local_repo_path=str(tmp_path),
+            allowed_paths=["research_plan", "artifacts"],
+            acceptance_criteria=[],
+            policy_approval_granted=True,
+        )
+    )
+
+    assert result["status"] == "running"
+    assert finalized == [{"session_id": "sess-planner-1", "status": "completed"}]
+
+
 def test_cancel_runner_session_uses_file_backed_state_when_runtime_row_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1127,6 +1127,34 @@ def _read_exit_code(path: Path) -> int | None:
         return 1
 
 
+async def _repair_stale_running_agents_for_project(
+    project: dict[str, Any],
+    active_sessions: list[dict[str, Any]],
+    *,
+    project_root: Path | None,
+) -> list[dict[str, Any]]:
+    if project_root is None or not project_root.exists():
+        return active_sessions
+
+    surviving: list[dict[str, Any]] = []
+    for active_session in active_sessions:
+        session_root = _resolve_session_root_path(active_session, project_root=project_root)
+        if session_root is None or not session_root.exists():
+            surviving.append(active_session)
+            continue
+        state = session_files.read_state(session_root)
+        status = str(state.get("status") or "")
+        if status not in TERMINAL_STATUSES:
+            surviving.append(active_session)
+            continue
+        await running_agent_service.finalize_running_agent(
+            str(active_session["_id"]),
+            status=status,
+            ended_at=int(time.time() * 1000),
+        )
+    return surviving
+
+
 async def _ingest_local_cli_runner_events(
     *,
     convex_session_id: str,
@@ -2051,6 +2079,11 @@ async def create_runner_session(
             project_id,
             active_only=True,
             limit=50,
+        )
+        active_sessions = await _repair_stale_running_agents_for_project(
+            project or {"_id": project_id, "localRepoPath": str(project_root)},
+            active_sessions,
+            project_root=project_root,
         )
         if workspace_config.get("nonconcurrent_run", True) and active_sessions:
             active_session = active_sessions[0]
