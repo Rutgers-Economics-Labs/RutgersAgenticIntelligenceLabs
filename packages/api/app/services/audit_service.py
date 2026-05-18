@@ -164,6 +164,43 @@ def audit_gate_status(project_root: Path) -> dict[str, Any]:
     }
 
 
+async def repair_stale_session_audits(project: dict[str, Any], project_root: Path) -> dict[str, Any]:
+    gate = audit_gate_status(project_root)
+    stale_session_ids = [str(item) for item in (gate.get("staleSessionIds") or []) if item]
+    if not stale_session_ids:
+        return {"repairedSessionIds": []}
+
+    repaired: list[str] = []
+    for session_root in _session_roots(project_root):
+        state = session_files.read_state(session_root)
+        session_id = str(state.get("session_id") or session_root.name)
+        if session_id not in stale_session_ids:
+            continue
+        status = str(state.get("status") or "")
+        if status not in {"completed", "failed", "cancelled"}:
+            continue
+        events = session_files.list_events(session_root)
+        changed_files = [
+            item.get("path")
+            for item in events
+            if item.get("type") == "file_change_detected" and item.get("path")
+        ]
+        await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id=session_id,
+            session={
+                "_id": session_id,
+                "role": state.get("role") or session_root.parent.name,
+                "taskId": state.get("task_id"),
+            },
+            changed_files=list(dict.fromkeys(str(path) for path in changed_files)),
+        )
+        repaired.append(session_id)
+    return {"repairedSessionIds": repaired}
+
+
 async def write_post_run_audit(
     *,
     project: dict[str, Any],

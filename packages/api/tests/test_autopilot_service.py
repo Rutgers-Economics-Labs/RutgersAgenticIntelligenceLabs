@@ -355,6 +355,7 @@ def test_autopilot_blocks_advance_until_audit_is_current(tmp_path: Path, monkeyp
 
     async def _launch_ready_task(project_arg, ready_tasks: list[dict]):
         launches.append({"task_ids": [str(item["_id"]) for item in ready_tasks]})
+        autopilot_service._active_autopilots["soccer-project"] = False
         return {"convex_session_id": "session-1"}
 
     monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
@@ -418,6 +419,68 @@ def test_repair_stale_active_sessions_finalizes_runtime_rows(tmp_path: Path, mon
 
     assert result == {"repairedSessionIds": ["sess-1"]}
     assert finalized == [{"session_id": "sess-1", "status": "completed"}]
+
+
+def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "status": "ready", "localRepoPath": str(tmp_path)}
+    planner_turns: list[str] = []
+    launches: list[dict] = []
+    events: list[dict] = []
+
+    async def _get_project_by_slug(_slug: str):
+        return project
+
+    async def _run_planner_turn(*, project=None, user_message=None, persist=False):
+        planner_turns.append(str(user_message or ""))
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return None
+
+    async def _find_active_worker(project_id: str):
+        return None
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [{"_id": "task-1", "status": "ready", "approvalState": "granted", "dependsOnTaskIds": []}]
+
+    async def _raise_decision_event(project_arg, **kwargs):
+        events.append(kwargs)
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return {"_id": "event-1"}
+
+    async def _launch_ready_task(project_arg, ready_tasks: list[dict]):
+        launches.append({"task_ids": [str(item["_id"]) for item in ready_tasks]})
+        return {"convex_session_id": "session-1"}
+
+    gate_calls = {"count": 0}
+
+    def _audit_gate_status(project_root: Path):
+        gate_calls["count"] += 1
+        return {"blocked": gate_calls["count"] == 1, "reason": "audit stale", "staleSessionIds": ["sess-1"] if gate_calls["count"] == 1 else []}
+
+    async def _repair_stale_session_audits(project_arg, project_root: Path):
+        return {"repairedSessionIds": ["sess-1"]}
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service, "_launch_ready_task", _launch_ready_task)
+    monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
+    monkeypatch.setattr(autopilot_service, "audit_gate_status", _audit_gate_status)
+    monkeypatch.setattr(autopilot_service, "repair_stale_session_audits", _repair_stale_session_audits)
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+    autopilot_service._wake_events["soccer-project"] = asyncio.Event()
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    assert gate_calls["count"] >= 2
+    assert planner_turns
+    assert events == []
 
 
 def test_autopilot_creates_pipeline_population_task_when_pipeline_has_no_steps(tmp_path: Path, monkeypatch):
