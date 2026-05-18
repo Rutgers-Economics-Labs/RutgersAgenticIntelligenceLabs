@@ -1181,6 +1181,22 @@ class ResearchIntegrityRepo:
 
     def _normalize_claim_record_for_write(self, record: ClaimRecord | dict[str, Any]) -> ClaimRecord:
         normalized = ClaimRecord.model_validate(record)
+        known_source_keys = {item.source_key for item in self.load_sources()}
+        known_chunk_keys = {item.chunk_key for item in self.load_evidence_chunks()}
+        valid_evidence_paths = [
+            path
+            for path in normalized.evidence_paths
+            if path and (self.project_root / path).exists()
+        ]
+        valid_source_keys = [key for key in normalized.source_keys if key in known_source_keys]
+        valid_chunk_keys = [key for key in normalized.evidence_chunk_keys if key in known_chunk_keys]
+        normalized = normalized.model_copy(
+            update={
+                "evidence_paths": valid_evidence_paths,
+                "source_keys": valid_source_keys,
+                "evidence_chunk_keys": valid_chunk_keys,
+            }
+        )
         if normalized.status != "supported":
             return normalized
         expected_status = self._default_claim_status(

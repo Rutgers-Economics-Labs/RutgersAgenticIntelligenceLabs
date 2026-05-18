@@ -873,6 +873,54 @@ def test_write_claims_downgrades_supported_status_without_evidence(tmp_path):
     assert stored.status == "needs_evidence"
 
 
+def test_upsert_claim_strips_unknown_references_and_downgrades_supported_status(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    claim = repo.upsert_claim(
+        {
+            "claim_key": "claim-001",
+            "claim_text": "This should not be marked supported yet.",
+            "status": "supported",
+            "evidence_kind": "direct",
+            "evidence_paths": ["topics/missing-evidence.md"],
+            "source_keys": ["missing-source"],
+            "evidence_chunk_keys": ["missing-chunk"],
+        }
+    )
+
+    assert claim.status == "needs_evidence"
+    assert claim.evidence_paths == []
+    assert claim.source_keys == []
+    assert claim.evidence_chunk_keys == []
+
+
+def test_write_claims_strips_unknown_references_before_persisting(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "This should not be marked supported yet.",
+                "status": "supported",
+                "evidence_kind": "direct",
+                "evidence_paths": ["topics/missing-evidence.md"],
+                "source_keys": ["missing-source"],
+                "evidence_chunk_keys": ["missing-chunk"],
+            }
+        ]
+    )
+
+    stored = repo.get_claim("claim-001")
+    assert stored is not None
+    assert stored.status == "needs_evidence"
+    assert stored.evidence_paths == []
+    assert stored.source_keys == []
+    assert stored.evidence_chunk_keys == []
+
+
 def test_upsert_source_downgrades_validated_status_without_provenance(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)
