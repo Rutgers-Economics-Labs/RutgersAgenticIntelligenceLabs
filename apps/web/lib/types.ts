@@ -430,6 +430,7 @@ export type CommandCenter = {
     staleAuditSessionCount: number;
     terminalSessionCount: number;
     activeRuntimeSessionCount: number;
+    runningAgentStatusDriftCount?: number;
     ontologyArtifactDriftCount?: number;
     artifactRegistryDriftCount?: number;
     secretPolicyRoleDriftCount?: number;
@@ -441,6 +442,14 @@ export type CommandCenter = {
       staleAuditSessionIds: string[];
       terminalSessionIds: string[];
       activeRuntimeSessionIds: string[];
+      runningAgentStatusDrift?: {
+        hasDrift: boolean;
+        sessions: Array<{
+          sessionId: string;
+          status: string;
+          canonicalStatus: string;
+        }>;
+      };
       ontologyArtifactDrift?: {
         hasDrift: boolean;
         activeDuckdbPath?: string | null;

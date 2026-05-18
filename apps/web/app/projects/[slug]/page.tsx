@@ -100,6 +100,7 @@ export default async function ProjectHomePage({
         <InlineStatus label="task mismatches" value={center.projectReality?.taskSessionMismatchCount ?? 0} />
         <InlineStatus label="stale runtime" value={center.projectReality?.staleRuntimeSessionCount ?? 0} />
         <InlineStatus label="stale audits" value={center.projectReality?.staleAuditSessionCount ?? 0} />
+        <InlineStatus label="session status drift" value={center.projectReality?.runningAgentStatusDriftCount ?? 0} />
         <InlineStatus label="duplicate tasks" value={center.projectReality?.duplicateTaskFileCount ?? 0} />
         <InlineStatus label="ontology drift" value={center.projectReality?.ontologyArtifactDriftCount ?? 0} />
         <InlineStatus label="artifact drift" value={center.projectReality?.artifactRegistryDriftCount ?? 0} />
@@ -123,6 +124,15 @@ export default async function ProjectHomePage({
           <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
             {center.projectReality.details.staleRuntimeSessionIds.slice(0, 5).map((item) => (
               <div key={item} className="mono-muted">stale runtime: {item}</div>
+            ))}
+          </div>
+        ) : null}
+        {center.projectReality?.details?.runningAgentStatusDrift?.hasDrift ? (
+          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
+            {center.projectReality.details.runningAgentStatusDrift.sessions.slice(0, 5).map((item) => (
+              <div key={`${item.sessionId}-${item.canonicalStatus}`} className="mono-muted">
+                session status drift: {item.sessionId} · {item.status} -&gt; {item.canonicalStatus}
+              </div>
             ))}
           </div>
         ) : null}
