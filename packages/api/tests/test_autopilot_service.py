@@ -2371,11 +2371,12 @@ def test_ensure_control_plane_repair_tasks_creates_reconcile_task(tmp_path: Path
     assert changed is True
     assert created[0]["title"] == "Reconcile control-plane drift and stale sessions"
     assert created[0]["agent_role"] == "health"
+    assert "stale or missing post-run audits" in str(created[0]["description"])
     assert "non-canonical secret policy role mappings" in str(created[0]["description"])
     assert "non-canonical role config aliases" in str(created[0]["description"])
     assert "non-canonical running-agent session statuses" in str(created[0]["description"])
     assert "non-canonical running-agent session roles" in str(created[0]["description"])
-    assert "duplicate task files, task/session mismatches, running-agent status drift, running-agent role drift, running-agent runner drift, secret policy role drift, and role config alias drift are reconciled" in created[0]["acceptance_criteria"]
+    assert "duplicate task files, task/session mismatches, stale session audits, running-agent status drift, running-agent role drift, running-agent runner drift, secret policy role drift, and role config alias drift are reconciled" in created[0]["acceptance_criteria"]
     assert synced == [True]
 
 

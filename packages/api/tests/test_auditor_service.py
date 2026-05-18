@@ -62,7 +62,7 @@ frontend:
             "runningAgentStatusDriftCount": 1,
             "runningAgentRoleDriftCount": 1,
             "runningAgentRunnerDriftCount": 1,
-            "staleAuditSessionCount": 0,
+            "staleAuditSessionCount": 1,
             "terminalSessionCount": 1,
             "activeRuntimeSessionCount": 1,
             "roleConfigAliasDriftCount": 1,
@@ -96,6 +96,7 @@ frontend:
     assert "1 running-agent session role alias row(s) detected." in result["session"]["blockers"]
     assert "1 running-agent session runner alias row(s) detected." in result["session"]["blockers"]
     assert result["planner"]["status"] == "blocked"
+    assert "1 terminal session audit(s) are stale or missing." in result["planner"]["blockers"]
     assert "1 role config alias declaration(s) detected." in result["planner"]["blockers"]
     assert result["ontology"]["status"] == "blocked"
     assert result["integrity"]["status"] == "ready"
@@ -343,7 +344,7 @@ frontend:
             "runningAgentStatusDriftCount": 1,
             "runningAgentRoleDriftCount": 1,
             "runningAgentRunnerDriftCount": 1,
-            "staleAuditSessionCount": 0,
+            "staleAuditSessionCount": 1,
             "terminalSessionCount": 0,
             "activeRuntimeSessionCount": 0,
             "secretPolicyRoleDriftCount": 1,
@@ -388,6 +389,7 @@ frontend:
     assert result["ontology"]["status"] == "blocked"
     assert "Active ontology artifact pointer drift detected: active_ontology_pointer_out_of_date." in result["ontology"]["blockers"]
     assert result["planner"]["status"] == "blocked"
+    assert "1 terminal session audit(s) are stale or missing." in result["planner"]["blockers"]
     assert "1 agent secret policy role alias row(s) detected." in result["planner"]["blockers"]
     assert "1 role config alias declaration(s) detected." in result["planner"]["blockers"]
     assert result["integrity"]["status"] == "blocked"
