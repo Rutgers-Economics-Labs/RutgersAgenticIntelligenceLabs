@@ -70,7 +70,7 @@ from app.services.integrity_service import (
     update_source_and_mark_stale,
     update_assumption_and_mark_stale,
 )
-from app.services.role_runtime_service import load_role_runtime_config
+from app.services.role_runtime_service import ROLE_ALIASES, load_role_runtime_config
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy, is_write_capable
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -409,6 +409,7 @@ ALLOWED_APPROVAL_STATUSES = {"pending", "granted", "rejected", "approved"}
 ALLOWED_APPROVAL_TYPES = {"run_task"}
 ALLOWED_TASK_RUNNERS = {"default", "jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
 ALLOWED_TASK_PRIORITIES = {"high", "medium", "low"}
+ALLOWED_TASK_AGENT_ROLES = {"research", "data", "coding", "artifact", "health", "planner"}
 
 
 def _validate_trusted_source_contract(
@@ -506,6 +507,17 @@ def _validate_planner_task_priority(priority: str | None) -> None:
             status_code=422,
             detail="Planner task priority must be one of: high, medium, low.",
         )
+
+
+def _normalize_planner_task_agent_role(agent_role: str | None) -> str:
+    normalized = str(agent_role or "").strip().lower()
+    normalized = ROLE_ALIASES.get(normalized, normalized)
+    if normalized not in ALLOWED_TASK_AGENT_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail="Planner task agent role must be one of: research, data, coding, artifact, health, planner.",
+        )
+    return normalized
 
 
 def _validate_approval_status(status: str | None) -> None:
@@ -2240,6 +2252,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
     _validate_planner_task_approval_state(data.approvalState)
     _validate_planner_task_runner(data.runner)
     _validate_planner_task_priority(data.priority)
+    agent_role = _normalize_planner_task_agent_role(data.agentRole)
     board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
         project=project,
@@ -2247,7 +2260,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
         title=data.title,
         description=data.description,
         status=data.status,
-        agent_role=data.agentRole,
+        agent_role=agent_role,
         repo_paths=data.repoPaths,
         acceptance_criteria=data.acceptanceCriteria,
         depends_on_task_ids=data.dependsOnTaskIds,

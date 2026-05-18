@@ -269,6 +269,69 @@ def test_update_planner_task_rejects_unknown_priority(monkeypatch):
     assert "Planner task priority must be one of" in response.json()["detail"]
 
 
+def test_create_planner_task_rejects_unknown_agent_role(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/planner/tasks",
+        json={
+            "title": "Bad task",
+            "description": "Should fail",
+            "status": "backlog",
+            "agentRole": "writer",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Planner task agent role must be one of" in response.json()["detail"]
+
+
+def test_create_planner_task_normalizes_agent_role_alias(monkeypatch):
+    import app.routers.projects as projects_router
+
+    created: list[dict] = []
+    synced: list[bool] = []
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _ensure_main_board(project_arg, session_id=None):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": "task-1", "agentRole": kwargs["agent_role"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(projects_router.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(projects_router.planner_service, "sync_planner_files", _sync_planner_files)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/planner/tasks",
+        json={
+            "title": "Alias task",
+            "description": "Should normalize role alias",
+            "status": "backlog",
+            "agentRole": "developer",
+        },
+    )
+
+    assert response.status_code == 200
+    assert created[0]["agent_role"] == "coding"
+    assert response.json()["agentRole"] == "coding"
+    assert synced == [True]
+
+
 def test_create_project_approval_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 
