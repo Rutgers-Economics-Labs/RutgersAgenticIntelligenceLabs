@@ -56,6 +56,11 @@ def _normalize_runner_name(name: str | None, default_name: str) -> str:
     return normalized
 
 
+def _canonicalize_role(role: str | None, default_role: str) -> str:
+    normalized = str(role or default_role).strip().lower()
+    return ROLE_ALIASES.get(normalized, normalized)
+
+
 def load_role_runtime_config(project: dict[str, Any], role: str) -> RoleRuntimeConfig:
     project_root = _project_root(project)
     manifest = load_manifest(project_root)
@@ -73,7 +78,7 @@ def load_role_runtime_config(project: dict[str, Any], role: str) -> RoleRuntimeC
     system_prompt, checklist_prompt = load_agent_prompts(role_path.read_text(encoding="utf-8"), project_root)
 
     return RoleRuntimeConfig(
-        role=raw.get("role") or canonical_role,
+        role=_canonicalize_role(raw.get("role"), canonical_role),
         label=raw.get("label") or canonical_role.title(),
         purpose=raw.get("purpose") or "",
         policy=policy,

@@ -10,7 +10,7 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def test_load_role_runtime_config_reads_runner_and_skills(tmp_path: Path):
+def _bootstrap_manifest(tmp_path: Path) -> None:
     _write(
         tmp_path / "rail.yaml",
         """
@@ -48,6 +48,10 @@ frontend:
   default_home_view: project_home
 """.strip(),
     )
+
+
+def test_load_role_runtime_config_reads_runner_and_skills(tmp_path: Path):
+    _bootstrap_manifest(tmp_path)
     _write(tmp_path / "agents" / "prompts" / "planner.md", "# planner prompt")
     _write(tmp_path / "agents" / "checklists" / "planner.md", "- verify")
     _write(
@@ -93,3 +97,45 @@ completion:
 
     skills = read_project_skills(project)
     assert skills[0]["path"] == "skills/repo-contract.md"
+
+
+def test_load_role_runtime_config_normalizes_legacy_role_alias_from_yaml(tmp_path: Path):
+    _bootstrap_manifest(tmp_path)
+    _write(tmp_path / "agents" / "prompts" / "coding.md", "# coding prompt")
+    _write(tmp_path / "agents" / "checklists" / "coding.md", "- ship")
+    _write(
+        tmp_path / "agents" / "coding.yaml",
+        """
+role: developer
+label: Coding Agent
+purpose: Build features.
+runner:
+  default: codex_cli
+  approval_required: true
+  bash_access: true
+threading:
+  mode: task_scoped
+permissions:
+  read: [specs]
+  write: [packages]
+  deny: []
+secrets:
+  allow: []
+skills:
+  allow_use: true
+tools:
+  allow: [read_repo]
+  deny: []
+prompts:
+  system: agents/prompts/coding.md
+  checklist: agents/checklists/coding.md
+completion:
+  requires: [task_documented]
+""".strip(),
+    )
+
+    project = {"localRepoPath": str(tmp_path), "slug": "demo", "name": "Demo"}
+    config = load_role_runtime_config(project, "coding")
+
+    assert config.role == "coding"
+    assert summarize_role_config(config)["role"] == "coding"
