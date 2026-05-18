@@ -261,3 +261,32 @@ def test_local_cli_list_events_recovers_detached_file_backed_state(tmp_path, mon
     assert events[0].normalized_payload["content"] == "Reading README"
     assert events[1].event_type == RunnerEventType.FILE_CHANGE_DETECTED
     assert events[1].normalized_payload["path"] == "notes.md"
+
+
+def test_local_cli_cancel_recovers_detached_file_backed_state(tmp_path, monkeypatch):
+    root = session_files.ensure_session_root(tmp_path, "coding", "sess-detached")
+    session_files.update_state(root, status="running")
+    runtime = runner_runtime_paths(str(root))
+    runtime["root"].mkdir(parents=True, exist_ok=True)
+    runtime["command"].write_text(
+        '{"session_id":"cursor_cli_detached","runner":"cursor_cli","command":["agent","-p","hello"],"cwd":"/tmp/repo"}\n',
+        encoding="utf-8",
+    )
+    runtime["pid"].write_text("12345\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    kill_calls: list[tuple[int, int]] = []
+    monkeypatch.setattr("os.kill", lambda pid, sig: kill_calls.append((pid, sig)))
+
+    runner = CursorCliRunner(command="agent")
+
+    import asyncio
+
+    asyncio.run(runner.cancel("cursor_cli_detached"))
+
+    state = session_files.read_state(root)
+    events = session_files.list_events(root)
+    assert kill_calls
+    assert kill_calls[0][0] == 12345
+    assert state["status"] == "cancelled"
+    assert events[-1]["type"] == "cancelled"

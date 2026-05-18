@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import shlex
 import shutil
 import subprocess
@@ -857,7 +858,36 @@ class LocalCLIRunner(BaseRunner):
     async def cancel(self, session_id: str) -> None:
         session = self._sessions.get(session_id)
         if not session:
-            raise ValueError(f"Unknown session: {session_id}")
+            detached = self._detached_session_snapshot(session_id)
+            if detached is None:
+                raise ValueError(f"Unknown session: {session_id}")
+            runtime_paths = detached["runtime_paths"]
+            pid = None
+            if runtime_paths["pid"].exists():
+                try:
+                    pid = int(runtime_paths["pid"].read_text(encoding="utf-8").strip() or "0")
+                except ValueError:
+                    pid = None
+            if pid and pid > 0:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    pass
+            try:
+                from app.services import session_files
+
+                session_files.append_event(
+                    detached["root"],
+                    "cancelled",
+                    content="Session cancelled by user.",
+                    status="cancelled",
+                )
+                session_files.update_state(detached["root"], status="cancelled", review_status="needs_changes")
+            except Exception:
+                pass
+            return
         if session.process and session.process.returncode is None:
             session.process.terminate()
         session.status = "cancelled"
