@@ -49,6 +49,36 @@ def _render_prompt_template(template: str, values: dict[str, str]) -> str:
     return rendered
 
 
+def _is_ontology_project(project: dict[str, Any]) -> bool:
+    root = planner_service.project_root_from_record(project)
+    if project.get("approach") == "ontology-first":
+        return True
+    if root is None:
+        return False
+    return (root / ".ontology").exists()
+
+
+def _ontology_expansion_guidance(project: dict[str, Any]) -> str:
+    if not _is_ontology_project(project):
+        return ""
+    return (
+        "\n## Ontology Expansion Contract\n\n"
+        "- For each follow-up research question, classify it as exactly one of:\n"
+        "  - `answerable_now`\n"
+        "  - `answerable_after_requery`\n"
+        "  - `answerable_after_expansion`\n"
+        "  - `blocked_by_data`\n"
+        "- If a question is `answerable_after_expansion`, create explicit ontology-expansion work instead of hand-waving:\n"
+        "  - source discovery or access tasks\n"
+        "  - `.ontology/sources` config tasks\n"
+        "  - `.ontology/pipelines` or transform tasks\n"
+        "  - ontology health verification tasks\n"
+        "- If a question is `blocked_by_data`, record the missing source, access blocker, or licensing blocker explicitly.\n"
+        "- Do not launch downstream research or final synthesis when the real blocker is missing ontology coverage.\n"
+        "- Prefer durable expansion tasks in `research_plan/` over speculative analysis without hydrated support.\n"
+    )
+
+
 def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[str, Any]], skills: list[dict[str, str]]) -> str:
     role_lines = "\n".join(
         (
@@ -63,7 +93,7 @@ def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[st
     skill_lines = "\n".join(f"- {item['path']}" for item in skills) or "- no project skills found"
     prompt_path = _ensure_project_planner_prompt(project)
     template = prompt_path.read_text(encoding="utf-8") if prompt_path else _default_planner_prompt()
-    return _render_prompt_template(
+    rendered = _render_prompt_template(
         template,
         {
             "project_name": str(project.get("name") or "Untitled Project"),
@@ -72,6 +102,7 @@ def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[st
             "skill_lines": skill_lines,
         },
     )
+    return rendered + _ontology_expansion_guidance(project)
 
 
 def _planner_tools() -> list[dict[str, Any]]:

@@ -207,3 +207,30 @@ def test_planner_system_prompt_includes_role_checklist_contracts():
 
     assert "checklist=agents/checklists/research.md" in prompt
     assert "completion=task_documented, evidence_recorded" in prompt
+
+
+def test_planner_system_prompt_includes_ontology_expansion_contract(tmp_path: Path):
+    project = {
+        "name": "Demo",
+        "slug": "demo",
+        "localRepoPath": str(tmp_path),
+    }
+    (tmp_path / ".ontology").mkdir(parents=True, exist_ok=True)
+
+    prompt = planner_runtime._planner_system_prompt(project, [], [])
+
+    assert "Ontology Expansion Contract" in prompt
+    assert "`answerable_after_expansion`" in prompt
+    assert "Do not launch downstream research or final synthesis when the real blocker is missing ontology coverage." in prompt
+
+
+def test_planner_system_prompt_skips_ontology_expansion_contract_for_non_ontology_project(tmp_path: Path):
+    project = {
+        "name": "Demo",
+        "slug": "demo",
+        "localRepoPath": str(tmp_path),
+    }
+
+    prompt = planner_runtime._planner_system_prompt(project, [], [])
+
+    assert "Ontology Expansion Contract" not in prompt
