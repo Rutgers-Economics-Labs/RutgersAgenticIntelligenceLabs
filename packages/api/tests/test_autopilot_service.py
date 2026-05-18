@@ -111,12 +111,61 @@ def test_start_autopilot_marks_project_completed_when_all_tasks_terminal(monkeyp
     monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", _mark_project_completed)
+    monkeypatch.setattr(autopilot_service, "_closeout_gate", lambda project_arg, tasks: asyncio.sleep(0, result={"blocked": False, "reason": None}))
 
     asyncio.run(autopilot_service.start_autopilot("soccer-project"))
 
     assert completions == [project]
     assert planner_turns == []
     assert autopilot_service._active_autopilots.get("soccer-project") is False
+
+
+def test_autopilot_does_not_complete_when_closeout_gate_is_blocked(monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "status": "draft", "pipelineConfigSlug": "soccer-pipeline"}
+    completions: list[dict] = []
+    events: list[dict] = []
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _run_planner_turn(**kwargs):
+        return None
+
+    async def _find_active_worker(project_id: str):
+        return None
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [{"_id": "task-1", "status": "done", "dependsOnTaskIds": []}]
+
+    async def _mark_project_completed(project_arg):
+        completions.append(project_arg)
+        return None
+
+    async def _raise_decision_event(project_arg, **kwargs):
+        events.append(kwargs)
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return {"_id": "event-1"}
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service, "_mark_project_completed", _mark_project_completed)
+    monkeypatch.setattr(
+        autopilot_service,
+        "_closeout_gate",
+        lambda project_arg, tasks: asyncio.sleep(0, result={"blocked": True, "reason": "Integrity closeout gate is blocked."}),
+    )
+    monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
+
+    asyncio.run(autopilot_service.start_autopilot("soccer-project"))
+
+    assert completions == []
+    assert events and events[0]["event_type"] == "closeout_gate_blocked"
 
 
 def test_mark_project_completed_uses_repo_pipeline_when_project_record_is_stale(tmp_path, monkeypatch):

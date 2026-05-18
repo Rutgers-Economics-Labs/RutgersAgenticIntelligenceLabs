@@ -13,6 +13,7 @@ from app.services.audit_service import audit_gate_status
 from app.services.convex_client import convex
 from app.services.decision_service import list_decision_events, mark_decision_event, raise_decision_event
 from app.services.hydration_registry_service import get_hydration_status
+from app.services.integrity_service import evaluate_integrity_gate
 from rail.manifest import load_manifest
 import yaml
 
@@ -491,6 +492,52 @@ async def _mark_project_completed(project: dict[str, Any]) -> None:
     except Exception as exc:
         logger.warning("Failed to mark project %s terminal status %s: %s", project.get("slug"), derived_status, exc)
 
+
+async def _ontology_health_gate(project: dict[str, Any]) -> dict[str, Any]:
+    if not _is_ontology_project(project):
+        return {"blocked": False, "reason": None}
+    try:
+        hydration = await get_hydration_status(project=project)
+    except Exception as exc:
+        return {"blocked": True, "reason": f"Could not read hydration status: {exc}"}
+    state = hydration.get("state")
+    duckdb_path = _hydration_duckdb_path(hydration) or project.get("activeOntologyDuckdbPath")
+    if state not in ONTOLOGY_READY_STATES:
+        return {"blocked": True, "reason": f"Ontology hydration state is `{state}`."}
+    if not _duckdb_has_populated_rows(duckdb_path) and not _ontology_has_populated_rows(project):
+        return {"blocked": True, "reason": "Ontology artifact exists but does not contain populated rows."}
+    return {"blocked": False, "reason": None}
+
+
+async def _closeout_gate(project: dict[str, Any], tasks: list[dict[str, Any]]) -> dict[str, Any]:
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    if not project_root or not project_root.exists():
+        return {"blocked": True, "reason": "Project repo root is unavailable for closeout."}
+
+    active_sessions = await running_agent_service.list_project_running_agents(
+        project["_id"],
+        active_only=True,
+        limit=50,
+    )
+    if active_sessions:
+        return {"blocked": True, "reason": f"{len(active_sessions)} active session(s) still exist."}
+
+    unfinished = [task for task in tasks if task.get("status") not in {"done", "cancelled"}]
+    if unfinished:
+        return {"blocked": True, "reason": f"{len(unfinished)} non-terminal task(s) remain."}
+
+    ontology_gate = await _ontology_health_gate(project)
+    if ontology_gate.get("blocked"):
+        return ontology_gate
+
+    manifest = load_manifest(project_root)
+    integrity_gate = evaluate_integrity_gate(project_root, manifest, action="closeout")
+    if integrity_gate.get("blocked"):
+        reasons = integrity_gate.get("reasons") or []
+        return {"blocked": True, "reason": str(reasons[0] if reasons else "Integrity closeout gate is blocked.")}
+
+    return {"blocked": False, "reason": None}
+
 async def start_autopilot(project_slug: str, auto_approve: bool = False):
     """
     Starts the autopilot loop for a project if not already running.
@@ -606,14 +653,30 @@ async def run_autopilot_loop(project_slug: str):
 
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
-            logger.info("Autopilot: All tasks are completed. Project goal reached.")
-            _update_config(
-                project_slug,
-                last_action="Completed",
-                last_turn_result="All planner tasks reached terminal status.",
-            )
-            await _mark_project_completed(project)
-            break
+            closeout_gate = await _closeout_gate(project, tasks)
+            if closeout_gate.get("blocked"):
+                await raise_decision_event(
+                    project,
+                    source="autopilot",
+                    event_type="closeout_gate_blocked",
+                    severity="needs_planner",
+                    summary=str(closeout_gate.get("reason") or "Closeout gate blocked autopilot completion."),
+                    evidence_refs=[f"project:{project.get('slug')}"],
+                    recommended_actions=[
+                        "Repair closeout blockers",
+                        "Refresh ontology or integrity state",
+                        "Advance only after closeout gate passes",
+                    ],
+                )
+            else:
+                logger.info("Autopilot: All tasks are completed. Project goal reached.")
+                _update_config(
+                    project_slug,
+                    last_action="Completed",
+                    last_turn_result="All planner tasks reached terminal status and closeout gate passed.",
+                )
+                await _mark_project_completed(project)
+                break
 
         # 2. Run the planner to see what it wants to do
         _update_config(project_slug, last_action="Running Planner: Determining next task...")
@@ -674,14 +737,30 @@ async def run_autopilot_loop(project_slug: str):
         # If everything is 'done' or 'cancelled', we are finished
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
-            logger.info("Autopilot: All tasks are completed. Project goal reached.")
-            _update_config(
-                project_slug,
-                last_action="Completed",
-                last_turn_result="All planner tasks reached terminal status.",
-            )
-            await _mark_project_completed(project)
-            break
+            closeout_gate = await _closeout_gate(project, tasks)
+            if closeout_gate.get("blocked"):
+                await raise_decision_event(
+                    project,
+                    source="autopilot",
+                    event_type="closeout_gate_blocked",
+                    severity="needs_planner",
+                    summary=str(closeout_gate.get("reason") or "Closeout gate blocked autopilot completion."),
+                    evidence_refs=[f"project:{project.get('slug')}"],
+                    recommended_actions=[
+                        "Repair closeout blockers",
+                        "Refresh ontology or integrity state",
+                        "Advance only after closeout gate passes",
+                    ],
+                )
+            else:
+                logger.info("Autopilot: All tasks are completed. Project goal reached.")
+                _update_config(
+                    project_slug,
+                    last_action="Completed",
+                    last_turn_result="All planner tasks reached terminal status and closeout gate passed.",
+                )
+                await _mark_project_completed(project)
+                break
 
         task_by_id = {str(t["_id"]): t for t in tasks}
 
