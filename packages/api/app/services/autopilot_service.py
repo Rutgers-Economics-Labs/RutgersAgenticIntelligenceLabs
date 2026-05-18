@@ -13,7 +13,7 @@ from app.services.audit_service import audit_gate_status
 from app.services.convex_client import convex
 from app.services.decision_service import list_decision_events, mark_decision_event, raise_decision_event
 from app.services.hydration_registry_service import get_hydration_status
-from app.services.integrity_service import evaluate_integrity_gate
+from app.services.integrity_service import evaluate_integrity_gate, summarize_agent_workflow_health
 from app.services.auditor_service import build_auditor_statuses
 from app.services.reconciliation_service import (
     project_reality_status,
@@ -503,6 +503,49 @@ async def _ensure_project_reality_repair_tasks(project: dict[str, Any], tasks: l
     return changed
 
 
+async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        return False
+    workflow = summarize_agent_workflow_health(root)
+    health = workflow.get("health") or {}
+    inadmissible_sources = [str(item) for item in (health.get("inadmissibleSources") or []) if str(item).strip()]
+    if not inadmissible_sources:
+        return False
+
+    board = await planner_service.ensure_main_board(project)
+    task_title = "Resolve inadmissible sources for trusted outputs"
+    if any(str(task.get("title") or "") == task_title for task in tasks):
+        return False
+
+    await planner_service.create_task(
+        project=project,
+        board_id=board["_id"],
+        title=task_title,
+        description=(
+            "Repair source admissibility blockers that prevent trusted promotion. "
+            "Each inadmissible source should be upgraded to an admissible state with real evidence, "
+            "or the dependent claims and artifacts should be downgraded so they are no longer treated as trusted outputs."
+        ),
+        status="ready",
+        agent_role="health",
+        repo_paths=["research_plan/state", ".ontology/sources", "artifacts", "topics"],
+        acceptance_criteria=[
+            "every inadmissible source is either repaired to an admissible state or explicitly removed from trusted promotion paths",
+            "affected claims and artifacts are downgraded, rerouted, or re-evidenced so integrity no longer reports inadmissible sources",
+            "the repair notes why each source was inadmissible and what changed",
+        ],
+        runner="codex_cli",
+    )
+    await planner_service.sync_planner_files(project, board)
+    logger.info(
+        "Autopilot: ensured integrity repair task for inadmissible sources on %s (%s)",
+        project.get("slug"),
+        ", ".join(inadmissible_sources[:3]),
+    )
+    return True
+
+
 async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
     if not _is_ontology_project(project):
         return False
@@ -896,6 +939,10 @@ async def run_autopilot_loop(project_slug: str):
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_project_reality_repair_tasks(project, tasks):
+            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            consecutive_idle_turns = 0
+            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+        if await _ensure_integrity_repair_tasks(project, tasks):
             tasks = await planner_service.list_tasks(board["_id"], project=project)
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
