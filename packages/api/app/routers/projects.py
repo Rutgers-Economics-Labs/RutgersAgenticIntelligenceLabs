@@ -306,6 +306,7 @@ class IntegritySourceUpdateRequest(BaseModel):
     freshnessStatus: str | None = None
     impactLevel: str | None = None
     qualityStatus: str | None = None
+    admissibilityStatus: str | None = None
     provenance: dict | None = None
     qualityNotes: str | None = None
     notes: str | None = None
@@ -1372,6 +1373,14 @@ async def patch_project_integrity_source(slug: str, source_key: str, data: Integ
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    if data.qualityStatus == "validated" and data.admissibilityStatus not in {"observed", "derived"}:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Validated sources require explicit admissibility state. "
+                "Use `observed` or `derived` for trusted source records."
+            ),
+        )
     changes = {
         key: value
         for key, value in {
@@ -1384,6 +1393,7 @@ async def patch_project_integrity_source(slug: str, source_key: str, data: Integ
             "freshness_status": data.freshnessStatus,
             "impact_level": data.impactLevel,
             "quality_status": data.qualityStatus,
+            "admissibility_status": data.admissibilityStatus,
             "provenance": data.provenance,
             "quality_notes": data.qualityNotes,
             "notes": data.notes,
