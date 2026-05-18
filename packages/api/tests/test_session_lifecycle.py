@@ -931,6 +931,121 @@ def test_create_runner_session_repairs_stale_active_sessions_before_nonconcurren
     assert finalized == [{"session_id": "sess-planner-1", "status": "completed"}]
 
 
+def test_create_runner_session_blocks_research_launch_when_ontology_auditor_is_blocked(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Ontology Gate Project")
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "ontology-gate-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(
+        running_agent_service,
+        "list_project_running_agents",
+        lambda *args, **kwargs: asyncio.sleep(0, result=[]),
+    )
+
+    async def _build_auditor_statuses(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _build_auditor_statuses)
+
+    with pytest.raises(RuntimeError, match="Ontology hydration state is `not_hydrated`\\."):
+        asyncio.run(
+            session_lifecycle.create_runner_session(
+                project_id="project-1",
+                project_slug="ontology-gate-project",
+                task_id="task-2",
+                runner_name="codex_cli",
+                role="research",
+                task_description="Write narrative findings",
+                repo_url="https://github.com/example/repo",
+                branch="main",
+                local_repo_path=str(tmp_path),
+                allowed_paths=["research_plan", "artifacts"],
+                acceptance_criteria=[],
+                policy_approval_granted=True,
+            )
+        )
+
+
+def test_create_runner_session_allows_repair_launch_when_ontology_auditor_is_blocked(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Ontology Gate Project")
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "ontology-gate-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    class _FakeRunner:
+        async def create_session(self, task_payload):
+            return {"session_id": "external-default-1", "status": "running"}
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(
+        running_agent_service,
+        "list_project_running_agents",
+        lambda *args, **kwargs: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        running_agent_service,
+        "create_running_agent",
+        lambda **kwargs: asyncio.sleep(0, result="sess-new-1"),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_materialize_workspace",
+        lambda **kwargs: asyncio.sleep(0, result={"mode": "linked-worktree"}),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_run_workspace_setup",
+        lambda **kwargs: asyncio.sleep(0, result={"status": "passed", "stdout": "", "stderr": ""}),
+    )
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+
+    async def _build_auditor_statuses(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _build_auditor_statuses)
+
+    result = asyncio.run(
+        session_lifecycle.create_runner_session(
+            project_id="project-1",
+            project_slug="ontology-gate-project",
+            task_id="task-2",
+            runner_name="codex_cli",
+            role="data",
+            task_description="Repair pipeline and hydrate ontology",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            local_repo_path=str(tmp_path),
+            allowed_paths=[".ontology", "research_plan"],
+            acceptance_criteria=[],
+            policy_approval_granted=True,
+        )
+    )
+
+    assert result["status"] == "running"
+
+
 def test_cancel_runner_session_uses_file_backed_state_when_runtime_row_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

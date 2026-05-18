@@ -113,6 +113,42 @@ def _should_retry_false_publish_failure(state: dict[str, Any]) -> bool:
         and state.get("verification_status") in {"passed", "skipped"}
         and state.get("review_status") == "needs_changes"
     )
+
+
+def _runner_launch_blocked_by_auditors(
+    role: str,
+    task_description: str,
+    auditors: dict[str, Any] | None,
+) -> str | None:
+    auditors = auditors or {}
+    session_auditor = auditors.get("session") or {}
+    planner_auditor = auditors.get("planner") or {}
+    ontology_auditor = auditors.get("ontology") or {}
+    integrity_auditor = auditors.get("integrity") or {}
+
+    for auditor in (session_auditor, planner_auditor):
+        if auditor.get("status") == "blocked":
+            blockers = [str(item) for item in (auditor.get("blockers") or []) if item]
+            if blockers:
+                return blockers[0]
+
+    role_name = str(role or "").strip().lower()
+    description = str(task_description or "").strip().lower()
+
+    if ontology_auditor.get("status") == "blocked":
+        if role_name not in {"planner", "data", "health"}:
+            blockers = [str(item) for item in (ontology_auditor.get("blockers") or []) if item]
+            return blockers[0] if blockers else "Ontology auditor blocked this launch."
+
+    if integrity_auditor.get("status") == "blocked":
+        allowed_roles = {"planner", "health", "data", "coding"}
+        if role_name not in allowed_roles and not any(
+            token in description for token in ("verify", "evidence", "source", "provenance", "claim")
+        ):
+            blockers = [str(item) for item in (integrity_auditor.get("blockers") or []) if item]
+            return blockers[0] if blockers else "Integrity auditor blocked this launch."
+
+    return None
 STATE_INDEX_FILE_NAMES = (
     "assumptions.json",
     "sources.json",
@@ -2092,6 +2128,17 @@ async def create_runner_session(
                 "Sequential execution enforced: "
                 f"{active_role} session {active_session['_id']} is still active"
             )
+        if project:
+            from app.services.auditor_service import build_auditor_statuses
+
+            auditors = await build_auditor_statuses(
+                project,
+                tasks=None,
+                active_sessions=active_sessions,
+            )
+            auditor_blocker = _runner_launch_blocked_by_auditors(role, task_description, auditors)
+            if auditor_blocker:
+                raise RuntimeError(auditor_blocker)
 
     if project:
         role_config = None
