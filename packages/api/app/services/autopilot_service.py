@@ -509,9 +509,13 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
         return False
     workflow = summarize_agent_workflow_health(root)
     data = workflow.get("data") or {}
+    coding = workflow.get("coding") or {}
     health = workflow.get("health") or {}
     datasets_missing_provenance = [str(item) for item in (data.get("datasetsMissingProvenance") or []) if str(item).strip()]
     datasets_missing_freshness = [str(item) for item in (data.get("datasetsMissingFreshness") or []) if str(item).strip()]
+    artifacts_missing_lineage = [str(item) for item in (coding.get("artifactsMissingLineage") or []) if str(item).strip()]
+    artifacts_missing_verification_commands = [str(item) for item in (coding.get("artifactsMissingVerificationCommands") or []) if str(item).strip()]
+    artifacts_missing_verification = [str(item) for item in (coding.get("artifactsMissingVerification") or []) if str(item).strip()]
     missing_evidence_claims = [str(item) for item in (health.get("missingEvidenceClaims") or []) if str(item).strip()]
     stale_sources = [str(item) for item in (health.get("staleSources") or []) if str(item).strip()]
     failed_verification_runs = [str(item) for item in (health.get("failedVerificationRuns") or []) if str(item).strip()]
@@ -525,6 +529,9 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
         and not reproducibility_gaps
         and not datasets_missing_provenance
         and not datasets_missing_freshness
+        and not artifacts_missing_lineage
+        and not artifacts_missing_verification_commands
+        and not artifacts_missing_verification
     ):
         return False
 
@@ -550,6 +557,30 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
                     "datasets missing provenance are linked to explicit source records",
                     "datasets missing freshness metadata record a current freshness state or are left explicitly blocked",
                     "trusted datasets no longer depend on missing provenance or freshness metadata",
+                ],
+                runner="codex_cli",
+            )
+            live_titles.add(task_title)
+            changed = True
+
+    if artifacts_missing_lineage or artifacts_missing_verification_commands or artifacts_missing_verification:
+        task_title = "Repair analysis lineage and verification metadata"
+        if task_title not in live_titles:
+            await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Repair analysis artifact metadata before trusted promotion. "
+                    "Deterministic analyses should declare their inputs, scripts, verification commands, and verification runs."
+                ),
+                status="ready",
+                agent_role="coding",
+                repo_paths=["research_plan/state", "artifacts", "topics"],
+                acceptance_criteria=[
+                    "analysis artifacts missing lineage declare their scripts and inputs",
+                    "deterministic analyses record verification commands where applicable",
+                    "analysis artifacts no longer rely on missing verification runs for trusted promotion",
                 ],
                 runner="codex_cli",
             )
@@ -679,10 +710,13 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     if changed:
         await planner_service.sync_planner_files(project, board)
         logger.info(
-            "Autopilot: ensured integrity repair tasks for %s (dataset_provenance=%s, dataset_freshness=%s, claims=%s, stale_sources=%s, failed_verification_runs=%s, reproducibility_gaps=%s, inadmissible_sources=%s)",
+            "Autopilot: ensured integrity repair tasks for %s (dataset_provenance=%s, dataset_freshness=%s, analysis_lineage=%s, analysis_verification_commands=%s, analysis_verification_runs=%s, claims=%s, stale_sources=%s, failed_verification_runs=%s, reproducibility_gaps=%s, inadmissible_sources=%s)",
             project.get("slug"),
             len(datasets_missing_provenance),
             len(datasets_missing_freshness),
+            len(artifacts_missing_lineage),
+            len(artifacts_missing_verification_commands),
+            len(artifacts_missing_verification),
             len(missing_evidence_claims),
             len(stale_sources),
             len(failed_verification_runs),
