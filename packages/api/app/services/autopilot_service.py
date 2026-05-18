@@ -1515,6 +1515,12 @@ async def run_autopilot_loop(project_slug: str):
                 _update_config(project_slug, last_action="Idle (Recovering from error)", last_turn_result=f"Error: {e}")
                 await asyncio.sleep(60)
                 continue
+
+        poll_result = await _poll_active_worker_if_present(project, active_worker, project_slug)
+        if poll_result:
+            if poll_result == "polled":
+                consecutive_idle_turns = 0
+            continue
             
         # 4. Check tasks on the board to see if we are actually making progress
         # If everything is 'done' or 'cancelled', we are finished

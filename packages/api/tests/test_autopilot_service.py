@@ -1167,6 +1167,114 @@ def test_autopilot_refreshes_task_state_after_planner_turn(monkeypatch):
     assert launched == [{"task_ids": ["task-2"]}]
 
 
+def test_autopilot_polls_worker_revealed_by_planner_before_auto_promoting(monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": "/tmp/soccer-project"}
+    planner_turns: list[str] = []
+    polled: list[dict] = []
+    updates: list[dict] = []
+    task_snapshots = [
+        [{"_id": "task-1", "status": "backlog", "title": "Prepare research plan", "dependsOnTaskIds": []}],
+        [
+            {
+                "_id": "task-2",
+                "status": "awaiting_approval",
+                "title": "Continue downstream research synthesis",
+                "approvalState": "pending",
+                "priority": "high",
+                "runner": "codex_cli",
+                "dependsOnTaskIds": [],
+            }
+        ],
+    ]
+    active_worker_snapshots = [None, {"_id": "sess-planner", "role": "research", "status": "running"}]
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        if len(task_snapshots) > 1:
+            return task_snapshots.pop(0)
+        return task_snapshots[0]
+
+    async def _run_planner_turn(**kwargs):
+        planner_turns.append("ran")
+        return None
+
+    async def _find_active_worker(project_id: str):
+        if len(active_worker_snapshots) > 1:
+            return active_worker_snapshots.pop(0)
+        return active_worker_snapshots[0]
+
+    async def _poll_session_until_done(session_id: str, *, project_id=None, max_polls=None, poll_interval_seconds=None):
+        polled.append({"session_id": session_id, "project_id": project_id})
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return None
+
+    async def _update_task(task_id: str, *, project=None, **fields):
+        updates.append({"task_id": task_id, **fields})
+        return {"_id": task_id, **fields}
+
+    async def _list_decision_events(*args, **kwargs):
+        return []
+
+    async def _sync_planner_files(*args, **kwargs):
+        return None
+
+    async def _reconcile_project_reality(project_arg):
+        return {
+            "removedTaskFiles": [],
+            "updatedTaskIds": [],
+            "repairedSessionIds": [],
+            "repairedAuditSessionIds": [],
+            "hasChanges": False,
+        }
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service.session_lifecycle, "poll_session_until_done", _poll_session_until_done)
+    monkeypatch.setattr(autopilot_service.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(autopilot_service, "list_decision_events", _list_decision_events)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+    monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _reconcile_project_reality)
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_expansion_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_project_reality_repair_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_integrity_repair_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_repair_task", lambda project_arg, tasks, auditors: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_reconcile_ontology_lifecycle_state", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_control_plane_repair_tasks", lambda project_arg, tasks, auditors: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "ready", "blockers": [], "state": "hydrated_on_this_device"},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+            },
+        ),
+    )
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+    autopilot_service._wake_events["soccer-project"] = asyncio.Event()
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    assert planner_turns == ["ran"]
+    assert polled == [{"session_id": "sess-planner", "project_id": "project-1"}]
+    assert updates == []
+
+
 def test_autopilot_polls_active_worker_before_launching_new_ready_task(monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": "/tmp/soccer-project"}
     launches: list[dict] = []
