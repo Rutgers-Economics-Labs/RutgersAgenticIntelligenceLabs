@@ -1361,6 +1361,11 @@ def test_ensure_integrity_repair_tasks_creates_inadmissible_source_task(tmp_path
         autopilot_service,
         "summarize_agent_workflow_health",
         lambda root: {
+            "data": {
+                "status": "ready",
+                "datasetsMissingProvenance": [],
+                "datasetsMissingFreshness": [],
+            },
             "health": {
                 "status": "blocked",
                 "missingEvidenceClaims": [],
@@ -1404,6 +1409,11 @@ def test_ensure_integrity_repair_tasks_creates_unsupported_claim_task(tmp_path: 
         autopilot_service,
         "summarize_agent_workflow_health",
         lambda root: {
+            "data": {
+                "status": "ready",
+                "datasetsMissingProvenance": [],
+                "datasetsMissingFreshness": [],
+            },
             "health": {
                 "status": "blocked",
                 "missingEvidenceClaims": ["claim-001", "claim-002"],
@@ -1447,6 +1457,11 @@ def test_ensure_integrity_repair_tasks_creates_stale_source_task(tmp_path: Path,
         autopilot_service,
         "summarize_agent_workflow_health",
         lambda root: {
+            "data": {
+                "status": "ready",
+                "datasetsMissingProvenance": [],
+                "datasetsMissingFreshness": [],
+            },
             "health": {
                 "status": "blocked",
                 "missingEvidenceClaims": [],
@@ -1490,6 +1505,11 @@ def test_ensure_integrity_repair_tasks_creates_failed_verification_task(tmp_path
         autopilot_service,
         "summarize_agent_workflow_health",
         lambda root: {
+            "data": {
+                "status": "ready",
+                "datasetsMissingProvenance": [],
+                "datasetsMissingFreshness": [],
+            },
             "health": {
                 "status": "blocked",
                 "missingEvidenceClaims": [],
@@ -1533,6 +1553,11 @@ def test_ensure_integrity_repair_tasks_creates_reproducibility_gap_task(tmp_path
         autopilot_service,
         "summarize_agent_workflow_health",
         lambda root: {
+            "data": {
+                "status": "ready",
+                "datasetsMissingProvenance": [],
+                "datasetsMissingFreshness": [],
+            },
             "health": {
                 "status": "blocked",
                 "missingEvidenceClaims": [],
@@ -1552,6 +1577,54 @@ def test_ensure_integrity_repair_tasks_creates_reproducibility_gap_task(tmp_path
     assert changed is True
     assert created[0]["title"] == "Repair reproducibility metadata for trusted artifacts"
     assert created[0]["agent_role"] == "health"
+    assert synced == [True]
+
+
+def test_ensure_integrity_repair_tasks_creates_dataset_metadata_task(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    created: list[dict[str, object]] = []
+    synced: list[bool] = []
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": kwargs["title"], "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "project_root_from_record", lambda project_arg: tmp_path)
+    monkeypatch.setattr(
+        autopilot_service,
+        "summarize_agent_workflow_health",
+        lambda root: {
+            "data": {
+                "status": "blocked",
+                "datasetsMissingProvenance": ["artifacts/panel.csv"],
+                "datasetsMissingFreshness": ["artifacts/panel.csv"],
+            },
+            "health": {
+                "status": "ready",
+                "missingEvidenceClaims": [],
+                "staleSources": [],
+                "failedVerificationRuns": [],
+                "reproducibilityGaps": [],
+                "inadmissibleSources": [],
+            },
+        },
+    )
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    changed = asyncio.run(autopilot_service._ensure_integrity_repair_tasks(project, []))
+
+    assert changed is True
+    assert created[0]["title"] == "Repair dataset provenance and freshness metadata"
+    assert created[0]["agent_role"] == "data"
     assert synced == [True]
 
 
@@ -1576,6 +1649,11 @@ def test_ensure_integrity_repair_tasks_is_noop_without_inadmissible_sources(tmp_
         autopilot_service,
         "summarize_agent_workflow_health",
         lambda root: {
+            "data": {
+                "status": "ready",
+                "datasetsMissingProvenance": [],
+                "datasetsMissingFreshness": [],
+            },
             "health": {
                 "status": "ready",
                 "missingEvidenceClaims": [],

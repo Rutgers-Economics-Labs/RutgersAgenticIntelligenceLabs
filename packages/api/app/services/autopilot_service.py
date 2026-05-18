@@ -508,18 +508,53 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     if root is None:
         return False
     workflow = summarize_agent_workflow_health(root)
+    data = workflow.get("data") or {}
     health = workflow.get("health") or {}
+    datasets_missing_provenance = [str(item) for item in (data.get("datasetsMissingProvenance") or []) if str(item).strip()]
+    datasets_missing_freshness = [str(item) for item in (data.get("datasetsMissingFreshness") or []) if str(item).strip()]
     missing_evidence_claims = [str(item) for item in (health.get("missingEvidenceClaims") or []) if str(item).strip()]
     stale_sources = [str(item) for item in (health.get("staleSources") or []) if str(item).strip()]
     failed_verification_runs = [str(item) for item in (health.get("failedVerificationRuns") or []) if str(item).strip()]
     reproducibility_gaps = [str(item) for item in (health.get("reproducibilityGaps") or []) if str(item).strip()]
     inadmissible_sources = [str(item) for item in (health.get("inadmissibleSources") or []) if str(item).strip()]
-    if not inadmissible_sources and not missing_evidence_claims and not stale_sources and not failed_verification_runs and not reproducibility_gaps:
+    if (
+        not inadmissible_sources
+        and not missing_evidence_claims
+        and not stale_sources
+        and not failed_verification_runs
+        and not reproducibility_gaps
+        and not datasets_missing_provenance
+        and not datasets_missing_freshness
+    ):
         return False
 
     board = await planner_service.ensure_main_board(project)
     live_titles = {str(task.get("title") or "") for task in tasks}
     changed = False
+
+    if datasets_missing_provenance or datasets_missing_freshness:
+        task_title = "Repair dataset provenance and freshness metadata"
+        if task_title not in live_titles:
+            await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Repair dataset metadata gaps before trusted promotion. "
+                    "Datasets should retain source provenance and freshness metadata so downstream analyses can be audited."
+                ),
+                status="ready",
+                agent_role="data",
+                repo_paths=["research_plan/state", ".ontology/sources", ".ontology/pipelines", "artifacts"],
+                acceptance_criteria=[
+                    "datasets missing provenance are linked to explicit source records",
+                    "datasets missing freshness metadata record a current freshness state or are left explicitly blocked",
+                    "trusted datasets no longer depend on missing provenance or freshness metadata",
+                ],
+                runner="codex_cli",
+            )
+            live_titles.add(task_title)
+            changed = True
 
     if missing_evidence_claims:
         task_title = "Repair unsupported claims and verification evidence"
@@ -644,8 +679,10 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     if changed:
         await planner_service.sync_planner_files(project, board)
         logger.info(
-            "Autopilot: ensured integrity repair tasks for %s (claims=%s, stale_sources=%s, failed_verification_runs=%s, reproducibility_gaps=%s, inadmissible_sources=%s)",
+            "Autopilot: ensured integrity repair tasks for %s (dataset_provenance=%s, dataset_freshness=%s, claims=%s, stale_sources=%s, failed_verification_runs=%s, reproducibility_gaps=%s, inadmissible_sources=%s)",
             project.get("slug"),
+            len(datasets_missing_provenance),
+            len(datasets_missing_freshness),
             len(missing_evidence_claims),
             len(stale_sources),
             len(failed_verification_runs),
