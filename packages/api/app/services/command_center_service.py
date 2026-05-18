@@ -701,6 +701,52 @@ def _summarize_current_plan(project: dict) -> dict[str, Any]:
     return {"path": _rel(path, root), "summary": _summary_from_markdown(content), "content": content}
 
 
+def _ontology_follow_up_summary(project: dict) -> dict[str, Any]:
+    root = project_root(project)
+    path = root / "research_plan" / "ontology_answerable_follow_up_questions.md"
+    if not path.exists():
+        return {
+            "path": None,
+            "questions": [],
+            "classificationCounts": {},
+        }
+
+    content = _read(path, 40_000)
+    questions: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if line.startswith("### "):
+            if current:
+                questions.append(current)
+            current = {"title": line[4:].strip(), "classification": None, "notes": []}
+            continue
+        if current is None:
+            continue
+        if line.startswith("- Classification:"):
+            marker = line.split("`")
+            if len(marker) >= 2:
+                current["classification"] = marker[1].strip()
+            else:
+                current["classification"] = line.removeprefix("- Classification:").strip()
+            continue
+        if line.startswith("- Why") or line.startswith("- What would improve it:") or line.startswith("- Why expansion is needed:"):
+            current["notes"].append(line.removeprefix("- ").strip())
+    if current:
+        questions.append(current)
+
+    classification_counts: dict[str, int] = {}
+    for question in questions:
+        key = str(question.get("classification") or "unknown")
+        classification_counts[key] = classification_counts.get(key, 0) + 1
+
+    return {
+        "path": _rel(path, root),
+        "questions": questions,
+        "classificationCounts": classification_counts,
+    }
+
+
 def _build_blocker_summary(
     *,
     latest_audit: dict[str, Any] | None,
@@ -778,6 +824,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     artifacts = list_project_artifacts(project)
     integrity = list_project_integrity(project)
     root = project_root(project)
+    ontology_follow_ups = _ontology_follow_up_summary(project)
     latest_audit = read_latest_audit(root)
     recent_audits = list_recent_audits(root)
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
@@ -821,6 +868,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
             "sourceAdmissibilityCounts": integrity["summary"]["sourceAdmissibilityCounts"],
             "agentWorkflow": integrity["agentWorkflow"],
         },
+        "ontologyFollowUps": ontology_follow_ups,
         "auditedTruth": latest_audit,
         "recentAudits": recent_audits,
         "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,

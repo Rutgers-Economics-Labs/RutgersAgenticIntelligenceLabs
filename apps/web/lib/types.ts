@@ -338,6 +338,15 @@ export type CommandCenter = {
     sourceAdmissibilityCounts: Record<string, number>;
     agentWorkflow: AgentWorkflowSummary;
   };
+  ontologyFollowUps?: {
+    path?: string | null;
+    questions: Array<{
+      title: string;
+      classification?: string | null;
+      notes?: string[];
+    }>;
+    classificationCounts: Record<string, number>;
+  };
   auditedTruth?: {
     generatedAt?: string;
     path?: string;

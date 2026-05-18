@@ -149,6 +149,26 @@ export default async function ProjectHomePage({
           <div className="empty-state">No integrity workflow summary yet.</div>
         )}
       </SectionCard>
+      <SectionCard eyebrow="Ontology Coverage" noPad>
+        {Object.entries(center.ontologyFollowUps?.classificationCounts ?? {}).map(([key, value]) => (
+          <InlineStatus key={key} label={key.replaceAll("_", " ")} value={value} />
+        ))}
+        {center.ontologyFollowUps?.questions?.length ? (
+          center.ontologyFollowUps.questions.slice(0, 5).map((question) => (
+            <div key={question.title} className="approval-row">
+              <div>
+                <div style={{ fontWeight: 600, color: "var(--fg)" }}>{question.title}</div>
+                <div className="mono-muted">
+                  {question.notes?.[0] ?? "No ontology coverage note recorded."}
+                </div>
+              </div>
+              <StatusPill value={question.classification ?? "unknown"} />
+            </div>
+          ))
+        ) : (
+          <div className="empty-state">No ontology follow-up classifications yet.</div>
+        )}
+      </SectionCard>
       <SectionCard eyebrow="Auditors" noPad>
         {Object.entries(center.auditors ?? {}).length ? Object.entries(center.auditors ?? {}).map(([key, value]) => (
           <div key={key} className="approval-row">

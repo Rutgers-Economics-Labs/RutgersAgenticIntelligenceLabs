@@ -503,6 +503,40 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert "Repair hydration or promote the correct ontology artifact before research or closeout." in center["blockerSummary"]["repairs"]
 
 
+def test_build_command_center_surfaces_ontology_follow_up_classifications(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {}
+
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
+
+    _write(
+        tmp_path / "research_plan" / "ontology_answerable_follow_up_questions.md",
+        """# Ontology-Answerable Follow-Up Questions
+
+### 1. Which question is answerable now?
+
+- Classification: `current_ontology`
+- Why answerable now:
+  - hydrated table exists
+
+### 2. Which question requires expansion?
+
+- Classification: `requires_expansion`
+- Why expansion is needed:
+  - missing domestic scope
+""",
+    )
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["ontologyFollowUps"]["path"] == "research_plan/ontology_answerable_follow_up_questions.md"
+    assert center["ontologyFollowUps"]["classificationCounts"]["current_ontology"] == 1
+    assert center["ontologyFollowUps"]["classificationCounts"]["requires_expansion"] == 1
+    assert center["ontologyFollowUps"]["questions"][0]["title"] == "1. Which question is answerable now?"
+
+
 def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):
     from app.services import command_center_service
 
