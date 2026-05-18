@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from rail.completion_gate import PlannerCompletionGate
 
 from app.services.convex_client import convex
 from app.services import session_files
@@ -122,6 +123,27 @@ def _normalize_task_runner(runner: str | None, *, strict: bool = False) -> str |
     if strict:
         raise ValueError(f"Unsupported task runner: {runner}")
     return None
+
+
+def _enforce_planner_completion_gate(*, root: Path, task: dict[str, Any], patch: dict[str, Any]) -> None:
+    if str(patch.get("status") or "").strip().lower() != "done":
+        return
+    if str(task.get("agentRole") or "").strip().lower() != "planner":
+        return
+
+    summary = PlannerCompletionGate().check(
+        {
+            "repo_path": str(root),
+            "plan_root": "research_plan",
+            "db_task_status_current": True,
+        }
+    )
+    if summary.passed:
+        return
+
+    failures = summary.failures
+    reason = failures[0].message if failures else "Planner completion gate failed."
+    raise ValueError(f"Planner tasks cannot be marked done until planner completion checks pass: {reason}")
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -592,6 +614,7 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
         patch["approvalState"] = _normalize_task_approval_state(patch.get("approvalState"), strict=True)
     if "approval_state" in patch:
         patch["approval_state"] = _normalize_task_approval_state(patch.get("approval_state"), strict=True)
+    _enforce_planner_completion_gate(root=root, task=task, patch=patch)
     mapping = {
         "title": "title",
         "description": "description",
