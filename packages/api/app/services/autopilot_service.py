@@ -857,8 +857,49 @@ async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: li
 
 
 def _task_priority(task: dict[str, Any]) -> tuple[int, str]:
+    boost = int(task.get("_autopilotPriorityBoost") or 0)
     weight = {"high": 0, "medium": 1, "low": 2, None: 3}.get(task.get("priority"), 3)
-    return (weight, str(task.get("_id") or ""))
+    return (boost, weight, str(task.get("_id") or ""))
+
+
+def _apply_auditor_priority_boosts(
+    ready_tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not ready_tasks:
+        return []
+    auditors = auditors or {}
+    boosted: list[dict[str, Any]] = [dict(task) for task in ready_tasks]
+    ontology_blocked = (auditors.get("ontology") or {}).get("status") == "blocked"
+    integrity_blocked = (auditors.get("integrity") or {}).get("status") == "blocked"
+    closeout_blocked = (auditors.get("closeout") or {}).get("status") == "blocked"
+
+    for task in boosted:
+        title = str(task.get("title") or "").lower()
+        boost = 0
+        if ontology_blocked:
+            if any(token in title for token in ("repair ontology", "repair ontology readiness", "repair ontology readiness blockers")):
+                boost = min(boost, -25)
+            elif any(token in title for token in ("hydrate", "pipeline", "source", "ontology health")):
+                boost = min(boost, -20)
+        if integrity_blocked and any(
+            token in title
+            for token in (
+                "repair unsupported claims",
+                "refresh stale sources",
+                "resolve failed verification",
+                "repair reproducibility",
+                "resolve inadmissible sources",
+                "repair dataset provenance",
+                "repair analysis lineage",
+            )
+        ):
+            boost = min(boost, -10)
+        if closeout_blocked and any(token in title for token in ("resolve closeout blockers", "reconcile control-plane", "repair closeout")):
+            boost = min(boost, -5)
+        if boost:
+            task["_autopilotPriorityBoost"] = boost
+    return boosted
 
 
 def _filter_ready_tasks_for_auditors(
@@ -868,7 +909,7 @@ def _filter_ready_tasks_for_auditors(
     if not ready_tasks:
         return []
     ontology_auditor = (auditors or {}).get("ontology") or {}
-    filtered = list(ready_tasks)
+    filtered = _apply_auditor_priority_boosts(ready_tasks, auditors)
     if ontology_auditor.get("status") == "blocked":
         allowed_roles = {"data", "health"}
         allowed: list[dict[str, Any]] = []

@@ -628,6 +628,44 @@ def test_autopilot_filters_ready_tasks_when_integrity_auditor_is_blocked(monkeyp
     assert launched == [{"task_ids": ["integrity-repair"]}]
 
 
+def test_filter_ready_tasks_prioritizes_matching_repair_tasks_for_blocked_auditors():
+    ready_tasks = [
+        {
+            "_id": "task-1",
+            "title": "Verify ontology health after hydration",
+            "status": "ready",
+            "agentRole": "health",
+            "priority": "high",
+        },
+        {
+            "_id": "task-2",
+            "title": "Repair ontology readiness blockers",
+            "status": "ready",
+            "agentRole": "data",
+            "priority": "medium",
+        },
+        {
+            "_id": "task-3",
+            "title": "Resolve closeout blockers",
+            "status": "ready",
+            "agentRole": "health",
+            "priority": "high",
+        },
+    ]
+
+    filtered = autopilot_service._filter_ready_tasks_for_auditors(
+        ready_tasks,
+        {
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        },
+    )
+
+    ranked_ids = [task["_id"] for task in sorted(filtered, key=autopilot_service._task_priority)]
+    assert ranked_ids[0] == "task-2"
+
+
 def test_autopilot_routes_planner_turn_toward_ontology_unblocking(monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": "/tmp/soccer-project"}
     planner_turns: list[str] = []
