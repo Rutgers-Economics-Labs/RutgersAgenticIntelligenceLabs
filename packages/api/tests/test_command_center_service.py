@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
@@ -144,6 +145,7 @@ sources:
     assert artifacts["artifacts"][0]["trustState"]["isTrusted"] is True
     assert artifacts["artifacts"][0]["trustState"]["isBlocked"] is False
     assert artifacts["artifacts"][0]["trustState"]["isStale"] is False
+    assert artifacts["artifacts"][0]["trustState"]["recommendedNextAction"] == "Trust state is current."
     assert artifacts["artifacts"][0]["assumptions"] == ["research_plan/state/assumptions.json#baseline-window"]
     assert artifacts["summary"]["trustedCount"] == 1
     assert artifacts["summary"]["blockedCount"] == 0
@@ -157,6 +159,7 @@ sources:
     assert integrity["indexes"]["sources"][0]["sourceState"]["isFresh"] is True
     assert integrity["indexes"]["artifact_lineage"][0]["verificationStatus"] == "passed"
     assert integrity["indexes"]["artifact_lineage"][0]["trustState"]["isTrusted"] is True
+    assert integrity["indexes"]["artifact_lineage"][0]["trustState"]["recommendedNextAction"] == "Trust state is current."
     assert integrity["agentWorkflow"]["research"]["requirements"]
     assert integrity["agentWorkflow"]["health"]["status"] == "ready"
 
@@ -266,6 +269,37 @@ def test_integrity_summary_surfaces_role_specific_blockers(tmp_path: Path):
     assert "claim-001" in integrity["agentWorkflow"]["health"]["missingEvidenceClaims"]
     assert "stale-source" in integrity["agentWorkflow"]["health"]["staleSources"]
     assert "run-001" in integrity["agentWorkflow"]["health"]["failedVerificationRuns"]
+
+
+def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path: Path):
+    from app.services import command_center_service
+
+    _write(
+        tmp_path / "research_plan" / "audits" / "sess-2.json",
+        json.dumps(
+            {
+                "generatedAt": "2026-05-17T10:00:00Z",
+                "session": {
+                    "id": "sess-2",
+                    "role": "data",
+                    "status": "completed",
+                    "reviewStatus": "needs_changes",
+                    "verificationStatus": "passed",
+                    "publishStatus": "published",
+                },
+                "planner": {"taskCounts": {"blocked": 1}, "readyTasks": [], "blockedTasks": ["Repair source config"], "activeTasks": []},
+                "integrity": {"action": "artifact_generation", "blocked": True, "reasons": ["Datasets must record source provenance before promotion."]},
+                "currentBlocker": "Datasets must record source provenance before promotion.",
+            },
+            indent=2,
+        ),
+    )
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["currentBlocker"] == "Datasets must record source provenance before promotion."
+    assert center["auditedTruth"]["session"]["id"] == "sess-2"
+    assert center["auditedTruth"]["path"] == "research_plan/audits/sess-2.json"
 
 
 def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):

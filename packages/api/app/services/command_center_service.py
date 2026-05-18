@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from app.services.integrity_service import load_integrity_indexes, summarize_agent_workflow_health
+from rail.integrity import build_artifact_trust_summary, build_source_state
 
 
 TEXT_PREVIEW_LIMIT = 80_000
@@ -136,6 +137,23 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
+
+
+def _latest_audit(project_root: Path) -> dict[str, Any] | None:
+    audit_root = project_root / "research_plan" / "audits"
+    if not audit_root.is_dir():
+        return None
+    candidates = sorted(audit_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        payload["path"] = _rel(path, project_root)
+        return payload
+    return None
 
 
 def _safe_status(value: Any, default: str = "candidate") -> str:
@@ -493,24 +511,15 @@ def _artifact_verification_status(path: str, lineage: Any | None, verification_r
 
 
 def _source_state(row: Any) -> dict[str, Any]:
-    freshness_status = str(getattr(row, "freshness_status", "unknown") or "unknown")
-    quality_status = str(getattr(row, "quality_status", "candidate") or "candidate")
-    return {
-        "freshnessStatus": freshness_status,
-        "qualityStatus": quality_status,
-        "isFresh": freshness_status == "fresh" and quality_status not in {"blocked", "rejected"},
-        "isStale": freshness_status == "stale",
-        "needsRefresh": freshness_status == "needs_refresh",
-        "isBlocked": quality_status in {"blocked", "rejected"},
-    }
+    return build_source_state(row)
 
 
-def _artifact_trust_state(promotion_state: str, verification_status: str, stale_reasons: list[str]) -> dict[str, bool]:
-    return {
-        "isTrusted": promotion_state == "verified" and verification_status == "passed" and not stale_reasons,
-        "isBlocked": promotion_state in {"blocked", "needs_evidence"},
-        "isStale": promotion_state == "stale" or bool(stale_reasons),
-    }
+def _artifact_trust_state(lineage: Any, verification_status: str) -> dict[str, Any]:
+    return build_artifact_trust_summary(
+        lineage,
+        verification_status=verification_status,
+        artifact_blocked=lineage.promotion_state in {"blocked", "needs_evidence"},
+    )
 
 
 def list_project_integrity(project: dict) -> dict[str, Any]:
@@ -553,7 +562,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
         payload = row.model_dump(mode="json")
         verification_status = _artifact_verification_status(row.artifact_path, row, indexes.verification_runs)
         payload["verificationStatus"] = verification_status
-        payload["trustState"] = _artifact_trust_state(row.promotion_state, verification_status, list(row.stale_reasons))
+        payload["trustState"] = _artifact_trust_state(row, verification_status)
         artifact_lineage.append(payload)
     verification_runs = [row.model_dump(mode="json") for row in indexes.verification_runs]
 
@@ -574,7 +583,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
         payload = row.model_dump(mode="json")
         verification_status = _artifact_verification_status(row.artifact_path, row, indexes.verification_runs)
         payload["verificationStatus"] = verification_status
-        payload["trustState"] = _artifact_trust_state(row.promotion_state, verification_status, list(row.stale_reasons))
+        payload["trustState"] = _artifact_trust_state(row, verification_status)
         stale_outputs.append(payload)
     agent_workflow = summarize_agent_workflow_health(root)
 
@@ -619,7 +628,25 @@ def list_project_artifacts(project: dict) -> dict[str, Any]:
             promotion_state = lineage.promotion_state if lineage else "exploratory"
             verification_status = _artifact_verification_status(rel_path, lineage, verification_runs)
             stale_reasons = list(lineage.stale_reasons) if lineage else []
-            trust_state = _artifact_trust_state(promotion_state, verification_status, stale_reasons)
+            trust_state = _artifact_trust_state(lineage, verification_status) if lineage else {
+                "currentState": promotion_state,
+                "verificationStatus": verification_status,
+                "isTrusted": False,
+                "isBlocked": False,
+                "isStale": False,
+                "hasEvidence": False,
+                "hasFreshSources": False,
+                "isReproducible": False,
+                "staleReasons": stale_reasons,
+                "blockingReasons": [],
+                "eligibleTransitions": [],
+                "promotableTargets": [],
+                "blockingClaims": [],
+                "blockingSources": [],
+                "blockingArtifacts": [],
+                "blockingVerificationRuns": [],
+                "recommendedNextAction": "Attach claims or sources so the artifact has explicit lineage.",
+            }
             artifacts.append(
                 {
                     "name": path.name,
@@ -696,6 +723,8 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     skills = list_project_skills(project)
     artifacts = list_project_artifacts(project)
     integrity = list_project_integrity(project)
+    root = project_root(project)
+    latest_audit = _latest_audit(root)
 
     status_counts: dict[str, int] = {}
     for task in tasks:
@@ -733,6 +762,8 @@ async def build_command_center(project: dict) -> dict[str, Any]:
             "sourceFreshnessCounts": integrity["summary"]["sourceFreshnessCounts"],
             "agentWorkflow": integrity["agentWorkflow"],
         },
+        "auditedTruth": latest_audit,
+        "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
         "repoHealth": {
             "hasLocalRepo": bool(project.get("localRepoPath")),
             "hasRailYaml": bool(project.get("localRepoPath") and (Path(project["localRepoPath"]) / "rail.yaml").exists()),

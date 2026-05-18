@@ -6,6 +6,7 @@ import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { AgentRunCard, CommandShell, InlineStatus, MetricStrip, TaskBoard } from "@/components/command-center";
 import { ApprovalPanel } from "@/components/approval-panel";
+import { getArtifactTrustDisplay, getWorkflowDisplaySections } from "@/lib/integrity-ui";
 
 export default async function ProjectHomePage({
   params
@@ -19,11 +20,30 @@ export default async function ProjectHomePage({
   ]);
   const tasks = home.planner.tasks ?? [];
   const latestMessage = home.planner.messages.filter((m: any) => String(m.content ?? "").trim()).at(0);
+  const workflowSections = center.integritySummary ? getWorkflowDisplaySections(center.integritySummary.agentWorkflow) : [];
 
   const rightRail = (
     <div>
       <SectionCard eyebrow="Next Action" noPad>
         <div style={{ padding: "12px 14px", fontWeight: 600 }}>{center.nextAction}</div>
+      </SectionCard>
+      <SectionCard eyebrow="Current Blocker" noPad>
+        <div style={{ padding: "12px 14px" }}>
+          <div style={{ fontWeight: 600, color: "var(--fg)" }}>{center.currentBlocker ?? "No current blocker detected."}</div>
+          {center.auditedTruth?.path ? (
+            <div className="mono-muted" style={{ marginTop: 6 }}>
+              audited via {center.auditedTruth.path}
+            </div>
+          ) : null}
+        </div>
+      </SectionCard>
+      <SectionCard eyebrow="Audited Truth" noPad>
+        <InlineStatus label="session" value={center.auditedTruth?.session?.id ?? "none"} />
+        <InlineStatus label="role" value={center.auditedTruth?.session?.role ?? "—"} />
+        <InlineStatus label="review" value={center.auditedTruth?.session?.reviewStatus ?? "pending"} />
+        <InlineStatus label="integrity" value={center.auditedTruth?.integrity?.blocked ? "blocked" : "clear"} />
+        <InlineStatus label="blocked tasks" value={center.auditedTruth?.planner?.taskCounts?.blocked ?? 0} />
+        <InlineStatus label="ready tasks" value={center.auditedTruth?.planner?.taskCounts?.ready ?? 0} />
       </SectionCard>
       <SectionCard eyebrow="Approvals" noPad>
         <ApprovalPanel approvals={center.pendingApprovals} slug={slug} />
@@ -33,6 +53,22 @@ export default async function ProjectHomePage({
         {Object.entries(center.sourceSummary.statusCounts ?? {}).map(([key, value]) => (
           <InlineStatus key={key} label={key.replaceAll("_", " ")} value={value} />
         ))}
+        {Object.entries(center.integritySummary?.sourceFreshnessCounts ?? {}).map(([key, value]) => (
+          <InlineStatus key={`freshness-${key}`} label={key.replaceAll("_", " ")} value={value} />
+        ))}
+      </SectionCard>
+      <SectionCard eyebrow="Workflow Gates" noPad>
+        {workflowSections.length ? workflowSections.map((section) => (
+          <div key={section.key} className="approval-row">
+            <div>
+              <div style={{ fontWeight: 600, color: "var(--fg)" }}>{section.label}</div>
+              <div className="mono-muted">{section.blockerCount ? `${section.blockerCount} blockers` : "ready"}</div>
+            </div>
+            <StatusPill value={section.status} />
+          </div>
+        )) : (
+          <div className="empty-state">No integrity workflow summary yet.</div>
+        )}
       </SectionCard>
       <SectionCard eyebrow="Repo Health" noPad>
         <InlineStatus label="local repo" value={center.repoHealth.hasLocalRepo ? "yes" : "no"} />
@@ -95,7 +131,10 @@ export default async function ProjectHomePage({
                     <div style={{ fontWeight: 600 }}>{artifact.name}</div>
                     <div className="mono-muted">{artifact.path}</div>
                   </div>
-                  <StatusPill value={artifact.type} />
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                    <StatusPill value={artifact.type} />
+                    <StatusPill value={getArtifactTrustDisplay(artifact).label} />
+                  </div>
                 </Link>
               ))
             ) : (

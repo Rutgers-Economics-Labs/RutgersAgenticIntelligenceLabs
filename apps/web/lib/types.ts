@@ -337,6 +337,31 @@ export type CommandCenter = {
     sourceFreshnessCounts: Record<string, number>;
     agentWorkflow: AgentWorkflowSummary;
   };
+  auditedTruth?: {
+    generatedAt?: string;
+    path?: string;
+    currentBlocker?: string | null;
+    session?: {
+      id?: string;
+      role?: string;
+      status?: string;
+      reviewStatus?: string;
+      verificationStatus?: string;
+      publishStatus?: string;
+    };
+    planner?: {
+      taskCounts?: Record<string, number>;
+      readyTasks?: string[];
+      blockedTasks?: string[];
+      activeTasks?: string[];
+    };
+    integrity?: {
+      action?: string;
+      blocked?: boolean;
+      reasons?: string[];
+    };
+  } | null;
+  currentBlocker?: string | null;
   repoHealth: {
     hasLocalRepo: boolean;
     hasRailYaml: boolean;
