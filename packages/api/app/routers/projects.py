@@ -394,6 +394,9 @@ class IntegrityArtifactPromotionRequest(BaseModel):
     targetState: str
 
 
+ALLOWED_SOURCE_ADMISSIBILITY_STATUSES = {"observed", "derived", "estimated", "synthetic", "missing"}
+
+
 def _validate_trusted_source_contract(
     *,
     quality_status: str | None,
@@ -401,6 +404,13 @@ def _validate_trusted_source_contract(
     freshness_status: str | None,
     provenance: dict | None,
 ) -> None:
+    if admissibility_status not in {None, ""} and admissibility_status not in ALLOWED_SOURCE_ADMISSIBILITY_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Source admissibility must be one of: observed, derived, estimated, synthetic, missing."
+            ),
+        )
     if quality_status != "validated":
         return
     if admissibility_status not in {"observed", "derived"}:
