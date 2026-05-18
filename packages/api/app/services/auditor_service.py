@@ -5,6 +5,7 @@ from typing import Any
 
 from app.services.hydration_registry_service import get_hydration_status
 from app.services.integrity_service import evaluate_integrity_gate, load_integrity_indexes
+from app.services.question_expansion_service import missing_expansion_task_blockers, parse_follow_up_questions
 from app.services.reconciliation_service import project_reality_status
 from rail.manifest import load_manifest
 
@@ -71,50 +72,10 @@ def _hydration_duckdb_path(hydration: dict[str, Any]) -> str | None:
     return None
 
 
-def _parse_ontology_follow_up_questions(project_root: Path) -> list[dict[str, Any]]:
-    path = project_root / "research_plan" / "ontology_answerable_follow_up_questions.md"
-    if not path.exists():
-        return []
-
-    questions: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.strip()
-        if line.startswith("### "):
-            if current:
-                questions.append(current)
-            current = {"title": line[4:].strip(), "classification": None}
-            continue
-        if current is None:
-            continue
-        if line.startswith("- Classification:"):
-            marker = line.split("`")
-            if len(marker) >= 2:
-                current["classification"] = marker[1].strip()
-            else:
-                current["classification"] = line.removeprefix("- Classification:").strip()
-    if current:
-        questions.append(current)
-    return questions
-
-
 def _missing_follow_up_task_blockers(tasks: list[dict[str, Any]], project_root: Path) -> list[str]:
     task_titles = {str(task.get("title") or "") for task in tasks}
-    blockers: list[str] = []
-    for question in _parse_ontology_follow_up_questions(project_root):
-        title = str(question.get("title") or "").strip()
-        classification = str(question.get("classification") or "").strip().lower()
-        if not title:
-            continue
-        if classification == "requires_expansion":
-            expected = f"Expand ontology coverage for: {title}"
-            if expected not in task_titles:
-                blockers.append(f"Missing ontology expansion task for follow-up question: {title}")
-        elif classification == "blocked_by_data":
-            expected = f"Resolve data blocker for: {title}"
-            if expected not in task_titles:
-                blockers.append(f"Missing data-blocker task for follow-up question: {title}")
-    return blockers
+    questions = parse_follow_up_questions(project_root)
+    return missing_expansion_task_blockers(questions, task_titles)
 
 
 def _list_final_artifact_files(project_root: Path, artifacts_root: str) -> list[str]:
