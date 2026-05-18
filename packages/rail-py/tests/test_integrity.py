@@ -2211,6 +2211,13 @@ def test_local_project_can_apply_artifact_promotion(tmp_path):
             }
         ]
     )
+    from rail.local import LocalEngine
+
+    engine = LocalEngine(str(root))
+    engine.artifact_duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+    engine.artifact_duckdb_path.write_bytes(b"")
+    engine._write_hydration_meta("default", "full")
+    engine._record_hydration_lineage("default")
 
     project = rail.local(str(root))
     result = project.apply_integrity_artifact_promotion("artifacts/report.md", target_state="verified")
@@ -2219,6 +2226,69 @@ def test_local_project_can_apply_artifact_promotion(tmp_path):
     assert result["status"] == "promoted"
     updated = ResearchIntegrityRepo(root).load_artifact_lineage()[0]
     assert updated.promotion_state == "verified"
+
+
+def test_local_project_blocks_trusted_artifact_promotion_without_hydration(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_sources(
+        [
+            {
+                "source_key": "bls-laus",
+                "source_type": "dataset",
+                "title": "BLS LAUS",
+                "url_or_path": "https://example.com/bls.csv",
+                "origin": "BLS",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "api",
+                "freshness_status": "fresh",
+                "quality_status": "validated",
+                "provenance": {"text": "BLS extract."},
+            }
+        ]
+    )
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "Unemployment fell after 2021.",
+                "artifact_path": "artifacts/report.md",
+                "evidence_paths": ["topics/labor/notes.md"],
+                "source_keys": ["bls-laus"],
+                "status": "supported",
+                "evidence_kind": "direct",
+            }
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "partially_verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "sources": ["research_plan/state/sources.json#bls-laus"],
+                "claims": ["research_plan/state/claims.json#claim-001"],
+                "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
+
+    project = rail.local(str(root))
+    with pytest.raises(ValueError, match="Trusted artifact promotion requires local hydrated ontology state"):
+        project.apply_integrity_artifact_promotion("artifacts/report.md", target_state="verified")
 
 
 def test_local_project_can_promote_source_and_claim_candidates(tmp_path):
