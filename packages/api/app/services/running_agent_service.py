@@ -38,6 +38,11 @@ def _session_status_has_drift(status: str | None) -> bool:
     return normalized is not None and normalized != status
 
 
+def _session_role_has_drift(role: str | None) -> bool:
+    normalized = _normalize_role_alias(role)
+    return normalized is not None and normalized != role
+
+
 def _normalize_session_record(session: dict[str, Any] | None) -> dict[str, Any] | None:
     if not session:
         return session
@@ -66,6 +71,24 @@ async def list_running_agent_status_drift(project_id: str, *, limit: int = 50) -
     return drifted
 
 
+async def list_running_agent_role_drift(project_id: str, *, limit: int = 50) -> list[dict[str, str]]:
+    sessions = await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": limit}) or []
+    drifted: list[dict[str, str]] = []
+    for session in sessions:
+        raw_role = session.get("role")
+        normalized_role = _normalize_role_alias(raw_role)
+        if not _session_role_has_drift(raw_role) or normalized_role is None:
+            continue
+        drifted.append(
+            {
+                "sessionId": str(session.get("_id") or ""),
+                "role": str(raw_role),
+                "canonicalRole": normalized_role,
+            }
+        )
+    return drifted
+
+
 async def repair_running_agent_status_drift(project_id: str, *, limit: int = 50) -> dict[str, list[str]]:
     repaired_session_ids: list[str] = []
     for session in await list_running_agent_status_drift(project_id, limit=limit):
@@ -74,6 +97,24 @@ async def repair_running_agent_status_drift(project_id: str, *, limit: int = 50)
         if not session_id or not canonical_status:
             continue
         await update_running_agent(session_id, status=canonical_status)
+        repaired_session_ids.append(session_id)
+    return {"repairedSessionIds": repaired_session_ids}
+
+
+async def repair_running_agent_role_drift(project_id: str, *, limit: int = 50) -> dict[str, list[str]]:
+    repaired_session_ids: list[str] = []
+    for session in await list_running_agent_role_drift(project_id, limit=limit):
+        session_id = str(session.get("sessionId") or "")
+        canonical_role = str(session.get("canonicalRole") or "")
+        if not session_id or not canonical_role:
+            continue
+        await convex.mutation(
+            "agent:updateSession",
+            {
+                "sessionId": session_id,
+                "role": canonical_role,
+            },
+        )
         repaired_session_ids.append(session_id)
     return {"repairedSessionIds": repaired_session_ids}
 

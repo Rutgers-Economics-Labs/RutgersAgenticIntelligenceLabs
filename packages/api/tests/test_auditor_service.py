@@ -60,6 +60,7 @@ frontend:
             "taskSessionMismatchCount": 2,
             "staleRuntimeSessionCount": 1,
             "runningAgentStatusDriftCount": 1,
+            "runningAgentRoleDriftCount": 1,
             "staleAuditSessionCount": 0,
             "terminalSessionCount": 1,
             "activeRuntimeSessionCount": 1,
@@ -91,6 +92,7 @@ frontend:
 
     assert result["session"]["status"] == "blocked"
     assert "1 running-agent session status alias row(s) detected." in result["session"]["blockers"]
+    assert "1 running-agent session role alias row(s) detected." in result["session"]["blockers"]
     assert result["planner"]["status"] == "blocked"
     assert "1 role config alias declaration(s) detected." in result["planner"]["blockers"]
     assert result["ontology"]["status"] == "blocked"
@@ -337,6 +339,7 @@ frontend:
             "taskSessionMismatchCount": 0,
             "staleRuntimeSessionCount": 0,
             "runningAgentStatusDriftCount": 1,
+            "runningAgentRoleDriftCount": 1,
             "staleAuditSessionCount": 0,
             "terminalSessionCount": 0,
             "activeRuntimeSessionCount": 0,
@@ -377,6 +380,7 @@ frontend:
 
     assert result["session"]["status"] == "blocked"
     assert "1 running-agent session status alias row(s) detected." in result["session"]["blockers"]
+    assert "1 running-agent session role alias row(s) detected." in result["session"]["blockers"]
     assert result["ontology"]["status"] == "blocked"
     assert "Active ontology artifact pointer drift detected: active_ontology_pointer_out_of_date." in result["ontology"]["blockers"]
     assert result["planner"]["status"] == "blocked"

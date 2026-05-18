@@ -128,7 +128,7 @@ async def build_auditor_statuses(
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
 
     session_status = {
-        "status": "blocked" if reality["staleRuntimeSessionCount"] or reality.get("runningAgentStatusDriftCount") else "ready",
+        "status": "blocked" if reality["staleRuntimeSessionCount"] or reality.get("runningAgentStatusDriftCount") or reality.get("runningAgentRoleDriftCount") else "ready",
         "blockers": [
             *(
                 [f"{reality['staleRuntimeSessionCount']} stale runtime session(s) still marked active."]
@@ -138,6 +138,11 @@ async def build_auditor_statuses(
             *(
                 [f"{reality['runningAgentStatusDriftCount']} running-agent session status alias row(s) detected."]
                 if reality.get("runningAgentStatusDriftCount")
+                else []
+            ),
+            *(
+                [f"{reality['runningAgentRoleDriftCount']} running-agent session role alias row(s) detected."]
+                if reality.get("runningAgentRoleDriftCount")
                 else []
             ),
         ],
