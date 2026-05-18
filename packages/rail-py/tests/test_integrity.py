@@ -141,6 +141,42 @@ def test_integrity_repo_loads_legacy_verification_run_records(tmp_path):
     assert run.checks[0]["name"] == "deterministic_repo_audit"
 
 
+def test_integrity_repo_loads_legacy_planner_claim_candidate_records(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "claims.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "claim_id": "ucl_participation_plan_claim_001",
+                    "claim": "The ranked UEFA participation source stack is sufficient for a first-pass hydration design.",
+                    "status": "candidate",
+                    "scope": "planning_evidence",
+                    "confidence": "supported",
+                    "artifacts": [
+                        {"path": "research_plan/uefa_plan.md", "lines": "10-20"},
+                        {"path": "artifacts/uefa_execution.md", "lines": "7-14"},
+                    ],
+                    "notes": "Legacy planner-side claim candidate.",
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    claim = ResearchIntegrityRepo(root).load_claims()[0]
+
+    assert claim.claim_key == "ucl_participation_plan_claim_001"
+    assert claim.claim_text == "The ranked UEFA participation source stack is sufficient for a first-pass hydration design."
+    assert claim.status == "needs_evidence"
+    assert claim.artifact_path == "research_plan/uefa_plan.md"
+    assert claim.evidence_paths == ["research_plan/uefa_plan.md", "artifacts/uefa_execution.md"]
+    assert "Legacy planner-side claim candidate." in claim.caveats
+    assert "legacy_scope:planning_evidence" in claim.caveats
+
+
 def test_integrity_record_models_validate_required_fields():
     with pytest.raises(ValidationError):
         AssumptionRecord.model_validate({"title": "Missing key", "value": "2018-2020"})
@@ -800,6 +836,41 @@ def test_source_change_marks_dependent_claims_and_artifacts_stale(tmp_path):
     assert "source_changed:bls-laus" in stale_artifacts[0].stale_reasons
     chunks = repo.chunks_for_source("bls-laus")
     assert chunks == []
+
+
+def test_upsert_claim_downgrades_supported_status_without_explicit_evidence(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    claim = repo.upsert_claim(
+        {
+            "claim_key": "claim-001",
+            "claim_text": "This should not be marked supported yet.",
+            "status": "supported",
+            "evidence_kind": "semantic_suggestion",
+        }
+    )
+
+    assert claim.status == "needs_evidence"
+
+
+def test_write_claims_downgrades_supported_status_without_evidence(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "This should not be marked supported yet.",
+                "status": "supported",
+            }
+        ]
+    )
+
+    stored = repo.get_claim("claim-001")
+    assert stored is not None
+    assert stored.status == "needs_evidence"
 
 
 def test_source_refresh_clears_dependent_stale_state_when_revalidated(tmp_path):

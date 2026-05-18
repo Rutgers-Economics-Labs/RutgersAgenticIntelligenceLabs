@@ -1086,12 +1086,33 @@ class ResearchIntegrityRepo:
     def load_claims(self) -> list[ClaimRecord]:
         return self._load_records(self.claims_path(), ClaimRecord)
 
+    def _normalize_claim_record_for_write(self, record: ClaimRecord | dict[str, Any]) -> ClaimRecord:
+        normalized = ClaimRecord.model_validate(record)
+        if normalized.status != "supported":
+            return normalized
+        expected_status = self._default_claim_status(
+            list(normalized.evidence_paths),
+            list(normalized.source_keys),
+            list(normalized.evidence_chunk_keys),
+            normalized.evidence_kind,
+        )
+        if expected_status == "supported":
+            return normalized
+        return normalized.model_copy(update={"status": expected_status})
+
     def write_claims(self, records: list[ClaimRecord] | list[dict[str, Any]]) -> None:
-        self._write_records(self.claims_path(), records, ClaimRecord)
+        normalized_records = [self._normalize_claim_record_for_write(record) for record in records]
+        self._write_records(self.claims_path(), normalized_records, ClaimRecord)
         self.rebuild_integrity_edges()
 
     def upsert_claim(self, record: ClaimRecord | dict[str, Any]) -> ClaimRecord:
-        stored = self._upsert_by_key(self.load_claims, self.write_claims, ClaimRecord, "claim_key", record)
+        stored = self._upsert_by_key(
+            self.load_claims,
+            self.write_claims,
+            ClaimRecord,
+            "claim_key",
+            self._normalize_claim_record_for_write(record),
+        )
         self.reconcile_claim_conflicts()
         self.reconcile_artifact_claim_support()
         return self.get_claim(stored.claim_key) or stored

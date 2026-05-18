@@ -127,6 +127,44 @@ async def test_apply_rerun_plan_creates_tasks(client, convex_mock, tmp_path):
     assert len(payload["tasks"]) >= 2
 
 
+async def test_record_claim_downgrades_supported_status_without_explicit_evidence(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/claims",
+        json={
+            "claimKey": "claim-001",
+            "statement": "This claim should not land as supported.",
+            "artifactPath": "artifacts/report.md",
+            "status": "supported",
+            "evidenceKind": "semantic_suggestion",
+        },
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["status"] == "needs_evidence"
+
+
 async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifact(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     artifact_path = root / "artifacts" / "report.md"
