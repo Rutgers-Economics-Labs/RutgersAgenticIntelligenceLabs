@@ -58,6 +58,24 @@ def test_autopilot_auto_approves_ready_pending_task(monkeypatch):
     async def _list_decision_events(*args, **kwargs):
         return []
 
+    async def _reconcile_project_reality(project_arg):
+        return {
+            "removedTaskFiles": [],
+            "updatedTaskIds": [],
+            "repairedSessionIds": [],
+            "repairedAuditSessionIds": [],
+            "hasChanges": False,
+        }
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
     monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
     monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
     monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
@@ -69,6 +87,8 @@ def test_autopilot_auto_approves_ready_pending_task(monkeypatch):
     monkeypatch.setattr(autopilot_service.planner_service, "update_task", _update_task)
     monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
     monkeypatch.setattr(autopilot_service, "list_decision_events", _list_decision_events)
+    monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _reconcile_project_reality)
+    monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _build_auditor_statuses)
 
     autopilot_service._active_autopilots["soccer-project"] = True
     autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
@@ -80,6 +100,121 @@ def test_autopilot_auto_approves_ready_pending_task(monkeypatch):
     assert resolved and resolved[0]["approval_id"] == "approval-1"
     assert updates and updates[0]["approval_state"] == "granted"
     assert updates[0]["status"] == "ready"
+
+
+def test_autopilot_control_plane_gate_only_launches_repair_task(monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project"}
+    tasks = [
+        {
+            "_id": "task-1",
+            "title": "Continue downstream research synthesis",
+            "status": "awaiting_approval",
+            "approvalState": "pending",
+            "runner": "codex_cli",
+            "dependsOnTaskIds": [],
+        },
+        {
+            "_id": "task-repair",
+            "title": "Reconcile control-plane drift and stale sessions",
+            "status": "ready",
+            "approvalState": "granted",
+            "agentRole": "health",
+            "runner": "codex_cli",
+            "dependsOnTaskIds": [],
+        },
+    ]
+    launches: list[list[str]] = []
+    created: list[dict] = []
+    resolved: list[dict] = []
+    updates: list[dict] = []
+    planner_turns: list[str] = []
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _run_planner_turn(**kwargs):
+        planner_turns.append("ran")
+        return None
+
+    async def _find_active_worker(project_id: str):
+        return None
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return tasks
+
+    async def _list_approvals(project_arg):
+        return []
+
+    async def _create_approval(**kwargs):
+        created.append(kwargs)
+        return "approval-1"
+
+    async def _resolve_approval(**kwargs):
+        resolved.append(kwargs)
+        return {"_id": "approval-1"}
+
+    async def _update_task(task_id: str, *, project=None, **fields):
+        updates.append({"task_id": task_id, **fields})
+        return {"_id": task_id, **fields}
+
+    async def _sync_planner_files(*args, **kwargs):
+        return None
+
+    async def _list_decision_events(*args, **kwargs):
+        return []
+
+    async def _launch_ready_task(project_arg, ready_tasks: list[dict]):
+        launches.append([str(task["_id"]) for task in ready_tasks])
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return {"convex_session_id": "session-1"}
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "blocked", "blockers": ["1 stale runtime session(s) detected."]},
+            "planner": {"status": "blocked", "blockers": ["1 duplicate task file(s) detected."]},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    async def _reconcile_project_reality(project_arg):
+        return {
+            "removedTaskFiles": [],
+            "updatedTaskIds": [],
+            "repairedSessionIds": [],
+            "repairedAuditSessionIds": [],
+            "hasChanges": False,
+        }
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_approvals", _list_approvals)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_approval", _create_approval)
+    monkeypatch.setattr(autopilot_service.planner_service, "resolve_approval", _resolve_approval)
+    monkeypatch.setattr(autopilot_service.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+    monkeypatch.setattr(autopilot_service, "list_decision_events", _list_decision_events)
+    monkeypatch.setattr(autopilot_service, "_launch_ready_task", _launch_ready_task)
+    monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _build_auditor_statuses)
+    monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _reconcile_project_reality)
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+    autopilot_service._wake_events["soccer-project"] = asyncio.Event()
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    assert planner_turns == []
+    assert launches == [["task-repair"]]
+    assert created == []
+    assert resolved == []
+    assert updates == []
 
 
 def test_start_autopilot_marks_project_completed_when_all_tasks_terminal(monkeypatch):

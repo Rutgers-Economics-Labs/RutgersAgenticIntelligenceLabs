@@ -906,10 +906,13 @@ def _apply_auditor_priority_boosts(
     ontology_blocked = (auditors.get("ontology") or {}).get("status") == "blocked"
     integrity_blocked = (auditors.get("integrity") or {}).get("status") == "blocked"
     closeout_blocked = (auditors.get("closeout") or {}).get("status") == "blocked"
+    control_plane_blocked = _control_plane_auditor_gate(auditors).get("blocked")
 
     for task in boosted:
         title = str(task.get("title") or "").lower()
         boost = 0
+        if control_plane_blocked and title == "reconcile control-plane drift and stale sessions":
+            boost = min(boost, -30)
         if ontology_blocked:
             if any(token in title for token in ("repair ontology", "repair ontology readiness", "repair ontology readiness blockers")):
                 boost = min(boost, -25)
@@ -943,6 +946,11 @@ def _filter_ready_tasks_for_auditors(
         return []
     ontology_auditor = (auditors or {}).get("ontology") or {}
     filtered = _apply_auditor_priority_boosts(ready_tasks, auditors)
+    if _control_plane_auditor_gate(auditors).get("blocked"):
+        filtered = [
+            task for task in filtered
+            if str(task.get("title") or "") == "Reconcile control-plane drift and stale sessions"
+        ]
     if ontology_auditor.get("status") == "blocked":
         allowed_roles = {"data", "health"}
         allowed: list[dict[str, Any]] = []
@@ -1270,25 +1278,7 @@ async def run_autopilot_loop(project_slug: str):
                 pass
             continue
         
-        # 1. Check for pending approvals if auto-approve is enabled
         config = _autopilot_configs.get(project_slug, {})
-        if config.get("auto_approve"):
-            try:
-                approvals = await planner_service.list_approvals(project)
-                pending = [a for a in approvals if a["status"] == "pending"]
-                if pending:
-                    for app in pending:
-                        logger.info(f"Autopilot: Auto-approving {app['_id']}")
-                        await planner_service.resolve_approval(
-                            project=project,
-                            approval_id=app["_id"],
-                            status="granted",
-                            resolution_note="Auto-approved by Autopilot Mode."
-                        )
-                        if app.get("taskId"):
-                            await planner_service.update_task(app["taskId"], project=project, approval_state="granted")
-            except Exception as e:
-                logger.error(f"Failed to auto-approve in autopilot: {e}")
 
         board = await planner_service.ensure_main_board(project)
         tasks = await planner_service.list_tasks(board["_id"], project=project)
@@ -1513,12 +1503,12 @@ async def run_autopilot_loop(project_slug: str):
 
         task_by_id = {str(t["_id"]): t for t in tasks}
 
-        if config.get("auto_approve"):
+        if config.get("auto_approve") and not control_plane_gate.get("blocked"):
             promoted: list[str] = []
             approvals = await planner_service.list_approvals(project)
             for task in tasks:
                 status = task.get("status")
-                if status not in {"awaiting_approval", "backlog", "blocked"}:
+                if status not in {"ready", "awaiting_approval", "backlog", "blocked"}:
                     continue
                 if status == "blocked" and task.get("blockerCategory") == "publish_failure":
                     continue
