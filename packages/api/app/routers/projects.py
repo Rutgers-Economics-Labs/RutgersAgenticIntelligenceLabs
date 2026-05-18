@@ -2313,7 +2313,10 @@ async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRe
     _validate_planner_task_runner(data.runner)
     _validate_planner_task_priority(data.priority)
     board = await planner_service.ensure_main_board(project)
-    await planner_service.update_task(task_id, project=project, **data.model_dump())
+    try:
+        await planner_service.update_task(task_id, project=project, **data.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     await planner_service.sync_planner_files(project, board)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
     for task in tasks:

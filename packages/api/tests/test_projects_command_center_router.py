@@ -303,6 +303,34 @@ def test_update_planner_task_rejects_unknown_priority(monkeypatch):
     assert "Planner task priority must be one of" in response.json()["detail"]
 
 
+def test_update_planner_task_surfaces_planner_completion_gate_block(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _update_task(task_id: str, *, project: dict, **fields):
+        raise ValueError(
+            "Planner tasks cannot be marked done until planner completion checks pass: "
+            "research_plan/current_plan.md missing or empty at /tmp/demo-project/research_plan/current_plan.md"
+        )
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(projects_router.planner_service, "update_task", _update_task)
+
+    response = client.patch(
+        "/api/v1/projects/demo-project/planner/tasks/task-1",
+        json={"status": "done"},
+    )
+
+    assert response.status_code == 409
+    assert "Planner tasks cannot be marked done until planner completion checks pass" in response.json()["detail"]
+
+
 def test_create_planner_task_rejects_unknown_agent_role(monkeypatch):
     import app.routers.projects as projects_router
 
