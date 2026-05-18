@@ -400,6 +400,52 @@ async def test_artifact_promotion_rejects_when_ontology_auditor_is_blocked(clien
     assert "Artifact promotion blocked by auditor state: ontology:" in payload["detail"]
 
 
+async def test_artifact_lineage_write_rejects_trusted_state_when_ontology_auditor_is_blocked(client, convex_mock, tmp_path, monkeypatch):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+            "integrity": {"status": "ready", "blockers": []},
+        }
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr("app.routers.projects.build_auditor_statuses", _build_auditor_statuses)
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "verified",
+            "inputs": [".ontology/onto.duckdb"],
+            "sources": ["research_plan/state/sources.json#context-doc-234"],
+        },
+    )
+
+    assert artifact_resp.status_code == 409
+    payload = artifact_resp.json()
+    assert "Artifact lineage write blocked by auditor state: ontology:" in payload["detail"]
+
+
 async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     artifact_path = root / "artifacts" / "report.md"
