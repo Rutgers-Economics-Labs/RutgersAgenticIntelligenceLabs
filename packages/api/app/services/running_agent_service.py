@@ -8,6 +8,10 @@ from app.services.role_runtime_service import ROLE_ALIASES
 
 
 ACTIVE_STATUSES = {"queued", "running", "awaiting_input", "awaiting_approval", "paused"}
+SESSION_STATUSES = ACTIVE_STATUSES | {"completed", "failed", "cancelled", "blocked"}
+LEGACY_SESSION_STATUS_ALIASES = {
+    "done": "completed",
+}
 
 
 def _normalize_role_alias(role: str | None) -> str | None:
@@ -17,13 +21,26 @@ def _normalize_role_alias(role: str | None) -> str | None:
     return ROLE_ALIASES.get(normalized, normalized)
 
 
+def _normalize_session_status(status: str | None, *, strict: bool = False) -> str | None:
+    if status in {None, ""}:
+        return None
+    normalized = str(status).strip().lower()
+    normalized = LEGACY_SESSION_STATUS_ALIASES.get(normalized, normalized)
+    if normalized in SESSION_STATUSES:
+        return normalized
+    if strict:
+        raise ValueError(f"Unsupported running-agent status: {status}")
+    return status
+
+
 def _normalize_session_record(session: dict[str, Any] | None) -> dict[str, Any] | None:
     if not session:
         return session
     normalized_role = _normalize_role_alias(session.get("role"))
-    if normalized_role == session.get("role"):
+    normalized_status = _normalize_session_status(session.get("status"))
+    if normalized_role == session.get("role") and normalized_status == session.get("status"):
         return session
-    return dict(session) | {"role": normalized_role}
+    return dict(session) | {"role": normalized_role, "status": normalized_status}
 
 
 async def create_running_agent(
@@ -39,6 +56,7 @@ async def create_running_agent(
     status: str = "queued",
 ) -> str:
     role = _normalize_role_alias(role) or "agent"
+    status = _normalize_session_status(status, strict=True) or "queued"
     # Convex agent:createSession validator (from schema inspection):
     #   required: title, model
     #   optional: externalSessionId, projectId, projectSlug, role, runner, status, taskId
@@ -66,6 +84,8 @@ async def update_running_agent(session_id: str, **fields: Any) -> None:
     # actualCostUsd, estimatedCostUsd. All other fields are silently dropped.
     _allowed = {"status", "externalSessionId", "endedAt", "actualCostUsd", "estimatedCostUsd"}
     patch = {k: v for k, v in fields.items() if k in _allowed and v is not None}
+    if "status" in patch:
+        patch["status"] = _normalize_session_status(patch.get("status"), strict=True)
     await convex.mutation("agent:updateSessionState", {"sessionId": session_id, **patch})
 
 
