@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from rail.integrity import ResearchIntegrityRepo, sync_sources_from_configs
 from rail.manifest import load_manifest, parse_manifest_content
 
 from app.services.convex_client import convex
@@ -70,6 +74,10 @@ def artifact_files_exist(record: dict[str, Any]) -> bool:
         return False
     if duckdb_path and not Path(duckdb_path).exists():
         return False
+    if duckdb_path:
+        hydration_meta_path = Path(duckdb_path).parent / ".rail_hydration.json"
+        if not hydration_meta_path.exists():
+            return False
     return bool(ontology_path or duckdb_path)
 
 
@@ -83,6 +91,12 @@ async def register_hydration_artifact(
     status: str = "valid",
 ) -> str:
     root = Path(project["localRepoPath"]).resolve()
+    _sync_repo_hydration_lineage(
+        project_root=root,
+        manifest_path=project.get("manifestPath") or "rail.yaml",
+        pipeline_slug=pipeline_slug,
+        duckdb_artifact_path=duckdb_artifact_path,
+    )
     return await convex.mutation(
         "hydrationArtifacts:register",
         {
@@ -96,6 +110,128 @@ async def register_hydration_artifact(
             "duckdbArtifactPath": duckdb_artifact_path,
             "status": status,
         },
+    )
+
+
+async def promote_project_hydration_artifact(
+    *,
+    project: dict[str, Any],
+    ontology_artifact_path: str | None,
+    duckdb_artifact_path: str | None,
+    owl_artifact_path: str | None = None,
+    embeddings_artifact_path: str | None = None,
+    status: str = "hydrated",
+) -> None:
+    project_id = project.get("_id")
+    if not project_id:
+        return
+
+    ontology_path = str(ontology_artifact_path) if ontology_artifact_path else None
+    duckdb_path = str(duckdb_artifact_path) if duckdb_artifact_path else None
+    if not ontology_path and not duckdb_path:
+        return
+
+    ontology_parent = Path(ontology_path or duckdb_path).parent
+    hydration_meta_path = ontology_parent / ".rail_hydration.json"
+    if duckdb_path and not hydration_meta_path.exists():
+        raise ValueError("Hydration metadata must exist before promoting active ontology artifacts.")
+
+    owl_path = owl_artifact_path
+    if owl_path is None:
+        candidate = ontology_parent / "populated_ontology.owl"
+        if candidate.exists():
+            owl_path = str(candidate)
+
+    embeddings_path = embeddings_artifact_path
+    if embeddings_path is None:
+        candidate = ontology_parent / "embeddings.db"
+        if candidate.exists():
+            embeddings_path = str(candidate)
+
+    patch: dict[str, Any] = {
+        "projectId": project_id,
+        "status": status,
+        "lastHydratedAt": int(time.time() * 1000),
+    }
+    if ontology_path:
+        patch["activeOntologyDbPath"] = ontology_path
+    if owl_path:
+        patch["activeOntologyOwlPath"] = str(owl_path)
+    if duckdb_path:
+        patch["activeOntologyDuckdbPath"] = duckdb_path
+    if embeddings_path:
+        patch["activeOntologyEmbeddingsPath"] = str(embeddings_path)
+    await convex.mutation("projects:updateById", patch)
+
+
+def _sync_repo_hydration_lineage(
+    *,
+    project_root: Path,
+    manifest_path: str,
+    pipeline_slug: str,
+    duckdb_artifact_path: str | None,
+) -> None:
+    if not duckdb_artifact_path:
+        return
+    try:
+        manifest = load_manifest(project_root)
+    except Exception:
+        return
+    pipeline_path = project_root / manifest.hydration.pipelines_dir / f"{pipeline_slug}.yaml"
+    if not pipeline_path.exists():
+        return
+    try:
+        pipeline_spec = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return
+
+    source_keys = sorted(
+        {
+            *[str(item) for item in manifest.hydration.linked_sources],
+            *[
+                str(step.get("api"))
+                for step in pipeline_spec.get("steps") or []
+                if isinstance(step, dict) and step.get("api")
+            ],
+        }
+    )
+    sync_sources_from_configs(
+        project_root,
+        sources_dir=manifest.hydration.sources_dir,
+        source_keys=source_keys,
+    )
+    repo = ResearchIntegrityRepo(project_root)
+    duckdb_path = Path(duckdb_artifact_path)
+    artifact_rel = _safe_relpath(duckdb_path, project_root)
+    hydration_meta_rel = _safe_relpath(project_root / ".ontology" / ".rail_hydration.json", project_root)
+    source_inputs = [
+        str((Path(manifest.hydration.sources_dir) / f"{source_key}.yaml").as_posix())
+        for source_key in source_keys
+    ]
+    script_inputs = [str((Path(manifest.hydration.pipelines_dir) / f"{pipeline_slug}.yaml").as_posix())]
+    source_refs = [f"research_plan/state/sources.json#{source_key}" for source_key in source_keys]
+    repo.upsert_artifact_lineage(
+        {
+            "artifact_path": artifact_rel,
+            "artifact_type": "dataset",
+            "title": duckdb_path.name,
+            "promotion_state": "draft",
+            "inputs": source_inputs,
+            "scripts": script_inputs,
+            "sources": source_refs,
+        }
+    )
+    repo.upsert_artifact_lineage(
+        {
+            "artifact_path": hydration_meta_rel,
+            "artifact_type": "dataset",
+            "title": Path(hydration_meta_rel).name,
+            "promotion_state": "draft",
+            "inputs": source_inputs,
+            "scripts": script_inputs,
+            "sources": source_refs,
+            "reproducibility_mode": "deterministic",
+        }
     )
 
 

@@ -8,6 +8,36 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_register_artifacts_rejects_missing_hydration_metadata(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    ontology_root = tmp_path / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_db = ontology_root / "onto.db"
+    onto_db.write_bytes(b"db")
+    onto_duckdb = ontology_root / "onto.duckdb"
+    onto_duckdb.write_bytes(b"duck")
+
+    async def _query(path: str, payload: dict):
+        if path == "projects:getBySlug":
+            return {"_id": "project-1", "slug": payload["slug"], "localRepoPath": str(tmp_path)}
+        raise AssertionError(path)
+
+    async def _mutation(path: str, payload: dict):
+        raise AssertionError(f"unexpected mutation {path}")
+
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/register-artifacts",
+        json={"output_db_path": str(onto_db)},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Hydration metadata must exist before promoting active ontology artifacts."
+
+
 def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
     import app.routers.projects as projects_router
 

@@ -29,10 +29,16 @@ sys.path.insert(0, API_ROOT)
 # Import at module level so we pick up packages/api before LocalEngine has
 # a chance to insert packages/engine at position 0 during test execution.
 import os
+import json
+import asyncio
 os.environ.setdefault("CONVEX_URL", "https://colorless-elephant-150.convex.cloud")
 os.environ.setdefault("CONVEX_DEPLOY_KEY", "test-key")
 
-from app.services.hydration_registry_service import resolve_pipeline_slug  # noqa: E402
+from app.services.hydration_registry_service import (  # noqa: E402
+    promote_project_hydration_artifact,
+    register_hydration_artifact,
+    resolve_pipeline_slug,
+)
 
 MINIMAL_RAIL_YAML = textwrap.dedent("""\
     version: 1
@@ -81,7 +87,7 @@ def project_root(tmp_path):
 def test_resolve_returns_manifest_default_pipeline(project_root):
     """resolve_pipeline_slug reads default_pipeline from rail.yaml correctly."""
     from app.services.hydration_registry_service import resolve_pipeline_slug
-    slug = resolve_pipeline_slug(project_root)
+    slug = resolve_pipeline_slug({}, project_root)
     assert slug == "my_pipeline"
 
 
@@ -93,15 +99,134 @@ def test_resolve_returns_fallback_when_no_default(tmp_path):
     (tmp_path / "rail.yaml").write_text(no_default, encoding="utf-8")
 
     from app.services.hydration_registry_service import resolve_pipeline_slug
-    slug = resolve_pipeline_slug(tmp_path)
+    slug = resolve_pipeline_slug({}, tmp_path)
     assert slug == "default"
 
 
 def test_resolve_respects_custom_manifest_path(tmp_path):
-    """resolve_pipeline_slug uses manifest_path argument correctly (no double-append)."""
-    custom_path = tmp_path / "custom.yaml"
-    custom_path.write_text(MINIMAL_RAIL_YAML, encoding="utf-8")
-
+    """resolve_pipeline_slug prefers the project record pipeline slug when present."""
+    (tmp_path / "rail.yaml").write_text(MINIMAL_RAIL_YAML, encoding="utf-8")
     from app.services.hydration_registry_service import resolve_pipeline_slug
-    slug = resolve_pipeline_slug(tmp_path, manifest_path="custom.yaml")
-    assert slug == "my_pipeline"
+    slug = resolve_pipeline_slug({"pipelineConfigSlug": "configured_pipeline"}, tmp_path)
+    assert slug == "configured_pipeline"
+
+
+def test_register_hydration_artifact_syncs_repo_dataset_lineage(project_root, monkeypatch):
+    (project_root / ".ontology").mkdir(exist_ok=True)
+    (project_root / ".ontology" / "sources").mkdir(parents=True, exist_ok=True)
+    (project_root / ".ontology" / "pipelines").mkdir(parents=True, exist_ok=True)
+    (project_root / "research_plan" / "state").mkdir(parents=True, exist_ok=True)
+    (project_root / "research_plan" / "state" / "sources.json").write_text(
+        json.dumps(
+            [
+                {
+                    "source_key": "sample",
+                    "source_type": "dataset",
+                    "title": "Sample Source",
+                    "url_or_path": "https://example.com/sample.csv",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (project_root / ".ontology" / "sources" / "sample.yaml").write_text("name: Sample\n", encoding="utf-8")
+    (project_root / ".ontology" / "pipelines" / "my_pipeline.yaml").write_text(
+        "ontology: .ontology/ontology.yaml\nsteps:\n  - api: sample\n",
+        encoding="utf-8",
+    )
+    duckdb_path = project_root / ".ontology" / "onto.duckdb"
+    duckdb_path.write_bytes(b"")
+
+    async def _fake_mutation(path: str, payload: dict):
+        assert path == "hydrationArtifacts:register"
+        return "artifact-1"
+
+    monkeypatch.setattr("app.services.hydration_registry_service.convex.mutation", _fake_mutation)
+
+    artifact_id = asyncio.run(
+        register_hydration_artifact(
+            project={
+                "_id": "project-1",
+                "localRepoPath": str(project_root),
+                "manifestPath": "rail.yaml",
+            },
+            pipeline_slug="my_pipeline",
+            hydration_mode="full",
+            ontology_artifact_path=str(project_root / ".ontology" / "onto.db"),
+            duckdb_artifact_path=str(duckdb_path),
+            status="valid",
+        )
+    )
+
+    assert artifact_id == "artifact-1"
+    lineage = json.loads((project_root / "research_plan" / "state" / "artifact_lineage.json").read_text(encoding="utf-8"))
+    sources = json.loads((project_root / "research_plan" / "state" / "sources.json").read_text(encoding="utf-8"))
+    dataset_entry = next(item for item in lineage if item["artifact_path"] == ".ontology/onto.duckdb")
+    source_entry = next(item for item in sources if item["source_key"] == "sample")
+    assert dataset_entry["sources"] == ["research_plan/state/sources.json#sample"]
+    assert dataset_entry["scripts"] == [".ontology/pipelines/my_pipeline.yaml"]
+    assert dataset_entry["inputs"] == [".ontology/sources/sample.yaml"]
+    assert source_entry["title"] == "Sample"
+    assert source_entry["access_method"] == "api"
+    assert source_entry["freshness_status"] == "fresh"
+    assert source_entry["provenance"]["config_path"] == ".ontology/sources/sample.yaml"
+
+
+def test_promote_project_hydration_artifact_updates_active_paths(project_root, monkeypatch):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_db = ontology_root / "onto.db"
+    onto_duckdb = ontology_root / "onto.duckdb"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    owl = ontology_root / "populated_ontology.owl"
+    embeddings = ontology_root / "embeddings.db"
+    onto_db.write_bytes(b"db")
+    onto_duckdb.write_bytes(b"duck")
+    hydration_meta.write_text('{"pipeline_slug":"my_pipeline","hydration_mode":"full"}', encoding="utf-8")
+    owl.write_text("owl", encoding="utf-8")
+    embeddings.write_bytes(b"emb")
+
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_mutation(path: str, payload: dict):
+        calls.append((path, payload))
+        return "ok"
+
+    monkeypatch.setattr("app.services.hydration_registry_service.convex.mutation", _fake_mutation)
+
+    asyncio.run(
+        promote_project_hydration_artifact(
+            project={"_id": "project-1"},
+            ontology_artifact_path=str(onto_db),
+            duckdb_artifact_path=str(onto_duckdb),
+        )
+    )
+
+    assert len(calls) == 1
+    path, payload = calls[0]
+    assert path == "projects:updateById"
+    assert payload["projectId"] == "project-1"
+    assert payload["status"] == "hydrated"
+    assert payload["activeOntologyDbPath"] == str(onto_db)
+    assert payload["activeOntologyDuckdbPath"] == str(onto_duckdb)
+    assert payload["activeOntologyOwlPath"] == str(owl)
+    assert payload["activeOntologyEmbeddingsPath"] == str(embeddings)
+    assert isinstance(payload["lastHydratedAt"], int)
+
+
+def test_promote_project_hydration_artifact_rejects_missing_hydration_metadata(project_root):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_db = ontology_root / "onto.db"
+    onto_duckdb = ontology_root / "onto.duckdb"
+    onto_db.write_bytes(b"db")
+    onto_duckdb.write_bytes(b"duck")
+
+    with pytest.raises(ValueError, match="Hydration metadata must exist before promoting active ontology artifacts."):
+        asyncio.run(
+            promote_project_hydration_artifact(
+                project={"_id": "project-1"},
+                ontology_artifact_path=str(onto_db),
+                duckdb_artifact_path=str(onto_duckdb),
+            )
+        )

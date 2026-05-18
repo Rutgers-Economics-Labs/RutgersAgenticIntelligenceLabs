@@ -26,6 +26,7 @@ from app.services.auditor_service import build_auditor_statuses
 from app.services.device_service import get_device_metadata
 from app.services.hydration_registry_service import (
     get_hydration_status as get_project_hydration_status,
+    promote_project_hydration_artifact,
     register_hydration_artifact,
     resolve_pipeline_slug,
 )
@@ -1339,7 +1340,6 @@ async def register_artifacts_from_job(
     if not project:
         raise HTTPException(404, "Project not found")
 
-    convex_project_id = project["_id"]
     job: dict | None = None
     db_key: str | None = None
     owl_key: str | None = None
@@ -1379,21 +1379,26 @@ async def register_artifacts_from_job(
 
     parent = Path(db_key).parent
     duckdb_path = str(parent / "onto.duckdb")
-    embeddings_path = str(parent / "embeddings.db")
+    try:
+        await promote_project_hydration_artifact(
+            project=project,
+            ontology_artifact_path=db_key,
+            duckdb_artifact_path=duckdb_path,
+            owl_artifact_path=owl_key,
+            embeddings_artifact_path=str(parent / "embeddings.db"),
+            status="hydrated",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    now_ms = int(time.time() * 1000)
-    patch: dict = {
-        "projectId": convex_project_id,
-        "status": "hydrated",
-        "lastHydratedAt": now_ms,
-        "activeOntologyDbPath": db_key,
-        "activeOntologyOwlPath": owl_key,
-        "activeOntologyDuckdbPath": duckdb_path,
-        "activeOntologyEmbeddingsPath": embeddings_path,
-    }
     if last_job_convex_id is not None:
-        patch["lastJobId"] = last_job_convex_id
-    await convex.mutation("projects:updateById", patch)
+        await convex.mutation(
+            "projects:updateById",
+            {
+                "projectId": project["_id"],
+                "lastJobId": last_job_convex_id,
+            },
+        )
 
     # Warm ontology on the same thread the API uses for Owlready2 (executor), not the event loop.
     db_path = Path(db_key).resolve()
