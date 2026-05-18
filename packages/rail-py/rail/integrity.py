@@ -528,6 +528,25 @@ def _normalize_validated_source_quality(
     return quality_status
 
 
+def _infer_source_admissibility_from_config(raw: dict[str, Any]) -> str:
+    explicit = str(raw.get("admissibility_status") or raw.get("admissibilityStatus") or "").strip().lower()
+    if explicit:
+        if explicit not in {"observed", "derived", "estimated", "synthetic", "missing"}:
+            raise ValueError(
+                "Source config admissibility_status must be one of observed, derived, estimated, synthetic, or missing."
+            )
+        return explicit
+    if raw.get("synthetic"):
+        return "synthetic"
+    if raw.get("estimated"):
+        return "estimated"
+    if raw.get("missing"):
+        return "missing"
+    if raw.get("derived_from") or raw.get("derivedFrom"):
+        return "derived"
+    return "observed"
+
+
 def _normalize_artifact_record_for_write(
     record: ArtifactLineageRecord,
     *,
@@ -3954,6 +3973,7 @@ def sync_sources_from_configs(
         if not isinstance(raw, dict):
             raise ValueError(f"Source config {config_path} must decode to a mapping")
         source_type = str(raw.get("type") or raw.get("source_type") or "api")
+        admissibility_status = _infer_source_admissibility_from_config(raw)
         url_or_path = str(
             raw.get("url")
             or raw.get("path")
@@ -3972,6 +3992,7 @@ def sync_sources_from_configs(
                 "retrieved_at": _stringify_timestamp(raw.get("retrieved_at") or raw.get("retrievedAt")) or _utc_now(),
                 "access_method": raw.get("access_method") or raw.get("accessMethod") or source_type,
                 "freshness_status": raw.get("freshness_status") or raw.get("freshnessStatus") or "fresh",
+                "admissibility_status": admissibility_status,
                 "impact_level": raw.get("impact_level") or raw.get("impactLevel") or "normal",
                 "provenance": {
                     "config_path": str(config_path.relative_to(root)),
@@ -3979,6 +4000,10 @@ def sync_sources_from_configs(
                     "url": raw.get("url"),
                     "storage_key": raw.get("storage_key"),
                     "response_path": raw.get("response_path"),
+                    "derived_from": raw.get("derived_from") or raw.get("derivedFrom"),
+                    "synthetic": bool(raw.get("synthetic")),
+                    "estimated": bool(raw.get("estimated")),
+                    "missing": bool(raw.get("missing")),
                     "fields": raw.get("fields") or [],
                 },
                 "quality_notes": raw.get("description"),

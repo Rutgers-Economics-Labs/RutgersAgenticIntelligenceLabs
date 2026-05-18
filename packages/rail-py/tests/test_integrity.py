@@ -667,6 +667,8 @@ def test_sync_sources_from_configs_records_local_file_provenance(tmp_path):
     assert len(synced) == 1
     assert synced[0].source_type == "file"
     assert synced[0].url_or_path == "data/raw/local.csv"
+    assert synced[0].admissibility_status == "observed"
+    assert synced[0].quality_status == "validated"
     assert synced[0].provenance["config_path"] == ".ontology/sources/local-file.yaml"
     assert synced[0].provenance["path"] == "data/raw/local.csv"
 
@@ -699,9 +701,70 @@ def test_sync_sources_from_configs_records_api_source_freshness_metadata(tmp_pat
     assert synced[0].retrieved_at == "2026-05-14T01:00:00Z"
     assert synced[0].access_method == "http_get"
     assert synced[0].freshness_status == "fresh"
+    assert synced[0].admissibility_status == "observed"
+    assert synced[0].quality_status == "validated"
     assert synced[0].provenance["config_path"] == ".ontology/sources/labor-api.yaml"
     assert synced[0].provenance["url"] == "https://api.example.com/labor"
     assert synced[0].provenance["fields"] == ["series_id", "value"]
+
+
+def test_sync_sources_from_configs_preserves_derived_admissibility_metadata(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    sources_dir = root / ".ontology" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    (sources_dir / "derived-series.yaml").write_text(
+        "name: Derived Series\n"
+        "type: transform\n"
+        "path: data/derived/series.csv\n"
+        "derived_from:\n"
+        "  - bls-laus\n"
+        "freshness_status: fresh\n",
+        encoding="utf-8",
+    )
+
+    synced = sync_sources_from_configs(root, sources_dir=".ontology/sources", source_keys=["derived-series"])
+
+    assert len(synced) == 1
+    assert synced[0].admissibility_status == "derived"
+    assert synced[0].quality_status == "validated"
+    assert synced[0].provenance["derived_from"] == ["bls-laus"]
+
+
+def test_sync_sources_from_configs_downgrades_estimated_sources_from_trusted_state(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    sources_dir = root / ".ontology" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    (sources_dir / "estimated-series.yaml").write_text(
+        "name: Estimated Series\n"
+        "type: estimate\n"
+        "path: data/derived/estimate.csv\n"
+        "estimated: true\n"
+        "freshness_status: fresh\n",
+        encoding="utf-8",
+    )
+
+    synced = sync_sources_from_configs(root, sources_dir=".ontology/sources", source_keys=["estimated-series"])
+
+    assert len(synced) == 1
+    assert synced[0].admissibility_status == "estimated"
+    assert synced[0].quality_status == "candidate"
+    assert synced[0].provenance["estimated"] is True
+
+
+def test_sync_sources_from_configs_rejects_unknown_admissibility_status(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    sources_dir = root / ".ontology" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    (sources_dir / "broken.yaml").write_text(
+        "name: Broken Source\n"
+        "type: api\n"
+        "url: https://api.example.com/broken\n"
+        "admissibility_status: hearsay\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="admissibility_status must be one of observed, derived, estimated, synthetic, or missing"):
+        sync_sources_from_configs(root, sources_dir=".ontology/sources", source_keys=["broken"])
 
 
 def test_assumption_change_marks_dependent_artifacts_stale(tmp_path):
