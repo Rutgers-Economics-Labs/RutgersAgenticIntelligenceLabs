@@ -431,9 +431,25 @@ def _validate_trusted_source_contract(
 def _validate_claim_reference_integrity(
     repo,
     *,
+    project_root: Path,
+    evidence_paths: list[str],
     source_keys: list[str],
     evidence_chunk_keys: list[str],
 ) -> None:
+    missing_paths = sorted(
+        {
+            path
+            for path in evidence_paths
+            if path
+            and not (project_root / path).exists()
+        }
+    )
+    if missing_paths:
+        raise HTTPException(
+            status_code=422,
+            detail="Claim references missing evidence paths: " + ", ".join(missing_paths),
+        )
+
     known_sources = {item.source_key for item in repo.load_sources()}
     missing_sources = sorted({key for key in source_keys if key not in known_sources})
     if missing_sources:
@@ -1785,6 +1801,8 @@ async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRe
     repo = get_integrity_repo(root)
     _validate_claim_reference_integrity(
         repo,
+        project_root=root,
+        evidence_paths=data.evidencePaths,
         source_keys=data.sourceKeys,
         evidence_chunk_keys=data.evidenceChunkKeys,
     )
