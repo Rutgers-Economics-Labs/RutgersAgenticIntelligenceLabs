@@ -528,13 +528,26 @@ def _normalize_validated_source_quality(
     return quality_status
 
 
-def _normalize_artifact_promotion_state_for_write(record: ArtifactLineageRecord) -> PromotionState:
-    has_workflow_support = bool(record.inputs or record.scripts or record.verification_runs)
-    if record.promotion_state == "verified" and not record.verification_runs:
-        return "partially_verified" if has_workflow_support else "draft"
-    if record.promotion_state == "partially_verified" and not has_workflow_support:
-        return "draft"
-    return record.promotion_state
+def _normalize_artifact_record_for_write(
+    record: ArtifactLineageRecord,
+    *,
+    valid_verification_run_keys: set[str],
+) -> ArtifactLineageRecord:
+    normalized_verification_runs = [
+        ref for ref in record.verification_runs if _normalize_reference_key(ref) in valid_verification_run_keys
+    ]
+    has_workflow_support = bool(record.inputs or record.scripts or normalized_verification_runs)
+    promotion_state = record.promotion_state
+    if promotion_state == "verified" and not normalized_verification_runs:
+        promotion_state = "partially_verified" if has_workflow_support else "draft"
+    if promotion_state == "partially_verified" and not has_workflow_support:
+        promotion_state = "draft"
+    return record.model_copy(
+        update={
+            "verification_runs": normalized_verification_runs,
+            "promotion_state": promotion_state,
+        }
+    )
 
 
 def build_claim_state(
@@ -1279,25 +1292,25 @@ class ResearchIntegrityRepo:
         return self._load_records(self.artifact_lineage_path(), ArtifactLineageRecord)
 
     def write_artifact_lineage(self, records: list[ArtifactLineageRecord] | list[dict[str, Any]]) -> None:
+        valid_verification_run_keys = {item.run_id for item in self.load_verification_runs()}
         normalized_records: list[ArtifactLineageRecord] = []
         for record in records:
             normalized = ArtifactLineageRecord.model_validate(record)
             normalized_records.append(
-                normalized.model_copy(
-                    update={
-                        "promotion_state": _normalize_artifact_promotion_state_for_write(normalized),
-                    }
+                _normalize_artifact_record_for_write(
+                    normalized,
+                    valid_verification_run_keys=valid_verification_run_keys,
                 )
             )
         self._write_records(self.artifact_lineage_path(), normalized_records, ArtifactLineageRecord)
         self.rebuild_integrity_edges()
 
     def upsert_artifact_lineage(self, record: ArtifactLineageRecord | dict[str, Any]) -> ArtifactLineageRecord:
+        valid_verification_run_keys = {item.run_id for item in self.load_verification_runs()}
         normalized = ArtifactLineageRecord.model_validate(record)
-        normalized = normalized.model_copy(
-            update={
-                "promotion_state": _normalize_artifact_promotion_state_for_write(normalized),
-            }
+        normalized = _normalize_artifact_record_for_write(
+            normalized,
+            valid_verification_run_keys=valid_verification_run_keys,
         )
         stored = self._upsert_by_key(
             self.load_artifact_lineage,
