@@ -37,6 +37,29 @@ export default async function ProjectHomePage({
           ) : null}
         </div>
       </SectionCard>
+      <SectionCard eyebrow="Why Blocked" noPad>
+        <div style={{ padding: "12px 14px" }}>
+          <div style={{ fontWeight: 600, color: "var(--fg)" }}>
+            {center.blockerSummary?.headline ?? "No active blocker detected."}
+          </div>
+          {center.blockerSummary?.reasons?.length ? (
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              {center.blockerSummary.reasons.map((reason) => (
+                <div key={reason} className="mono-muted">{reason}</div>
+              ))}
+            </div>
+          ) : (
+            <div className="mono-muted" style={{ marginTop: 8 }}>No blocker reasons recorded.</div>
+          )}
+          {center.blockerSummary?.repairs?.length ? (
+            <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+              {center.blockerSummary.repairs.map((repair) => (
+                <div key={repair} style={{ color: "var(--fg)" }}>{repair}</div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </SectionCard>
       <SectionCard eyebrow="Audited Truth" noPad>
         <InlineStatus label="session" value={center.auditedTruth?.session?.id ?? "none"} />
         <InlineStatus label="role" value={center.auditedTruth?.session?.role ?? "—"} />

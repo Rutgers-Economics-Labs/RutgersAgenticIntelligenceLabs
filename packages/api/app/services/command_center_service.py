@@ -701,6 +701,65 @@ def _summarize_current_plan(project: dict) -> dict[str, Any]:
     return {"path": _rel(path, root), "summary": _summary_from_markdown(content), "content": content}
 
 
+def _build_blocker_summary(
+    *,
+    latest_audit: dict[str, Any] | None,
+    reality: dict[str, Any],
+    auditors: dict[str, Any],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    repairs: list[str] = []
+
+    session = auditors.get("session") or {}
+    planner = auditors.get("planner") or {}
+    ontology = auditors.get("ontology") or {}
+    integrity = auditors.get("integrity") or {}
+    closeout = auditors.get("closeout") or {}
+
+    if latest_audit and latest_audit.get("currentBlocker"):
+        reasons.insert(0, str(latest_audit["currentBlocker"]))
+    reasons.extend(str(item) for item in (session.get("blockers") or []) if str(item) not in reasons)
+    reasons.extend(str(item) for item in (planner.get("blockers") or []) if str(item) not in reasons)
+    reasons.extend(str(item) for item in (ontology.get("blockers") or []) if str(item) not in reasons)
+    reasons.extend(str(item) for item in (integrity.get("blockers") or []) if str(item) not in reasons)
+    reasons.extend(str(item) for item in (closeout.get("blockers") or []) if str(item) not in reasons)
+
+    if reality.get("staleRuntimeSessionCount"):
+        reasons.append(f"{reality['staleRuntimeSessionCount']} stale runtime session(s) are still marked active.")
+        repairs.append("Finalize or cancel stale runtime sessions before launching more work.")
+    if reality.get("duplicateTaskFileCount"):
+        reasons.append(f"{reality['duplicateTaskFileCount']} duplicate planner task file(s) are present.")
+        repairs.append("Run planner task-file reconciliation so the board has one canonical task record per task.")
+    if reality.get("taskSessionMismatchCount"):
+        reasons.append(f"{reality['taskSessionMismatchCount']} task(s) disagree with terminal session truth.")
+        repairs.append("Reconcile task states from terminal session review and publish results.")
+    if reality.get("staleAuditSessionCount"):
+        reasons.append(f"{reality['staleAuditSessionCount']} terminal session audit(s) are stale or missing.")
+        repairs.append("Regenerate post-run audits before autopilot advances.")
+
+    if ontology.get("status") == "blocked":
+        repairs.append("Repair hydration or promote the correct ontology artifact before research or closeout.")
+    if integrity.get("status") == "blocked":
+        repairs.append("Resolve unsupported claims, inadmissible sources, or missing provenance before promotion.")
+    if closeout.get("status") == "blocked":
+        repairs.append("Clear active blockers and rerun closeout once ontology and integrity gates are green.")
+
+    deduped_reasons = list(dict.fromkeys(reason for reason in reasons if reason))
+    deduped_repairs = list(dict.fromkeys(repair for repair in repairs if repair))
+    blocked = bool(deduped_reasons)
+
+    headline = "No active blocker detected."
+    if blocked:
+        headline = deduped_reasons[0]
+
+    return {
+        "blocked": blocked,
+        "headline": headline,
+        "reasons": deduped_reasons[:6],
+        "repairs": deduped_repairs[:6],
+    }
+
+
 async def build_command_center(project: dict) -> dict[str, Any]:
     planner_service, running_agent_service = _runtime_services()
     if planner_service is None or running_agent_service is None:
@@ -723,6 +782,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     recent_audits = list_recent_audits(root)
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
+    blocker_summary = _build_blocker_summary(latest_audit=latest_audit, reality=reality, auditors=auditors)
 
     status_counts: dict[str, int] = {}
     for task in tasks:
@@ -764,6 +824,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         "auditedTruth": latest_audit,
         "recentAudits": recent_audits,
         "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
+        "blockerSummary": blocker_summary,
         "projectReality": reality,
         "auditors": auditors,
         "repoHealth": {

@@ -384,6 +384,12 @@ export type CommandCenter = {
     };
   }>;
   currentBlocker?: string | null;
+  blockerSummary?: {
+    blocked: boolean;
+    headline: string;
+    reasons: string[];
+    repairs: string[];
+  };
   projectReality?: {
     hasDrift: boolean;
     duplicateTaskFileCount: number;

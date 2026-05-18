@@ -455,6 +455,45 @@ def test_build_command_center_surfaces_auditor_statuses(tmp_path: Path, monkeypa
     assert center["auditors"]["closeout"]["blockers"] == ["1 non-terminal task(s) remain."]
 
 
+def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _project_reality_status(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "hasDrift": True,
+            "duplicateTaskFileCount": 1,
+            "taskSessionMismatchCount": 2,
+            "staleRuntimeSessionCount": 1,
+            "staleAuditSessionCount": 1,
+            "terminalSessionCount": 2,
+            "activeRuntimeSessionCount": 1,
+        }
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "blocked", "blockers": ["1 stale runtime session(s) still marked active."]},
+            "planner": {"status": "blocked", "blockers": ["1 duplicate task file(s) detected."]},
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+            "integrity": {"status": "blocked", "blockers": ["Unsupported claims prevent trusted promotion."]},
+            "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+        }
+
+    monkeypatch.setattr(command_center_service, "project_reality_status", _project_reality_status)
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
+    monkeypatch.setattr(
+        command_center_service,
+        "read_latest_audit",
+        lambda root: {"currentBlocker": "Autopilot is waiting for audited truth."},
+    )
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["blockerSummary"]["blocked"] is True
+    assert center["blockerSummary"]["headline"] == "Autopilot is waiting for audited truth."
+    assert "Ontology hydration state is `not_hydrated`." in center["blockerSummary"]["reasons"]
+    assert "Repair hydration or promote the correct ontology artifact before research or closeout." in center["blockerSummary"]["repairs"]
+
+
 def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):
     from app.services import command_center_service
 
