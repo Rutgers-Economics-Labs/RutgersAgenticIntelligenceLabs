@@ -436,6 +436,108 @@ def test_autopilot_launches_created_closeout_repair_task_before_waiting(tmp_path
     assert events == []
 
 
+def test_autopilot_refreshes_active_worker_after_closeout_repair_task_creation(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "status": "draft", "localRepoPath": str(tmp_path)}
+    launches: list[dict] = []
+    polled: list[dict] = []
+    created = {"value": False}
+    active_worker_snapshots = [None, {"_id": "sess-closeout", "role": "health", "status": "running"}]
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _run_planner_turn(**kwargs):
+        return None
+
+    async def _find_active_worker(project_id: str):
+        if len(active_worker_snapshots) > 1:
+            return active_worker_snapshots.pop(0)
+        return active_worker_snapshots[0]
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        if created["value"]:
+            return [
+                {"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []},
+                {
+                    "_id": "repair-closeout",
+                    "title": "Resolve closeout blockers",
+                    "status": "ready",
+                    "agentRole": "health",
+                    "approvalState": "granted",
+                    "priority": "medium",
+                    "dependsOnTaskIds": [],
+                },
+            ]
+        return [{"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []}]
+
+    async def _create_task(**kwargs):
+        created["value"] = True
+        return {"_id": "repair-closeout", "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        return None
+
+    async def _launch_ready_task(project_arg, ready_tasks: list[dict]):
+        launches.append({"task_ids": [str(item["_id"]) for item in ready_tasks]})
+        return {"convex_session_id": "session-closeout"}
+
+    async def _poll_session_until_done(session_id: str, *, project_id=None, max_polls=None, poll_interval_seconds=None):
+        polled.append({"session_id": session_id, "project_id": project_id})
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+    monkeypatch.setattr(autopilot_service, "_launch_ready_task", _launch_ready_task)
+    monkeypatch.setattr(autopilot_service.session_lifecycle, "poll_session_until_done", _poll_session_until_done)
+    monkeypatch.setattr(
+        autopilot_service,
+        "reconcile_project_reality",
+        lambda project_arg: asyncio.sleep(
+            0,
+            result={
+                "removedTaskFiles": [],
+                "updatedTaskIds": [],
+                "repairedSessionIds": [],
+                "repairedAuditSessionIds": [],
+                "hasChanges": False,
+            },
+        ),
+    )
+    monkeypatch.setattr(autopilot_service, "audit_gate_status", lambda project_root: {"blocked": False})
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "ready", "blockers": []},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["Integrity closeout gate is blocked."]},
+            },
+        ),
+    )
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+    autopilot_service._wake_events["soccer-project"] = asyncio.Event()
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    assert launches == []
+    assert polled == [{"session_id": "sess-closeout", "project_id": "project-1"}]
+
+
 def test_mark_project_completed_uses_repo_pipeline_when_project_record_is_stale(tmp_path, monkeypatch):
     project = {
         "_id": "project-1",

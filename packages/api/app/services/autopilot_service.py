@@ -1511,9 +1511,8 @@ async def run_autopilot_loop(project_slug: str):
             closeout_auditor = auditors.get("closeout") or {}
             if closeout_auditor.get("status") == "blocked":
                 if await _ensure_closeout_repair_task(project, tasks, auditors):
-                    tasks = await planner_service.list_tasks(board["_id"], project=project)
+                    tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
                     consecutive_idle_turns = 0
-                    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
                     continue
                 closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
