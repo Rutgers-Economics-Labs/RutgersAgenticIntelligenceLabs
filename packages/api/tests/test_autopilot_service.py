@@ -969,6 +969,14 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_task_session_states", lambda project_arg: asyncio.sleep(0, result={"updated": ["task-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_session_audits", lambda project_arg, project_root: asyncio.sleep(0, result={"repairedSessionIds": ["sess-2"]}))
+    monkeypatch.setattr(
+        reconciliation_service,
+        "repair_active_ontology_registry_drift",
+        lambda project_arg: asyncio.sleep(
+            0,
+            result={"repaired": True, "previousDuckdbPath": "/tmp/old.duckdb", "nextDuckdbPath": "/tmp/new.duckdb"},
+        ),
+    )
 
     result = asyncio.run(reconciliation_service.reconcile_project_reality(project))
 
@@ -977,6 +985,11 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
         "updatedTaskIds": ["task-1"],
         "repairedSessionIds": ["sess-1"],
         "repairedAuditSessionIds": ["sess-2"],
+        "repairedOntologyArtifact": {
+            "repaired": True,
+            "previousDuckdbPath": "/tmp/old.duckdb",
+            "nextDuckdbPath": "/tmp/new.duckdb",
+        },
         "hasChanges": True,
     }
 
@@ -1067,7 +1080,12 @@ Duplicate task file.
 
 
 def test_project_reality_snapshot_returns_drift_details(tmp_path: Path, monkeypatch):
-    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "localRepoPath": str(tmp_path),
+        "activeOntologyDuckdbPath": str(tmp_path / ".ontology" / "missing.duckdb"),
+    }
     task_dir = tmp_path / "research_plan" / "tasks"
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / "task-a.md").write_text(
@@ -1125,6 +1143,17 @@ Duplicate task file.
             ],
         ),
     )
+    monkeypatch.setattr(
+        reconciliation_service.hydration_registry_service,
+        "get_hydration_status",
+        lambda **kwargs: asyncio.sleep(
+            0,
+            result={
+                "reusableArtifact": {"duckdbArtifactPath": str(tmp_path / ".ontology" / "onto.duckdb")},
+                "currentDeviceArtifacts": [],
+            },
+        ),
+    )
 
     snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
 
@@ -1133,6 +1162,50 @@ Duplicate task file.
     assert snapshot["staleRuntimeSessionIds"] == ["sess-1"]
     assert snapshot["terminalSessionIds"] == ["sess-1"]
     assert snapshot["activeRuntimeSessionIds"] == ["sess-1"]
+    assert snapshot["ontologyArtifactDrift"]["hasDrift"] is True
+    assert snapshot["ontologyArtifactDrift"]["reason"] == "active_ontology_path_missing_on_disk"
+    assert snapshot["ontologyArtifactDrift"]["expectedDuckdbPath"] == str(tmp_path / ".ontology" / "onto.duckdb")
+
+
+def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_path: Path, monkeypatch):
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "status": "hydrated",
+        "localRepoPath": str(tmp_path),
+        "activeOntologyDuckdbPath": str(tmp_path / ".ontology" / "missing.duckdb"),
+    }
+    (tmp_path / ".ontology").mkdir(parents=True, exist_ok=True)
+    target_duckdb = tmp_path / ".ontology" / "onto.duckdb"
+    target_duckdb.write_text("", encoding="utf-8")
+    promoted: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        reconciliation_service.hydration_registry_service,
+        "get_hydration_status",
+        lambda **kwargs: asyncio.sleep(
+            0,
+            result={
+                "reusableArtifact": {
+                    "ontologyArtifactPath": str(tmp_path / ".ontology" / "onto.db"),
+                    "duckdbArtifactPath": str(target_duckdb),
+                    "owlArtifactPath": str(tmp_path / ".ontology" / "populated_ontology.owl"),
+                },
+                "currentDeviceArtifacts": [],
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.hydration_registry_service,
+        "promote_project_hydration_artifact",
+        lambda **kwargs: asyncio.sleep(0, result=promoted.append(kwargs)),
+    )
+
+    result = asyncio.run(reconciliation_service.repair_active_ontology_registry_drift(project))
+
+    assert result["repaired"] is True
+    assert result["nextDuckdbPath"] == str(target_duckdb)
+    assert promoted[0]["duckdb_artifact_path"] == str(target_duckdb)
 
 
 def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, monkeypatch):

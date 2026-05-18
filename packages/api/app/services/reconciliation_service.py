@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runners import session_lifecycle
-from app.services import planner_service, running_agent_service
+from app.services import hydration_registry_service, planner_service, running_agent_service
 from app.services.audit_service import audit_gate_status, repair_stale_session_audits
 
 
@@ -32,6 +32,63 @@ async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any
         )
         repaired.append(str(session["_id"]))
     return {"repairedSessionIds": repaired}
+
+
+def _preferred_hydration_artifact_path(hydration: dict[str, Any]) -> str | None:
+    reusable = hydration.get("reusableArtifact") or {}
+    if reusable.get("duckdbArtifactPath"):
+        return str(reusable["duckdbArtifactPath"])
+    current = hydration.get("currentDeviceArtifacts") or []
+    preferred = next(
+        (
+            item
+            for item in current
+            if item.get("duckdbArtifactPath")
+            and item.get("filesExist")
+            and item.get("isCurrentCommit")
+            and item.get("isCurrentManifest")
+        ),
+        None,
+    )
+    if preferred and preferred.get("duckdbArtifactPath"):
+        return str(preferred["duckdbArtifactPath"])
+    fallback = next((item for item in current if item.get("duckdbArtifactPath") and item.get("filesExist")), None)
+    if fallback and fallback.get("duckdbArtifactPath"):
+        return str(fallback["duckdbArtifactPath"])
+    return None
+
+
+async def repair_active_ontology_registry_drift(project: dict[str, Any]) -> dict[str, Any]:
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    if project_root is None or not project_root.exists():
+        return {"repaired": False}
+    try:
+        hydration = await hydration_registry_service.get_hydration_status(project=project)
+    except Exception:
+        return {"repaired": False}
+
+    expected_duckdb_path = _preferred_hydration_artifact_path(hydration)
+    active_duckdb_path = str(project.get("activeOntologyDuckdbPath") or "").strip() or None
+    active_exists = bool(active_duckdb_path and Path(active_duckdb_path).exists())
+    if not expected_duckdb_path:
+        return {"repaired": False}
+    if active_duckdb_path == expected_duckdb_path and active_exists:
+        return {"repaired": False}
+
+    reusable = hydration.get("reusableArtifact") or {}
+    await hydration_registry_service.promote_project_hydration_artifact(
+        project=project,
+        ontology_artifact_path=reusable.get("ontologyArtifactPath"),
+        duckdb_artifact_path=expected_duckdb_path,
+        owl_artifact_path=reusable.get("owlArtifactPath"),
+        embeddings_artifact_path=reusable.get("embeddingsArtifactPath"),
+        status=str(project.get("status") or "hydrated"),
+    )
+    return {
+        "repaired": True,
+        "previousDuckdbPath": active_duckdb_path,
+        "nextDuckdbPath": expected_duckdb_path,
+    }
 
 
 async def project_reality_snapshot(
@@ -107,6 +164,39 @@ async def project_reality_snapshot(
     gate = audit_gate_status(root)
     stale_audit_session_ids = [str(item) for item in (gate.get("staleSessionIds") or []) if item]
     terminal_session_ids = [str(item) for item in (gate.get("terminalSessionIds") or []) if item]
+    ontology_artifact_drift: dict[str, Any] = {
+        "hasDrift": False,
+        "activeDuckdbPath": str(project.get("activeOntologyDuckdbPath") or "") or None,
+        "expectedDuckdbPath": None,
+        "reason": None,
+    }
+    try:
+        hydration = await hydration_registry_service.get_hydration_status(project=project)
+        expected_duckdb_path = _preferred_hydration_artifact_path(hydration)
+        active_duckdb_path = ontology_artifact_drift["activeDuckdbPath"]
+        active_exists = bool(active_duckdb_path and Path(active_duckdb_path).exists())
+        ontology_artifact_drift["expectedDuckdbPath"] = expected_duckdb_path
+        if expected_duckdb_path:
+            if not active_duckdb_path:
+                ontology_artifact_drift = {
+                    **ontology_artifact_drift,
+                    "hasDrift": True,
+                    "reason": "project_missing_active_ontology_pointer",
+                }
+            elif not active_exists:
+                ontology_artifact_drift = {
+                    **ontology_artifact_drift,
+                    "hasDrift": True,
+                    "reason": "active_ontology_path_missing_on_disk",
+                }
+            elif active_duckdb_path != expected_duckdb_path:
+                ontology_artifact_drift = {
+                    **ontology_artifact_drift,
+                    "hasDrift": True,
+                    "reason": "active_ontology_pointer_out_of_date",
+                }
+    except Exception:
+        pass
 
     return {
         "duplicateTaskFiles": duplicate_task_files,
@@ -115,6 +205,7 @@ async def project_reality_snapshot(
         "staleAuditSessionIds": stale_audit_session_ids,
         "terminalSessionIds": terminal_session_ids,
         "activeRuntimeSessionIds": [str(item.get("_id")) for item in runtime_active_sessions if item.get("_id")],
+        "ontologyArtifactDrift": ontology_artifact_drift,
     }
 
 
@@ -131,15 +222,17 @@ async def project_reality_status(
     stale_audit_count = len(snapshot["staleAuditSessionIds"])
     terminal_count = len(snapshot["terminalSessionIds"])
     active_runtime_count = len(snapshot["activeRuntimeSessionIds"])
+    ontology_artifact_drift_count = 1 if snapshot.get("ontologyArtifactDrift", {}).get("hasDrift") else 0
 
     return {
-        "hasDrift": bool(duplicate_count or mismatch_count or stale_runtime_count or stale_audit_count),
+        "hasDrift": bool(duplicate_count or mismatch_count or stale_runtime_count or stale_audit_count or ontology_artifact_drift_count),
         "duplicateTaskFileCount": duplicate_count,
         "taskSessionMismatchCount": mismatch_count,
         "staleRuntimeSessionCount": stale_runtime_count,
         "staleAuditSessionCount": stale_audit_count,
         "terminalSessionCount": terminal_count,
         "activeRuntimeSessionCount": active_runtime_count,
+        "ontologyArtifactDriftCount": ontology_artifact_drift_count,
         "details": snapshot,
     }
 
@@ -150,22 +243,28 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     updated_task_ids: list[str] = []
     repaired_session_ids: list[str] = []
     repaired_audit_session_ids: list[str] = []
+    repaired_ontology_artifact: dict[str, Any] | None = None
 
     removed_task_files = list((await planner_service.reconcile_task_files(project)).get("removed") or [])
     updated_task_ids = list((await planner_service.reconcile_task_session_states(project)).get("updated") or [])
     repaired_session_ids = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
     if root is not None and root.exists():
         repaired_audit_session_ids = list((await repair_stale_session_audits(project, root)).get("repairedSessionIds") or [])
+    ontology_repair = await repair_active_ontology_registry_drift(project)
+    if ontology_repair.get("repaired"):
+        repaired_ontology_artifact = ontology_repair
 
     return {
         "removedTaskFiles": removed_task_files,
         "updatedTaskIds": updated_task_ids,
         "repairedSessionIds": repaired_session_ids,
         "repairedAuditSessionIds": repaired_audit_session_ids,
+        "repairedOntologyArtifact": repaired_ontology_artifact,
         "hasChanges": bool(
             removed_task_files
             or updated_task_ids
             or repaired_session_ids
             or repaired_audit_session_ids
+            or repaired_ontology_artifact
         ),
     }

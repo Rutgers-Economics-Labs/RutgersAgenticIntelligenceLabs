@@ -101,6 +101,7 @@ export default async function ProjectHomePage({
         <InlineStatus label="stale runtime" value={center.projectReality?.staleRuntimeSessionCount ?? 0} />
         <InlineStatus label="stale audits" value={center.projectReality?.staleAuditSessionCount ?? 0} />
         <InlineStatus label="duplicate tasks" value={center.projectReality?.duplicateTaskFileCount ?? 0} />
+        <InlineStatus label="ontology drift" value={center.projectReality?.ontologyArtifactDriftCount ?? 0} />
         {center.projectReality?.details?.duplicateTaskFiles?.length ? (
           <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
             {center.projectReality.details.duplicateTaskFiles.slice(0, 5).map((item) => (
@@ -120,6 +121,19 @@ export default async function ProjectHomePage({
             {center.projectReality.details.staleRuntimeSessionIds.slice(0, 5).map((item) => (
               <div key={item} className="mono-muted">stale runtime: {item}</div>
             ))}
+          </div>
+        ) : null}
+        {center.projectReality?.details?.ontologyArtifactDrift?.hasDrift ? (
+          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
+            <div className="mono-muted">
+              ontology drift: {center.projectReality.details.ontologyArtifactDrift.reason ?? "active ontology pointer drift detected"}
+            </div>
+            {center.projectReality.details.ontologyArtifactDrift.activeDuckdbPath ? (
+              <div className="mono-muted">active: {center.projectReality.details.ontologyArtifactDrift.activeDuckdbPath}</div>
+            ) : null}
+            {center.projectReality.details.ontologyArtifactDrift.expectedDuckdbPath ? (
+              <div className="mono-muted">expected: {center.projectReality.details.ontologyArtifactDrift.expectedDuckdbPath}</div>
+            ) : null}
           </div>
         ) : null}
       </SectionCard>

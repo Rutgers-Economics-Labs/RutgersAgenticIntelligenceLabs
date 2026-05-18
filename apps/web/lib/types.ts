@@ -410,6 +410,7 @@ export type CommandCenter = {
     staleAuditSessionCount: number;
     terminalSessionCount: number;
     activeRuntimeSessionCount: number;
+    ontologyArtifactDriftCount?: number;
     details?: {
       duplicateTaskFiles: string[];
       taskSessionMismatchTaskIds: string[];
@@ -417,6 +418,12 @@ export type CommandCenter = {
       staleAuditSessionIds: string[];
       terminalSessionIds: string[];
       activeRuntimeSessionIds: string[];
+      ontologyArtifactDrift?: {
+        hasDrift: boolean;
+        activeDuckdbPath?: string | null;
+        expectedDuckdbPath?: string | null;
+        reason?: string | null;
+      };
     };
   };
   auditors?: Record<
