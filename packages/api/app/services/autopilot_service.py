@@ -512,8 +512,9 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     missing_evidence_claims = [str(item) for item in (health.get("missingEvidenceClaims") or []) if str(item).strip()]
     stale_sources = [str(item) for item in (health.get("staleSources") or []) if str(item).strip()]
     failed_verification_runs = [str(item) for item in (health.get("failedVerificationRuns") or []) if str(item).strip()]
+    reproducibility_gaps = [str(item) for item in (health.get("reproducibilityGaps") or []) if str(item).strip()]
     inadmissible_sources = [str(item) for item in (health.get("inadmissibleSources") or []) if str(item).strip()]
-    if not inadmissible_sources and not missing_evidence_claims and not stale_sources and not failed_verification_runs:
+    if not inadmissible_sources and not missing_evidence_claims and not stale_sources and not failed_verification_runs and not reproducibility_gaps:
         return False
 
     board = await planner_service.ensure_main_board(project)
@@ -593,6 +594,30 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
             live_titles.add(task_title)
             changed = True
 
+    if reproducibility_gaps:
+        task_title = "Repair reproducibility metadata for trusted artifacts"
+        if task_title not in live_titles:
+            await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Repair reproducibility gaps before trusted promotion. "
+                    "Trusted artifacts should declare their scripts, inputs, and verification path so they can be rerun and audited."
+                ),
+                status="ready",
+                agent_role="health",
+                repo_paths=["research_plan/state", "artifacts", "topics"],
+                acceptance_criteria=[
+                    "artifacts with reproducibility gaps declare the required scripts, inputs, and metadata",
+                    "verification commands or equivalent reproducibility instructions are recorded where applicable",
+                    "trusted artifacts no longer depend on unresolved reproducibility gaps",
+                ],
+                runner="codex_cli",
+            )
+            live_titles.add(task_title)
+            changed = True
+
     task_title = "Resolve inadmissible sources for trusted outputs"
     if inadmissible_sources and task_title not in live_titles:
         await planner_service.create_task(
@@ -619,11 +644,12 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     if changed:
         await planner_service.sync_planner_files(project, board)
         logger.info(
-            "Autopilot: ensured integrity repair tasks for %s (claims=%s, stale_sources=%s, failed_verification_runs=%s, inadmissible_sources=%s)",
+            "Autopilot: ensured integrity repair tasks for %s (claims=%s, stale_sources=%s, failed_verification_runs=%s, reproducibility_gaps=%s, inadmissible_sources=%s)",
             project.get("slug"),
             len(missing_evidence_claims),
             len(stale_sources),
             len(failed_verification_runs),
+            len(reproducibility_gaps),
             len(inadmissible_sources),
         )
     return changed
