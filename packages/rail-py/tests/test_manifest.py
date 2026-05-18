@@ -10,7 +10,12 @@ RAIL_PY_ROOT = Path(__file__).parents[1]
 if str(RAIL_PY_ROOT) not in sys.path:
     sys.path.insert(0, str(RAIL_PY_ROOT))
 
-from rail.manifest import parse_manifest_content
+from rail.manifest import (
+    ContractViolation,
+    load_and_validate_manifest,
+    parse_manifest_content,
+    validate_repo_contract,
+)
 
 
 MINIMAL_RAIL_YAML = textwrap.dedent(
@@ -136,7 +141,7 @@ def test_manifest_defaults_new_contract_sections():
     assert ".ontology" in manifest.repo_contract.required_paths
     assert manifest.research.brief_path == "topics/brief.md"
     assert manifest.planner.task_root == "research_plan/tasks"
-    assert manifest.auditors.enabled is False
+    assert manifest.auditors.enabled is True
     assert manifest.verification.deterministic_command == "scripts/run-verification.sh"
     assert manifest.secrets.project_scope is True
     assert "hydrated" in manifest.lifecycle.phases
@@ -157,3 +162,59 @@ def test_manifest_rejects_ontology_first_without_required_phases():
 
     with pytest.raises(ValueError, match="ontology_first projects must include hydrated and ontology_healthy lifecycle phases"):
         parse_manifest_content(content)
+
+
+def test_validate_repo_contract_passes_when_all_required_paths_exist(tmp_path):
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+    for rel in manifest.repo_contract.required_paths:
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+
+    violations = validate_repo_contract(manifest, tmp_path)
+
+    assert violations == []
+
+
+def test_validate_repo_contract_returns_violations_for_missing_paths(tmp_path):
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+    # create all required paths except "specs"
+    for rel in manifest.repo_contract.required_paths:
+        if rel != "specs":
+            (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+
+    violations = validate_repo_contract(manifest, tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].path == "specs"
+    assert "does not exist" in violations[0].reason
+
+
+def test_validate_repo_contract_returns_all_missing_paths(tmp_path):
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+    # create nothing — all required paths are missing
+
+    violations = validate_repo_contract(manifest, tmp_path)
+
+    missing_paths = {v.path for v in violations}
+    assert missing_paths == set(manifest.repo_contract.required_paths)
+
+
+def test_load_and_validate_manifest_returns_manifest_and_violations(tmp_path):
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+    # write rail.yaml but leave required paths absent
+    (tmp_path / "rail.yaml").write_text(MINIMAL_RAIL_YAML, encoding="utf-8")
+
+    loaded, violations = load_and_validate_manifest(tmp_path)
+
+    assert loaded.project.slug == "test-project"
+    assert len(violations) == len(manifest.repo_contract.required_paths)
+
+
+def test_load_and_validate_manifest_no_violations_when_structure_complete(tmp_path):
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+    (tmp_path / "rail.yaml").write_text(MINIMAL_RAIL_YAML, encoding="utf-8")
+    for rel in manifest.repo_contract.required_paths:
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+
+    _loaded, violations = load_and_validate_manifest(tmp_path)
+
+    assert violations == []

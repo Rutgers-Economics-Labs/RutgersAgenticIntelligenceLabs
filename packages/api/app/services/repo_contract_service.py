@@ -121,7 +121,7 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "default_planner_role": "planner",
         },
         "auditors": {
-            "enabled": False,
+            "enabled": True,
             "order": ["session", "planner", "ontology", "integrity", "closeout"],
             "fail_closed": True,
         },
@@ -308,7 +308,7 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
     autonomy.setdefault("max_retries_per_task", 3)
 
     auditors = manifest.setdefault("auditors", {})
-    auditors.setdefault("enabled", False)
+    auditors.setdefault("enabled", True)
     auditors.setdefault("order", ["session", "planner", "ontology", "integrity", "closeout"])
     auditors.setdefault("fail_closed", True)
 

@@ -62,6 +62,8 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
     assert rail_data["verification"]["deterministic_command"] == "scripts/run-verification.sh"
     assert "hydrated" in rail_data["lifecycle"]["phases"]
     assert "ontology_healthy" in rail_data["lifecycle"]["phases"]
+    assert rail_data["auditors"]["enabled"] is True
+    assert rail_data["auditors"]["fail_closed"] is True
 
     assert yaml.safe_load((root / "research_plan/state/assumptions.json").read_text(encoding="utf-8")) == []
     assert yaml.safe_load((root / "research_plan/state/verification_runs.json").read_text(encoding="utf-8")) == []

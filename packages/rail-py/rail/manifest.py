@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
@@ -224,7 +225,7 @@ class PlannerSection(BaseModel):
 class AuditorsSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
+    enabled: bool = True
     order: list[AuditStage] = Field(default_factory=lambda: ["session", "planner", "ontology", "integrity", "closeout"])
     fail_closed: bool = True
 
@@ -340,6 +341,29 @@ class RailManifest(BaseModel):
 
     def resolve_repo_path(self, project_root: str | Path, relative_path: str) -> Path:
         return Path(project_root).resolve() / relative_path
+
+
+@dataclass(frozen=True)
+class ContractViolation:
+    path: str
+    reason: str
+
+
+def validate_repo_contract(manifest: RailManifest, project_root: str | Path) -> list[ContractViolation]:
+    """Check that every required_path in the manifest exists on disk."""
+    root = Path(project_root).resolve()
+    violations: list[ContractViolation] = []
+    for rel_path in manifest.repo_contract.required_paths:
+        if not (root / rel_path).exists():
+            violations.append(ContractViolation(path=rel_path, reason="required path does not exist"))
+    return violations
+
+
+def load_and_validate_manifest(project_root: str | Path) -> tuple[RailManifest, list[ContractViolation]]:
+    """Load manifest and validate the repo structure against its contract."""
+    manifest = load_manifest(project_root)
+    violations = validate_repo_contract(manifest, project_root)
+    return manifest, violations
 
 
 def parse_manifest_content(content: str) -> RailManifest:

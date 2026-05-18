@@ -115,7 +115,7 @@ def bootstrap_future_project(
           default_planner_role: "planner"
 
         auditors:
-          enabled: false
+          enabled: true
           order:
             - "session"
             - "planner"
