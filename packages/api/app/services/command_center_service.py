@@ -799,6 +799,9 @@ def _build_blocker_summary(
     if reality.get("secretPolicyRoleDriftCount"):
         reasons.append(f"{reality['secretPolicyRoleDriftCount']} agent secret policy role alias row(s) are still non-canonical.")
         repairs.append("Reconcile agent secret policies so secret access is keyed by canonical agent roles.")
+    if reality.get("roleConfigAliasDriftCount"):
+        reasons.append(f"{reality['roleConfigAliasDriftCount']} role config alias declaration(s) are still non-canonical.")
+        repairs.append("Reconcile agent role config files so runner policy is keyed by canonical agent roles.")
 
     if ontology.get("status") == "blocked":
         repairs.append("Repair hydration or promote the correct ontology artifact before research or closeout.")

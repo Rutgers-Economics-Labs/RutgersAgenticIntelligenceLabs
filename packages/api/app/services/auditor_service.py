@@ -137,7 +137,7 @@ async def build_auditor_statuses(
     }
     planner_status = {
         "status": "blocked"
-        if reality["duplicateTaskFileCount"] or reality["taskSessionMismatchCount"] or reality.get("secretPolicyRoleDriftCount")
+        if reality["duplicateTaskFileCount"] or reality["taskSessionMismatchCount"] or reality.get("secretPolicyRoleDriftCount") or reality.get("roleConfigAliasDriftCount")
         else "ready",
         "blockers": [
             *([f"{reality['duplicateTaskFileCount']} duplicate task file(s) detected."] if reality["duplicateTaskFileCount"] else []),
@@ -145,6 +145,11 @@ async def build_auditor_statuses(
             *(
                 [f"{reality['secretPolicyRoleDriftCount']} agent secret policy role alias row(s) detected."]
                 if reality.get("secretPolicyRoleDriftCount")
+                else []
+            ),
+            *(
+                [f"{reality['roleConfigAliasDriftCount']} role config alias declaration(s) detected."]
+                if reality.get("roleConfigAliasDriftCount")
                 else []
             ),
         ],

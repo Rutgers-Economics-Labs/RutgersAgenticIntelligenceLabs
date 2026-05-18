@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.services.role_runtime_service import load_role_runtime_config, read_project_skills, summarize_role_config
+from app.services.role_runtime_service import (
+    detect_role_config_alias_drift,
+    load_role_runtime_config,
+    read_project_skills,
+    reconcile_role_config_aliases,
+    summarize_role_config,
+)
 
 
 def _write(path: Path, content: str) -> None:
@@ -139,3 +145,27 @@ completion:
 
     assert config.role == "coding"
     assert summarize_role_config(config)["role"] == "coding"
+
+
+def test_reconcile_role_config_aliases_rewrites_legacy_role_alias_in_repo(tmp_path: Path):
+    _bootstrap_manifest(tmp_path)
+    _write(
+        tmp_path / "agents" / "coding.yaml",
+        """
+role: developer
+label: Coding Agent
+purpose: Build features.
+runner:
+  default: codex_cli
+""".strip(),
+    )
+
+    project = {"localRepoPath": str(tmp_path), "slug": "demo", "name": "Demo"}
+
+    drift = detect_role_config_alias_drift(project)
+    result = reconcile_role_config_aliases(project)
+    updated_text = (tmp_path / "agents" / "coding.yaml").read_text(encoding="utf-8")
+
+    assert drift == [{"configPath": "agents/coding.yaml", "role": "developer", "canonicalRole": "coding"}]
+    assert result == {"updatedConfigPaths": ["agents/coding.yaml"]}
+    assert "role: coding" in updated_text

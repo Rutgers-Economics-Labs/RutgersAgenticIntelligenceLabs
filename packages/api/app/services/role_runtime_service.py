@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any
 
 from rail.manifest import load_manifest
@@ -59,6 +60,58 @@ def _normalize_runner_name(name: str | None, default_name: str) -> str:
 def _canonicalize_role(role: str | None, default_role: str) -> str:
     normalized = str(role or default_role).strip().lower()
     return ROLE_ALIASES.get(normalized, normalized)
+
+
+def detect_role_config_alias_drift(project: dict[str, Any]) -> list[dict[str, str]]:
+    project_root = _project_root(project)
+    manifest = load_manifest(project_root)
+    roles_dir = project_root / manifest.agents.roles_dir
+    if not roles_dir.is_dir():
+        return []
+
+    drifted: list[dict[str, str]] = []
+    for path in sorted(roles_dir.glob("*.yaml")):
+        raw = parse(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            continue
+        raw_role = str(raw.get("role") or "").strip().lower()
+        if not raw_role:
+            continue
+        canonical_role = _canonicalize_role(raw_role, path.stem)
+        if canonical_role == raw_role:
+            continue
+        drifted.append(
+            {
+                "configPath": str(path.relative_to(project_root)).replace("\\", "/"),
+                "role": raw_role,
+                "canonicalRole": canonical_role,
+            }
+        )
+    return drifted
+
+
+def reconcile_role_config_aliases(project: dict[str, Any]) -> dict[str, list[str]]:
+    project_root = _project_root(project)
+    manifest = load_manifest(project_root)
+    roles_dir = project_root / manifest.agents.roles_dir
+    if not roles_dir.is_dir():
+        return {"updatedConfigPaths": []}
+
+    updated_paths: list[str] = []
+    for drift in detect_role_config_alias_drift(project):
+        path = project_root / drift["configPath"]
+        content = path.read_text(encoding="utf-8")
+        updated = re.sub(
+            r"(?m)^role:\s*[^\n#]+(?:\s+#.*)?$",
+            f"role: {drift['canonicalRole']}",
+            content,
+            count=1,
+        )
+        if updated == content:
+            continue
+        path.write_text(updated, encoding="utf-8")
+        updated_paths.append(drift["configPath"])
+    return {"updatedConfigPaths": updated_paths}
 
 
 def load_role_runtime_config(project: dict[str, Any], role: str) -> RoleRuntimeConfig:

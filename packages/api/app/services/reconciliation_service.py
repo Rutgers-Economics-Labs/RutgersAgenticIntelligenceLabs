@@ -8,6 +8,7 @@ from app.services.convex_client import convex
 from app.services import hydration_registry_service, planner_service, running_agent_service
 from app.services.audit_service import audit_gate_status, repair_stale_session_audits
 from app.services.integrity_service import load_integrity_indexes
+from app.services import role_runtime_service
 from app.services.role_runtime_service import ROLE_ALIASES
 from rail.manifest import load_manifest
 
@@ -312,6 +313,18 @@ async def project_reality_snapshot(
         }
     except Exception:
         pass
+    role_config_alias_drift: dict[str, Any] = {
+        "hasDrift": False,
+        "configs": [],
+    }
+    try:
+        drifted_configs = role_runtime_service.detect_role_config_alias_drift(project)
+        role_config_alias_drift = {
+            "hasDrift": bool(drifted_configs),
+            "configs": drifted_configs,
+        }
+    except Exception:
+        pass
 
     return {
         "duplicateTaskFiles": duplicate_task_files,
@@ -323,6 +336,7 @@ async def project_reality_snapshot(
         "ontologyArtifactDrift": ontology_artifact_drift,
         "artifactRegistryDrift": artifact_registry_drift,
         "secretPolicyRoleDrift": secret_policy_role_drift,
+        "roleConfigAliasDrift": role_config_alias_drift,
     }
 
 
@@ -343,6 +357,7 @@ async def project_reality_status(
     artifact_registry_drift = snapshot.get("artifactRegistryDrift") or {}
     artifact_registry_drift_count = len(artifact_registry_drift.get("untrackedArtifactPaths") or []) + len(artifact_registry_drift.get("missingArtifactPaths") or [])
     secret_policy_role_drift_count = len((snapshot.get("secretPolicyRoleDrift") or {}).get("policies") or [])
+    role_config_alias_drift_count = len((snapshot.get("roleConfigAliasDrift") or {}).get("configs") or [])
 
     return {
         "hasDrift": bool(
@@ -353,6 +368,7 @@ async def project_reality_status(
             or ontology_artifact_drift_count
             or artifact_registry_drift_count
             or secret_policy_role_drift_count
+            or role_config_alias_drift_count
         ),
         "duplicateTaskFileCount": duplicate_count,
         "taskSessionMismatchCount": mismatch_count,
@@ -363,6 +379,7 @@ async def project_reality_status(
         "ontologyArtifactDriftCount": ontology_artifact_drift_count,
         "artifactRegistryDriftCount": artifact_registry_drift_count,
         "secretPolicyRoleDriftCount": secret_policy_role_drift_count,
+        "roleConfigAliasDriftCount": role_config_alias_drift_count,
         "details": snapshot,
     }
 
@@ -373,6 +390,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     updated_task_ids: list[str] = []
     updated_approval_ids: list[str] = []
     repaired_secret_policy_roles: list[str] = []
+    repaired_role_config_paths: list[str] = []
     repaired_session_ids: list[str] = []
     repaired_audit_session_ids: list[str] = []
     repaired_ontology_artifact: dict[str, Any] | None = None
@@ -384,6 +402,11 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     updated_task_ids = list(dict.fromkeys(updated_task_ids + metadata_task_updates))
     updated_approval_ids = [str(item) for item in (metadata_repair.get("updatedApprovalIds") or []) if item]
     repaired_secret_policy_roles = [str(item) for item in ((await repair_agent_secret_policy_roles(project)).get("repairedRoles") or []) if item]
+    repaired_role_config_paths = [
+        str(item)
+        for item in role_runtime_service.reconcile_role_config_aliases(project).get("updatedConfigPaths") or []
+        if item
+    ]
     repaired_session_ids = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
     if root is not None and root.exists():
         repaired_audit_session_ids = list((await repair_stale_session_audits(project, root)).get("repairedSessionIds") or [])
@@ -396,6 +419,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
         "updatedTaskIds": updated_task_ids,
         "updatedApprovalIds": updated_approval_ids,
         "repairedSecretPolicyRoles": repaired_secret_policy_roles,
+        "repairedRoleConfigPaths": repaired_role_config_paths,
         "repairedSessionIds": repaired_session_ids,
         "repairedAuditSessionIds": repaired_audit_session_ids,
         "repairedOntologyArtifact": repaired_ontology_artifact,
@@ -404,6 +428,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
             or updated_task_ids
             or updated_approval_ids
             or repaired_secret_policy_roles
+            or repaired_role_config_paths
             or repaired_session_ids
             or repaired_audit_session_ids
             or repaired_ontology_artifact

@@ -62,6 +62,7 @@ frontend:
             "staleAuditSessionCount": 0,
             "terminalSessionCount": 1,
             "activeRuntimeSessionCount": 1,
+            "roleConfigAliasDriftCount": 1,
             "details": {
                 "ontologyArtifactDrift": {"hasDrift": False},
                 "artifactRegistryDrift": {"hasDrift": False, "untrackedArtifactPaths": [], "missingArtifactPaths": []},
@@ -89,6 +90,7 @@ frontend:
 
     assert result["session"]["status"] == "blocked"
     assert result["planner"]["status"] == "blocked"
+    assert "1 role config alias declaration(s) detected." in result["planner"]["blockers"]
     assert result["ontology"]["status"] == "blocked"
     assert result["integrity"]["status"] == "ready"
     assert result["closeout"]["status"] == "blocked"
@@ -336,6 +338,7 @@ frontend:
             "terminalSessionCount": 0,
             "activeRuntimeSessionCount": 0,
             "secretPolicyRoleDriftCount": 1,
+            "roleConfigAliasDriftCount": 1,
             "details": {
                 "ontologyArtifactDrift": {
                     "hasDrift": True,
@@ -373,6 +376,7 @@ frontend:
     assert "Active ontology artifact pointer drift detected: active_ontology_pointer_out_of_date." in result["ontology"]["blockers"]
     assert result["planner"]["status"] == "blocked"
     assert "1 agent secret policy role alias row(s) detected." in result["planner"]["blockers"]
+    assert "1 role config alias declaration(s) detected." in result["planner"]["blockers"]
     assert result["integrity"]["status"] == "blocked"
     assert "Artifacts exist on disk without lineage records: artifacts/untracked.md." in result["integrity"]["blockers"]
     assert "Artifact lineage points to missing files: artifacts/missing.md." in result["integrity"]["blockers"]

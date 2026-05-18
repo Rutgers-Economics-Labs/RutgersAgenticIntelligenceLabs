@@ -1229,6 +1229,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_task_session_states", lambda project_arg: asyncio.sleep(0, result={"updated": ["task-1"]}))
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_planner_metadata", lambda project_arg: asyncio.sleep(0, result={"updatedTaskIds": ["task-2"], "updatedApprovalIds": ["approval-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_agent_secret_policy_roles", lambda project_arg: asyncio.sleep(0, result={"repairedRoles": ["coding"]}))
+    monkeypatch.setattr(reconciliation_service.role_runtime_service, "reconcile_role_config_aliases", lambda project_arg: {"updatedConfigPaths": ["agents/coding.yaml"]})
     monkeypatch.setattr(reconciliation_service, "repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_session_audits", lambda project_arg, project_root: asyncio.sleep(0, result={"repairedSessionIds": ["sess-2"]}))
     monkeypatch.setattr(
@@ -1247,6 +1248,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
         "updatedTaskIds": ["task-1", "task-2"],
         "updatedApprovalIds": ["approval-1"],
         "repairedSecretPolicyRoles": ["coding"],
+        "repairedRoleConfigPaths": ["agents/coding.yaml"],
         "repairedSessionIds": ["sess-1"],
         "repairedAuditSessionIds": ["sess-2"],
         "repairedOntologyArtifact": {
@@ -1433,6 +1435,52 @@ Duplicate task file.
             ] if path == "agentSecretPolicies:listByProject" else None,
         ),
     )
+    (tmp_path / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "agents" / "coding.yaml").write_text(
+        """role: developer
+label: Coding Agent
+purpose: Build features.
+runner:
+  default: codex_cli
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "rail.yaml").write_text(
+        """version: 1
+project:
+  name: Grid Study
+  slug: grid-study
+  default_branch: main
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+  transforms_dir: .ontology/transforms
+  hydration_mode: full
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+  approval_required_for_write_runs: true
+  planner_thread_mode: project
+  default_planner_role: planner
+frontend:
+  topic_index_mode: filesystem
+  artifact_index_mode: filesystem
+  show_repo_tree: true
+  show_task_board_snapshot: true
+  default_home_view: project_home
+""",
+        encoding="utf-8",
+    )
 
     snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
 
@@ -1448,6 +1496,9 @@ Duplicate task file.
     assert snapshot["secretPolicyRoleDrift"]["hasDrift"] is True
     assert snapshot["secretPolicyRoleDrift"]["policies"][0]["agentRole"] == "developer"
     assert snapshot["secretPolicyRoleDrift"]["policies"][0]["canonicalRole"] == "coding"
+    assert snapshot["roleConfigAliasDrift"]["hasDrift"] is True
+    assert snapshot["roleConfigAliasDrift"]["configs"][0]["configPath"] == "agents/coding.yaml"
+    assert snapshot["roleConfigAliasDrift"]["configs"][0]["canonicalRole"] == "coding"
 
 
 def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path, monkeypatch):
@@ -1495,6 +1546,44 @@ def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path
         "query",
         lambda path, args: asyncio.sleep(0, result=[] if path == "agentSecretPolicies:listByProject" else None),
     )
+    (tmp_path / "rail.yaml").write_text(
+        """version: 1
+project:
+  name: Artifact Drift Project
+  slug: artifact-drift-project
+  default_branch: main
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+  transforms_dir: .ontology/transforms
+  hydration_mode: full
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+  approval_required_for_write_runs: true
+  planner_thread_mode: project
+  default_planner_role: planner
+frontend:
+  topic_index_mode: filesystem
+  artifact_index_mode: filesystem
+  show_repo_tree: true
+  show_task_board_snapshot: true
+  default_home_view: project_home
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "agents").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "agents" / "coding.yaml").write_text("role: developer\n", encoding="utf-8")
 
     snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
     status = asyncio.run(reconciliation_service.project_reality_status(project))
@@ -1504,6 +1593,7 @@ def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path
     assert snapshot["artifactRegistryDrift"]["missingArtifactPaths"] == ["artifacts/missing.md"]
     assert status["artifactRegistryDriftCount"] == 2
     assert status["secretPolicyRoleDriftCount"] == 0
+    assert status["roleConfigAliasDriftCount"] == 1
 
 
 def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_path: Path, monkeypatch):
@@ -2093,7 +2183,8 @@ def test_ensure_control_plane_repair_tasks_creates_reconcile_task(tmp_path: Path
     assert created[0]["title"] == "Reconcile control-plane drift and stale sessions"
     assert created[0]["agent_role"] == "health"
     assert "non-canonical secret policy role mappings" in str(created[0]["description"])
-    assert "duplicate task files, task/session mismatches, and secret policy role drift are reconciled" in created[0]["acceptance_criteria"]
+    assert "non-canonical role config aliases" in str(created[0]["description"])
+    assert "duplicate task files, task/session mismatches, secret policy role drift, and role config alias drift are reconciled" in created[0]["acceptance_criteria"]
     assert synced == [True]
 
 
