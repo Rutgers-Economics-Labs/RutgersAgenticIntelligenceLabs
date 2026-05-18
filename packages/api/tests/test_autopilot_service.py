@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.services import autopilot_service
 from app.services import reconciliation_service
+from rail.bootstrap import bootstrap_future_project
 
 
 def test_autopilot_auto_approves_ready_pending_task(monkeypatch):
@@ -1165,6 +1166,57 @@ Duplicate task file.
     assert snapshot["ontologyArtifactDrift"]["hasDrift"] is True
     assert snapshot["ontologyArtifactDrift"]["reason"] == "active_ontology_path_missing_on_disk"
     assert snapshot["ontologyArtifactDrift"]["expectedDuckdbPath"] == str(tmp_path / ".ontology" / "onto.duckdb")
+    assert snapshot["artifactRegistryDrift"]["hasDrift"] is False
+
+
+def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Artifact Drift Project", slug="artifact-drift-project")
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "localRepoPath": str(tmp_path),
+    }
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts" / "untracked.md").write_text("# Untracked\n", encoding="utf-8")
+    (tmp_path / "research_plan" / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "research_plan" / "state" / "artifact_lineage.json").write_text(
+        """[
+  {
+    "artifact_path": "artifacts/missing.md",
+    "artifact_type": "report",
+    "title": "Missing",
+    "promotion_state": "draft",
+    "inputs": [],
+    "scripts": [],
+    "sources": [],
+    "assumptions": [],
+    "claims": [],
+    "verification_runs": [],
+    "stale_reasons": []
+  }
+]
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.hydration_registry_service,
+        "get_hydration_status",
+        lambda **kwargs: asyncio.sleep(0, result={"reusableArtifact": {}, "currentDeviceArtifacts": []}),
+    )
+
+    snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
+    status = asyncio.run(reconciliation_service.project_reality_status(project))
+
+    assert snapshot["artifactRegistryDrift"]["hasDrift"] is True
+    assert snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"] == ["artifacts/untracked.md"]
+    assert snapshot["artifactRegistryDrift"]["missingArtifactPaths"] == ["artifacts/missing.md"]
+    assert status["artifactRegistryDriftCount"] == 2
 
 
 def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_path: Path, monkeypatch):

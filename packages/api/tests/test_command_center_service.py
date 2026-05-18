@@ -414,6 +414,7 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
             "terminalSessionCount": 4,
             "activeRuntimeSessionCount": 1,
             "ontologyArtifactDriftCount": 1,
+            "artifactRegistryDriftCount": 2,
             "details": {
                 "duplicateTaskFiles": ["research_plan/tasks/task-b.md"],
                 "taskSessionMismatchTaskIds": ["task-1", "task-2"],
@@ -426,6 +427,11 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
                     "activeDuckdbPath": "/tmp/old.duckdb",
                     "expectedDuckdbPath": "/tmp/new.duckdb",
                     "reason": "active_ontology_pointer_out_of_date",
+                },
+                "artifactRegistryDrift": {
+                    "hasDrift": True,
+                    "untrackedArtifactPaths": ["artifacts/untracked.md"],
+                    "missingArtifactPaths": ["artifacts/missing.md"],
                 },
             },
         }
@@ -448,6 +454,7 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
     assert center["projectReality"]["taskSessionMismatchCount"] == 2
     assert center["projectReality"]["staleAuditSessionCount"] == 3
     assert center["projectReality"]["ontologyArtifactDriftCount"] == 1
+    assert center["projectReality"]["artifactRegistryDriftCount"] == 2
     assert center["projectReality"]["details"]["duplicateTaskFiles"] == ["research_plan/tasks/task-b.md"]
 
 

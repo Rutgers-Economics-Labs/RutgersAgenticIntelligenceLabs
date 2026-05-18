@@ -6,6 +6,8 @@ from typing import Any
 from app.runners import session_lifecycle
 from app.services import hydration_registry_service, planner_service, running_agent_service
 from app.services.audit_service import audit_gate_status, repair_stale_session_audits
+from app.services.integrity_service import load_integrity_indexes
+from rail.manifest import load_manifest
 
 
 async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any]:
@@ -197,6 +199,40 @@ async def project_reality_snapshot(
                 }
     except Exception:
         pass
+    artifact_registry_drift: dict[str, Any] = {
+        "hasDrift": False,
+        "untrackedArtifactPaths": [],
+        "missingArtifactPaths": [],
+    }
+    try:
+        manifest = load_manifest(root)
+        indexes = load_integrity_indexes(root)
+        artifacts_root = root / manifest.paths.artifacts_root
+        disk_artifacts = sorted(
+            str(path.relative_to(root)).replace("\\", "/")
+            for path in artifacts_root.rglob("*")
+            if path.is_file() and not any(part.startswith(".") for part in path.relative_to(root).parts)
+        ) if artifacts_root.exists() else []
+        tracked_artifacts = sorted(
+            str(item.artifact_path)
+            for item in indexes.artifact_lineage
+            if item.artifact_type != "dataset"
+            and (
+                str(item.artifact_path) == manifest.paths.artifacts_root
+                or str(item.artifact_path).startswith(f"{manifest.paths.artifacts_root}/")
+            )
+        )
+        tracked_set = set(tracked_artifacts)
+        disk_set = set(disk_artifacts)
+        untracked = sorted(path for path in disk_artifacts if path not in tracked_set)
+        missing = sorted(path for path in tracked_artifacts if path not in disk_set)
+        artifact_registry_drift = {
+            "hasDrift": bool(untracked or missing),
+            "untrackedArtifactPaths": untracked,
+            "missingArtifactPaths": missing,
+        }
+    except Exception:
+        pass
 
     return {
         "duplicateTaskFiles": duplicate_task_files,
@@ -206,6 +242,7 @@ async def project_reality_snapshot(
         "terminalSessionIds": terminal_session_ids,
         "activeRuntimeSessionIds": [str(item.get("_id")) for item in runtime_active_sessions if item.get("_id")],
         "ontologyArtifactDrift": ontology_artifact_drift,
+        "artifactRegistryDrift": artifact_registry_drift,
     }
 
 
@@ -223,9 +260,18 @@ async def project_reality_status(
     terminal_count = len(snapshot["terminalSessionIds"])
     active_runtime_count = len(snapshot["activeRuntimeSessionIds"])
     ontology_artifact_drift_count = 1 if snapshot.get("ontologyArtifactDrift", {}).get("hasDrift") else 0
+    artifact_registry_drift = snapshot.get("artifactRegistryDrift") or {}
+    artifact_registry_drift_count = len(artifact_registry_drift.get("untrackedArtifactPaths") or []) + len(artifact_registry_drift.get("missingArtifactPaths") or [])
 
     return {
-        "hasDrift": bool(duplicate_count or mismatch_count or stale_runtime_count or stale_audit_count or ontology_artifact_drift_count),
+        "hasDrift": bool(
+            duplicate_count
+            or mismatch_count
+            or stale_runtime_count
+            or stale_audit_count
+            or ontology_artifact_drift_count
+            or artifact_registry_drift_count
+        ),
         "duplicateTaskFileCount": duplicate_count,
         "taskSessionMismatchCount": mismatch_count,
         "staleRuntimeSessionCount": stale_runtime_count,
@@ -233,6 +279,7 @@ async def project_reality_status(
         "terminalSessionCount": terminal_count,
         "activeRuntimeSessionCount": active_runtime_count,
         "ontologyArtifactDriftCount": ontology_artifact_drift_count,
+        "artifactRegistryDriftCount": artifact_registry_drift_count,
         "details": snapshot,
     }
 

@@ -411,6 +411,7 @@ export type CommandCenter = {
     terminalSessionCount: number;
     activeRuntimeSessionCount: number;
     ontologyArtifactDriftCount?: number;
+    artifactRegistryDriftCount?: number;
     details?: {
       duplicateTaskFiles: string[];
       taskSessionMismatchTaskIds: string[];
@@ -423,6 +424,11 @@ export type CommandCenter = {
         activeDuckdbPath?: string | null;
         expectedDuckdbPath?: string | null;
         reason?: string | null;
+      };
+      artifactRegistryDrift?: {
+        hasDrift: boolean;
+        untrackedArtifactPaths: string[];
+        missingArtifactPaths: string[];
       };
     };
   };
