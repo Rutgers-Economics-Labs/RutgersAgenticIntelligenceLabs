@@ -340,6 +340,58 @@ Concrete pipeline task.
     assert tasks[0]["blockerCategory"] is None
 
 
+def test_list_tasks_normalizes_legacy_role_aliases_from_frontmatter(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "legacy-role-task.md",
+        """---
+task_id: legacy-role-task
+title: Legacy role task
+status: ready
+assigned_role: developer
+---
+
+## Description
+
+Legacy task role alias.
+""",
+    )
+
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert len(tasks) == 1
+    assert tasks[0]["agentRole"] == "coding"
+
+
+def test_list_approvals_normalizes_requested_by_role_alias_from_frontmatter(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "approvals" / "approval-1.md",
+        """---
+approval_id: approval-1
+project_id: project-id-abc
+task_id: task-1
+approval_type: run_task
+status: approved
+requested_by_role: auditor
+requested_at: 2026-01-01T00:00:00Z
+---
+
+Legacy approval role alias.
+""",
+    )
+
+    approvals = asyncio.run(planner_service.list_approvals(project))
+
+    assert len(approvals) == 1
+    assert approvals[0]["status"] == "granted"
+    assert approvals[0]["requestedByRole"] == "health"
+
+
 def test_reconcile_task_session_states_updates_terminal_task_from_session_truth(tmp_path: Path):
     from app.services import planner_service
 

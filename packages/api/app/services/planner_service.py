@@ -8,6 +8,7 @@ import yaml
 
 from app.services.convex_client import convex
 from app.services import session_files
+from app.services.role_runtime_service import ROLE_ALIASES
 
 
 PLANNER_THREAD_ID = "planner"
@@ -45,6 +46,11 @@ def _normalize_approval_status(status: str | None) -> str:
     if normalized not in APPROVAL_STATUSES:
         raise ValueError(f"Unsupported approval status: {status}")
     return normalized
+
+
+def _normalize_role_alias(role: str | None, default: str) -> str:
+    normalized = str(role or default).strip().lower()
+    return ROLE_ALIASES.get(normalized, normalized)
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -224,7 +230,7 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
         "title": title,
         "description": description,
         "status": status,
-        "agentRole": meta.get("assigned_role") or meta.get("agent_role") or "planner",
+        "agentRole": _normalize_role_alias(meta.get("assigned_role") or meta.get("agent_role"), "planner"),
         "repoPaths": meta.get("related_files") or [],
         "acceptanceCriteria": meta.get("acceptance_criteria") or [],
         "dependsOnTaskIds": meta.get("dependencies") or [],
@@ -513,7 +519,7 @@ def _approval_to_runtime(path: Path) -> dict[str, Any]:
         "agentSessionId": meta.get("agent_session_id"),
         "approvalType": meta.get("approval_type", "run_task"),
         "status": _normalize_approval_status(meta.get("status", "pending")),
-        "requestedByRole": meta.get("requested_by_role", "planner"),
+        "requestedByRole": _normalize_role_alias(meta.get("requested_by_role"), "planner"),
         "grantedByUserId": meta.get("granted_by_user_id"),
         "requestedAt": meta.get("requested_at"),
         "resolvedAt": meta.get("resolved_at"),
