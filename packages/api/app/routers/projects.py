@@ -395,6 +395,7 @@ class IntegrityArtifactPromotionRequest(BaseModel):
 
 
 ALLOWED_SOURCE_ADMISSIBILITY_STATUSES = {"observed", "derived", "estimated", "synthetic", "missing"}
+ALLOWED_SOURCE_FRESHNESS_STATUSES = {"unknown", "fresh", "needs_refresh", "stale"}
 
 
 def _validate_trusted_source_contract(
@@ -404,6 +405,11 @@ def _validate_trusted_source_contract(
     freshness_status: str | None,
     provenance: dict | None,
 ) -> None:
+    if freshness_status not in {None, ""} and freshness_status not in ALLOWED_SOURCE_FRESHNESS_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail="Source freshness must be one of: unknown, fresh, needs_refresh, stale.",
+        )
     if admissibility_status not in {None, ""} and admissibility_status not in ALLOWED_SOURCE_ADMISSIBILITY_STATUSES:
         raise HTTPException(
             status_code=422,
