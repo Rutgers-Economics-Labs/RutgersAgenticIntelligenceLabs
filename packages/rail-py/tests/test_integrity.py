@@ -2314,6 +2314,37 @@ def test_local_project_can_promote_source_and_claim_candidates(tmp_path):
     assert claim_result["claim"]["status"] == "supported"
 
 
+def test_promote_claim_candidate_rejects_supported_status_without_explicit_evidence(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    claim_candidate = repo.upsert_claim_candidate(
+        {
+            "candidate_key": "claim-candidate-unsupported",
+            "claim_text": "Employment rose after the reform.",
+            "snippet": "Semantic retrieval lead without explicit evidence.",
+        }
+    )
+
+    with pytest.raises(ValueError, match="Supported claims require explicit recorded evidence before claim-candidate promotion."):
+        repo.promote_claim_candidate(claim_candidate.candidate_key, status="supported")
+
+
+def test_local_project_blocks_claim_candidate_supported_promotion_without_explicit_evidence(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    claim_candidate = repo.upsert_claim_candidate(
+        {
+            "candidate_key": "claim-candidate-unsupported",
+            "claim_text": "Employment rose after the reform.",
+            "snippet": "Semantic retrieval lead without explicit evidence.",
+        }
+    )
+
+    project = rail.local(str(root))
+    with pytest.raises(ValueError, match="Supported claims require explicit recorded evidence before claim-candidate promotion."):
+        project.apply_integrity_claim_candidate_promotion(claim_candidate.candidate_key, status="supported")
+
+
 def test_local_claim_detail_exposes_contradictory_claims(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)

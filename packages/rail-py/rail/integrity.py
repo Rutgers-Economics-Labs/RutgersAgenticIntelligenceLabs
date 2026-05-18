@@ -1577,11 +1577,19 @@ class ResearchIntegrityRepo:
             raise KeyError(f"Unknown claim candidate: {candidate_key}")
 
         resolved_source_keys = sorted(set(source_keys or self._resolve_source_keys_for_claim_candidate(candidate)))
+        requested_status = status
         promoted_claim_key = claim_key or self._record_key("claim", candidate.claim_text)
         existing_claim = self.get_claim(promoted_claim_key)
         resolved_evidence_kind = evidence_kind or (
             existing_claim.evidence_kind if existing_claim is not None else ("direct" if resolved_source_keys or candidate.evidence_paths else None)
         )
+        if requested_status == "supported" and (
+            not (resolved_source_keys or candidate.evidence_paths)
+            or resolved_evidence_kind in {None, "semantic_suggestion"}
+        ):
+            raise ValueError(
+                "Supported claims require explicit recorded evidence before claim-candidate promotion."
+            )
         effective_status = status or (
             existing_claim.status
             if existing_claim is not None
