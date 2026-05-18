@@ -110,6 +110,92 @@ class LocalCLIRunner(BaseRunner):
     def _base_command_parts(self) -> list[str]:
         return shlex.split(self._command)
 
+    def _find_detached_session_root(self, session_id: str) -> Path | None:
+        search_root = Path.cwd()
+        sessions_root = search_root / "research_plan" / "sessions"
+        if not sessions_root.exists():
+            return None
+        for command_file in sessions_root.glob("*/*/.runner/command.json"):
+            try:
+                payload = json.loads(command_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if str(payload.get("session_id") or "") == session_id:
+                return command_file.parent.parent
+        return None
+
+    def _detached_session_snapshot(self, session_id: str) -> dict[str, Any] | None:
+        root = self._find_detached_session_root(session_id)
+        if root is None:
+            return None
+        runtime_paths = runner_runtime_paths(str(root))
+        try:
+            command = json.loads(runtime_paths["command"].read_text(encoding="utf-8"))
+        except Exception:
+            command = {}
+        try:
+            from app.services import session_files
+
+            state = session_files.read_state(root)
+            file_events = session_files.list_events(root)
+        except Exception:
+            state = {}
+            file_events = []
+
+        def _tail_lines(path: Path, limit: int = 50) -> list[str]:
+            if not path.exists():
+                return []
+            return path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:]
+
+        stdout_lines = _tail_lines(runtime_paths["stdout"])
+        stderr_lines = _tail_lines(runtime_paths["stderr"])
+        return {
+            "root": root,
+            "runtime_paths": runtime_paths,
+            "command": command,
+            "state": state,
+            "file_events": file_events,
+            "stdout_lines": stdout_lines,
+            "stderr_lines": stderr_lines,
+        }
+
+    def _runner_events_from_file_events(self, session_id: str, file_events: list[dict[str, Any]]) -> list[RunnerEvent]:
+        event_type_map = {
+            "session_started": RunnerEventType.SESSION_CREATED,
+            "status_changed": RunnerEventType.STATUS_CHANGED,
+            "approval_requested": RunnerEventType.APPROVAL_REQUESTED,
+            "question_asked": RunnerEventType.QUESTION_ASKED,
+            "assistant_message": RunnerEventType.PROGRESS,
+            "tool_call": RunnerEventType.BASH_COMMAND_STARTED,
+            "tool_result": RunnerEventType.BASH_COMMAND_COMPLETED,
+            "file_change_detected": RunnerEventType.FILE_CHANGE_DETECTED,
+            "verification_started": RunnerEventType.VERIFICATION_STARTED,
+            "verification_completed": RunnerEventType.VERIFICATION_COMPLETED,
+            "completed": RunnerEventType.COMPLETED,
+            "failed": RunnerEventType.FAILED,
+            "cancelled": RunnerEventType.CANCELLED,
+        }
+        events: list[RunnerEvent] = []
+        for item in file_events:
+            mapped = event_type_map.get(str(item.get("type") or ""))
+            if mapped is None:
+                continue
+            payload = {
+                key: value
+                for key, value in item.items()
+                if key not in {"id", "timestamp", "type"}
+            }
+            events.append(
+                RunnerEvent(
+                    event_type=mapped,
+                    session_id=session_id,
+                    normalized_payload=payload,
+                    raw_payload=dict(item),
+                    debug_visibility=bool(item.get("debug_visibility", False)),
+                )
+            )
+        return events
+
     def _command_args(self, prompt: str, task_payload: TaskPayload) -> list[str]:
         parts = shlex.split(self._command)
         return [*parts, self.prompt_flag, prompt]
@@ -121,6 +207,16 @@ class LocalCLIRunner(BaseRunner):
             return []
         if not isinstance(payload, dict):
             return []
+
+        if payload.get("type") == "turn.completed":
+            return [
+                RunnerEvent(
+                    event_type=RunnerEventType.COMPLETED,
+                    session_id=session_id,
+                    normalized_payload={"status": "completed"},
+                    raw_payload=payload,
+                )
+            ]
 
         cursor_events = self._derived_events_from_cursor_payload(session_id, payload)
         if cursor_events:
@@ -674,7 +770,29 @@ class LocalCLIRunner(BaseRunner):
     async def get_session(self, session_id: str) -> dict[str, Any]:
         session = self._sessions.get(session_id)
         if not session:
-            raise ValueError(f"Unknown session: {session_id}")
+            detached = self._detached_session_snapshot(session_id)
+            if detached is None:
+                raise ValueError(f"Unknown session: {session_id}")
+            state = detached["state"]
+            status = str(state.get("status") or "running")
+            normalized_status = {
+                "completed": RunnerEventType.COMPLETED.value,
+                "failed": RunnerEventType.FAILED.value,
+                "cancelled": RunnerEventType.CANCELLED.value,
+            }.get(status, RunnerEventType.PROGRESS.value)
+            command = detached["command"]
+            return {
+                "session_id": session_id,
+                "status": status,
+                "normalized_status": normalized_status,
+                "stdout": "\n".join(detached["stdout_lines"]),
+                "stderr": "\n".join(detached["stderr_lines"]),
+                "raw": {
+                    "command": command.get("command"),
+                    "cwd": command.get("cwd"),
+                    "session_root": str(detached["root"]),
+                },
+            }
         normalized_status = {
             "completed": RunnerEventType.COMPLETED.value,
             "failed": RunnerEventType.FAILED.value,
@@ -696,13 +814,21 @@ class LocalCLIRunner(BaseRunner):
     async def list_events(self, session_id: str) -> list[RunnerEvent]:
         session = self._sessions.get(session_id)
         if not session:
-            raise ValueError(f"Unknown session: {session_id}")
+            detached = self._detached_session_snapshot(session_id)
+            if detached is None:
+                raise ValueError(f"Unknown session: {session_id}")
+            return self._runner_events_from_file_events(session_id, detached["file_events"])
         return list(session.events)
 
     async def send_message(self, session_id: str, message: str) -> None:
         session = self._sessions.get(session_id)
         if not session:
-            raise ValueError(f"Unknown session: {session_id}")
+            # Detached local CLI runners do not support true interactive follow-up
+            # after launch. After an API restart the in-memory session map is empty,
+            # but the file-backed session and process may still be alive. Treat
+            # follow-up messages as a no-op instead of surfacing a misleading
+            # "Unknown session" error back to the control plane.
+            return
         session.events.append(
             RunnerEvent(
                 event_type=RunnerEventType.QUESTION_ASKED,
@@ -715,7 +841,10 @@ class LocalCLIRunner(BaseRunner):
     async def approve(self, session_id: str, payload: dict[str, Any]) -> None:
         session = self._sessions.get(session_id)
         if not session:
-            raise ValueError(f"Unknown session: {session_id}")
+            # See send_message(): detached local CLI sessions are file-backed and
+            # may outlive the API process that launched them. Approval nudges are
+            # likewise a no-op for these runners after launch.
+            return
         session.events.append(
             RunnerEvent(
                 event_type=RunnerEventType.APPROVAL_REQUESTED,
