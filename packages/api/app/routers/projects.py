@@ -404,6 +404,7 @@ ALLOWED_CLAIM_STATUSES = {"draft", "supported", "unsupported", "needs_evidence",
 ALLOWED_EVIDENCE_KINDS = {"direct", "derived", "contextual", "semantic_suggestion"}
 ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially_verified", "verified", "stale", "blocked"}
 ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
+ALLOWED_TASK_APPROVAL_STATES = {"pending", "granted"}
 
 
 def _validate_trusted_source_contract(
@@ -476,6 +477,14 @@ def _validate_planner_task_status(status: str | None) -> None:
         raise HTTPException(
             status_code=422,
             detail="Planner task status must be one of: " + ", ".join(planner_service.TASK_STATUSES) + ".",
+        )
+
+
+def _validate_planner_task_approval_state(approval_state: str | None) -> None:
+    if approval_state not in {None, ""} and approval_state not in ALLOWED_TASK_APPROVAL_STATES:
+        raise HTTPException(
+            status_code=422,
+            detail="Planner task approval state must be one of: pending, granted.",
         )
 
 
@@ -2192,6 +2201,7 @@ async def get_planner_board(slug: str):
 async def create_planner_task(slug: str, data: PlannerTaskRequest):
     project = await planner_service.get_project_by_slug(slug)
     _validate_planner_task_status(data.status)
+    _validate_planner_task_approval_state(data.approvalState)
     board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
         project=project,
@@ -2216,6 +2226,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
 async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRequest):
     project = await planner_service.get_project_by_slug(slug)
     _validate_planner_task_status(data.status)
+    _validate_planner_task_approval_state(data.approvalState)
     board = await planner_service.ensure_main_board(project)
     await planner_service.update_task(task_id, project=project, **data.model_dump())
     await planner_service.sync_planner_files(project, board)
