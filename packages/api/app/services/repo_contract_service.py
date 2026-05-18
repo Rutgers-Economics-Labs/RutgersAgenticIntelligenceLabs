@@ -62,6 +62,12 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "slug": slug,
             "default_branch": project.get("defaultBranch") or "main",
             "description": project.get("description") or "RAIL project",
+            "mode": "ontology_first",
+        },
+        "repo_contract": {
+            "required_paths": [".ontology", "specs", "research_plan", "topics", "agents", "skills"],
+            "flexible_paths": ["artifacts", "topics/**"],
+            "source_of_truth": "git",
         },
         "paths": {
             "ontology_root": CURRENT_PATHS["ontology_root"],
@@ -83,6 +89,29 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "linked_sources": project.get("apiConfigSlugs") or [],
             "hydration_mode": "full",
         },
+        "research": {
+            "brief_path": "topics/brief.md",
+            "spec_path": "specs/research_question.yaml",
+            "question_policy": {
+                "allow_follow_up_generation": True,
+                "allow_midstream_direction_change": True,
+                "require_question_classification": True,
+                "allowed_classifications": [
+                    "answerable_now",
+                    "answerable_after_requery",
+                    "answerable_after_expansion",
+                    "blocked_by_data",
+                ],
+            },
+        },
+        "planner": {
+            "current_plan_path": "research_plan/current_plan.md",
+            "task_root": "research_plan/tasks",
+            "approval_root": "research_plan/approvals",
+            "decision_root": "research_plan/decisions",
+            "require_audit_before_advance": True,
+            "lane_policy": "single_active_worker",
+        },
         "agents": {
             "roles_dir": "agents",
             "default_runner": "codex_cli",
@@ -90,6 +119,11 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "approval_required_for_write_runs": True,
             "planner_thread_mode": "project",
             "default_planner_role": "planner",
+        },
+        "auditors": {
+            "enabled": False,
+            "order": ["session", "planner", "ontology", "integrity", "closeout"],
+            "fail_closed": True,
         },
         "autonomy": {
             "mode": "assisted",
@@ -119,6 +153,39 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "require_lineage_for_final_artifacts": True,
             "require_evidence_for_report_claims": True,
             "stale_outputs_block_promotion": True,
+        },
+        "verification": {
+            "deterministic_command": "scripts/run-verification.sh",
+            "require_integrity_gate_for": ["artifact_generation", "closeout"],
+            "require_ontology_health_before": ["research", "artifact"],
+            "required_artifact_lineage": True,
+            "required_claim_evidence": True,
+        },
+        "secrets": {
+            "project_scope": True,
+            "per_agent_allowlists": True,
+            "inject_at_session_start_only": True,
+            "allowed": {},
+        },
+        "lifecycle": {
+            "phases": [
+                "brief",
+                "scoped",
+                "source_discovery",
+                "config_ready",
+                "hydration_ready",
+                "hydrated",
+                "ontology_healthy",
+                "research_active",
+                "synthesis_ready",
+                "closed",
+            ],
+            "closeout_requires": [
+                "no_active_agents",
+                "no_non_done_required_tasks",
+                "clean_integrity_gate",
+                "final_artifacts_present",
+            ],
         },
         "workspaces": {
             "mode": "isolated",
@@ -156,8 +223,14 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
     manifest["project"]["name"] = project["name"]
     manifest["project"]["slug"] = project["slug"]
     manifest["project"]["default_branch"] = project.get("defaultBranch") or "main"
+    manifest["project"].setdefault("mode", "ontology_first")
     if project.get("description"):
         manifest["project"]["description"] = project["description"]
+
+    repo_contract = manifest.setdefault("repo_contract", {})
+    repo_contract.setdefault("required_paths", [".ontology", "specs", "research_plan", "topics", "agents", "skills"])
+    repo_contract.setdefault("flexible_paths", ["artifacts", "topics/**"])
+    repo_contract.setdefault("source_of_truth", "git")
 
     manifest.setdefault("paths", {})
     manifest["paths"].setdefault("ontology_root", CURRENT_PATHS["ontology_root"])
@@ -180,6 +253,28 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
         hydration["ontology_file"] = f"{CURRENT_PATHS['ontology_dir']}/{project['ontologyConfigSlug']}.yaml"
     else:
         hydration["ontology_file"] = hydration.get("ontology_file") or f"{CURRENT_PATHS['ontology_root']}/ontology.yaml"
+
+    research = manifest.setdefault("research", {})
+    research.setdefault("brief_path", "topics/brief.md")
+    research.setdefault("spec_path", "specs/research_question.yaml")
+    question_policy = research.setdefault("question_policy", {})
+    question_policy.setdefault("allow_follow_up_generation", True)
+    question_policy.setdefault("allow_midstream_direction_change", True)
+    question_policy.setdefault("require_question_classification", True)
+    question_policy.setdefault("allowed_classifications", [
+        "answerable_now",
+        "answerable_after_requery",
+        "answerable_after_expansion",
+        "blocked_by_data",
+    ])
+
+    planner = manifest.setdefault("planner", {})
+    planner.setdefault("current_plan_path", "research_plan/current_plan.md")
+    planner.setdefault("task_root", "research_plan/tasks")
+    planner.setdefault("approval_root", "research_plan/approvals")
+    planner.setdefault("decision_root", "research_plan/decisions")
+    planner.setdefault("require_audit_before_advance", True)
+    planner.setdefault("lane_policy", "single_active_worker")
 
     workspaces = manifest.setdefault("workspaces", {})
     workspaces.setdefault("mode", "isolated")
@@ -212,12 +307,50 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
     autonomy.setdefault("max_cost_usd", 20)
     autonomy.setdefault("max_retries_per_task", 3)
 
+    auditors = manifest.setdefault("auditors", {})
+    auditors.setdefault("enabled", False)
+    auditors.setdefault("order", ["session", "planner", "ontology", "integrity", "closeout"])
+    auditors.setdefault("fail_closed", True)
+
     integrity = manifest.setdefault("integrity", {})
     integrity.setdefault("allow_synthetic_data", False)
     integrity.setdefault("require_source_for_datasets", True)
     integrity.setdefault("require_lineage_for_final_artifacts", True)
     integrity.setdefault("require_evidence_for_report_claims", True)
     integrity.setdefault("stale_outputs_block_promotion", True)
+
+    verification = manifest.setdefault("verification", {})
+    verification.setdefault("deterministic_command", "scripts/run-verification.sh")
+    verification.setdefault("require_integrity_gate_for", ["artifact_generation", "closeout"])
+    verification.setdefault("require_ontology_health_before", ["research", "artifact"])
+    verification.setdefault("required_artifact_lineage", True)
+    verification.setdefault("required_claim_evidence", True)
+
+    secrets = manifest.setdefault("secrets", {})
+    secrets.setdefault("project_scope", True)
+    secrets.setdefault("per_agent_allowlists", True)
+    secrets.setdefault("inject_at_session_start_only", True)
+    secrets.setdefault("allowed", {})
+
+    lifecycle = manifest.setdefault("lifecycle", {})
+    lifecycle.setdefault("phases", [
+        "brief",
+        "scoped",
+        "source_discovery",
+        "config_ready",
+        "hydration_ready",
+        "hydrated",
+        "ontology_healthy",
+        "research_active",
+        "synthesis_ready",
+        "closed",
+    ])
+    lifecycle.setdefault("closeout_requires", [
+        "no_active_agents",
+        "no_non_done_required_tasks",
+        "clean_integrity_gate",
+        "final_artifacts_present",
+    ])
 
     return yaml.safe_dump(manifest, sort_keys=False, allow_unicode=False)
 

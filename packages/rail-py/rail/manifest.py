@@ -15,6 +15,15 @@ HomeView = Literal["planner", "project_home", "artifacts"]
 WorkspaceMode = Literal["isolated"]
 CheckpointMode = Literal["git-ref", "none"]
 AutonomyMode = Literal["assisted", "supervised_autopilot", "autopilot"]
+ProjectMode = Literal["ontology_first", "research_first"]
+SourceOfTruth = Literal["git"]
+QuestionClassification = Literal[
+    "answerable_now",
+    "answerable_after_requery",
+    "answerable_after_expansion",
+    "blocked_by_data",
+]
+AuditStage = Literal["session", "planner", "ontology", "integrity", "closeout"]
 
 
 def _validate_repo_relative_path(value: str) -> str:
@@ -33,6 +42,22 @@ class ProjectSection(BaseModel):
     slug: str
     default_branch: str
     description: str | None = None
+    mode: ProjectMode = "ontology_first"
+
+
+class RepoContractSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    required_paths: list[str] = Field(
+        default_factory=lambda: [".ontology", "specs", "research_plan", "topics", "agents", "skills"]
+    )
+    flexible_paths: list[str] = Field(default_factory=lambda: ["artifacts", "topics/**"])
+    source_of_truth: SourceOfTruth = "git"
+
+    @field_validator("required_paths", "flexible_paths")
+    @classmethod
+    def _validate_contract_paths(cls, values: list[str]) -> list[str]:
+        return [_validate_repo_relative_path(value) for value in values]
 
 
 class PathsSection(BaseModel):
@@ -151,16 +176,127 @@ class WorkspacesSection(BaseModel):
         return _validate_repo_relative_path(value)
 
 
+class ResearchQuestionPolicySection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allow_follow_up_generation: bool = True
+    allow_midstream_direction_change: bool = True
+    require_question_classification: bool = True
+    allowed_classifications: list[QuestionClassification] = Field(
+        default_factory=lambda: [
+            "answerable_now",
+            "answerable_after_requery",
+            "answerable_after_expansion",
+            "blocked_by_data",
+        ]
+    )
+
+
+class ResearchSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    brief_path: str = "topics/brief.md"
+    spec_path: str = "specs/research_question.yaml"
+    question_policy: ResearchQuestionPolicySection = Field(default_factory=ResearchQuestionPolicySection)
+
+    @field_validator("brief_path", "spec_path")
+    @classmethod
+    def _validate_relative_paths(cls, value: str) -> str:
+        return _validate_repo_relative_path(value)
+
+
+class PlannerSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_plan_path: str = "research_plan/current_plan.md"
+    task_root: str = "research_plan/tasks"
+    approval_root: str = "research_plan/approvals"
+    decision_root: str = "research_plan/decisions"
+    require_audit_before_advance: bool = True
+    lane_policy: Literal["single_active_worker"] = "single_active_worker"
+
+    @field_validator("current_plan_path", "task_root", "approval_root", "decision_root")
+    @classmethod
+    def _validate_relative_paths(cls, value: str) -> str:
+        return _validate_repo_relative_path(value)
+
+
+class AuditorsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    order: list[AuditStage] = Field(default_factory=lambda: ["session", "planner", "ontology", "integrity", "closeout"])
+    fail_closed: bool = True
+
+
+class VerificationSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deterministic_command: str = "scripts/run-verification.sh"
+    require_integrity_gate_for: list[str] = Field(default_factory=lambda: ["artifact_generation", "closeout"])
+    require_ontology_health_before: list[str] = Field(default_factory=lambda: ["research", "artifact"])
+    required_artifact_lineage: bool = True
+    required_claim_evidence: bool = True
+
+    @field_validator("deterministic_command")
+    @classmethod
+    def _validate_command_path(cls, value: str) -> str:
+        return _validate_repo_relative_path(value)
+
+
+class SecretsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    project_scope: bool = True
+    per_agent_allowlists: bool = True
+    inject_at_session_start_only: bool = True
+    allowed: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class LifecycleSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    phases: list[str] = Field(
+        default_factory=lambda: [
+            "brief",
+            "scoped",
+            "source_discovery",
+            "config_ready",
+            "hydration_ready",
+            "hydrated",
+            "ontology_healthy",
+            "research_active",
+            "synthesis_ready",
+            "closed",
+        ]
+    )
+    closeout_requires: list[str] = Field(
+        default_factory=lambda: [
+            "no_active_agents",
+            "no_non_done_required_tasks",
+            "clean_integrity_gate",
+            "final_artifacts_present",
+        ]
+    )
+
+
 class RailManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     version: int = Field(..., ge=1)
     project: ProjectSection
+    repo_contract: RepoContractSection = Field(default_factory=RepoContractSection)
     paths: PathsSection
     hydration: HydrationSection
+    research: ResearchSection = Field(default_factory=ResearchSection)
+    planner: PlannerSection = Field(default_factory=PlannerSection)
     agents: AgentsSection
+    auditors: AuditorsSection = Field(default_factory=AuditorsSection)
     autonomy: AutonomySection = Field(default_factory=AutonomySection)
     integrity: IntegritySection = Field(default_factory=IntegritySection)
+    verification: VerificationSection = Field(default_factory=VerificationSection)
+    secrets: SecretsSection = Field(default_factory=SecretsSection)
+    lifecycle: LifecycleSection = Field(default_factory=LifecycleSection)
     workspaces: WorkspacesSection = Field(default_factory=WorkspacesSection)
     frontend: FrontendSection
 
@@ -192,6 +328,14 @@ class RailManifest(BaseModel):
             raise ValueError(
                 "approval_required_for_write_runs=true is only compatible with autonomy.mode=assisted"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_phase_model(self) -> "RailManifest":
+        if self.project.mode == "ontology_first":
+            required = {"hydrated", "ontology_healthy"}
+            if not required.issubset(set(self.lifecycle.phases)):
+                raise ValueError("ontology_first projects must include hydrated and ontology_healthy lifecycle phases")
         return self
 
     def resolve_repo_path(self, project_root: str | Path, relative_path: str) -> Path:

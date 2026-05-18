@@ -55,6 +55,20 @@ def bootstrap_future_project(
           slug: "{project_slug}"
           default_branch: "{default_branch}"
           description: "RAIL future project"
+          mode: "ontology_first"
+
+        repo_contract:
+          required_paths:
+            - ".ontology"
+            - "specs"
+            - "research_plan"
+            - "topics"
+            - "agents"
+            - "skills"
+          flexible_paths:
+            - "artifacts"
+            - "topics/**"
+          source_of_truth: "git"
 
         paths:
           ontology_root: ".ontology"
@@ -72,12 +86,43 @@ def bootstrap_future_project(
           transforms_dir: ".ontology/transforms"
           hydration_mode: "full"
 
+        research:
+          brief_path: "topics/brief.md"
+          spec_path: "specs/research_question.yaml"
+          question_policy:
+            allow_follow_up_generation: true
+            allow_midstream_direction_change: true
+            require_question_classification: true
+            allowed_classifications:
+              - "answerable_now"
+              - "answerable_after_requery"
+              - "answerable_after_expansion"
+              - "blocked_by_data"
+
+        planner:
+          current_plan_path: "research_plan/current_plan.md"
+          task_root: "research_plan/tasks"
+          approval_root: "research_plan/approvals"
+          decision_root: "research_plan/decisions"
+          require_audit_before_advance: true
+          lane_policy: "single_active_worker"
+
         agents:
           roles_dir: "agents"
           default_runner: "codex_cli"
           sequential_execution: true
           planner_thread_mode: "project"
           default_planner_role: "planner"
+
+        auditors:
+          enabled: false
+          order:
+            - "session"
+            - "planner"
+            - "ontology"
+            - "integrity"
+            - "closeout"
+          fail_closed: true
 
         autonomy:
           mode: "assisted"
@@ -105,6 +150,41 @@ def bootstrap_future_project(
           require_lineage_for_final_artifacts: true
           require_evidence_for_report_claims: true
           stale_outputs_block_promotion: true
+
+        verification:
+          deterministic_command: "scripts/run-verification.sh"
+          require_integrity_gate_for:
+            - "artifact_generation"
+            - "closeout"
+          require_ontology_health_before:
+            - "research"
+            - "artifact"
+          required_artifact_lineage: true
+          required_claim_evidence: true
+
+        secrets:
+          project_scope: true
+          per_agent_allowlists: true
+          inject_at_session_start_only: true
+          allowed: {{}}
+
+        lifecycle:
+          phases:
+            - "brief"
+            - "scoped"
+            - "source_discovery"
+            - "config_ready"
+            - "hydration_ready"
+            - "hydrated"
+            - "ontology_healthy"
+            - "research_active"
+            - "synthesis_ready"
+            - "closed"
+          closeout_requires:
+            - "no_active_agents"
+            - "no_non_done_required_tasks"
+            - "clean_integrity_gate"
+            - "final_artifacts_present"
 
         workspaces:
           mode: "isolated"

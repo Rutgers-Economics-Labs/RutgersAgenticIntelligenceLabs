@@ -55,6 +55,13 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
     assert rail_data["integrity"]["require_evidence_for_report_claims"] is True
     assert rail_data["workspaces"]["mode"] == "isolated"
     assert rail_data["workspaces"]["setup_script"] == "scripts/setup-workspace.sh"
+    assert rail_data["project"]["mode"] == "ontology_first"
+    assert rail_data["repo_contract"]["source_of_truth"] == "git"
+    assert rail_data["research"]["brief_path"] == "topics/brief.md"
+    assert rail_data["planner"]["task_root"] == "research_plan/tasks"
+    assert rail_data["verification"]["deterministic_command"] == "scripts/run-verification.sh"
+    assert "hydrated" in rail_data["lifecycle"]["phases"]
+    assert "ontology_healthy" in rail_data["lifecycle"]["phases"]
 
     assert yaml.safe_load((root / "research_plan/state/assumptions.json").read_text(encoding="utf-8")) == []
     assert yaml.safe_load((root / "research_plan/state/verification_runs.json").read_text(encoding="utf-8")) == []

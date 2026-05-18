@@ -126,3 +126,34 @@ def test_manifest_preserves_legacy_write_approval_shorthand():
 
     assert manifest.agents.approval_required_for_write_runs is True
     assert manifest.autonomy.mode == "assisted"
+
+
+def test_manifest_defaults_new_contract_sections():
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+
+    assert manifest.project.mode == "ontology_first"
+    assert manifest.repo_contract.source_of_truth == "git"
+    assert ".ontology" in manifest.repo_contract.required_paths
+    assert manifest.research.brief_path == "topics/brief.md"
+    assert manifest.planner.task_root == "research_plan/tasks"
+    assert manifest.auditors.enabled is False
+    assert manifest.verification.deterministic_command == "scripts/run-verification.sh"
+    assert manifest.secrets.project_scope is True
+    assert "hydrated" in manifest.lifecycle.phases
+    assert "ontology_healthy" in manifest.lifecycle.phases
+
+
+def test_manifest_rejects_ontology_first_without_required_phases():
+    content = MINIMAL_RAIL_YAML + textwrap.dedent(
+        """\
+
+        lifecycle:
+          phases:
+            - "brief"
+            - "scoped"
+            - "closed"
+        """
+    )
+
+    with pytest.raises(ValueError, match="ontology_first projects must include hydrated and ontology_healthy lifecycle phases"):
+        parse_manifest_content(content)
