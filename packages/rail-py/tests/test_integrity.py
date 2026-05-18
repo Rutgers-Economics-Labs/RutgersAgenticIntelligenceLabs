@@ -873,6 +873,55 @@ def test_write_claims_downgrades_supported_status_without_evidence(tmp_path):
     assert stored.status == "needs_evidence"
 
 
+def test_upsert_source_downgrades_validated_status_without_provenance(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    source = repo.upsert_source(
+        {
+            "source_key": "bls-laus",
+            "source_type": "dataset",
+            "title": "BLS LAUS",
+            "url_or_path": "https://example.com/bls.csv",
+            "origin": "BLS",
+            "acquired_at": "2026-05-14T00:00:00Z",
+            "access_method": "api",
+            "freshness_status": "fresh",
+            "quality_status": "validated",
+            "admissibility_status": "observed",
+        }
+    )
+
+    assert source.quality_status == "candidate"
+
+
+def test_write_sources_downgrades_validated_derived_status_without_lineage(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_sources(
+        [
+            {
+                "source_key": "derived-series",
+                "source_type": "dataset",
+                "title": "Derived Series",
+                "url_or_path": "https://example.com/derived.csv",
+                "origin": "Internal",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "manual",
+                "freshness_status": "fresh",
+                "quality_status": "validated",
+                "admissibility_status": "derived",
+                "provenance": {"text": "Computed from upstream series."},
+            }
+        ]
+    )
+
+    stored = repo.get_source("derived-series")
+    assert stored is not None
+    assert stored.quality_status == "candidate"
+
+
 def test_source_refresh_clears_dependent_stale_state_when_revalidated(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)

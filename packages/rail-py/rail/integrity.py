@@ -508,6 +508,26 @@ def _has_explicit_source_promotion_provenance(provenance: dict[str, Any] | None)
     )
 
 
+def _normalize_validated_source_quality(
+    *,
+    quality_status: str,
+    freshness_status: str,
+    admissibility_status: str | None,
+    provenance: dict[str, Any] | None,
+) -> str:
+    if quality_status != "validated":
+        return quality_status
+    if admissibility_status not in {"observed", "derived"}:
+        return "candidate"
+    if not _has_explicit_source_promotion_provenance(provenance):
+        return "candidate"
+    if admissibility_status == "derived" and not ((provenance or {}).get("derived_from") or (provenance or {}).get("derivedFrom")):
+        return "candidate"
+    if freshness_status in {"", "unknown"}:
+        return "candidate"
+    return quality_status
+
+
 def build_claim_state(
     claim: ClaimRecord,
     *,
@@ -1064,11 +1084,37 @@ class ResearchIntegrityRepo:
         return self._load_records(self.sources_path(), SourceRecord)
 
     def write_sources(self, records: list[SourceRecord] | list[dict[str, Any]]) -> None:
-        self._write_records(self.sources_path(), records, SourceRecord)
+        normalized_records: list[SourceRecord] = []
+        for record in records:
+            normalized = SourceRecord.model_validate(record)
+            normalized_records.append(
+                normalized.model_copy(
+                    update={
+                        "quality_status": _normalize_validated_source_quality(
+                            quality_status=normalized.quality_status,
+                            freshness_status=normalized.freshness_status,
+                            admissibility_status=normalized.admissibility_status,
+                            provenance=normalized.provenance,
+                        )
+                    }
+                )
+            )
+        self._write_records(self.sources_path(), normalized_records, SourceRecord)
         self.rebuild_integrity_edges()
 
     def upsert_source(self, record: SourceRecord | dict[str, Any]) -> SourceRecord:
-        stored = self._upsert_by_key(self.load_sources, self.write_sources, SourceRecord, "source_key", record)
+        normalized = SourceRecord.model_validate(record)
+        normalized = normalized.model_copy(
+            update={
+                "quality_status": _normalize_validated_source_quality(
+                    quality_status=normalized.quality_status,
+                    freshness_status=normalized.freshness_status,
+                    admissibility_status=normalized.admissibility_status,
+                    provenance=normalized.provenance,
+                )
+            }
+        )
+        stored = self._upsert_by_key(self.load_sources, self.write_sources, SourceRecord, "source_key", normalized)
         self.rebuild_chunks_for_source(stored.source_key)
         return stored
 
@@ -1078,6 +1124,16 @@ class ResearchIntegrityRepo:
             if record.source_key != source_key:
                 continue
             updated = record.model_copy(update=changes)
+            updated = updated.model_copy(
+                update={
+                    "quality_status": _normalize_validated_source_quality(
+                        quality_status=updated.quality_status,
+                        freshness_status=updated.freshness_status,
+                        admissibility_status=updated.admissibility_status,
+                        provenance=updated.provenance,
+                    )
+                }
+            )
             updated = self._normalize_timestamps(updated, preserve_created_at=record.created_at)
             records[idx] = updated
             self.write_sources(records)
