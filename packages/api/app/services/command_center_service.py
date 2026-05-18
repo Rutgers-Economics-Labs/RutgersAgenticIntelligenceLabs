@@ -793,6 +793,9 @@ def _build_blocker_summary(
     if reality.get("runningAgentRoleDriftCount"):
         reasons.append(f"{reality['runningAgentRoleDriftCount']} running-agent session role alias row(s) are still non-canonical.")
         repairs.append("Reconcile running-agent session roles so live runtime state uses canonical agent roles.")
+    if reality.get("runningAgentRunnerDriftCount"):
+        reasons.append(f"{reality['runningAgentRunnerDriftCount']} running-agent session runner alias row(s) are still non-canonical.")
+        repairs.append("Reconcile running-agent session runners so live runtime state uses canonical runner values.")
     if reality.get("duplicateTaskFileCount"):
         reasons.append(f"{reality['duplicateTaskFileCount']} duplicate planner task file(s) are present.")
         repairs.append("Run planner task-file reconciliation so the board has one canonical task record per task.")

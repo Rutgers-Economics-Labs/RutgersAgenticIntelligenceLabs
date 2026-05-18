@@ -1232,6 +1232,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
     monkeypatch.setattr(reconciliation_service.role_runtime_service, "reconcile_role_config_aliases", lambda project_arg: {"updatedConfigPaths": ["agents/coding.yaml"]})
     monkeypatch.setattr(reconciliation_service, "repair_running_agent_status_drift", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-legacy"]}))
     monkeypatch.setattr(reconciliation_service, "repair_running_agent_role_drift", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-role"]}))
+    monkeypatch.setattr(reconciliation_service, "repair_running_agent_runner_drift", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-runner"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_session_audits", lambda project_arg, project_root: asyncio.sleep(0, result={"repairedSessionIds": ["sess-2"]}))
     monkeypatch.setattr(
@@ -1253,6 +1254,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
         "repairedRoleConfigPaths": ["agents/coding.yaml"],
         "repairedRunningAgentStatusSessionIds": ["sess-legacy"],
         "repairedRunningAgentRoleSessionIds": ["sess-role"],
+        "repairedRunningAgentRunnerSessionIds": ["sess-runner"],
         "repairedSessionIds": ["sess-1"],
         "repairedAuditSessionIds": ["sess-2"],
         "repairedOntologyArtifact": {
@@ -1352,6 +1354,14 @@ Duplicate task file.
             result=[{"sessionId": "sess-role", "role": "developer", "canonicalRole": "coding"}],
         ),
     )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-runner", "runner": "CODEX_CLI", "canonicalRunner": "codex_cli"}],
+        ),
+    )
 
     status = asyncio.run(reconciliation_service.project_reality_status(project))
 
@@ -1362,6 +1372,7 @@ Duplicate task file.
     assert status["terminalSessionCount"] == 1
     assert status["runningAgentStatusDriftCount"] == 1
     assert status["runningAgentRoleDriftCount"] == 1
+    assert status["runningAgentRunnerDriftCount"] == 1
     assert status["details"]["duplicateTaskFiles"] == ["research_plan/tasks/task-b.md"]
     assert status["details"]["taskSessionMismatchTaskIds"] == ["task-a"]
     assert status["details"]["staleRuntimeSessionIds"] == ["sess-1"]
@@ -1445,6 +1456,14 @@ Duplicate task file.
         lambda project_id, *, limit=50: asyncio.sleep(
             0,
             result=[{"sessionId": "sess-role", "role": "developer", "canonicalRole": "coding"}],
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-runner", "runner": "CODEX_CLI", "canonicalRunner": "codex_cli"}],
         ),
     )
     monkeypatch.setattr(
@@ -1533,6 +1552,9 @@ frontend:
     assert snapshot["runningAgentRoleDrift"]["hasDrift"] is True
     assert snapshot["runningAgentRoleDrift"]["sessions"][0]["sessionId"] == "sess-role"
     assert snapshot["runningAgentRoleDrift"]["sessions"][0]["canonicalRole"] == "coding"
+    assert snapshot["runningAgentRunnerDrift"]["hasDrift"] is True
+    assert snapshot["runningAgentRunnerDrift"]["sessions"][0]["sessionId"] == "sess-runner"
+    assert snapshot["runningAgentRunnerDrift"]["sessions"][0]["canonicalRunner"] == "codex_cli"
     assert snapshot["ontologyArtifactDrift"]["hasDrift"] is True
     assert snapshot["ontologyArtifactDrift"]["reason"] == "active_ontology_path_missing_on_disk"
     assert snapshot["ontologyArtifactDrift"]["expectedDuckdbPath"] == str(tmp_path / ".ontology" / "onto.duckdb")
@@ -1597,6 +1619,14 @@ def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path
         ),
     )
     monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-runner", "runner": "CODEX_CLI", "canonicalRunner": "codex_cli"}],
+        ),
+    )
+    monkeypatch.setattr(
         reconciliation_service.hydration_registry_service,
         "get_hydration_status",
         lambda **kwargs: asyncio.sleep(0, result={"reusableArtifact": {}, "currentDeviceArtifacts": []}),
@@ -1656,6 +1686,7 @@ frontend:
     assert status["roleConfigAliasDriftCount"] == 1
     assert status["runningAgentStatusDriftCount"] == 1
     assert status["runningAgentRoleDriftCount"] == 1
+    assert status["runningAgentRunnerDriftCount"] == 1
 
 
 def test_project_reality_snapshot_without_repo_root_preserves_control_plane_drift_shape(monkeypatch):
@@ -1675,6 +1706,14 @@ def test_project_reality_snapshot_without_repo_root_preserves_control_plane_drif
         lambda project_id, *, limit=50: asyncio.sleep(
             0,
             result=[{"sessionId": "sess-role", "role": "developer", "canonicalRole": "coding"}],
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-runner", "runner": "CODEX_CLI", "canonicalRunner": "codex_cli"}],
         ),
     )
     monkeypatch.setattr(
@@ -1713,6 +1752,9 @@ def test_project_reality_snapshot_without_repo_root_preserves_control_plane_drif
     assert snapshot["runningAgentRoleDrift"]["hasDrift"] is True
     assert snapshot["runningAgentRoleDrift"]["sessions"][0]["sessionId"] == "sess-role"
     assert snapshot["runningAgentRoleDrift"]["sessions"][0]["canonicalRole"] == "coding"
+    assert snapshot["runningAgentRunnerDrift"]["hasDrift"] is True
+    assert snapshot["runningAgentRunnerDrift"]["sessions"][0]["sessionId"] == "sess-runner"
+    assert snapshot["runningAgentRunnerDrift"]["sessions"][0]["canonicalRunner"] == "codex_cli"
     assert snapshot["secretPolicyRoleDrift"]["hasDrift"] is True
     assert snapshot["secretPolicyRoleDrift"]["policies"][0]["agentRole"] == "developer"
     assert snapshot["secretPolicyRoleDrift"]["policies"][0]["canonicalRole"] == "coding"
@@ -1734,6 +1776,7 @@ def test_project_reality_snapshot_without_repo_root_preserves_control_plane_drif
     assert status["hasDrift"] is True
     assert status["runningAgentStatusDriftCount"] == 1
     assert status["runningAgentRoleDriftCount"] == 1
+    assert status["runningAgentRunnerDriftCount"] == 1
     assert status["secretPolicyRoleDriftCount"] == 1
     assert status["ontologyArtifactDriftCount"] == 0
     assert status["artifactRegistryDriftCount"] == 0
@@ -2330,7 +2373,7 @@ def test_ensure_control_plane_repair_tasks_creates_reconcile_task(tmp_path: Path
     assert "non-canonical role config aliases" in str(created[0]["description"])
     assert "non-canonical running-agent session statuses" in str(created[0]["description"])
     assert "non-canonical running-agent session roles" in str(created[0]["description"])
-    assert "duplicate task files, task/session mismatches, running-agent status drift, running-agent role drift, secret policy role drift, and role config alias drift are reconciled" in created[0]["acceptance_criteria"]
+    assert "duplicate task files, task/session mismatches, running-agent status drift, running-agent role drift, running-agent runner drift, secret policy role drift, and role config alias drift are reconciled" in created[0]["acceptance_criteria"]
     assert synced == [True]
 
 

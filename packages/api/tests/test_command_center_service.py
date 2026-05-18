@@ -414,6 +414,7 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
             "terminalSessionCount": 4,
             "activeRuntimeSessionCount": 1,
             "runningAgentRoleDriftCount": 1,
+            "runningAgentRunnerDriftCount": 1,
             "ontologyArtifactDriftCount": 1,
             "artifactRegistryDriftCount": 2,
             "secretPolicyRoleDriftCount": 1,
@@ -432,6 +433,16 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
                             "sessionId": "sess-role",
                             "role": "developer",
                             "canonicalRole": "coding",
+                        }
+                    ],
+                },
+                "runningAgentRunnerDrift": {
+                    "hasDrift": True,
+                    "sessions": [
+                        {
+                            "sessionId": "sess-runner",
+                            "runner": "CODEX_CLI",
+                            "canonicalRunner": "codex_cli",
                         }
                     ],
                 },
@@ -488,6 +499,7 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
     assert center["projectReality"]["taskSessionMismatchCount"] == 2
     assert center["projectReality"]["staleAuditSessionCount"] == 3
     assert center["projectReality"]["runningAgentRoleDriftCount"] == 1
+    assert center["projectReality"]["runningAgentRunnerDriftCount"] == 1
     assert center["projectReality"]["ontologyArtifactDriftCount"] == 1
     assert center["projectReality"]["artifactRegistryDriftCount"] == 2
     assert center["projectReality"]["secretPolicyRoleDriftCount"] == 1
@@ -658,6 +670,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
             "staleRuntimeSessionCount": 1,
             "runningAgentStatusDriftCount": 1,
             "runningAgentRoleDriftCount": 1,
+            "runningAgentRunnerDriftCount": 1,
             "staleAuditSessionCount": 1,
             "terminalSessionCount": 2,
             "activeRuntimeSessionCount": 1,
@@ -689,6 +702,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert "Ontology hydration state is `not_hydrated`." in center["blockerSummary"]["reasons"]
     assert "Reconcile running-agent session statuses so live runtime state uses canonical lifecycle values." in center["blockerSummary"]["repairs"]
     assert "Reconcile running-agent session roles so live runtime state uses canonical agent roles." in center["blockerSummary"]["repairs"]
+    assert "Reconcile running-agent session runners so live runtime state uses canonical runner values." in center["blockerSummary"]["repairs"]
 
 
 def test_build_command_center_surfaces_ontology_follow_up_classifications(tmp_path: Path, monkeypatch):
