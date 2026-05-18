@@ -874,6 +874,43 @@ def _control_plane_auditor_gate(auditors: dict[str, Any] | None) -> dict[str, An
     return {"blocked": True, "blockers": list(dict.fromkeys(blockers))}
 
 
+async def _ensure_control_plane_repair_tasks(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> bool:
+    gate = _control_plane_auditor_gate(auditors)
+    if not gate.get("blocked"):
+        return False
+
+    board = await planner_service.ensure_main_board(project)
+    task_title = "Reconcile control-plane drift and stale sessions"
+    if any(str(task.get("title") or "") == task_title for task in tasks):
+        return False
+
+    await planner_service.create_task(
+        project=project,
+        board_id=board["_id"],
+        title=task_title,
+        description=(
+            "Repair persistent control-plane blockers such as stale runtime sessions, duplicate task files, "
+            "or task/session state mismatches so autopilot can safely advance from audited truth."
+        ),
+        status="ready",
+        agent_role="health",
+        repo_paths=["research_plan", "research_plan/state", ".ontology"],
+        acceptance_criteria=[
+            "stale runtime sessions are finalized or cancelled from durable session truth",
+            "duplicate task files and task/session mismatches are reconciled",
+            "session and planner auditors no longer report control-plane blockers after the repair",
+        ],
+        runner="codex_cli",
+    )
+    await planner_service.sync_planner_files(project, board)
+    logger.info("Autopilot: ensured control-plane repair task for %s", project.get("slug"))
+    return True
+
+
 def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
     base = (
         "[AUTOPILOT MODE] Analyze the project state. If any tasks are 'ready', use launch_task_runner to start them. "
@@ -1127,6 +1164,10 @@ async def run_autopilot_loop(project_slug: str):
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _reconcile_ontology_lifecycle_state(project, tasks):
+            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            consecutive_idle_turns = 0
+            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+        if await _ensure_control_plane_repair_tasks(project, tasks, auditors):
             tasks = await planner_service.list_tasks(board["_id"], project=project)
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
