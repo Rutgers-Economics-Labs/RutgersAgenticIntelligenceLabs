@@ -362,6 +362,27 @@ export type CommandCenter = {
       reasons?: string[];
     };
   } | null;
+  recentAudits?: Array<{
+    generatedAt?: string;
+    path?: string;
+    currentBlocker?: string | null;
+    session?: {
+      id?: string;
+      role?: string;
+      status?: string;
+      reviewStatus?: string;
+      verificationStatus?: string;
+      publishStatus?: string;
+    };
+    integrity?: {
+      blocked?: boolean;
+      reason?: string | null;
+    };
+    planner?: {
+      blockedTaskCount?: number;
+      readyTaskCount?: number;
+    };
+  }>;
   currentBlocker?: string | null;
   projectReality?: {
     hasDrift: boolean;

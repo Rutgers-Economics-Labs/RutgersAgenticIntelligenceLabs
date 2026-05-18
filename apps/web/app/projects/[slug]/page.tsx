@@ -45,6 +45,31 @@ export default async function ProjectHomePage({
         <InlineStatus label="blocked tasks" value={center.auditedTruth?.planner?.taskCounts?.blocked ?? 0} />
         <InlineStatus label="ready tasks" value={center.auditedTruth?.planner?.taskCounts?.ready ?? 0} />
       </SectionCard>
+      <SectionCard eyebrow="Audit Timeline" noPad>
+        {center.recentAudits?.length ? center.recentAudits.map((audit, index) => (
+          <div key={`${audit.session?.id ?? "audit"}-${index}`} className="approval-row">
+            <div>
+              <div style={{ fontWeight: 600, color: "var(--fg)" }}>
+                {audit.session?.id ?? "unknown session"}{audit.session?.role ? ` · ${audit.session.role}` : ""}
+              </div>
+              <div className="mono-muted">
+                {audit.generatedAt ?? "unknown time"}{audit.path ? ` · ${audit.path}` : ""}
+              </div>
+              <div className="mono-muted">
+                {audit.currentBlocker ?? audit.integrity?.reason ?? "No blocker recorded."}
+              </div>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+              <StatusPill value={audit.session?.status ?? "unknown"} />
+              <div className="mono-muted">
+                {audit.integrity?.blocked ? "integrity blocked" : "integrity clear"}
+              </div>
+            </div>
+          </div>
+        )) : (
+          <div className="empty-state">No recent audits yet.</div>
+        )}
+      </SectionCard>
       <SectionCard eyebrow="Reality Drift" noPad>
         <InlineStatus label="drift" value={center.projectReality?.hasDrift ? "present" : "clear"} />
         <InlineStatus label="task mismatches" value={center.projectReality?.taskSessionMismatchCount ?? 0} />

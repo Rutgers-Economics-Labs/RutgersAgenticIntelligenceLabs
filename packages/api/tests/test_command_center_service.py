@@ -271,8 +271,13 @@ def test_integrity_summary_surfaces_role_specific_blockers(tmp_path: Path):
     assert "run-001" in integrity["agentWorkflow"]["health"]["failedVerificationRuns"]
 
 
-def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path: Path):
+def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path: Path, monkeypatch):
     from app.services import command_center_service
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {}
+
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
 
     _write(
         tmp_path / "research_plan" / "audits" / "sess-2.json",
@@ -300,6 +305,64 @@ def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path
     assert center["currentBlocker"] == "Datasets must record source provenance before promotion."
     assert center["auditedTruth"]["session"]["id"] == "sess-2"
     assert center["auditedTruth"]["path"] == "research_plan/audits/sess-2.json"
+    assert center["recentAudits"][0]["session"]["id"] == "sess-2"
+    assert center["recentAudits"][0]["integrity"]["reason"] == "Datasets must record source provenance before promotion."
+
+
+def test_build_command_center_surfaces_recent_audit_timeline(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {}
+
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
+
+    _write(
+        tmp_path / "research_plan" / "audits" / "sess-1.json",
+        json.dumps(
+            {
+                "generatedAt": "2026-05-17T09:00:00Z",
+                "session": {
+                    "id": "sess-1",
+                    "role": "research",
+                    "status": "completed",
+                    "reviewStatus": "approved",
+                    "verificationStatus": "passed",
+                    "publishStatus": "published",
+                },
+                "planner": {"taskCounts": {"ready": 2, "blocked": 0}},
+                "integrity": {"blocked": False, "reasons": []},
+                "currentBlocker": None,
+            },
+            indent=2,
+        ),
+    )
+    _write(
+        tmp_path / "research_plan" / "audits" / "sess-2.json",
+        json.dumps(
+            {
+                "generatedAt": "2026-05-17T10:00:00Z",
+                "session": {
+                    "id": "sess-2",
+                    "role": "data",
+                    "status": "failed",
+                    "reviewStatus": "needs_changes",
+                    "verificationStatus": "failed",
+                    "publishStatus": "not_started",
+                },
+                "planner": {"taskCounts": {"ready": 1, "blocked": 1}},
+                "integrity": {"blocked": True, "reasons": ["Verification failed."]},
+                "currentBlocker": "Verification failed.",
+            },
+            indent=2,
+        ),
+    )
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert [row["session"]["id"] for row in center["recentAudits"][:2]] == ["sess-2", "sess-1"]
+    assert center["recentAudits"][0]["planner"]["blockedTaskCount"] == 1
+    assert center["recentAudits"][1]["integrity"]["blocked"] is False
 
 
 def test_build_command_center_surfaces_source_admissibility_counts(tmp_path: Path):

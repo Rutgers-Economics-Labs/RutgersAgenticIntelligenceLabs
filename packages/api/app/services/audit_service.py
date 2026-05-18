@@ -37,6 +37,51 @@ def read_latest_audit(project_root: Path) -> dict[str, Any] | None:
     return None
 
 
+def list_recent_audits(project_root: Path, *, limit: int = 5) -> list[dict[str, Any]]:
+    audit_root = _audit_root(project_root)
+    if not audit_root.is_dir():
+        return []
+
+    rows: list[dict[str, Any]] = []
+    candidates = sorted(audit_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in candidates:
+        if len(rows) >= limit:
+            break
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        session = payload.get("session") or {}
+        integrity = payload.get("integrity") or {}
+        planner = payload.get("planner") or {}
+        rows.append(
+            {
+                "generatedAt": payload.get("generatedAt"),
+                "path": str(path.relative_to(project_root)),
+                "currentBlocker": payload.get("currentBlocker"),
+                "session": {
+                    "id": session.get("id"),
+                    "role": session.get("role"),
+                    "status": session.get("status"),
+                    "reviewStatus": session.get("reviewStatus"),
+                    "verificationStatus": session.get("verificationStatus"),
+                    "publishStatus": session.get("publishStatus"),
+                },
+                "integrity": {
+                    "blocked": bool(integrity.get("blocked")),
+                    "reason": (integrity.get("reasons") or [None])[0],
+                },
+                "planner": {
+                    "blockedTaskCount": int((planner.get("taskCounts") or {}).get("blocked") or 0),
+                    "readyTaskCount": int((planner.get("taskCounts") or {}).get("ready") or 0),
+                },
+            }
+        )
+    return rows
+
+
 def _normalize_title(task: dict[str, Any]) -> str:
     return str(task.get("title") or task.get("_id") or "Untitled task")
 

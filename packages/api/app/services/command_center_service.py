@@ -8,7 +8,7 @@ from typing import Any
 
 import yaml
 
-from app.services.audit_service import read_latest_audit
+from app.services.audit_service import list_recent_audits, read_latest_audit
 from app.services.auditor_service import build_auditor_statuses
 from app.services.integrity_service import load_integrity_indexes, summarize_agent_workflow_health
 from app.services.reconciliation_service import project_reality_status
@@ -720,6 +720,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     integrity = list_project_integrity(project)
     root = project_root(project)
     latest_audit = read_latest_audit(root)
+    recent_audits = list_recent_audits(root)
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
 
@@ -761,6 +762,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
             "agentWorkflow": integrity["agentWorkflow"],
         },
         "auditedTruth": latest_audit,
+        "recentAudits": recent_audits,
         "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
         "projectReality": reality,
         "auditors": auditors,
