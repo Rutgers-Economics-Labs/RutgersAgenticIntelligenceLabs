@@ -22,6 +22,7 @@ from app.services import running_agent_service
 from app.services import session_files
 from app.services import command_center_service
 from app.services import reconciliation_service
+from app.services.auditor_service import build_auditor_statuses
 from app.services.device_service import get_device_metadata
 from app.services.hydration_registry_service import (
     get_hydration_status as get_project_hydration_status,
@@ -1596,6 +1597,20 @@ async def apply_project_integrity_artifact_promotion(slug: str, data: IntegrityA
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    if data.targetState in {"partially_verified", "verified"}:
+        auditors = await build_auditor_statuses(project)
+        blocked: list[str] = []
+        for key in ("ontology", "integrity"):
+            status = auditors.get(key) or {}
+            if str(status.get("status") or "") != "blocked":
+                continue
+            blocker = next((str(item) for item in (status.get("blockers") or []) if str(item).strip()), "blocked")
+            blocked.append(f"{key}: {blocker}")
+        if blocked:
+            raise HTTPException(
+                status_code=409,
+                detail="Artifact promotion blocked by auditor state: " + "; ".join(blocked),
+            )
     manifest = load_manifest(root)
     try:
         return promote_artifact(root, manifest, data.artifactPath, target_state=data.targetState)

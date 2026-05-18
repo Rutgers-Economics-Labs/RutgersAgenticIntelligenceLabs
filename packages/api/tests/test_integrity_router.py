@@ -207,7 +207,7 @@ async def test_record_source_rejects_validated_status_without_admissibility(clie
     assert "Validated sources require explicit admissibility state" in payload["detail"]
 
 
-async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifact(client, convex_mock, tmp_path):
+async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifact(client, convex_mock, tmp_path, monkeypatch):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -254,6 +254,13 @@ async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifa
 
     convex_mock.post("/api/query").mock(side_effect=_query)
     convex_mock.post("/api/mutation").mock(side_effect=_mutation)
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+        }
+
+    monkeypatch.setattr("app.routers.projects.build_auditor_statuses", _build_auditor_statuses)
 
     context_resp = await client.post(
         "/api/v1/context/text",
@@ -338,6 +345,59 @@ async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifa
     assert integrity_payload["indexes"]["sources"][0]["sourceState"]["isFresh"] is True
     by_path = {item["artifact_path"]: item for item in integrity_payload["indexes"]["artifact_lineage"]}
     assert by_path["artifacts/report.md"]["trustState"]["isTrusted"] is True
+
+
+async def test_artifact_promotion_rejects_when_ontology_auditor_is_blocked(client, convex_mock, tmp_path, monkeypatch):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    artifact_path = root / "artifacts" / "report.md"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("# Report\n", encoding="utf-8")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "draft",
+            }
+        ]
+    )
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+            "integrity": {"status": "ready", "blockers": []},
+        }
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr("app.routers.projects.build_auditor_statuses", _build_auditor_statuses)
+
+    promote_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts/promote",
+        json={"artifactPath": "artifacts/report.md", "targetState": "partially_verified"},
+    )
+
+    assert promote_resp.status_code == 409
+    payload = promote_resp.json()
+    assert "Artifact promotion blocked by auditor state: ontology:" in payload["detail"]
 
 
 async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(client, convex_mock, tmp_path):
