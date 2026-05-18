@@ -122,3 +122,50 @@ def test_update_running_agent_rejects_unknown_status(monkeypatch):
         assert "Unsupported running-agent status" in str(exc)
     else:
         raise AssertionError("Expected update_running_agent() to reject unknown statuses")
+
+
+def test_list_running_agent_status_drift_reports_legacy_status_aliases(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _query(path: str, payload: dict):
+        assert path == "agent:listByProjectId"
+        return [
+            {"_id": "sess-1", "role": "coding", "status": "done"},
+            {"_id": "sess-2", "role": "coding", "status": "completed"},
+        ]
+
+    monkeypatch.setattr(running_agent_service.convex, "query", _query)
+
+    drift = asyncio.run(running_agent_service.list_running_agent_status_drift("project-1"))
+
+    assert drift == [{"sessionId": "sess-1", "status": "done", "canonicalStatus": "completed"}]
+
+
+def test_repair_running_agent_status_drift_updates_legacy_status_aliases(monkeypatch):
+    from app.services import running_agent_service
+
+    mutations: list[dict] = []
+
+    async def _query(path: str, payload: dict):
+        assert path == "agent:listByProjectId"
+        return [
+            {"_id": "sess-1", "role": "coding", "status": "done"},
+            {"_id": "sess-2", "role": "coding", "status": "completed"},
+        ]
+
+    async def _mutation(path: str, payload: dict):
+        mutations.append({"path": path, "payload": payload})
+        return {}
+
+    monkeypatch.setattr(running_agent_service.convex, "query", _query)
+    monkeypatch.setattr(running_agent_service.convex, "mutation", _mutation)
+
+    result = asyncio.run(running_agent_service.repair_running_agent_status_drift("project-1"))
+
+    assert result == {"repairedSessionIds": ["sess-1"]}
+    assert mutations == [
+        {
+            "path": "agent:updateSessionState",
+            "payload": {"sessionId": "sess-1", "status": "completed"},
+        }
+    ]

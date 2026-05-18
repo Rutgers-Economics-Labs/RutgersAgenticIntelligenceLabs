@@ -1230,6 +1230,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_planner_metadata", lambda project_arg: asyncio.sleep(0, result={"updatedTaskIds": ["task-2"], "updatedApprovalIds": ["approval-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_agent_secret_policy_roles", lambda project_arg: asyncio.sleep(0, result={"repairedRoles": ["coding"]}))
     monkeypatch.setattr(reconciliation_service.role_runtime_service, "reconcile_role_config_aliases", lambda project_arg: {"updatedConfigPaths": ["agents/coding.yaml"]})
+    monkeypatch.setattr(reconciliation_service, "repair_running_agent_status_drift", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-legacy"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-1"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_session_audits", lambda project_arg, project_root: asyncio.sleep(0, result={"repairedSessionIds": ["sess-2"]}))
     monkeypatch.setattr(
@@ -1249,6 +1250,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
         "updatedApprovalIds": ["approval-1"],
         "repairedSecretPolicyRoles": ["coding"],
         "repairedRoleConfigPaths": ["agents/coding.yaml"],
+        "repairedRunningAgentStatusSessionIds": ["sess-legacy"],
         "repairedSessionIds": ["sess-1"],
         "repairedAuditSessionIds": ["sess-2"],
         "repairedOntologyArtifact": {
@@ -1332,6 +1334,14 @@ Duplicate task file.
             ],
         ),
     )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-legacy", "status": "done", "canonicalStatus": "completed"}],
+        ),
+    )
 
     status = asyncio.run(reconciliation_service.project_reality_status(project))
 
@@ -1340,6 +1350,7 @@ Duplicate task file.
     assert status["taskSessionMismatchCount"] == 1
     assert status["staleRuntimeSessionCount"] == 1
     assert status["terminalSessionCount"] == 1
+    assert status["runningAgentStatusDriftCount"] == 1
     assert status["details"]["duplicateTaskFiles"] == ["research_plan/tasks/task-b.md"]
     assert status["details"]["taskSessionMismatchTaskIds"] == ["task-a"]
     assert status["details"]["staleRuntimeSessionIds"] == ["sess-1"]
@@ -1407,6 +1418,14 @@ Duplicate task file.
                     "sessionPath": str(session_root),
                 }
             ],
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-legacy", "status": "done", "canonicalStatus": "completed"}],
         ),
     )
     monkeypatch.setattr(
@@ -1489,6 +1508,9 @@ frontend:
     assert snapshot["staleRuntimeSessionIds"] == ["sess-1"]
     assert snapshot["terminalSessionIds"] == ["sess-1"]
     assert snapshot["activeRuntimeSessionIds"] == ["sess-1"]
+    assert snapshot["runningAgentStatusDrift"]["hasDrift"] is True
+    assert snapshot["runningAgentStatusDrift"]["sessions"][0]["sessionId"] == "sess-legacy"
+    assert snapshot["runningAgentStatusDrift"]["sessions"][0]["canonicalStatus"] == "completed"
     assert snapshot["ontologyArtifactDrift"]["hasDrift"] is True
     assert snapshot["ontologyArtifactDrift"]["reason"] == "active_ontology_path_missing_on_disk"
     assert snapshot["ontologyArtifactDrift"]["expectedDuckdbPath"] == str(tmp_path / ".ontology" / "onto.duckdb")
@@ -1535,6 +1557,14 @@ def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path
         reconciliation_service.running_agent_service,
         "list_project_running_agents",
         lambda project_id, *, active_only=True, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-legacy", "status": "done", "canonicalStatus": "completed"}],
+        ),
     )
     monkeypatch.setattr(
         reconciliation_service.hydration_registry_service,
@@ -1594,6 +1624,7 @@ frontend:
     assert status["artifactRegistryDriftCount"] == 2
     assert status["secretPolicyRoleDriftCount"] == 0
     assert status["roleConfigAliasDriftCount"] == 1
+    assert status["runningAgentStatusDriftCount"] == 1
 
 
 def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_path: Path, monkeypatch):

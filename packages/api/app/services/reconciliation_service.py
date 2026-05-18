@@ -39,6 +39,13 @@ async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any
     return {"repairedSessionIds": repaired}
 
 
+async def repair_running_agent_status_drift(project: dict[str, Any]) -> dict[str, Any]:
+    project_id = project.get("_id")
+    if not project_id:
+        return {"repairedSessionIds": []}
+    return await running_agent_service.repair_running_agent_status_drift(str(project_id), limit=50)
+
+
 def _preferred_hydration_artifact_path(hydration: dict[str, Any]) -> str | None:
     reusable = hydration.get("reusableArtifact") or {}
     if reusable.get("duckdbArtifactPath"):
@@ -202,6 +209,18 @@ async def project_reality_snapshot(
         status = str(state.get("status") or "")
         if status in session_lifecycle.TERMINAL_STATUSES:
             stale_runtime_session_ids.append(str(session.get("_id") or ""))
+    running_agent_status_drift: dict[str, Any] = {
+        "hasDrift": False,
+        "sessions": [],
+    }
+    try:
+        status_drift = await running_agent_service.list_running_agent_status_drift(project["_id"], limit=50)
+        running_agent_status_drift = {
+            "hasDrift": bool(status_drift),
+            "sessions": status_drift,
+        }
+    except Exception:
+        pass
 
     duplicate_task_files: list[str] = []
     task_dir = root / "research_plan" / "tasks"
@@ -333,6 +352,7 @@ async def project_reality_snapshot(
         "staleAuditSessionIds": stale_audit_session_ids,
         "terminalSessionIds": terminal_session_ids,
         "activeRuntimeSessionIds": [str(item.get("_id")) for item in runtime_active_sessions if item.get("_id")],
+        "runningAgentStatusDrift": running_agent_status_drift,
         "ontologyArtifactDrift": ontology_artifact_drift,
         "artifactRegistryDrift": artifact_registry_drift,
         "secretPolicyRoleDrift": secret_policy_role_drift,
@@ -353,6 +373,7 @@ async def project_reality_status(
     stale_audit_count = len(snapshot["staleAuditSessionIds"])
     terminal_count = len(snapshot["terminalSessionIds"])
     active_runtime_count = len(snapshot["activeRuntimeSessionIds"])
+    running_agent_status_drift_count = len((snapshot.get("runningAgentStatusDrift") or {}).get("sessions") or [])
     ontology_artifact_drift_count = 1 if snapshot.get("ontologyArtifactDrift", {}).get("hasDrift") else 0
     artifact_registry_drift = snapshot.get("artifactRegistryDrift") or {}
     artifact_registry_drift_count = len(artifact_registry_drift.get("untrackedArtifactPaths") or []) + len(artifact_registry_drift.get("missingArtifactPaths") or [])
@@ -365,6 +386,7 @@ async def project_reality_status(
             or mismatch_count
             or stale_runtime_count
             or stale_audit_count
+            or running_agent_status_drift_count
             or ontology_artifact_drift_count
             or artifact_registry_drift_count
             or secret_policy_role_drift_count
@@ -376,6 +398,7 @@ async def project_reality_status(
         "staleAuditSessionCount": stale_audit_count,
         "terminalSessionCount": terminal_count,
         "activeRuntimeSessionCount": active_runtime_count,
+        "runningAgentStatusDriftCount": running_agent_status_drift_count,
         "ontologyArtifactDriftCount": ontology_artifact_drift_count,
         "artifactRegistryDriftCount": artifact_registry_drift_count,
         "secretPolicyRoleDriftCount": secret_policy_role_drift_count,
@@ -392,6 +415,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     repaired_secret_policy_roles: list[str] = []
     repaired_role_config_paths: list[str] = []
     repaired_session_ids: list[str] = []
+    repaired_running_agent_status_session_ids: list[str] = []
     repaired_audit_session_ids: list[str] = []
     repaired_ontology_artifact: dict[str, Any] | None = None
 
@@ -407,6 +431,11 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
         for item in role_runtime_service.reconcile_role_config_aliases(project).get("updatedConfigPaths") or []
         if item
     ]
+    repaired_running_agent_status_session_ids = [
+        str(item)
+        for item in (await repair_running_agent_status_drift(project)).get("repairedSessionIds") or []
+        if item
+    ]
     repaired_session_ids = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
     if root is not None and root.exists():
         repaired_audit_session_ids = list((await repair_stale_session_audits(project, root)).get("repairedSessionIds") or [])
@@ -420,6 +449,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
         "updatedApprovalIds": updated_approval_ids,
         "repairedSecretPolicyRoles": repaired_secret_policy_roles,
         "repairedRoleConfigPaths": repaired_role_config_paths,
+        "repairedRunningAgentStatusSessionIds": repaired_running_agent_status_session_ids,
         "repairedSessionIds": repaired_session_ids,
         "repairedAuditSessionIds": repaired_audit_session_ids,
         "repairedOntologyArtifact": repaired_ontology_artifact,
@@ -429,6 +459,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
             or updated_approval_ids
             or repaired_secret_policy_roles
             or repaired_role_config_paths
+            or repaired_running_agent_status_session_ids
             or repaired_session_ids
             or repaired_audit_session_ids
             or repaired_ontology_artifact

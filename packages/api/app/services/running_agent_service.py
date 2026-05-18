@@ -33,6 +33,11 @@ def _normalize_session_status(status: str | None, *, strict: bool = False) -> st
     return status
 
 
+def _session_status_has_drift(status: str | None) -> bool:
+    normalized = _normalize_session_status(status)
+    return normalized is not None and normalized != status
+
+
 def _normalize_session_record(session: dict[str, Any] | None) -> dict[str, Any] | None:
     if not session:
         return session
@@ -41,6 +46,36 @@ def _normalize_session_record(session: dict[str, Any] | None) -> dict[str, Any] 
     if normalized_role == session.get("role") and normalized_status == session.get("status"):
         return session
     return dict(session) | {"role": normalized_role, "status": normalized_status}
+
+
+async def list_running_agent_status_drift(project_id: str, *, limit: int = 50) -> list[dict[str, str]]:
+    sessions = await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": limit}) or []
+    drifted: list[dict[str, str]] = []
+    for session in sessions:
+        raw_status = session.get("status")
+        normalized_status = _normalize_session_status(raw_status)
+        if not _session_status_has_drift(raw_status) or normalized_status is None:
+            continue
+        drifted.append(
+            {
+                "sessionId": str(session.get("_id") or ""),
+                "status": str(raw_status),
+                "canonicalStatus": normalized_status,
+            }
+        )
+    return drifted
+
+
+async def repair_running_agent_status_drift(project_id: str, *, limit: int = 50) -> dict[str, list[str]]:
+    repaired_session_ids: list[str] = []
+    for session in await list_running_agent_status_drift(project_id, limit=limit):
+        session_id = str(session.get("sessionId") or "")
+        canonical_status = str(session.get("canonicalStatus") or "")
+        if not session_id or not canonical_status:
+            continue
+        await update_running_agent(session_id, status=canonical_status)
+        repaired_session_ids.append(session_id)
+    return {"repairedSessionIds": repaired_session_ids}
 
 
 async def create_running_agent(
