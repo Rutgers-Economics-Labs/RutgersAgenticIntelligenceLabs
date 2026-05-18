@@ -113,6 +113,20 @@ def test_start_autopilot_marks_project_completed_when_all_tasks_terminal(monkeyp
     monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", _mark_project_completed)
     monkeypatch.setattr(autopilot_service, "_closeout_gate", lambda project_arg, tasks: asyncio.sleep(0, result={"blocked": False, "reason": None}))
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "ready", "blockers": []},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "ready", "blockers": []},
+            },
+        ),
+    )
 
     asyncio.run(autopilot_service.start_autopilot("soccer-project"))
 
@@ -160,6 +174,20 @@ def test_autopilot_does_not_complete_when_closeout_gate_is_blocked(monkeypatch):
         autopilot_service,
         "_closeout_gate",
         lambda project_arg, tasks: asyncio.sleep(0, result={"blocked": True, "reason": "Integrity closeout gate is blocked."}),
+    )
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "ready", "blockers": []},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["Integrity closeout gate is blocked."]},
+            },
+        ),
     )
     monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
 

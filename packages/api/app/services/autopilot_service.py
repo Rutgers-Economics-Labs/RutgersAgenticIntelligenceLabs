@@ -14,6 +14,7 @@ from app.services.convex_client import convex
 from app.services.decision_service import list_decision_events, mark_decision_event, raise_decision_event
 from app.services.hydration_registry_service import get_hydration_status
 from app.services.integrity_service import evaluate_integrity_gate
+from app.services.auditor_service import build_auditor_statuses
 from app.services.reconciliation_service import (
     reconcile_project_reality,
     repair_stale_active_sessions as _repair_stale_active_sessions_impl,
@@ -637,23 +638,29 @@ async def run_autopilot_loop(project_slug: str):
 
         board = await planner_service.ensure_main_board(project)
         tasks = await planner_service.list_tasks(board["_id"], project=project)
+        active_worker = await running_agent_service.find_active_worker(project["_id"])
+        auditor_sessions = [active_worker] if active_worker else []
+        auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_ontology_lifecycle_tasks(project, tasks):
             tasks = await planner_service.list_tasks(board["_id"], project=project)
             consecutive_idle_turns = 0
+            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _reconcile_ontology_lifecycle_state(project, tasks):
             tasks = await planner_service.list_tasks(board["_id"], project=project)
             consecutive_idle_turns = 0
+            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
 
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
-            closeout_gate = await _closeout_gate(project, tasks)
-            if closeout_gate.get("blocked"):
+            closeout_auditor = auditors.get("closeout") or {}
+            if closeout_auditor.get("status") == "blocked":
+                blockers = closeout_auditor.get("blockers") or []
                 await raise_decision_event(
                     project,
                     source="autopilot",
                     event_type="closeout_gate_blocked",
                     severity="needs_planner",
-                    summary=str(closeout_gate.get("reason") or "Closeout gate blocked autopilot completion."),
+                    summary=str(blockers[0] if blockers else "Closeout gate blocked autopilot completion."),
                     evidence_refs=[f"project:{project.get('slug')}"],
                     recommended_actions=[
                         "Repair closeout blockers",
@@ -661,6 +668,19 @@ async def run_autopilot_loop(project_slug: str):
                         "Advance only after closeout gate passes",
                     ],
                 )
+                _update_config(
+                    project_slug,
+                    last_action="Waiting for closeout repair",
+                    last_turn_result=str(blockers[0] if blockers else "Closeout gate blocked autopilot completion."),
+                )
+                if not _active_autopilots.get(project_slug):
+                    break
+                _wake_events[project_slug].clear()
+                try:
+                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
             else:
                 logger.info("Autopilot: All tasks are completed. Project goal reached.")
                 _update_config(
@@ -689,7 +709,6 @@ async def run_autopilot_loop(project_slug: str):
 
         # 3. Check if a worker is already running or was just launched
         _update_config(project_slug, last_action="Checking for active worker sessions...")
-        active_worker = await running_agent_service.find_active_worker(project["_id"])
         if active_worker:
             session_id = active_worker["_id"]
             if active_worker.get("status") == "awaiting_input":
@@ -730,14 +749,15 @@ async def run_autopilot_loop(project_slug: str):
         # If everything is 'done' or 'cancelled', we are finished
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
-            closeout_gate = await _closeout_gate(project, tasks)
-            if closeout_gate.get("blocked"):
+            closeout_auditor = auditors.get("closeout") or {}
+            if closeout_auditor.get("status") == "blocked":
+                blockers = closeout_auditor.get("blockers") or []
                 await raise_decision_event(
                     project,
                     source="autopilot",
                     event_type="closeout_gate_blocked",
                     severity="needs_planner",
-                    summary=str(closeout_gate.get("reason") or "Closeout gate blocked autopilot completion."),
+                    summary=str(blockers[0] if blockers else "Closeout gate blocked autopilot completion."),
                     evidence_refs=[f"project:{project.get('slug')}"],
                     recommended_actions=[
                         "Repair closeout blockers",
@@ -745,6 +765,19 @@ async def run_autopilot_loop(project_slug: str):
                         "Advance only after closeout gate passes",
                     ],
                 )
+                _update_config(
+                    project_slug,
+                    last_action="Waiting for closeout repair",
+                    last_turn_result=str(blockers[0] if blockers else "Closeout gate blocked autopilot completion."),
+                )
+                if not _active_autopilots.get(project_slug):
+                    break
+                _wake_events[project_slug].clear()
+                try:
+                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
             else:
                 logger.info("Autopilot: All tasks are completed. Project goal reached.")
                 _update_config(
