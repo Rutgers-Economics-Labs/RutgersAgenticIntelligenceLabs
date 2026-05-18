@@ -341,6 +341,7 @@ class IntegrityRecordSourceRequest(BaseModel):
     freshnessStatus: str = "unknown"
     impactLevel: str = "normal"
     qualityStatus: str = "candidate"
+    admissibilityStatus: str | None = None
     provenance: dict = {}
     qualityNotes: str | None = None
     notes: str = ""
@@ -1655,6 +1656,15 @@ async def record_project_integrity_source(slug: str, data: IntegrityRecordSource
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    if data.qualityStatus == "validated":
+        if data.admissibilityStatus not in {"observed", "derived"}:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Validated sources require explicit admissibility state. "
+                    "Use `observed` or `derived` for trusted source records."
+                ),
+            )
     repo = get_integrity_repo(root)
     record = repo.upsert_source(
         {
@@ -1666,6 +1676,7 @@ async def record_project_integrity_source(slug: str, data: IntegrityRecordSource
             "acquired_at": data.acquiredAt or data.accessDate,
             "access_method": data.accessMethod,
             "freshness_status": data.freshnessStatus,
+            "admissibility_status": data.admissibilityStatus,
             "impact_level": data.impactLevel,
             "provenance": data.provenance,
             "quality_notes": data.qualityNotes,

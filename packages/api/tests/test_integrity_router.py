@@ -165,6 +165,48 @@ async def test_record_claim_rejects_supported_status_without_explicit_evidence(c
     assert "Supported claims require explicit recorded evidence" in payload["detail"]
 
 
+async def test_record_source_rejects_validated_status_without_admissibility(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/sources",
+        json={
+            "sourceKey": "bls-laus",
+            "sourceType": "dataset",
+            "title": "BLS LAUS",
+            "url": "https://example.com/bls.csv",
+            "publisher": "BLS",
+            "accessDate": "2026-05-14T00:00:00Z",
+            "accessMethod": "api",
+            "freshnessStatus": "fresh",
+            "qualityStatus": "validated",
+        },
+    )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "Validated sources require explicit admissibility state" in payload["detail"]
+
+
 async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifact(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     artifact_path = root / "artifacts" / "report.md"
