@@ -232,6 +232,48 @@ Canonical task file.
     assert tasks[0]["_id"] == "resolve-artifact-integrity-gate-mismatch-for-pre-hydration-planning"
 
 
+def test_reconcile_task_files_removes_lower_preference_duplicates(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    _write(
+        task_dir / "resolve-artifact-integrity-gate-mismatch-for-pre-hydration-plann.md",
+        """---
+title: Resolve artifact integrity-gate mismatch for pre-hydration planning
+status: done
+assigned_role: planner
+---
+
+## Description
+
+Legacy task file.
+""",
+    )
+    canonical = task_dir / "resolve-artifact-integrity-gate-mismatch-for-pre-hydration-planning.md"
+    _write(
+        canonical,
+        """---
+task_id: resolve-artifact-integrity-gate-mismatch-for-pre-hydration-planning
+title: Resolve artifact integrity-gate mismatch for pre-hydration planning
+status: done
+assigned_role: planner
+---
+
+## Description
+
+Canonical task file.
+""",
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_files(project))
+
+    assert result["removed"] == ["research_plan/tasks/resolve-artifact-integrity-gate-mismatch-for-pre-hydration-plann.md"]
+    assert canonical.exists()
+
+
 def test_list_tasks_hides_stale_terminal_task_metadata(tmp_path: Path):
     from app.services import planner_service
 
@@ -258,4 +300,40 @@ Completed task with stale metadata.
     assert len(tasks) == 1
     assert tasks[0]["status"] == "done"
     assert tasks[0]["approvalState"] is None
+
+
+def test_list_tasks_leniently_parses_task_frontmatter_with_unquoted_backticks(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "implement-first-pass-soccer-pipeline-steps-for-football-data-and.md",
+        """---
+title: Implement first-pass soccer pipeline steps for football-data and ClubElo
+status: done
+assigned_role: data
+runner: codex_cli
+dependencies: []
+acceptance_criteria:
+  - the default soccer pipeline no longer has `steps: []`
+  - at least football-data and ClubElo are represented as executable pipeline steps or clearly justified alternates
+related_files:
+  - .ontology/pipelines
+  - .ontology/sources
+latest_run_summary: "Published commit 8b913f8e0f9b095993cc06a4152aac7aaa5fb84e"
+---
+
+## Description
+
+Concrete pipeline task.
+""",
+    )
+
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "done"
+    assert tasks[0]["agentRole"] == "data"
+    assert tasks[0]["runner"] == "codex_cli"
+    assert tasks[0]["acceptanceCriteria"][0] == "the default soccer pipeline no longer has `steps: []`"
     assert tasks[0]["blockerCategory"] is None

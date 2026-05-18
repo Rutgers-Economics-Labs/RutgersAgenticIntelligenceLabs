@@ -50,8 +50,41 @@ def _split_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     try:
         meta = yaml.safe_load(raw_meta) or {}
     except Exception:
-        meta = {}
+        meta = _parse_frontmatter_lenient(raw_meta)
     return meta if isinstance(meta, dict) else {}, parts[1]
+
+
+def _parse_frontmatter_lenient(raw_meta: str) -> dict[str, Any]:
+    """Best-effort parser for older repo task files with invalid YAML scalars.
+
+    This intentionally handles only the frontmatter shapes we persist for
+    planner task files: top-level scalar keys plus simple indented lists.
+    """
+    meta: dict[str, Any] = {}
+    current_key: str | None = None
+    for raw_line in raw_meta.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+        if line.startswith("  - ") and current_key:
+            meta.setdefault(current_key, []).append(line[4:].strip().strip("\"'"))
+            continue
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        current_key = key.strip()
+        value = value.strip()
+        if not value:
+            meta[current_key] = []
+            continue
+        if value == "[]":
+            meta[current_key] = []
+            continue
+        if value.lower() == "null":
+            meta[current_key] = None
+            continue
+        meta[current_key] = value.strip("\"'")
+    return meta
 
 
 def get_project_by_slug_path(project_root: Path, slug: str) -> Path:
@@ -203,6 +236,40 @@ async def list_tasks(board_id: str, *, project: dict | None = None) -> list[dict
             chosen[key] = (task, path)
     tasks = [item[0] for item in chosen.values()] + [item[0] for item in fallback]
     return sorted(tasks, key=lambda item: str(item.get("_id") or ""))
+
+
+async def reconcile_task_files(project: dict) -> dict[str, Any]:
+    root = project_root_from_record(project)
+    if root is None:
+        return {"removed": []}
+    task_dir = _task_root(root)
+    if not task_dir.is_dir():
+        return {"removed": []}
+
+    chosen: dict[tuple[str, str], tuple[dict[str, Any], Path]] = {}
+    duplicates: list[Path] = []
+    for path in sorted(task_dir.glob("*.md")):
+        task = _task_to_runtime(path)
+        key = _task_dedupe_key(task)
+        if key == ("", ""):
+            continue
+        existing = chosen.get(key)
+        if existing is None:
+            chosen[key] = (task, path)
+            continue
+        if _task_preference_key(task, path) > _task_preference_key(existing[0], existing[1]):
+            duplicates.append(existing[1])
+            chosen[key] = (task, path)
+        else:
+            duplicates.append(path)
+
+    removed: list[str] = []
+    for path in duplicates:
+        if not path.exists():
+            continue
+        removed.append(str(path.relative_to(root)))
+        path.unlink()
+    return {"removed": removed}
 
 
 def _render_task_markdown(task: dict[str, Any]) -> str:

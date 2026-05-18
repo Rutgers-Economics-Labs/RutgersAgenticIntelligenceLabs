@@ -508,6 +508,13 @@ async def run_autopilot_loop(project_slug: str):
             
         logger.info(f"Autopilot iteration {i+1}/{max_iterations} for {project_slug}")
         project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+        repaired = await planner_service.reconcile_task_files(project)
+        if repaired.get("removed"):
+            _update_config(
+                project_slug,
+                last_action="Reconciled duplicate task files",
+                last_turn_result=", ".join(repaired["removed"][:5]),
+            )
         audit_gate = audit_gate_status(project_root) if project_root and project_root.exists() else {"blocked": False}
         if audit_gate.get("blocked"):
             _update_config(
