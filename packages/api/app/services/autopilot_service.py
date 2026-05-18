@@ -509,41 +509,72 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
         return False
     workflow = summarize_agent_workflow_health(root)
     health = workflow.get("health") or {}
+    missing_evidence_claims = [str(item) for item in (health.get("missingEvidenceClaims") or []) if str(item).strip()]
     inadmissible_sources = [str(item) for item in (health.get("inadmissibleSources") or []) if str(item).strip()]
-    if not inadmissible_sources:
+    if not inadmissible_sources and not missing_evidence_claims:
         return False
 
     board = await planner_service.ensure_main_board(project)
-    task_title = "Resolve inadmissible sources for trusted outputs"
-    if any(str(task.get("title") or "") == task_title for task in tasks):
-        return False
+    live_titles = {str(task.get("title") or "") for task in tasks}
+    changed = False
 
-    await planner_service.create_task(
-        project=project,
-        board_id=board["_id"],
-        title=task_title,
-        description=(
-            "Repair source admissibility blockers that prevent trusted promotion. "
-            "Each inadmissible source should be upgraded to an admissible state with real evidence, "
-            "or the dependent claims and artifacts should be downgraded so they are no longer treated as trusted outputs."
-        ),
-        status="ready",
-        agent_role="health",
-        repo_paths=["research_plan/state", ".ontology/sources", "artifacts", "topics"],
-        acceptance_criteria=[
-            "every inadmissible source is either repaired to an admissible state or explicitly removed from trusted promotion paths",
-            "affected claims and artifacts are downgraded, rerouted, or re-evidenced so integrity no longer reports inadmissible sources",
-            "the repair notes why each source was inadmissible and what changed",
-        ],
-        runner="codex_cli",
-    )
-    await planner_service.sync_planner_files(project, board)
-    logger.info(
-        "Autopilot: ensured integrity repair task for inadmissible sources on %s (%s)",
-        project.get("slug"),
-        ", ".join(inadmissible_sources[:3]),
-    )
-    return True
+    if missing_evidence_claims:
+        task_title = "Repair unsupported claims and verification evidence"
+        if task_title not in live_titles:
+            await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Repair unsupported or weakly evidenced claims before trusted promotion. "
+                    "Each affected claim should gain explicit evidence links, or the dependent artifacts should be downgraded "
+                    "so unsupported narrative does not remain in trusted outputs."
+                ),
+                status="ready",
+                agent_role="health",
+                repo_paths=["research_plan/state", "artifacts", "topics"],
+                acceptance_criteria=[
+                    "each unsupported claim is either linked to explicit evidence or downgraded from trusted outputs",
+                    "dependent artifacts no longer rely on unsupported or semantic-suggestion-only claims for trusted promotion",
+                    "the repair records which claims changed and what evidence or downgrade action was applied",
+                ],
+                runner="codex_cli",
+            )
+            live_titles.add(task_title)
+            changed = True
+
+    task_title = "Resolve inadmissible sources for trusted outputs"
+    if inadmissible_sources and task_title not in live_titles:
+        await planner_service.create_task(
+            project=project,
+            board_id=board["_id"],
+            title=task_title,
+            description=(
+                "Repair source admissibility blockers that prevent trusted promotion. "
+                "Each inadmissible source should be upgraded to an admissible state with real evidence, "
+                "or the dependent claims and artifacts should be downgraded so they are no longer treated as trusted outputs."
+            ),
+            status="ready",
+            agent_role="health",
+            repo_paths=["research_plan/state", ".ontology/sources", "artifacts", "topics"],
+            acceptance_criteria=[
+                "every inadmissible source is either repaired to an admissible state or explicitly removed from trusted promotion paths",
+                "affected claims and artifacts are downgraded, rerouted, or re-evidenced so integrity no longer reports inadmissible sources",
+                "the repair notes why each source was inadmissible and what changed",
+            ],
+            runner="codex_cli",
+        )
+        changed = True
+
+    if changed:
+        await planner_service.sync_planner_files(project, board)
+        logger.info(
+            "Autopilot: ensured integrity repair tasks for %s (claims=%s, sources=%s)",
+            project.get("slug"),
+            len(missing_evidence_claims),
+            len(inadmissible_sources),
+        )
+    return changed
 
 
 async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
