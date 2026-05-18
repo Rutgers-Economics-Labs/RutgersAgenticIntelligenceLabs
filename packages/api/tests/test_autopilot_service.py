@@ -1694,6 +1694,14 @@ def test_project_reality_snapshot_without_repo_root_preserves_control_plane_drif
 
     monkeypatch.setattr(
         reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(
+            0,
+            result=[{"_id": "sess-1", "role": "coding", "status": "running"}],
+        ),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
         "list_running_agent_status_drift",
         lambda project_id, *, limit=50: asyncio.sleep(
             0,
@@ -1734,16 +1742,10 @@ def test_project_reality_snapshot_without_repo_root_preserves_control_plane_drif
     )
 
     snapshot = asyncio.run(
-        reconciliation_service.project_reality_snapshot(
-            project,
-            active_sessions=[{"_id": "sess-1"}],
-        )
+        reconciliation_service.project_reality_snapshot(project)
     )
     status = asyncio.run(
-        reconciliation_service.project_reality_status(
-            project,
-            active_sessions=[{"_id": "sess-1"}],
-        )
+        reconciliation_service.project_reality_status(project)
     )
 
     assert snapshot["activeRuntimeSessionIds"] == ["sess-1"]

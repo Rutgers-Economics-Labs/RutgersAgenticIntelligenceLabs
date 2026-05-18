@@ -176,6 +176,11 @@ async def project_reality_snapshot(
 ) -> dict[str, Any]:
     root = planner_service.project_root_from_record(project)
     if root is None or not root.exists():
+        runtime_active_sessions = (
+            active_sessions
+            if active_sessions is not None
+            else await running_agent_service.list_project_running_agents(project["_id"], active_only=True, limit=50)
+        )
         running_agent_status_drift: dict[str, Any] = {
             "hasDrift": False,
             "sessions": [],
@@ -259,7 +264,7 @@ async def project_reality_snapshot(
             "staleRuntimeSessionIds": [],
             "staleAuditSessionIds": [],
             "terminalSessionIds": [],
-            "activeRuntimeSessionIds": [str(item.get("_id")) for item in (active_sessions or []) if item.get("_id")],
+            "activeRuntimeSessionIds": [str(item.get("_id")) for item in runtime_active_sessions if item.get("_id")],
             "runningAgentStatusDrift": running_agent_status_drift,
             "runningAgentRoleDrift": running_agent_role_drift,
             "runningAgentRunnerDrift": running_agent_runner_drift,
