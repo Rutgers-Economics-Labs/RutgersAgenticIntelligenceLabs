@@ -78,6 +78,28 @@ def _get_runner(runner_name: str):
         raise HTTPException(status_code=503, detail=str(e))
 
 
+async def _launch_blocker_for_project_session(
+    *,
+    project_slug: str,
+    role: str,
+    task_description: str,
+) -> str | None:
+    from app.runners import session_lifecycle
+    from app.services import planner_service, running_agent_service
+    from app.services.auditor_service import build_auditor_statuses
+
+    project = await planner_service.get_project_by_slug(project_slug)
+    if not project:
+        return None
+    active_sessions = await running_agent_service.list_project_running_agents(
+        project["_id"],
+        active_only=True,
+        limit=50,
+    )
+    auditors = await build_auditor_statuses(project, active_sessions=active_sessions)
+    return session_lifecycle._runner_launch_blocked_by_auditors(role, task_description, auditors)
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -102,6 +124,13 @@ async def create_session(
     from app.runners.base import TaskPayload
 
     adapter = _get_runner(runner)
+    blocker = await _launch_blocker_for_project_session(
+        project_slug=data.project_slug,
+        role=data.role,
+        task_description=data.task_description,
+    )
+    if blocker:
+        raise HTTPException(status_code=409, detail=blocker)
     payload = TaskPayload(
         project_slug=data.project_slug,
         role=data.role,
