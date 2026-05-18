@@ -510,8 +510,9 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     workflow = summarize_agent_workflow_health(root)
     health = workflow.get("health") or {}
     missing_evidence_claims = [str(item) for item in (health.get("missingEvidenceClaims") or []) if str(item).strip()]
+    stale_sources = [str(item) for item in (health.get("staleSources") or []) if str(item).strip()]
     inadmissible_sources = [str(item) for item in (health.get("inadmissibleSources") or []) if str(item).strip()]
-    if not inadmissible_sources and not missing_evidence_claims:
+    if not inadmissible_sources and not missing_evidence_claims and not stale_sources:
         return False
 
     board = await planner_service.ensure_main_board(project)
@@ -537,6 +538,30 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
                     "each unsupported claim is either linked to explicit evidence or downgraded from trusted outputs",
                     "dependent artifacts no longer rely on unsupported or semantic-suggestion-only claims for trusted promotion",
                     "the repair records which claims changed and what evidence or downgrade action was applied",
+                ],
+                runner="codex_cli",
+            )
+            live_titles.add(task_title)
+            changed = True
+
+    if stale_sources:
+        task_title = "Refresh stale sources or rerun dependent analyses"
+        if task_title not in live_titles:
+            await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Repair stale-source trust blockers before trusted promotion. "
+                    "Refresh the stale sources where possible, or rerun and downgrade dependent analyses until freshness is restored."
+                ),
+                status="ready",
+                agent_role="health",
+                repo_paths=["research_plan/state", ".ontology/sources", "artifacts", "topics"],
+                acceptance_criteria=[
+                    "each stale source is refreshed or explicitly documented as still stale",
+                    "dependent artifacts are rerun, downgraded, or left blocked until fresh source state is restored",
+                    "the repair records which sources were refreshed and which artifacts were affected",
                 ],
                 runner="codex_cli",
             )
@@ -569,9 +594,10 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     if changed:
         await planner_service.sync_planner_files(project, board)
         logger.info(
-            "Autopilot: ensured integrity repair tasks for %s (claims=%s, sources=%s)",
+            "Autopilot: ensured integrity repair tasks for %s (claims=%s, stale_sources=%s, inadmissible_sources=%s)",
             project.get("slug"),
             len(missing_evidence_claims),
+            len(stale_sources),
             len(inadmissible_sources),
         )
     return changed
