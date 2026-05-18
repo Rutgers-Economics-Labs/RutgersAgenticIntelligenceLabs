@@ -23,6 +23,23 @@ TASK_STATUSES = [
     "done",
     "cancelled",
 ]
+TASK_APPROVAL_STATES = [
+    "pending",
+    "granted",
+]
+TASK_RUNNERS = [
+    "default",
+    "jules",
+    "claude_code",
+    "gemini_cli",
+    "cursor_cli",
+    "codex_cli",
+]
+TASK_PRIORITIES = [
+    "high",
+    "medium",
+    "low",
+]
 APPROVAL_STATUSES = [
     "pending",
     "granted",
@@ -59,16 +76,52 @@ def _normalize_approval_type(approval_type: str | None) -> str:
     return normalized
 
 
+def _normalize_task_status(status: str | None, *, strict: bool = False) -> str:
+    normalized = str(status or "backlog").strip().lower()
+    if normalized in TASK_STATUSES:
+        return normalized
+    if strict:
+        raise ValueError(f"Unsupported task status: {status}")
+    return "backlog"
+
+
 def _normalize_role_alias(role: str | None, default: str) -> str:
     normalized = str(role or default).strip().lower()
     return ROLE_ALIASES.get(normalized, normalized)
 
 
-def _normalize_task_approval_state(approval_state: str | None) -> str | None:
+def _normalize_task_approval_state(approval_state: str | None, *, strict: bool = False) -> str | None:
     normalized = str(approval_state or "").strip().lower()
     if not normalized:
         return None
-    return LEGACY_APPROVAL_STATUS_ALIASES.get(normalized, normalized)
+    normalized = LEGACY_APPROVAL_STATUS_ALIASES.get(normalized, normalized)
+    if normalized in TASK_APPROVAL_STATES:
+        return normalized
+    if strict:
+        raise ValueError(f"Unsupported task approval state: {approval_state}")
+    return None
+
+
+def _normalize_task_priority(priority: str | None, *, strict: bool = False) -> str | None:
+    normalized = str(priority or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized in TASK_PRIORITIES:
+        return normalized
+    if strict:
+        raise ValueError(f"Unsupported task priority: {priority}")
+    return None
+
+
+def _normalize_task_runner(runner: str | None, *, strict: bool = False) -> str | None:
+    normalized = str(runner or "").strip().lower()
+    if not normalized:
+        return None
+    if normalized in TASK_RUNNERS:
+        return normalized
+    if strict:
+        raise ValueError(f"Unsupported task runner: {runner}")
+    return None
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -236,7 +289,7 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
     description = body.strip()
     if description.startswith("## Description"):
         description = description[len("## Description"):].lstrip("\n").strip()
-    status = meta.get("status", "backlog")
+    status = _normalize_task_status(meta.get("status", "backlog"))
     approval_state = _normalize_task_approval_state(meta.get("approval_state"))
     blocker_category = meta.get("blocker_category") or None
     if status in {"done", "cancelled"}:
@@ -253,8 +306,8 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
         "acceptanceCriteria": meta.get("acceptance_criteria") or [],
         "dependsOnTaskIds": meta.get("dependencies") or [],
         "approvalState": approval_state,
-        "priority": meta.get("priority") or None,
-        "runner": meta.get("runner") or None,
+        "priority": _normalize_task_priority(meta.get("priority")),
+        "runner": _normalize_task_runner(meta.get("runner")),
         "blockerCategory": blocker_category,
         "gitSnapshotPath": str(path.relative_to(path.parents[2])),
         "latestRunSummary": meta.get("latest_run_summary") or "Not started",
@@ -487,6 +540,10 @@ async def create_task(
     if root is None:
         raise ValueError("Project does not have a localRepoPath configured")
 
+    status = _normalize_task_status(status, strict=True)
+    priority = _normalize_task_priority(priority, strict=True)
+    runner = _normalize_task_runner(runner, strict=True)
+    approval_state = _normalize_task_approval_state(approval_state, strict=True)
     task_id = _slugify(title)
     path = _task_root(root) / f"{task_id}.md"
     task = {
@@ -525,6 +582,16 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
     # Keep explicit None values so callers can clear stale metadata like
     # blockerCategory or approvalState after a task is recovered.
     patch = dict(fields)
+    if "status" in patch:
+        patch["status"] = _normalize_task_status(patch.get("status"), strict=True)
+    if "priority" in patch:
+        patch["priority"] = _normalize_task_priority(patch.get("priority"), strict=True)
+    if "runner" in patch:
+        patch["runner"] = _normalize_task_runner(patch.get("runner"), strict=True)
+    if "approvalState" in patch:
+        patch["approvalState"] = _normalize_task_approval_state(patch.get("approvalState"), strict=True)
+    if "approval_state" in patch:
+        patch["approval_state"] = _normalize_task_approval_state(patch.get("approval_state"), strict=True)
     mapping = {
         "title": "title",
         "description": "description",

@@ -458,6 +458,94 @@ Legacy task approval-state alias.
     assert tasks[0]["approvalState"] == "granted"
 
 
+def test_list_tasks_normalizes_invalid_task_metadata_from_frontmatter(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "legacy-invalid-task.md",
+        """---
+task_id: legacy-invalid-task
+title: Legacy invalid task
+status: almost_ready
+assigned_role: planner
+approval_state: approved-ish
+priority: urgent
+runner: magic_runner
+---
+
+## Description
+
+Legacy invalid task metadata.
+""",
+    )
+
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert len(tasks) == 1
+    assert tasks[0]["status"] == "backlog"
+    assert tasks[0]["approvalState"] is None
+    assert tasks[0]["priority"] is None
+    assert tasks[0]["runner"] is None
+
+
+def test_reconcile_planner_metadata_rewrites_invalid_task_metadata_to_canonical_repo_state(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "legacy-invalid-task.md",
+        """---
+task_id: legacy-invalid-task
+title: Legacy invalid task
+status: almost_ready
+assigned_role: planner
+approval_state: approved-ish
+priority: urgent
+runner: magic_runner
+---
+
+## Description
+
+Legacy invalid task metadata.
+""",
+    )
+
+    result = asyncio.run(planner_service.reconcile_planner_metadata(project))
+    task_text = (tmp_path / "research_plan" / "tasks" / "legacy-invalid-task.md").read_text(encoding="utf-8")
+
+    assert result == {"updatedTaskIds": ["legacy-invalid-task"], "updatedApprovalIds": []}
+    assert "status: backlog" in task_text
+    assert "approval_state:" not in task_text
+    assert "priority:" not in task_text
+    assert "runner:" not in task_text
+
+
+def test_create_task_rejects_unknown_runtime_metadata(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    board = asyncio.run(planner_service.ensure_main_board(project))
+
+    try:
+        asyncio.run(
+            planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title="Invalid task metadata",
+                description="Should not persist invalid task control-plane state.",
+                status="almost_ready",
+                agent_role="planner",
+                priority="urgent",
+                runner="magic_runner",
+            )
+        )
+    except ValueError as exc:
+        assert "Unsupported task status" in str(exc)
+    else:
+        raise AssertionError("Expected create_task() to reject unknown task metadata")
+
+
 def test_reconcile_planner_metadata_rewrites_legacy_aliases_to_canonical_repo_state(tmp_path: Path):
     from app.services import planner_service
 
