@@ -431,6 +431,43 @@ async def test_record_source_rejects_unknown_freshness_status(client, convex_moc
     assert "Source freshness must be one of" in payload["detail"]
 
 
+async def test_record_source_rejects_unknown_quality_status(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/sources",
+        json={
+            "sourceKey": "bls-laus",
+            "sourceType": "dataset",
+            "title": "BLS LAUS",
+            "qualityStatus": "trusted-ish",
+        },
+    )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "Source quality must be one of" in payload["detail"]
+
+
 async def test_record_source_rejects_validated_status_without_provenance(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
 
@@ -1769,6 +1806,53 @@ async def test_patch_source_rejects_unknown_freshness_status(client, convex_mock
     assert resp.status_code == 422
     payload = resp.json()
     assert "Source freshness must be one of" in payload["detail"]
+
+
+async def test_patch_source_rejects_unknown_quality_status(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_sources(
+        [
+            {
+                "source_key": "bls-laus",
+                "source_type": "dataset",
+                "title": "BLS LAUS",
+                "url_or_path": "https://example.com/bls.csv",
+                "origin": "BLS",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "api",
+                "freshness_status": "fresh",
+            }
+        ]
+    )
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.patch(
+        "/api/v1/projects/integrity-router-project/integrity/sources/bls-laus",
+        json={"qualityStatus": "trusted-ish"},
+    )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "Source quality must be one of" in payload["detail"]
 
 
 async def test_patch_source_rejects_validated_status_without_provenance(client, convex_mock, tmp_path):
