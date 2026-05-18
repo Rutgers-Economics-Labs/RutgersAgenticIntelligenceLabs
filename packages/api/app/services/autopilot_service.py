@@ -441,20 +441,34 @@ def _filter_ready_tasks_for_auditors(
     if not ready_tasks:
         return []
     ontology_auditor = (auditors or {}).get("ontology") or {}
-    if ontology_auditor.get("status") != "blocked":
-        return ready_tasks
+    filtered = list(ready_tasks)
+    if ontology_auditor.get("status") == "blocked":
+        allowed_roles = {"data", "health"}
+        allowed: list[dict[str, Any]] = []
+        for task in filtered:
+            role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+            title = str(task.get("title") or "").lower()
+            if role in allowed_roles:
+                allowed.append(task)
+                continue
+            if not role and any(token in title for token in ("hydrate", "ontology", "pipeline", "source")):
+                allowed.append(task)
+        filtered = allowed
 
-    allowed_roles = {"data", "health"}
-    allowed: list[dict[str, Any]] = []
-    for task in ready_tasks:
-        role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
-        title = str(task.get("title") or "").lower()
-        if role in allowed_roles:
-            allowed.append(task)
-            continue
-        if not role and any(token in title for token in ("hydrate", "ontology", "pipeline", "source")):
-            allowed.append(task)
-    return allowed
+    integrity_auditor = (auditors or {}).get("integrity") or {}
+    if integrity_auditor.get("status") == "blocked":
+        allowed_roles = {"health", "data", "coding"}
+        allowed: list[dict[str, Any]] = []
+        for task in filtered:
+            role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+            title = str(task.get("title") or "").lower()
+            if role in allowed_roles:
+                allowed.append(task)
+                continue
+            if not role and any(token in title for token in ("verify", "evidence", "source", "provenance", "claim")):
+                allowed.append(task)
+        filtered = allowed
+    return filtered
 
 
 def _control_plane_auditor_gate(auditors: dict[str, Any] | None) -> dict[str, Any]:
