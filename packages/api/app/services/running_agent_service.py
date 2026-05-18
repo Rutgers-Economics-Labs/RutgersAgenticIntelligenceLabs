@@ -4,9 +4,26 @@ import time
 from typing import Any
 
 from app.services.convex_client import convex
+from app.services.role_runtime_service import ROLE_ALIASES
 
 
 ACTIVE_STATUSES = {"queued", "running", "awaiting_input", "awaiting_approval", "paused"}
+
+
+def _normalize_role_alias(role: str | None) -> str | None:
+    if role in {None, ""}:
+        return None
+    normalized = str(role).strip().lower()
+    return ROLE_ALIASES.get(normalized, normalized)
+
+
+def _normalize_session_record(session: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not session:
+        return session
+    normalized_role = _normalize_role_alias(session.get("role"))
+    if normalized_role == session.get("role"):
+        return session
+    return dict(session) | {"role": normalized_role}
 
 
 async def create_running_agent(
@@ -21,6 +38,7 @@ async def create_running_agent(
     session_path: str | None = None,
     status: str = "queued",
 ) -> str:
+    role = _normalize_role_alias(role) or "agent"
     # Convex agent:createSession validator (from schema inspection):
     #   required: title, model
     #   optional: externalSessionId, projectId, projectSlug, role, runner, status, taskId
@@ -52,11 +70,14 @@ async def update_running_agent(session_id: str, **fields: Any) -> None:
 
 
 async def get_running_agent(session_id: str) -> dict[str, Any] | None:
-    return await convex.query("agent:getSession", {"sessionId": session_id})
+    return _normalize_session_record(await convex.query("agent:getSession", {"sessionId": session_id}))
 
 
 async def list_project_running_agents(project_id: str, *, active_only: bool = True, limit: int = 50) -> list[dict[str, Any]]:
-    sessions = await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": limit}) or []
+    sessions = [
+        _normalize_session_record(item) or item
+        for item in (await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": limit}) or [])
+    ]
     if not active_only:
         return sessions
     return [item for item in sessions if item.get("status") in ACTIVE_STATUSES]
