@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import duckdb
 import pytest
 
 from app.services.integrity_service import (
@@ -1426,8 +1427,19 @@ def test_contradicting_supported_claims_become_conflicted_and_block_artifacts(tm
 def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
     repo = ResearchIntegrityRepo(root)
+    (root / "artifacts").mkdir(parents=True, exist_ok=True)
+    (root / "topics" / "labor").mkdir(parents=True, exist_ok=True)
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "artifacts" / "report.md").write_text("report", encoding="utf-8")
+    (root / "topics" / "data.csv").write_text("value\n1\n", encoding="utf-8")
+    (root / "topics" / "analyze.py").write_text("print('ok')\n", encoding="utf-8")
+    (root / "scripts" / "run-verification.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (root / "topics" / "labor" / "notes.md").write_text("evidence", encoding="utf-8")
     (root / ".ontology").mkdir(parents=True, exist_ok=True)
-    (root / ".ontology" / "onto.duckdb").write_bytes(b"")
+    conn = duckdb.connect(str(root / ".ontology" / "onto.duckdb"))
+    conn.execute("CREATE TABLE county (name VARCHAR)")
+    conn.execute("INSERT INTO county VALUES ('Middlesex')")
+    conn.close()
     (root / ".ontology" / ".rail_hydration.json").write_text("{}", encoding="utf-8")
     repo.write_sources(
         [
@@ -1440,6 +1452,7 @@ def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
                 "acquired_at": "2026-05-14T00:00:00Z",
                 "access_method": "api",
                 "freshness_status": "fresh",
+                "admissibility_status": "observed",
                 "quality_status": "validated",
                 "provenance": {"text": "BLS extract."},
             }
@@ -1455,6 +1468,15 @@ def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
                 "source_keys": ["bls-laus"],
                 "status": "supported",
                 "evidence_kind": "direct",
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
             }
         ]
     )
@@ -1474,6 +1496,59 @@ def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
             }
         ]
     )
+
+    result = promote_artifact(root, load_manifest(root), "artifacts/report.md", target_state="verified")
+
+    assert result["status"] == "promoted"
+    assert result["artifact"]["promotion_state"] == "verified"
+
+
+def test_promote_artifact_blocks_report_when_ontology_hydration_duckdb_is_empty(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    (root / "artifacts").mkdir(parents=True, exist_ok=True)
+    (root / "topics" / "labor").mkdir(parents=True, exist_ok=True)
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "artifacts" / "report.md").write_text("report", encoding="utf-8")
+    (root / "topics" / "data.csv").write_text("value\n1\n", encoding="utf-8")
+    (root / "topics" / "analyze.py").write_text("print('ok')\n", encoding="utf-8")
+    (root / "scripts" / "run-verification.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    (root / "topics" / "labor" / "notes.md").write_text("evidence", encoding="utf-8")
+    (root / ".ontology").mkdir(parents=True, exist_ok=True)
+    conn = duckdb.connect(str(root / ".ontology" / "onto.duckdb"))
+    conn.execute("CREATE TABLE county (name VARCHAR)")
+    conn.close()
+    (root / ".ontology" / ".rail_hydration.json").write_text("{}", encoding="utf-8")
+    repo.write_sources(
+        [
+            {
+                "source_key": "bls-laus",
+                "source_type": "dataset",
+                "title": "BLS LAUS",
+                "url_or_path": "https://example.com/bls.csv",
+                "origin": "BLS",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "api",
+                "freshness_status": "fresh",
+                "admissibility_status": "observed",
+                "quality_status": "validated",
+                "provenance": {"text": "BLS extract."},
+            }
+        ]
+    )
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "Unemployment fell after 2021.",
+                "artifact_path": "artifacts/report.md",
+                "evidence_paths": ["topics/labor/notes.md"],
+                "source_keys": ["bls-laus"],
+                "status": "supported",
+                "evidence_kind": "direct",
+            }
+        ]
+    )
     repo.write_verification_runs(
         [
             {
@@ -1483,11 +1558,28 @@ def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
             }
         ]
     )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "partially_verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "sources": ["research_plan/state/sources.json#bls-laus"],
+                "claims": ["research_plan/state/claims.json#claim-001"],
+                "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
+            }
+        ]
+    )
 
     result = promote_artifact(root, load_manifest(root), "artifacts/report.md", target_state="verified")
 
-    assert result["status"] == "promoted"
-    assert result["artifact"]["promotion_state"] == "verified"
+    assert result["status"] == "blocked"
+    assert "artifacts/report.md" in result["gate"]["blockingArtifacts"]
+    assert any("does not contain populated rows" in reason for reason in result["gate"]["reasons"])
 
 
 def test_promote_artifact_blocks_report_when_ontology_hydration_is_missing(tmp_path):

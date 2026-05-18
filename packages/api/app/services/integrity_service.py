@@ -66,6 +66,33 @@ def _utc_datetime_now() -> datetime:
     return datetime.now(timezone.utc).replace(microsecond=0)
 
 
+def _duckdb_has_populated_rows(duckdb_path: str | Path | None) -> bool:
+    if not duckdb_path:
+        return False
+    try:
+        import duckdb  # type: ignore
+    except Exception:
+        return False
+    try:
+        conn = duckdb.connect(str(duckdb_path), read_only=True)
+        tables = conn.execute("SHOW TABLES").fetchall()
+        if not tables:
+            conn.close()
+            return False
+        for (table_name,) in tables:
+            try:
+                count = conn.execute(f'SELECT COUNT(*) FROM "{table_name}"').fetchone()[0]
+            except Exception:
+                continue
+            if isinstance(count, int) and count > 0:
+                conn.close()
+                return True
+        conn.close()
+    except Exception:
+        return False
+    return False
+
+
 def _artifact_order_key(artifact: ArtifactLineageRecord) -> tuple[int, str]:
     return (0 if artifact.artifact_type == "dataset" else 1, artifact.artifact_path)
 
@@ -1462,6 +1489,20 @@ def promote_artifact(
                 "reasons": list(dict.fromkeys([
                     *[str(item) for item in (gate.get("reasons") or [])],
                     "Ontology hydration must exist before non-dataset artifacts can be promoted as trusted outputs.",
+                ])),
+                "blockingArtifacts": list(dict.fromkeys([
+                    *[str(item) for item in (gate.get("blockingArtifacts") or [])],
+                    artifact_path,
+                ])),
+            }
+            blocked_by_gate = True
+        elif not _duckdb_has_populated_rows(ontology_duckdb):
+            gate = {
+                **gate,
+                "blocked": True,
+                "reasons": list(dict.fromkeys([
+                    *[str(item) for item in (gate.get("reasons") or [])],
+                    "Ontology artifact exists but does not contain populated rows.",
                 ])),
                 "blockingArtifacts": list(dict.fromkeys([
                     *[str(item) for item in (gate.get("blockingArtifacts") or [])],
