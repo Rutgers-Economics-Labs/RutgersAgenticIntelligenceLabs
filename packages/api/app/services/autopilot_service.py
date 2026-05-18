@@ -862,6 +862,16 @@ def _task_priority(task: dict[str, Any]) -> tuple[int, str]:
     return (boost, weight, str(task.get("_id") or ""))
 
 
+def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
+    for task in tasks:
+        if str(task.get("title") or "") != title:
+            continue
+        if str(task.get("status") or "") not in {"ready", "running"}:
+            continue
+        return True
+    return False
+
+
 def _apply_auditor_priority_boosts(
     ready_tasks: list[dict[str, Any]],
     auditors: dict[str, Any] | None,
@@ -1292,31 +1302,34 @@ async def run_autopilot_loop(project_slug: str):
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         control_plane_gate = _control_plane_auditor_gate(auditors)
         if control_plane_gate.get("blocked"):
-            blockers = control_plane_gate.get("blockers") or []
-            _update_config(
-                project_slug,
-                last_action="Waiting for control-plane repair",
-                last_turn_result=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
-            )
-            await raise_decision_event(
-                project,
-                source="autopilot",
-                event_type="control_plane_auditor_blocked",
-                severity="needs_planner",
-                summary=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
-                evidence_refs=[f"project:{project.get('slug')}"],
-                recommended_actions=[
-                    "Repair stale sessions or planner drift",
-                    "Rerun reconciliation until session and planner auditors are clear",
-                    "Advance only after control-plane blockers are removed",
-                ],
-            )
-            _wake_events[project_slug].clear()
-            try:
-                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
-            except asyncio.TimeoutError:
-                pass
-            continue
+            if _has_ready_task_title(tasks, "Reconcile control-plane drift and stale sessions"):
+                logger.info("Autopilot: control-plane repair task is ready; bypassing wait gate to allow repair launch.")
+            else:
+                blockers = control_plane_gate.get("blockers") or []
+                _update_config(
+                    project_slug,
+                    last_action="Waiting for control-plane repair",
+                    last_turn_result=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+                )
+                await raise_decision_event(
+                    project,
+                    source="autopilot",
+                    event_type="control_plane_auditor_blocked",
+                    severity="needs_planner",
+                    summary=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+                    evidence_refs=[f"project:{project.get('slug')}"],
+                    recommended_actions=[
+                        "Repair stale sessions or planner drift",
+                        "Rerun reconciliation until session and planner auditors are clear",
+                        "Advance only after control-plane blockers are removed",
+                    ],
+                )
+                _wake_events[project_slug].clear()
+                try:
+                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
 
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
@@ -1326,7 +1339,8 @@ async def run_autopilot_loop(project_slug: str):
                     tasks = await planner_service.list_tasks(board["_id"], project=project)
                     consecutive_idle_turns = 0
                     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
-                    closeout_auditor = auditors.get("closeout") or {}
+                    continue
+                closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
                 await raise_decision_event(
                     project,
@@ -1428,7 +1442,8 @@ async def run_autopilot_loop(project_slug: str):
                     tasks = await planner_service.list_tasks(board["_id"], project=project)
                     consecutive_idle_turns = 0
                     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
-                    closeout_auditor = auditors.get("closeout") or {}
+                    continue
+                closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
                 await raise_decision_event(
                     project,
