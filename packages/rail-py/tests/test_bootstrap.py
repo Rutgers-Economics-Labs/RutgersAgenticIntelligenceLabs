@@ -68,6 +68,8 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
 
     planner_prompt = (root / "agents/prompts/planner.md").read_text(encoding="utf-8")
     assert "# RAIL Planner Prompt" in planner_prompt
+    planner_checklist = (root / "agents/checklists/planner.md").read_text(encoding="utf-8")
+    assert "read the latest project audit and current blocker before advancing work" in planner_checklist
 
     research_cfg = yaml.safe_load((root / "agents/research.yaml").read_text(encoding="utf-8"))
     planner_cfg = yaml.safe_load((root / "agents/planner.yaml").read_text(encoding="utf-8"))
@@ -79,6 +81,8 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
 
     research_prompt = (root / "agents/prompts/research.md").read_text(encoding="utf-8")
     assert "Do not treat web snippets as evidence" in research_prompt
+    research_checklist = (root / "agents/checklists/research.md").read_text(encoding="utf-8")
+    assert "separate facts, interpretations, and open questions explicitly" in research_checklist
 
     setup_script = (root / "scripts/setup-workspace.sh").read_text(encoding="utf-8")
     assert "packages/rail-py" in setup_script

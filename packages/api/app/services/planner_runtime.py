@@ -51,7 +51,13 @@ def _render_prompt_template(template: str, values: dict[str, str]) -> str:
 
 def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[str, Any]], skills: list[dict[str, str]]) -> str:
     role_lines = "\n".join(
-        f"- {item['role']}: runner={item['runner']['default']}, bash={item['runner']['bash_access']}, writes={', '.join(item['permissions']['write']) or 'none'}"
+        (
+            f"- {item['role']}: runner={item['runner']['default']}, "
+            f"bash={item['runner']['bash_access']}, "
+            f"writes={', '.join(item['permissions']['write']) or 'none'}, "
+            f"checklist={item['promptFiles']['checklist'] or 'none'}, "
+            f"completion={', '.join(item['completion']['requires']) or 'none'}"
+        )
         for item in role_summaries
     ) or "- no role configs found"
     skill_lines = "\n".join(f"- {item['path']}" for item in skills) or "- no project skills found"
@@ -332,7 +338,8 @@ async def _run_codex_cli_once(
         *shlex.split(command),
         "exec",
         "--skip-git-repo-check",
-        "--full-auto",
+        "--sandbox",
+        "workspace-write",
         "--json",
     ]
     if cwd is not None:
@@ -587,7 +594,13 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         role_config = load_role_runtime_config(project, task["agentRole"])
         selected_runner = args.get("runner") or task.get("runner") or role_config.policy.runner.default
         selected_runner = selected_runner if selected_runner else role_config.policy.runner.default
-        write_paths = role_config.policy.paths.write or task.get("repoPaths") or []
+        if selected_runner == "default":
+            selected_runner = role_config.policy.runner.default
+        # Prefer task-scoped outputs when they are declared so a task can narrow
+        # or extend the writable surface intentionally for the current run.
+        # Fall back to the role's default write policy when the task does not
+        # declare any repo paths.
+        write_paths = task.get("repoPaths") or role_config.policy.paths.write or []
         decision = evaluate_autonomy_policy(
             role_config.manifest,
             action=activity_key_for_role(role_config.role),

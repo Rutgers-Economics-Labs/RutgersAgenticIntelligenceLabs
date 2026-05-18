@@ -402,10 +402,65 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
                 "- follow repo contract\n"
                 "- stay inside allowed paths\n"
                 "- compare desired state vs current state before acting\n"
+                "- read the latest project audit and current blocker before advancing work\n"
                 "- keep plans, assumptions, decisions, and blockers in markdown under research_plan\n"
+                "- use role checklists as the approval contract before creating or launching worker tasks\n"
                 "- require ontology-backed source configs for required datasets\n"
                 "- flag placeholder, estimated, synthetic, or missing data explicitly\n"
+                "- do not advance a task until verification, publish status, and audited repo state agree\n"
                 "- launch the smallest next worker task and then re-plan from updated repo state\n"
+                "- satisfy deterministic completion checks\n"
+            )
+        if role == "research":
+            return (
+                "# Research Checklist\n\n"
+                "- follow repo contract\n"
+                "- stay inside allowed paths\n"
+                "- use primary or clearly admissible sources and record exact URLs or paths\n"
+                "- separate facts, interpretations, and open questions explicitly in markdown outputs\n"
+                "- do not cite snippets or summaries without inspecting the underlying source\n"
+                "- write claim candidates only when the supporting evidence is recorded in repo state\n"
+                "- satisfy deterministic completion checks\n"
+            )
+        if role == "data":
+            return (
+                "# Data Checklist\n\n"
+                "- follow repo contract\n"
+                "- stay inside allowed paths\n"
+                "- prefer repo-backed source configs, transforms, and pipelines over ad hoc local scripts\n"
+                "- record provenance and freshness for every dataset output before handoff\n"
+                "- mark synthetic, estimated, missing, or blocked data explicitly\n"
+                "- rerun hydration or verification when source or transform changes affect outputs\n"
+                "- satisfy deterministic completion checks\n"
+            )
+        if role == "coding":
+            return (
+                "# Coding Checklist\n\n"
+                "- follow repo contract\n"
+                "- stay inside allowed paths\n"
+                "- declare analysis inputs, scripts, and verification commands for produced artifacts\n"
+                "- avoid unstated assumptions or hidden data munging in notebooks or scripts\n"
+                "- save outputs in repo-backed paths with reproducible commands when possible\n"
+                "- satisfy deterministic completion checks\n"
+            )
+        if role == "artifact":
+            return (
+                "# Artifact Checklist\n\n"
+                "- follow repo contract\n"
+                "- stay inside allowed paths\n"
+                "- keep evidence links, assumptions, and caveats attached to reports and dashboards\n"
+                "- do not elevate unsupported claims into polished narrative form\n"
+                "- prefer tables, figures, and captions that can be traced to repo-backed evidence\n"
+                "- satisfy deterministic completion checks\n"
+            )
+        if role == "health":
+            return (
+                "# Health Checklist\n\n"
+                "- follow repo contract\n"
+                "- stay inside allowed paths\n"
+                "- verify repo hygiene, integrity ledger state, and workflow-contract compliance\n"
+                "- distinguish stale sessions, stale artifacts, and real data-quality blockers explicitly\n"
+                "- write actionable remediation steps, not just failure summaries\n"
                 "- satisfy deterministic completion checks\n"
             )
         return f"# {role.title()} Checklist\n\n- follow repo contract\n- stay inside allowed paths\n- satisfy deterministic completion checks\n"
