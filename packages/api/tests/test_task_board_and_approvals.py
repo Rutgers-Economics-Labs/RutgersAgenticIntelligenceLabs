@@ -392,6 +392,32 @@ Legacy approval role alias.
     assert approvals[0]["requestedByRole"] == "health"
 
 
+def test_list_tasks_normalizes_legacy_approval_state_from_frontmatter(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "legacy-approval-state-task.md",
+        """---
+task_id: legacy-approval-state-task
+title: Legacy approval state task
+status: awaiting_approval
+assigned_role: planner
+approval_state: approved
+---
+
+## Description
+
+Legacy task approval-state alias.
+""",
+    )
+
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert len(tasks) == 1
+    assert tasks[0]["approvalState"] == "granted"
+
+
 def test_reconcile_task_session_states_updates_terminal_task_from_session_truth(tmp_path: Path):
     from app.services import planner_service
 

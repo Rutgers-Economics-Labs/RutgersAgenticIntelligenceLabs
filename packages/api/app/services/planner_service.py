@@ -53,6 +53,13 @@ def _normalize_role_alias(role: str | None, default: str) -> str:
     return ROLE_ALIASES.get(normalized, normalized)
 
 
+def _normalize_task_approval_state(approval_state: str | None) -> str | None:
+    normalized = str(approval_state or "").strip().lower()
+    if not normalized:
+        return None
+    return LEGACY_APPROVAL_STATUS_ALIASES.get(normalized, normalized)
+
+
 def _write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -219,7 +226,7 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
     if description.startswith("## Description"):
         description = description[len("## Description"):].lstrip("\n").strip()
     status = meta.get("status", "backlog")
-    approval_state = meta.get("approval_state") or None
+    approval_state = _normalize_task_approval_state(meta.get("approval_state"))
     blocker_category = meta.get("blocker_category") or None
     if status in {"done", "cancelled"}:
         approval_state = None
