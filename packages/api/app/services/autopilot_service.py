@@ -726,6 +726,43 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     return changed
 
 
+async def _ensure_ontology_repair_task(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> bool:
+    ontology = (auditors or {}).get("ontology") or {}
+    if ontology.get("status") != "blocked":
+        return False
+
+    task_title = "Repair ontology readiness blockers"
+    if any(str(task.get("title") or "") == task_title for task in tasks):
+        return False
+
+    board = await planner_service.ensure_main_board(project)
+    await planner_service.create_task(
+        project=project,
+        board_id=board["_id"],
+        title=task_title,
+        description=(
+            "Repair ontology blockers that still prevent ontology-backed work. "
+            "This includes hydration failures, empty artifacts, broken active pointers, or missing ontology-health verification."
+        ),
+        status="ready",
+        agent_role="data",
+        repo_paths=[".ontology", "research_plan", "artifacts"],
+        acceptance_criteria=[
+            "ontology blockers are traced to a concrete hydration, artifact, or verification issue",
+            "the active ontology artifact is hydrated, current, and usable for ontology-backed work",
+            "the ontology auditor no longer reports readiness blockers after the repair",
+        ],
+        runner="codex_cli",
+    )
+    await planner_service.sync_planner_files(project, board)
+    logger.info("Autopilot: ensured ontology repair task for %s", project.get("slug"))
+    return True
+
+
 async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
     if not _is_ontology_project(project):
         return False
@@ -1197,6 +1234,10 @@ async def run_autopilot_loop(project_slug: str):
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_integrity_repair_tasks(project, tasks):
+            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            consecutive_idle_turns = 0
+            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+        if await _ensure_ontology_repair_task(project, tasks, auditors):
             tasks = await planner_service.list_tasks(board["_id"], project=project)
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)

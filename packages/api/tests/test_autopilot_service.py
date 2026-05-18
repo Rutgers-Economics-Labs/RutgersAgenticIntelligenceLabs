@@ -1911,6 +1911,73 @@ def test_ensure_closeout_repair_task_is_noop_without_blockers(tmp_path: Path, mo
     assert synced == []
 
 
+def test_ensure_ontology_repair_task_creates_ontology_task(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    created: list[dict[str, object]] = []
+    synced: list[bool] = []
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": kwargs["title"], "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    changed = asyncio.run(
+        autopilot_service._ensure_ontology_repair_task(
+            project,
+            [],
+            {"ontology": {"status": "blocked", "blockers": ["Ontology artifact exists but does not contain populated rows."]}},
+        )
+    )
+
+    assert changed is True
+    assert created[0]["title"] == "Repair ontology readiness blockers"
+    assert created[0]["agent_role"] == "data"
+    assert synced == [True]
+
+
+def test_ensure_ontology_repair_task_is_noop_without_blockers(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    created: list[dict[str, object]] = []
+    synced: list[bool] = []
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": kwargs["title"], "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    changed = asyncio.run(
+        autopilot_service._ensure_ontology_repair_task(
+            project,
+            [],
+            {"ontology": {"status": "ready", "blockers": []}},
+        )
+    )
+
+    assert changed is False
+    assert created == []
+    assert synced == []
+
+
 def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "status": "ready", "localRepoPath": str(tmp_path)}
     planner_turns: list[str] = []
