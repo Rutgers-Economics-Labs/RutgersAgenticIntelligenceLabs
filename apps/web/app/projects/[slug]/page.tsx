@@ -103,6 +103,7 @@ export default async function ProjectHomePage({
         <InlineStatus label="duplicate tasks" value={center.projectReality?.duplicateTaskFileCount ?? 0} />
         <InlineStatus label="ontology drift" value={center.projectReality?.ontologyArtifactDriftCount ?? 0} />
         <InlineStatus label="artifact drift" value={center.projectReality?.artifactRegistryDriftCount ?? 0} />
+        <InlineStatus label="secret policy drift" value={center.projectReality?.secretPolicyRoleDriftCount ?? 0} />
         {center.projectReality?.details?.duplicateTaskFiles?.length ? (
           <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
             {center.projectReality.details.duplicateTaskFiles.slice(0, 5).map((item) => (
@@ -144,6 +145,15 @@ export default async function ProjectHomePage({
             ))}
             {center.projectReality.details.artifactRegistryDrift.missingArtifactPaths.slice(0, 5).map((item) => (
               <div key={`missing-${item}`} className="mono-muted">missing artifact file: {item}</div>
+            ))}
+          </div>
+        ) : null}
+        {center.projectReality?.details?.secretPolicyRoleDrift?.hasDrift ? (
+          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
+            {center.projectReality.details.secretPolicyRoleDrift.policies.slice(0, 5).map((item) => (
+              <div key={item.policyId || `${item.agentRole}-${item.canonicalRole}`} className="mono-muted">
+                secret policy role drift: {item.agentRole} -&gt; {item.canonicalRole}
+              </div>
             ))}
           </div>
         ) : null}

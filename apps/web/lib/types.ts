@@ -432,6 +432,7 @@ export type CommandCenter = {
     activeRuntimeSessionCount: number;
     ontologyArtifactDriftCount?: number;
     artifactRegistryDriftCount?: number;
+    secretPolicyRoleDriftCount?: number;
     details?: {
       duplicateTaskFiles: string[];
       taskSessionMismatchTaskIds: string[];
@@ -449,6 +450,15 @@ export type CommandCenter = {
         hasDrift: boolean;
         untrackedArtifactPaths: string[];
         missingArtifactPaths: string[];
+      };
+      secretPolicyRoleDrift?: {
+        hasDrift: boolean;
+        policies: Array<{
+          policyId: string;
+          agentRole: string;
+          canonicalRole: string;
+          allowedSecretNames: string[];
+        }>;
       };
     };
   };
