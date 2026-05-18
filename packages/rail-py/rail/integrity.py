@@ -528,6 +528,15 @@ def _normalize_validated_source_quality(
     return quality_status
 
 
+def _normalize_artifact_promotion_state_for_write(record: ArtifactLineageRecord) -> PromotionState:
+    has_workflow_support = bool(record.inputs or record.scripts or record.verification_runs)
+    if record.promotion_state == "verified" and not record.verification_runs:
+        return "partially_verified" if has_workflow_support else "draft"
+    if record.promotion_state == "partially_verified" and not has_workflow_support:
+        return "draft"
+    return record.promotion_state
+
+
 def build_claim_state(
     claim: ClaimRecord,
     *,
@@ -1270,16 +1279,32 @@ class ResearchIntegrityRepo:
         return self._load_records(self.artifact_lineage_path(), ArtifactLineageRecord)
 
     def write_artifact_lineage(self, records: list[ArtifactLineageRecord] | list[dict[str, Any]]) -> None:
-        self._write_records(self.artifact_lineage_path(), records, ArtifactLineageRecord)
+        normalized_records: list[ArtifactLineageRecord] = []
+        for record in records:
+            normalized = ArtifactLineageRecord.model_validate(record)
+            normalized_records.append(
+                normalized.model_copy(
+                    update={
+                        "promotion_state": _normalize_artifact_promotion_state_for_write(normalized),
+                    }
+                )
+            )
+        self._write_records(self.artifact_lineage_path(), normalized_records, ArtifactLineageRecord)
         self.rebuild_integrity_edges()
 
     def upsert_artifact_lineage(self, record: ArtifactLineageRecord | dict[str, Any]) -> ArtifactLineageRecord:
+        normalized = ArtifactLineageRecord.model_validate(record)
+        normalized = normalized.model_copy(
+            update={
+                "promotion_state": _normalize_artifact_promotion_state_for_write(normalized),
+            }
+        )
         stored = self._upsert_by_key(
             self.load_artifact_lineage,
             self.write_artifact_lineage,
             ArtifactLineageRecord,
             "artifact_path",
-            record,
+            normalized,
         )
         self.reconcile_artifact_claim_support()
         return next(

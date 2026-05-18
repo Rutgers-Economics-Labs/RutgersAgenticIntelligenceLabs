@@ -922,6 +922,43 @@ def test_write_sources_downgrades_validated_derived_status_without_lineage(tmp_p
     assert stored.quality_status == "candidate"
 
 
+def test_write_artifact_lineage_downgrades_verified_without_verification_runs(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "verified",
+                "inputs": ["topics/analysis/notes.md"],
+                "scripts": ["topics/analysis/analyze.py"],
+            }
+        ]
+    )
+
+    stored = repo.load_artifact_lineage()[0]
+    assert stored.promotion_state == "partially_verified"
+
+
+def test_upsert_artifact_lineage_downgrades_partially_verified_without_workflow_support(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    stored = repo.upsert_artifact_lineage(
+        {
+            "artifact_path": "artifacts/report.md",
+            "artifact_type": "report",
+            "title": "Report",
+            "promotion_state": "partially_verified",
+        }
+    )
+
+    assert stored.promotion_state == "draft"
+
+
 def test_source_refresh_clears_dependent_stale_state_when_revalidated(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)
