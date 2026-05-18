@@ -484,6 +484,35 @@ def _control_plane_auditor_gate(auditors: dict[str, Any] | None) -> dict[str, An
     return {"blocked": True, "blockers": list(dict.fromkeys(blockers))}
 
 
+def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
+    base = (
+        "[AUTOPILOT MODE] Analyze the project state. If any tasks are 'ready', use launch_task_runner to start them. "
+        "If tasks recently finished, analyze findings. If everything is done, synthesize the final report. "
+        "Always move the project forward."
+    )
+    auditors = auditors or {}
+    ontology = auditors.get("ontology") or {}
+    integrity = auditors.get("integrity") or {}
+    closeout = auditors.get("closeout") or {}
+
+    if ontology.get("status") == "blocked":
+        return (
+            "[AUTOPILOT MODE] Ontology readiness is blocked. Focus only on hydration, source attachment, pipeline repair, "
+            "or ontology health verification tasks. Do not plan or synthesize downstream research until ontology blockers are cleared."
+        )
+    if integrity.get("status") == "blocked":
+        return (
+            "[AUTOPILOT MODE] Integrity is blocked. Focus only on provenance repair, evidence collection, verification, "
+            "claim cleanup, or other trust-repair tasks. Do not plan final synthesis or promote analytical outputs until integrity blockers are cleared."
+        )
+    if closeout.get("status") == "blocked":
+        return (
+            "[AUTOPILOT MODE] Closeout is blocked. Focus only on clearing remaining closeout blockers such as unfinished tasks, "
+            "active sessions, ontology issues, or integrity issues. Do not create new speculative research branches."
+        )
+    return base
+
+
 async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not ready_tasks:
         return None
@@ -773,7 +802,7 @@ async def run_autopilot_loop(project_slug: str):
         try:
             await planner_runtime.run_planner_turn(
                 project=project,
-                user_message="[AUTOPILOT MODE] Analyze the project state. If any tasks are 'ready', use launch_task_runner to start them. If tasks recently finished, analyze findings. If everything is done, synthesize the final report. Always move the project forward.",
+                user_message=_planner_turn_message(auditors),
                 persist=False # Do not spam the chat thread
             )
             _update_config(project_slug, last_turn_result="Planner turn completed.")
