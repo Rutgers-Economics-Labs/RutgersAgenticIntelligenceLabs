@@ -16,6 +16,7 @@ from app.services.hydration_registry_service import get_hydration_status
 from app.services.integrity_service import evaluate_integrity_gate
 from app.services.auditor_service import build_auditor_statuses
 from app.services.reconciliation_service import (
+    project_reality_status,
     reconcile_project_reality,
     repair_stale_active_sessions as _repair_stale_active_sessions_impl,
 )
@@ -436,6 +437,72 @@ async def _ensure_ontology_expansion_tasks(project: dict[str, Any], tasks: list[
     return changed
 
 
+async def _ensure_project_reality_repair_tasks(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
+    reality = await project_reality_status(project, tasks=tasks, active_sessions=[])
+    details = reality.get("details") or {}
+    ontology_drift = details.get("ontologyArtifactDrift") or {}
+    artifact_drift = details.get("artifactRegistryDrift") or {}
+    if not ontology_drift.get("hasDrift") and not artifact_drift.get("hasDrift"):
+        return False
+
+    board = await planner_service.ensure_main_board(project)
+    changed = False
+    live_tasks = list(tasks)
+
+    if ontology_drift.get("hasDrift"):
+        task_title = "Repair active ontology artifact pointer drift"
+        if not any(str(task.get("title") or "") == task_title for task in live_tasks):
+            task = await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Reconcile the project's active ontology pointers with the current hydration artifact registry. "
+                    "Ensure the project record points at the correct current DuckDB/ontology artifacts."
+                ),
+                status="ready",
+                agent_role="data",
+                repo_paths=[".ontology", "research_plan"],
+                acceptance_criteria=[
+                    "the active ontology pointer drift is reconciled against the hydration registry",
+                    "the project points at the expected current ontology artifacts",
+                    "the repair records the previous and updated artifact paths if they changed",
+                ],
+                runner="codex_cli",
+            )
+            live_tasks.append(task)
+            changed = True
+
+    if artifact_drift.get("hasDrift"):
+        task_title = "Reconcile artifact registry drift"
+        if not any(str(task.get("title") or "") == task_title for task in live_tasks):
+            task = await planner_service.create_task(
+                project=project,
+                board_id=board["_id"],
+                title=task_title,
+                description=(
+                    "Repair drift between artifacts on disk and artifact lineage records. "
+                    "Either register untracked final artifacts with explicit lineage or remove stale lineage entries for missing files."
+                ),
+                status="ready",
+                agent_role="health",
+                repo_paths=["artifacts", "research_plan/state", "research_plan"],
+                acceptance_criteria=[
+                    "untracked artifacts on disk are either registered with lineage or explicitly removed",
+                    "artifact lineage entries for missing files are reconciled or cleared",
+                    "project reality no longer reports artifact registry drift after the repair",
+                ],
+                runner="codex_cli",
+            )
+            live_tasks.append(task)
+            changed = True
+
+    if changed:
+        await planner_service.sync_planner_files(project, board)
+        logger.info("Autopilot: ensured project reality repair tasks for %s", project.get("slug"))
+    return changed
+
+
 async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
     if not _is_ontology_project(project):
         return False
@@ -825,6 +892,10 @@ async def run_autopilot_loop(project_slug: str):
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_ontology_expansion_tasks(project, tasks):
+            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            consecutive_idle_turns = 0
+            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+        if await _ensure_project_reality_repair_tasks(project, tasks):
             tasks = await planner_service.list_tasks(board["_id"], project=project)
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)

@@ -1260,6 +1260,86 @@ def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_pa
     assert promoted[0]["duckdb_artifact_path"] == str(target_duckdb)
 
 
+def test_ensure_project_reality_repair_tasks_creates_drift_tasks(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    created: list[dict[str, object]] = []
+    synced: list[bool] = []
+
+    async def _project_reality_status(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "hasDrift": True,
+            "details": {
+                "ontologyArtifactDrift": {"hasDrift": True, "reason": "active_ontology_pointer_out_of_date"},
+                "artifactRegistryDrift": {
+                    "hasDrift": True,
+                    "untrackedArtifactPaths": ["artifacts/untracked.md"],
+                    "missingArtifactPaths": ["artifacts/missing.md"],
+                },
+            },
+        }
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": kwargs["title"], "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service, "project_reality_status", _project_reality_status)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    changed = asyncio.run(autopilot_service._ensure_project_reality_repair_tasks(project, []))
+
+    titles = {str(item["title"]) for item in created}
+    assert changed is True
+    assert "Repair active ontology artifact pointer drift" in titles
+    assert "Reconcile artifact registry drift" in titles
+    assert synced == [True]
+
+
+def test_ensure_project_reality_repair_tasks_is_noop_without_drift(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    created: list[dict[str, object]] = []
+    synced: list[bool] = []
+
+    async def _project_reality_status(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "hasDrift": False,
+            "details": {
+                "ontologyArtifactDrift": {"hasDrift": False},
+                "artifactRegistryDrift": {"hasDrift": False},
+            },
+        }
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": kwargs["title"], "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service, "project_reality_status", _project_reality_status)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    changed = asyncio.run(autopilot_service._ensure_project_reality_repair_tasks(project, []))
+
+    assert changed is False
+    assert created == []
+    assert synced == []
+
+
 def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "status": "ready", "localRepoPath": str(tmp_path)}
     planner_turns: list[str] = []
