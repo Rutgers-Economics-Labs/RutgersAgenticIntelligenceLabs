@@ -2215,7 +2215,8 @@ def test_ensure_control_plane_repair_tasks_creates_reconcile_task(tmp_path: Path
     assert created[0]["agent_role"] == "health"
     assert "non-canonical secret policy role mappings" in str(created[0]["description"])
     assert "non-canonical role config aliases" in str(created[0]["description"])
-    assert "duplicate task files, task/session mismatches, secret policy role drift, and role config alias drift are reconciled" in created[0]["acceptance_criteria"]
+    assert "non-canonical running-agent session statuses" in str(created[0]["description"])
+    assert "duplicate task files, task/session mismatches, running-agent status drift, secret policy role drift, and role config alias drift are reconciled" in created[0]["acceptance_criteria"]
     assert synced == [True]
 
 

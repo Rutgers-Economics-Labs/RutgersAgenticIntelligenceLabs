@@ -787,6 +787,9 @@ def _build_blocker_summary(
     if reality.get("staleRuntimeSessionCount"):
         reasons.append(f"{reality['staleRuntimeSessionCount']} stale runtime session(s) are still marked active.")
         repairs.append("Finalize or cancel stale runtime sessions before launching more work.")
+    if reality.get("runningAgentStatusDriftCount"):
+        reasons.append(f"{reality['runningAgentStatusDriftCount']} running-agent session status alias row(s) are still non-canonical.")
+        repairs.append("Reconcile running-agent session statuses so live runtime state uses canonical lifecycle values.")
     if reality.get("duplicateTaskFileCount"):
         reasons.append(f"{reality['duplicateTaskFileCount']} duplicate planner task file(s) are present.")
         repairs.append("Run planner task-file reconciliation so the board has one canonical task record per task.")

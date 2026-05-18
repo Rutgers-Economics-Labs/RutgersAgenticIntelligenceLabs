@@ -644,6 +644,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
             "duplicateTaskFileCount": 1,
             "taskSessionMismatchCount": 2,
             "staleRuntimeSessionCount": 1,
+            "runningAgentStatusDriftCount": 1,
             "staleAuditSessionCount": 1,
             "terminalSessionCount": 2,
             "activeRuntimeSessionCount": 1,
@@ -673,6 +674,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert center["blockerSummary"]["blocked"] is True
     assert center["blockerSummary"]["headline"] == "Autopilot is waiting for audited truth."
     assert "Ontology hydration state is `not_hydrated`." in center["blockerSummary"]["reasons"]
+    assert "Reconcile running-agent session statuses so live runtime state uses canonical lifecycle values." in center["blockerSummary"]["repairs"]
     assert "Reconcile agent secret policies so secret access is keyed by canonical agent roles." in center["blockerSummary"]["repairs"]
     assert "Reconcile agent role config files so runner policy is keyed by canonical agent roles." in center["blockerSummary"]["repairs"]
 
