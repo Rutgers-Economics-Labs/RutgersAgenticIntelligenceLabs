@@ -355,6 +355,87 @@ def test_autopilot_launches_ready_task_when_planner_does_not(monkeypatch):
     assert launched == [{"task_ids": ["hydrate-task"]}]
 
 
+def test_autopilot_filters_ready_tasks_when_ontology_auditor_is_blocked(monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": "/tmp/soccer-project"}
+    launched: list[dict] = []
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [
+            {
+                "_id": "research-task",
+                "status": "ready",
+                "title": "Launch ontology-backed research after hydration",
+                "agentRole": "planner",
+                "approvalState": "granted",
+                "priority": "high",
+                "dependsOnTaskIds": [],
+            },
+            {
+                "_id": "hydrate-task",
+                "status": "ready",
+                "title": "Hydrate project ontology and register active artifacts",
+                "agentRole": "data",
+                "approvalState": "granted",
+                "priority": "medium",
+                "dependsOnTaskIds": [],
+            },
+        ]
+
+    async def _run_planner_turn(**kwargs):
+        return None
+
+    async def _find_active_worker(project_id: str):
+        return None
+
+    async def _launch_ready_task(project_arg, ready_tasks: list[dict]):
+        launched.append({"task_ids": [str(item["_id"]) for item in ready_tasks]})
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return {"convex_session_id": "session-1"}
+
+    async def _list_decision_events(*args, **kwargs):
+        return []
+
+    async def _sync_planner_files(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service, "list_decision_events", _list_decision_events)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+    monkeypatch.setattr(autopilot_service, "_launch_ready_task", _launch_ready_task)
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["2 non-terminal task(s) remain."]},
+            },
+        ),
+    )
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+    autopilot_service._wake_events["soccer-project"] = asyncio.Event()
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    assert launched == [{"task_ids": ["hydrate-task"]}]
+
+
 def test_autopilot_blocks_advance_until_audit_is_current(tmp_path: Path, monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": str(tmp_path)}
     planner_turns: list[dict] = []

@@ -434,6 +434,29 @@ def _task_priority(task: dict[str, Any]) -> tuple[int, str]:
     return (weight, str(task.get("_id") or ""))
 
 
+def _filter_ready_tasks_for_auditors(
+    ready_tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not ready_tasks:
+        return []
+    ontology_auditor = (auditors or {}).get("ontology") or {}
+    if ontology_auditor.get("status") != "blocked":
+        return ready_tasks
+
+    allowed_roles = {"data", "health"}
+    allowed: list[dict[str, Any]] = []
+    for task in ready_tasks:
+        role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+        title = str(task.get("title") or "").lower()
+        if role in allowed_roles:
+            allowed.append(task)
+            continue
+        if not role and any(token in title for token in ("hydrate", "ontology", "pipeline", "source")):
+            allowed.append(task)
+    return allowed
+
+
 async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not ready_tasks:
         return None
@@ -887,6 +910,7 @@ async def run_autopilot_loop(project_slug: str):
             
         # Check if we have ready tasks that weren't launched
         ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
+        ready_tasks = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
         if ready_tasks:
             cancelled_task_ids = {str(t["_id"]) for t in tasks if t.get("status") == "cancelled"}
             for event in await list_decision_events(project, status="open"):
