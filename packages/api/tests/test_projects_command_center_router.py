@@ -209,3 +209,25 @@ def test_create_project_approval_rejects_unknown_status(monkeypatch):
 
     assert response.status_code == 422
     assert "Approval status must be one of" in response.json()["detail"]
+
+
+def test_create_project_approval_rejects_unknown_type(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/approvals",
+        json={
+            "taskId": "task-1",
+            "approvalType": "run_session",
+            "status": "pending",
+            "requestedByRole": "planner",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Approval type must be one of" in response.json()["detail"]

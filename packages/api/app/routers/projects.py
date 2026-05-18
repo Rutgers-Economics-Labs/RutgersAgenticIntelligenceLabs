@@ -406,6 +406,7 @@ ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially
 ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
 ALLOWED_TASK_APPROVAL_STATES = {"pending", "granted"}
 ALLOWED_APPROVAL_STATUSES = {"pending", "granted", "rejected", "approved"}
+ALLOWED_APPROVAL_TYPES = {"run_task"}
 
 
 def _validate_trusted_source_contract(
@@ -494,6 +495,14 @@ def _validate_approval_status(status: str | None) -> None:
         raise HTTPException(
             status_code=422,
             detail="Approval status must be one of: pending, granted, rejected.",
+        )
+
+
+def _validate_approval_type(approval_type: str | None) -> None:
+    if approval_type not in {None, ""} and approval_type not in ALLOWED_APPROVAL_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail="Approval type must be one of: run_task.",
         )
 
 
@@ -2459,6 +2468,7 @@ async def list_project_approvals(slug: str, limit: int = Query(100)):
 async def create_project_approval(slug: str, data: ApprovalCreateRequest):
     project = await planner_service.get_project_by_slug(slug)
     _validate_approval_status(data.status)
+    _validate_approval_type(data.approvalType)
     approval_id = await planner_service.create_approval(
         project=project,
         task_id=data.taskId,
