@@ -433,6 +433,7 @@ export type CommandCenter = {
     ontologyArtifactDriftCount?: number;
     artifactRegistryDriftCount?: number;
     secretPolicyRoleDriftCount?: number;
+    roleConfigAliasDriftCount?: number;
     details?: {
       duplicateTaskFiles: string[];
       taskSessionMismatchTaskIds: string[];
@@ -458,6 +459,14 @@ export type CommandCenter = {
           agentRole: string;
           canonicalRole: string;
           allowedSecretNames: string[];
+        }>;
+      };
+      roleConfigAliasDrift?: {
+        hasDrift: boolean;
+        configs: Array<{
+          configPath: string;
+          role: string;
+          canonicalRole: string;
         }>;
       };
     };
