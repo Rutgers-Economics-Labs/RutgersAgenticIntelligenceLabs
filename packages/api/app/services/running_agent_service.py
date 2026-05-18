@@ -9,6 +9,7 @@ from app.services.role_runtime_service import ROLE_ALIASES
 
 ACTIVE_STATUSES = {"queued", "running", "awaiting_input", "awaiting_approval", "paused"}
 SESSION_STATUSES = ACTIVE_STATUSES | {"completed", "failed", "cancelled", "blocked"}
+RUNNER_NAMES = {"jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
 LEGACY_SESSION_STATUS_ALIASES = {
     "done": "completed",
 }
@@ -33,6 +34,17 @@ def _normalize_session_status(status: str | None, *, strict: bool = False) -> st
     return status
 
 
+def _normalize_runner_name(runner: str | None, *, strict: bool = False) -> str | None:
+    if runner in {None, ""}:
+        return None
+    normalized = str(runner).strip().lower()
+    if normalized in RUNNER_NAMES:
+        return normalized
+    if strict:
+        raise ValueError(f"Unsupported running-agent runner: {runner}")
+    return runner
+
+
 def _session_status_has_drift(status: str | None) -> bool:
     normalized = _normalize_session_status(status)
     return normalized is not None and normalized != status
@@ -48,9 +60,14 @@ def _normalize_session_record(session: dict[str, Any] | None) -> dict[str, Any] 
         return session
     normalized_role = _normalize_role_alias(session.get("role"))
     normalized_status = _normalize_session_status(session.get("status"))
-    if normalized_role == session.get("role") and normalized_status == session.get("status"):
+    normalized_runner = _normalize_runner_name(session.get("runner"))
+    if (
+        normalized_role == session.get("role")
+        and normalized_status == session.get("status")
+        and normalized_runner == session.get("runner")
+    ):
         return session
-    return dict(session) | {"role": normalized_role, "status": normalized_status}
+    return dict(session) | {"role": normalized_role, "status": normalized_status, "runner": normalized_runner}
 
 
 async def list_running_agent_status_drift(project_id: str, *, limit: int = 50) -> list[dict[str, str]]:
@@ -133,6 +150,7 @@ async def create_running_agent(
 ) -> str:
     role = _normalize_role_alias(role) or "agent"
     status = _normalize_session_status(status, strict=True) or "queued"
+    runtime_kind = _normalize_runner_name(runtime_kind, strict=True) or "codex_cli"
     # Convex agent:createSession validator (from schema inspection):
     #   required: title, model
     #   optional: externalSessionId, projectId, projectSlug, role, runner, status, taskId

@@ -56,6 +56,32 @@ def test_create_running_agent_normalizes_legacy_status_alias(monkeypatch):
     assert captured[0]["payload"]["status"] == "completed"
 
 
+def test_create_running_agent_normalizes_runner_name(monkeypatch):
+    from app.services import running_agent_service
+
+    captured: list[dict] = []
+
+    async def _mutation(path: str, payload: dict):
+        captured.append({"path": path, "payload": payload})
+        return {"sessionId": "sess-1"}
+
+    monkeypatch.setattr(running_agent_service.convex, "mutation", _mutation)
+
+    asyncio.run(
+        running_agent_service.create_running_agent(
+            project_id="project-1",
+            project_slug="demo-project",
+            task_id="task-1",
+            runtime_kind="CODEX_CLI",
+            role="coding",
+            title="Run coding task",
+        )
+    )
+
+    assert captured[0]["payload"]["runner"] == "codex_cli"
+    assert captured[0]["payload"]["model"] == "runtime:codex_cli"
+
+
 def test_get_running_agent_normalizes_legacy_role_alias(monkeypatch):
     from app.services import running_agent_service
 
@@ -86,6 +112,21 @@ def test_get_running_agent_normalizes_legacy_status_alias(monkeypatch):
     assert session["status"] == "completed"
 
 
+def test_get_running_agent_normalizes_runner_name(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _query(path: str, payload: dict):
+        assert path == "agent:getSession"
+        return {"_id": "sess-1", "role": "coding", "status": "running", "runner": "CODEX_CLI"}
+
+    monkeypatch.setattr(running_agent_service.convex, "query", _query)
+
+    session = asyncio.run(running_agent_service.get_running_agent("sess-1"))
+
+    assert session is not None
+    assert session["runner"] == "codex_cli"
+
+
 def test_list_project_running_agents_normalizes_legacy_role_aliases(monkeypatch):
     from app.services import running_agent_service
 
@@ -106,6 +147,31 @@ def test_list_project_running_agents_normalizes_legacy_role_aliases(monkeypatch)
     )
 
     assert [item["role"] for item in sessions] == ["coding", "planner"]
+
+
+def test_create_running_agent_rejects_unknown_runner(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _mutation(path: str, payload: dict):
+        raise AssertionError("Convex mutation should not be called for invalid runner")
+
+    monkeypatch.setattr(running_agent_service.convex, "mutation", _mutation)
+
+    try:
+        asyncio.run(
+            running_agent_service.create_running_agent(
+                project_id="project-1",
+                project_slug="demo-project",
+                task_id="task-1",
+                runtime_kind="writerbot",
+                role="coding",
+                title="Run coding task",
+            )
+        )
+    except ValueError as exc:
+        assert "Unsupported running-agent runner" in str(exc)
+    else:
+        raise AssertionError("Expected create_running_agent() to reject unknown runners")
 
 
 def test_update_running_agent_rejects_unknown_status(monkeypatch):
