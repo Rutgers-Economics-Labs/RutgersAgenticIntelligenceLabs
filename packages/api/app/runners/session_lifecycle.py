@@ -166,6 +166,7 @@ ARTIFACT_SUFFIXES = {".md", ".pdf", ".png", ".svg", ".jpg", ".jpeg", ".html", ".
 SCRIPT_LINEAGE_SUFFIXES = {".py", ".sh", ".sql", ".ipynb", ".r", ".js", ".ts", ".tsx", ".jsx"}
 _VERIFICATION_PATH_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.(?:ya?ml|csv|tsv|jsonl?|parquet|xlsx?|md|pdf|png|svg|jpe?g|html?|py|sh))")
 LOCAL_CLI_RUNNERS = {"claude_code", "codex_cli", "gemini_cli", "cursor_cli"}
+ALLOWED_RUNNER_NAMES = LOCAL_CLI_RUNNERS | {"default", "jules"}
 INTERNAL_WORKFLOW_DATASET_PATHS = {"ontology/.rail_hydration.json"}
 
 
@@ -213,18 +214,26 @@ def _normalize_runner_name_for_project(
     *,
     role_config: Any | None = None,
 ) -> str:
-    normalized = (runner_name or "").strip()
+    normalized = (runner_name or "").strip().lower()
+    if normalized and normalized not in ALLOWED_RUNNER_NAMES:
+        raise ValueError(f"Unsupported runner name: {runner_name}")
     if normalized and normalized != "default":
         return normalized
     if role_config is not None:
         default_runner = getattr(getattr(role_config, "policy", None), "runner", None)
         default_name = getattr(default_runner, "default", None)
         if default_name:
-            return str(default_name)
+            normalized_default = str(default_name).strip().lower()
+            if normalized_default not in ALLOWED_RUNNER_NAMES - {"default"}:
+                raise ValueError(f"Unsupported default runner in role policy: {default_name}")
+            return normalized_default
         manifest_default = getattr(getattr(role_config, "manifest", None), "agents", None)
         manifest_name = getattr(manifest_default, "default_runner", None)
         if manifest_name:
-            return str(manifest_name)
+            normalized_manifest = str(manifest_name).strip().lower()
+            if normalized_manifest not in ALLOWED_RUNNER_NAMES - {"default"}:
+                raise ValueError(f"Unsupported default runner in manifest: {manifest_name}")
+            return normalized_manifest
     return "jules"
 
 

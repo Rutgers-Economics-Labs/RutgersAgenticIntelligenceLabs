@@ -807,6 +807,11 @@ def test_create_runner_session_resolves_default_runner_from_project_policy(tmp_p
     assert seen_runner_names == ["codex_cli"]
 
 
+def test_normalize_runner_name_for_project_rejects_unknown_runner():
+    with pytest.raises(ValueError, match="Unsupported runner name: writerbot"):
+        session_lifecycle._normalize_runner_name_for_project("writerbot")
+
+
 def test_create_runner_session_rejects_parallel_launch_when_nonconcurrent(tmp_path: Path, monkeypatch):
     bootstrap_future_project(tmp_path, name="Sequential Project")
 

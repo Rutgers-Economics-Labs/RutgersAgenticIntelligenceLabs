@@ -514,6 +514,7 @@ def test_create_runner_session_normalizes_role_aliases(monkeypatch):
         json={
             "role": "developer",
             "agentRoleForSecrets": "auditor",
+            "runnerName": "CODEX_CLI",
             "taskDescription": "Run analysis",
         },
     )
@@ -521,6 +522,7 @@ def test_create_runner_session_normalizes_role_aliases(monkeypatch):
     assert response.status_code == 200
     assert created[0]["role"] == "coding"
     assert created[0]["agent_role_for_secrets"] == "health"
+    assert created[0]["runner_name"] == "codex_cli"
     assert polled == [("sess-1", "project-1")]
 
 
@@ -543,6 +545,27 @@ def test_create_runner_session_rejects_unknown_secret_role(monkeypatch):
 
     assert response.status_code == 422
     assert "Runner agentRoleForSecrets must be one of" in response.json()["detail"]
+
+
+def test_create_runner_session_rejects_unknown_runner(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/runner/sessions",
+        json={
+            "role": "data",
+            "runnerName": "writerbot",
+            "taskDescription": "Run analysis",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Runner session runnerName must be one of" in response.json()["detail"]
 
 
 def test_append_planner_message_rejects_unknown_role(monkeypatch):

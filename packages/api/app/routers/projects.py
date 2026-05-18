@@ -502,6 +502,16 @@ def _validate_planner_task_runner(runner: str | None) -> None:
         )
 
 
+def _normalize_runner_name(runner: str | None) -> str:
+    normalized = str(runner or "jules").strip().lower()
+    if normalized not in ALLOWED_TASK_RUNNERS:
+        raise HTTPException(
+            status_code=422,
+            detail="Runner session runnerName must be one of: default, jules, claude_code, gemini_cli, cursor_cli, codex_cli.",
+        )
+    return normalized
+
+
 def _validate_planner_task_priority(priority: str | None) -> None:
     if priority not in {None, ""} and priority not in ALLOWED_TASK_PRIORITIES:
         raise HTTPException(
@@ -2599,6 +2609,7 @@ async def create_project_runner_session(
     project = await planner_service.get_project_by_slug(slug)
     from app.runners import session_lifecycle
     role = _normalize_agent_role(data.role, field_name="Runner session role")
+    runner_name = _normalize_runner_name(data.runnerName)
     agent_role_for_secrets = None
     if data.agentRoleForSecrets not in {None, ""}:
         agent_role_for_secrets = _normalize_agent_role(
@@ -2661,7 +2672,7 @@ async def create_project_runner_session(
             project_id=project["_id"],
             project_slug=project["slug"],
             task_id=data.taskId,
-            runner_name=data.runnerName,
+            runner_name=runner_name,
             role=role,
             task_description=data.taskDescription,
             repo_url=repo_url,
