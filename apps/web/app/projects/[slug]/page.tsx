@@ -7,6 +7,7 @@ import { StatusPill } from "@/components/status-pill";
 import { AgentRunCard, CommandShell, InlineStatus, MetricStrip, TaskBoard } from "@/components/command-center";
 import { ApprovalPanel } from "@/components/approval-panel";
 import { ReconcileProjectButton } from "@/components/reconcile-actions";
+import { CreateOntologyFollowUpTaskButton } from "@/components/ontology-follow-up-actions";
 import { getArtifactTrustDisplay, getWorkflowDisplaySections } from "@/lib/integrity-ui";
 
 export default async function ProjectHomePage({
@@ -168,6 +169,15 @@ export default async function ProjectHomePage({
                 {question.expectedTaskTitle ? (
                   <div className="mono-muted">
                     {question.taskPresent ? `task: ${question.expectedTaskTitle}` : `missing task: ${question.expectedTaskTitle}`}
+                  </div>
+                ) : null}
+                {question.expectedTaskTitle && !question.taskPresent ? (
+                  <div style={{ marginTop: 8 }}>
+                    <CreateOntologyFollowUpTaskButton
+                      slug={slug}
+                      title={question.title}
+                      classification={question.classification ?? ""}
+                    />
                   </div>
                 ) : null}
               </div>

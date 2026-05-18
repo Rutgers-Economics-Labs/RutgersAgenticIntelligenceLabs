@@ -68,6 +68,13 @@ export async function reconcileCommandCenter(slug: string): Promise<{
   return postJson(`/projects/${slug}/command-center/reconcile`, {});
 }
 
+export async function createOntologyFollowUpTask(
+  slug: string,
+  payload: { title: string; classification: string },
+): Promise<{ created: boolean; task: Record<string, unknown> }> {
+  return postJson(`/projects/${slug}/command-center/ontology-follow-ups/expand`, payload);
+}
+
 export async function fetchProjectCatalog(): Promise<ProjectCatalogResponse> {
   return getJson<ProjectCatalogResponse>("/projects");
 }

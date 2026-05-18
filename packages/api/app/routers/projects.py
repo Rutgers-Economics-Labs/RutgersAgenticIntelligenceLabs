@@ -284,6 +284,11 @@ class IntegrityAssumptionUpdateRequest(BaseModel):
     value: str | None = None
     status: str | None = None
     notes: str | None = None
+
+
+class OntologyFollowUpTaskRequest(BaseModel):
+    title: str
+    classification: str
     affectedPaths: list[str] | None = None
 
 
@@ -1214,6 +1219,65 @@ async def get_command_center(slug: str):
 async def reconcile_command_center_state(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     return await reconciliation_service.reconcile_project_reality(project)
+
+
+@router.post("/{slug}/command-center/ontology-follow-ups/expand")
+async def create_ontology_follow_up_task(slug: str, request: OntologyFollowUpTaskRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    board = await planner_service.ensure_main_board(project)
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
+
+    title = str(request.title).strip()
+    classification = str(request.classification).strip().lower()
+    if not title:
+        raise HTTPException(status_code=400, detail="Follow-up question title is required.")
+    if classification not in {"requires_expansion", "blocked_by_data"}:
+        raise HTTPException(status_code=400, detail="Classification must be requires_expansion or blocked_by_data.")
+
+    if classification == "requires_expansion":
+        task_title = f"Expand ontology coverage for: {title}"
+        description = (
+            f"Create the ontology expansion needed to answer: {title}. "
+            "This should result in concrete source, pipeline, transform, or ontology-verification work."
+        )
+        agent_role = "data"
+        repo_paths = [".ontology/sources", ".ontology/pipelines", ".ontology/transforms", "research_plan", "topics"]
+        acceptance_criteria = [
+            "the missing ontology coverage is translated into concrete source or pipeline work",
+            "the task records which source, transform, or relationship expansion is required",
+            "follow-on ontology verification work is identified if hydration changes are needed",
+        ]
+    else:
+        task_title = f"Resolve data blocker for: {title}"
+        description = (
+            f"Investigate and document the missing data access needed to answer: {title}. "
+            "Record the missing source, access blocker, and what would unblock ontology expansion."
+        )
+        agent_role = "research"
+        repo_paths = ["research_plan", "topics", ".ontology/sources"]
+        acceptance_criteria = [
+            "the missing source or access blocker is documented explicitly",
+            "the task records whether the blocker is licensing, permissions, provenance, or coverage",
+            "the repo contains the next recommended expansion path if the blocker can be resolved",
+        ]
+
+    existing = next((task for task in tasks if str(task.get("title") or "") == task_title), None)
+    if existing is not None:
+        return {"created": False, "task": existing}
+
+    task = await planner_service.create_task(
+        project=project,
+        board_id=board["_id"],
+        title=task_title,
+        description=description,
+        status="ready",
+        agent_role=agent_role,
+        repo_paths=repo_paths,
+        acceptance_criteria=acceptance_criteria,
+        runner="codex_cli",
+    )
+    await planner_service.sync_planner_files(project, board)
+    return {"created": True, "task": task}
 
 
 @router.get("/{slug}/skills")
