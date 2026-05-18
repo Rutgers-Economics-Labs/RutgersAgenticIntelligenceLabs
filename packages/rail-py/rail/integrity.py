@@ -570,6 +570,29 @@ def _normalize_artifact_record_for_write(
     )
 
 
+def _normalize_verification_run_record_for_write(
+    record: VerificationRunRecord,
+    *,
+    project_root: Path,
+) -> VerificationRunRecord:
+    normalized_artifact_paths = [
+        path for path in record.artifact_paths if path and (project_root / path).exists()
+    ]
+    normalized_artifacts_checked = [
+        path for path in record.artifacts_checked if path and (project_root / path).exists()
+    ]
+    status = record.status
+    if status == "passed" and not normalized_artifact_paths:
+        status = "pending"
+    return record.model_copy(
+        update={
+            "artifact_paths": normalized_artifact_paths,
+            "artifacts_checked": normalized_artifacts_checked,
+            "status": status,
+        }
+    )
+
+
 def build_claim_state(
     claim: ClaimRecord,
     *,
@@ -1415,16 +1438,27 @@ class ResearchIntegrityRepo:
         return self._load_records(self.verification_runs_path(), VerificationRunRecord)
 
     def write_verification_runs(self, records: list[VerificationRunRecord] | list[dict[str, Any]]) -> None:
-        self._write_records(self.verification_runs_path(), records, VerificationRunRecord)
+        normalized_records = [
+            _normalize_verification_run_record_for_write(
+                VerificationRunRecord.model_validate(record),
+                project_root=self.project_root,
+            )
+            for record in records
+        ]
+        self._write_records(self.verification_runs_path(), normalized_records, VerificationRunRecord)
         self.rebuild_integrity_edges()
 
     def upsert_verification_run(self, record: VerificationRunRecord | dict[str, Any]) -> VerificationRunRecord:
+        normalized = _normalize_verification_run_record_for_write(
+            VerificationRunRecord.model_validate(record),
+            project_root=self.project_root,
+        )
         return self._upsert_by_key(
             self.load_verification_runs,
             self.write_verification_runs,
             VerificationRunRecord,
             "run_id",
-            record,
+            normalized,
         )
 
     def load_evidence_chunks(self) -> list[EvidenceChunkRecord]:

@@ -1061,6 +1061,27 @@ def test_write_artifact_lineage_strips_unknown_references_before_persisting(tmp_
     assert stored.verification_runs == []
 
 
+def test_write_verification_runs_downgrades_passed_status_without_real_artifact_paths(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/missing-report.md"],
+                "artifacts_checked": ["artifacts/missing-report.md"],
+            }
+        ]
+    )
+
+    stored = repo.load_verification_runs()[0]
+    assert stored.status == "pending"
+    assert stored.artifact_paths == []
+    assert stored.artifacts_checked == []
+
+
 def test_write_source_candidates_downgrades_promoted_without_canonical_source(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)
