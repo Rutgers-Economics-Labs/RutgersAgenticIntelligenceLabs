@@ -457,6 +457,19 @@ def _filter_ready_tasks_for_auditors(
     return allowed
 
 
+def _control_plane_auditor_gate(auditors: dict[str, Any] | None) -> dict[str, Any]:
+    session_auditor = (auditors or {}).get("session") or {}
+    planner_auditor = (auditors or {}).get("planner") or {}
+    blockers: list[str] = []
+    if session_auditor.get("status") == "blocked":
+        blockers.extend(str(item) for item in (session_auditor.get("blockers") or []) if item)
+    if planner_auditor.get("status") == "blocked":
+        blockers.extend(str(item) for item in (planner_auditor.get("blockers") or []) if item)
+    if not blockers:
+        return {"blocked": False, "blockers": []}
+    return {"blocked": True, "blockers": list(dict.fromkeys(blockers))}
+
+
 async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not ready_tasks:
         return None
@@ -672,6 +685,33 @@ async def run_autopilot_loop(project_slug: str):
             tasks = await planner_service.list_tasks(board["_id"], project=project)
             consecutive_idle_turns = 0
             auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+        control_plane_gate = _control_plane_auditor_gate(auditors)
+        if control_plane_gate.get("blocked"):
+            blockers = control_plane_gate.get("blockers") or []
+            _update_config(
+                project_slug,
+                last_action="Waiting for control-plane repair",
+                last_turn_result=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+            )
+            await raise_decision_event(
+                project,
+                source="autopilot",
+                event_type="control_plane_auditor_blocked",
+                severity="needs_planner",
+                summary=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+                evidence_refs=[f"project:{project.get('slug')}"],
+                recommended_actions=[
+                    "Repair stale sessions or planner drift",
+                    "Rerun reconciliation until session and planner auditors are clear",
+                    "Advance only after control-plane blockers are removed",
+                ],
+            )
+            _wake_events[project_slug].clear()
+            try:
+                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                pass
+            continue
 
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
