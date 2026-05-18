@@ -58,6 +58,16 @@ export async function fetchCommandCenter(slug: string): Promise<CommandCenter> {
   return getJson<CommandCenter>(`/projects/${slug}/command-center`);
 }
 
+export async function reconcileCommandCenter(slug: string): Promise<{
+  removedTaskFiles: string[];
+  updatedTaskIds: string[];
+  repairedSessionIds: string[];
+  repairedAuditSessionIds: string[];
+  hasChanges: boolean;
+}> {
+  return postJson(`/projects/${slug}/command-center/reconcile`, {});
+}
+
 export async function fetchProjectCatalog(): Promise<ProjectCatalogResponse> {
   return getJson<ProjectCatalogResponse>("/projects");
 }
@@ -314,9 +324,28 @@ export async function fetchOntologyGraph(
   projectId: string,
   options: { limit?: number } = {}
 ): Promise<any> {
-  const query = new URLSearchParams({
-    projectId,
-    limit: String(options.limit ?? 50),
-  });
-  return getJson(`/ontology/graph?${query.toString()}`);
+  try {
+    const query = new URLSearchParams({
+      projectId,
+      limit: String(options.limit ?? 50),
+    });
+    const response = await fetch(`${API_ROOT}/ontology/graph?${query.toString()}`, {
+      cache: "no-store"
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      return {
+        nodes: [],
+        links: [],
+        error: String(payload?.message ?? payload?.detail ?? `Ontology graph failed: ${response.status}`)
+      };
+    }
+    return response.json() as Promise<any>;
+  } catch (err) {
+    return {
+      nodes: [],
+      links: [],
+      error: String(err)
+    };
+  }
 }

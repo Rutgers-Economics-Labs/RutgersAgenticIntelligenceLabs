@@ -6,6 +6,7 @@ import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { AgentRunCard, CommandShell, InlineStatus, MetricStrip, TaskBoard } from "@/components/command-center";
 import { ApprovalPanel } from "@/components/approval-panel";
+import { ReconcileProjectButton } from "@/components/reconcile-actions";
 import { getArtifactTrustDisplay, getWorkflowDisplaySections } from "@/lib/integrity-ui";
 
 export default async function ProjectHomePage({
@@ -123,6 +124,9 @@ export default async function ProjectHomePage({
       </SectionCard>
       <SectionCard eyebrow="Approvals" noPad>
         <ApprovalPanel approvals={center.pendingApprovals} slug={slug} />
+      </SectionCard>
+      <SectionCard eyebrow="Repair Actions">
+        <ReconcileProjectButton slug={slug} />
       </SectionCard>
       <SectionCard eyebrow="Source Health" noPad>
         <InlineStatus label="sources" value={center.sourceSummary.count} />
