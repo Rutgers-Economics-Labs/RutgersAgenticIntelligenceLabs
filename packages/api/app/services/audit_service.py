@@ -13,6 +13,30 @@ def _audit_root(project_root: Path) -> Path:
     return project_root / "research_plan" / "audits"
 
 
+def _session_roots(project_root: Path) -> list[Path]:
+    sessions_root = project_root / "research_plan" / "sessions"
+    if not sessions_root.is_dir():
+        return []
+    return sorted(path for path in sessions_root.glob("*/*") if path.is_dir())
+
+
+def read_latest_audit(project_root: Path) -> dict[str, Any] | None:
+    audit_root = _audit_root(project_root)
+    if not audit_root.is_dir():
+        return None
+    candidates = sorted(audit_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        payload["path"] = str(path.relative_to(project_root))
+        return payload
+    return None
+
+
 def _normalize_title(task: dict[str, Any]) -> str:
     return str(task.get("title") or task.get("_id") or "Untitled task")
 
@@ -100,6 +124,44 @@ def _render_audit_markdown(payload: dict[str, Any]) -> str:
         lines.extend(["", "## Changed Files", ""])
         lines.extend(f"- `{path}`" for path in changed_files)
     return "\n".join(lines) + "\n"
+
+
+def audit_gate_status(project_root: Path) -> dict[str, Any]:
+    latest = read_latest_audit(project_root)
+    latest_generated_at = str((latest or {}).get("generatedAt") or "")
+    stale_sessions: list[str] = []
+    terminal_sessions: list[str] = []
+
+    for session_root in _session_roots(project_root):
+        state = session_files.read_state(session_root)
+        status = str(state.get("status") or "")
+        if status not in {"completed", "failed", "cancelled"}:
+            continue
+        session_id = str(state.get("session_id") or session_root.name)
+        terminal_sessions.append(session_id)
+        updated_at = str(state.get("updated_at") or "")
+        if not latest:
+            stale_sessions.append(session_id)
+            continue
+        audited_session_id = str((latest.get("session") or {}).get("id") or "")
+        if session_id != audited_session_id and updated_at >= latest_generated_at:
+            stale_sessions.append(session_id)
+            continue
+        if session_id == audited_session_id and updated_at > latest_generated_at:
+            stale_sessions.append(session_id)
+
+    return {
+        "blocked": bool(stale_sessions),
+        "reason": (
+            "Autopilot is waiting for audited truth to catch up with terminal session state."
+            if stale_sessions
+            else None
+        ),
+        "staleSessionIds": stale_sessions,
+        "latestAudit": latest,
+        "latestAuditPath": (latest or {}).get("path") if latest else None,
+        "terminalSessionIds": terminal_sessions,
+    }
 
 
 async def write_post_run_audit(

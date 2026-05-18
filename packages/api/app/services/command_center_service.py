@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from app.services.audit_service import read_latest_audit
 from app.services.integrity_service import load_integrity_indexes, summarize_agent_workflow_health
 from rail.integrity import build_artifact_trust_summary, build_source_state
 
@@ -137,23 +138,6 @@ def _load_yaml(path: Path) -> Any:
         return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
-
-
-def _latest_audit(project_root: Path) -> dict[str, Any] | None:
-    audit_root = project_root / "research_plan" / "audits"
-    if not audit_root.is_dir():
-        return None
-    candidates = sorted(audit_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
-    for path in candidates:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if not isinstance(payload, dict):
-            continue
-        payload["path"] = _rel(path, project_root)
-        return payload
-    return None
 
 
 def _safe_status(value: Any, default: str = "candidate") -> str:
@@ -724,7 +708,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     artifacts = list_project_artifacts(project)
     integrity = list_project_integrity(project)
     root = project_root(project)
-    latest_audit = _latest_audit(root)
+    latest_audit = read_latest_audit(root)
 
     status_counts: dict[str, int] = {}
     for task in tasks:
