@@ -21,6 +21,7 @@ from app.services import planner_runtime, planner_service
 from app.services import running_agent_service
 from app.services import session_files
 from app.services import command_center_service
+from app.services import reconciliation_service
 from app.services.device_service import get_device_metadata
 from app.services.hydration_registry_service import (
     get_hydration_status as get_project_hydration_status,
@@ -524,11 +525,13 @@ def _local_hydration_configs(project_root: Path, pipeline_slug: str) -> tuple[st
     onto_configs: dict[str, str] = {}
     onto_ref = str(pipeline_spec.get("ontology", "core") or "core")
     
-    # Try multiple locations for the ontology file
+    # Prefer the ontology file named directly by the pipeline before falling back
+    # to generic scaffold locations.
     candidate_paths = [
-        project_root / ".ontology" / "ontology.yaml",
+        project_root / onto_ref,
         project_root / ".ontology" / "ontologies" / f"{onto_ref}.yaml",
         project_root / ".ontology" / "ontologies" / f"{Path(onto_ref).stem}.yaml",
+        project_root / ".ontology" / "ontology.yaml",
     ]
     
     for onto_path in candidate_paths:
@@ -541,12 +544,95 @@ def _local_hydration_configs(project_root: Path, pipeline_slug: str) -> tuple[st
     return pipeline_content, api_configs, onto_configs
 
 
-def _git_init(path: Path) -> None:
+def _git_init(path: Path, *, default_branch: str = "main") -> None:
     if (path / ".git").exists():
         return
-    result = subprocess.run(["git", "init", str(path)], capture_output=True, text=True)
+    result = subprocess.run(
+        ["git", "init", "--initial-branch", default_branch, str(path)],
+        capture_output=True,
+        text=True,
+    )
     if result.returncode != 0:
         raise RuntimeError(f"git init failed: {result.stderr or result.stdout}")
+
+
+def _git_has_commits(path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "--verify", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _git_create_initial_commit(
+    path: Path,
+    *,
+    default_branch: str = "main",
+    message: str = "chore: initial project scaffold from RAIL brief",
+) -> str | None:
+    status = subprocess.run(
+        ["git", "-C", str(path), "status", "--short"],
+        capture_output=True,
+        text=True,
+    )
+    if status.returncode != 0:
+        raise RuntimeError(f"git status failed: {status.stderr or status.stdout}")
+
+    if _git_has_commits(path) and not status.stdout.strip():
+        head = subprocess.run(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        if head.returncode != 0:
+            raise RuntimeError(f"git rev-parse failed: {head.stderr or head.stdout}")
+        return head.stdout.strip()
+
+    checkout = subprocess.run(
+        ["git", "-C", str(path), "checkout", "-B", default_branch],
+        capture_output=True,
+        text=True,
+    )
+    if checkout.returncode != 0:
+        raise RuntimeError(f"git checkout failed: {checkout.stderr or checkout.stdout}")
+
+    add = subprocess.run(
+        ["git", "-C", str(path), "add", "-A"],
+        capture_output=True,
+        text=True,
+    )
+    if add.returncode != 0:
+        raise RuntimeError(f"git add failed: {add.stderr or add.stdout}")
+
+    commit = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(path),
+            "-c",
+            "user.name=RAIL Bot",
+            "-c",
+            "user.email=rail-bot@rutgers.edu",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if commit.returncode != 0:
+        raise RuntimeError(f"git commit failed: {commit.stderr or commit.stdout}")
+
+    head = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if head.returncode != 0:
+        raise RuntimeError(f"git rev-parse failed: {head.stderr or head.stdout}")
+    return head.stdout.strip()
 
 
 def _relative_to_project(project_root: Path | None, path: Path | None) -> str | None:
@@ -733,7 +819,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     repo_root.parent.mkdir(parents=True, exist_ok=True)
     bootstrap_future_project(repo_root, name=project_meta["name"], slug=slug, default_branch=data.defaultBranch)
     write_repo_files(repo_root, preview["repoFiles"])
-    _git_init(repo_root)
+    _git_init(repo_root, default_branch=data.defaultBranch)
 
     # Auto-create GitHub repo if no URL provided
     git_repo_url = data.gitRepoUrl
@@ -832,6 +918,18 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     rail_path = repo_root / "rail.yaml"
     existing_rail = rail_path.read_text(encoding="utf-8") if rail_path.exists() else None
     rail_path.write_text(render_rail_manifest(project, existing_rail), encoding="utf-8")
+    try:
+        _git_create_initial_commit(
+            repo_root,
+            default_branch=data.defaultBranch,
+            message="chore: initial project scaffold from RAIL brief",
+        )
+    except Exception as exc:
+        logger.error("Initial local scaffold commit failed for '%s': %s", slug, exc)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Initial local scaffold commit failed: {exc}",
+        )
 
     # Push all local repo files to GitHub as the initial commit
     if git_repo:
@@ -1110,6 +1208,12 @@ async def get_project_context(slug: str):
 async def get_command_center(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     return await command_center_service.build_command_center(project)
+
+
+@router.post("/{slug}/command-center/reconcile")
+async def reconcile_command_center_state(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return await reconciliation_service.reconcile_project_reality(project)
 
 
 @router.get("/{slug}/skills")
