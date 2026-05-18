@@ -874,20 +874,12 @@ def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
 
 def _should_skip_planner_for_ready_repair(tasks: list[dict[str, Any]], auditors: dict[str, Any] | None) -> bool:
     auditors = auditors or {}
-    if (auditors.get("ontology") or {}).get("status") == "blocked" and _has_ready_task_title(tasks, "Repair ontology readiness blockers"):
+    ready_tasks = [task for task in tasks if str(task.get("status") or "") == "ready" and task.get("approvalState") != "pending"]
+    filtered_ready = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
+    if (auditors.get("ontology") or {}).get("status") == "blocked" and filtered_ready:
         return True
-    if (auditors.get("integrity") or {}).get("status") == "blocked":
-        for title in (
-            "Repair unsupported claims and verification evidence",
-            "Refresh stale sources or rerun dependent analyses",
-            "Resolve failed verification runs before trusted promotion",
-            "Repair reproducibility metadata for trusted artifacts",
-            "Resolve inadmissible sources for trusted outputs",
-            "Repair dataset provenance and freshness metadata",
-            "Repair analysis lineage and verification metadata",
-        ):
-            if _has_ready_task_title(tasks, title):
-                return True
+    if (auditors.get("integrity") or {}).get("status") == "blocked" and filtered_ready:
+        return True
     if (auditors.get("closeout") or {}).get("status") == "blocked" and _has_ready_task_title(tasks, "Resolve closeout blockers"):
         return True
     if _control_plane_auditor_gate(auditors).get("blocked") and _has_ready_task_title(tasks, "Reconcile control-plane drift and stale sessions"):
@@ -938,6 +930,35 @@ def _apply_auditor_priority_boosts(
     return boosted
 
 
+def _task_matches_ontology_repair_work(task: dict[str, Any]) -> bool:
+    title = str(task.get("title") or "").strip().lower()
+    role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+    if title == "repair ontology readiness blockers":
+        return True
+    if title in {
+        "populate ontology pipeline steps for attachable sources",
+        "hydrate project ontology and register active artifacts",
+        "verify hydrated ontology health before research",
+    }:
+        return True
+    if role in {"data", "health"} and any(token in title for token in ("hydrate", "pipeline", "source", "health", "repair ontology")):
+        return True
+    return False
+
+
+def _task_matches_integrity_repair_work(task: dict[str, Any]) -> bool:
+    title = str(task.get("title") or "").strip().lower()
+    return title in {
+        "repair unsupported claims and verification evidence",
+        "refresh stale sources or rerun dependent analyses",
+        "resolve failed verification runs before trusted promotion",
+        "repair reproducibility metadata for trusted artifacts",
+        "resolve inadmissible sources for trusted outputs",
+        "repair dataset provenance and freshness metadata",
+        "repair analysis lineage and verification metadata",
+    }
+
+
 def _filter_ready_tasks_for_auditors(
     ready_tasks: list[dict[str, Any]],
     auditors: dict[str, Any] | None,
@@ -952,32 +973,19 @@ def _filter_ready_tasks_for_auditors(
             if str(task.get("title") or "") == "Reconcile control-plane drift and stale sessions"
         ]
     if ontology_auditor.get("status") == "blocked":
-        allowed_roles = {"data", "health"}
-        allowed: list[dict[str, Any]] = []
-        for task in filtered:
-            role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
-            title = str(task.get("title") or "").lower()
-            if role in allowed_roles:
-                allowed.append(task)
-                continue
-            if not role and any(token in title for token in ("hydrate", "ontology", "pipeline", "source")):
-                allowed.append(task)
-        filtered = allowed
+        filtered = [task for task in filtered if _task_matches_ontology_repair_work(task)]
 
     integrity_auditor = (auditors or {}).get("integrity") or {}
     if integrity_auditor.get("status") == "blocked":
-        allowed_roles = {"health", "data", "coding"}
-        allowed: list[dict[str, Any]] = []
-        for task in filtered:
-            role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
-            title = str(task.get("title") or "").lower()
-            if role in allowed_roles:
-                allowed.append(task)
-                continue
-            if not role and any(token in title for token in ("verify", "evidence", "source", "provenance", "claim")):
-                allowed.append(task)
-        filtered = allowed
+        filtered = [task for task in filtered if _task_matches_integrity_repair_work(task)]
     return filtered
+
+
+def _task_allowed_for_auditors(
+    task: dict[str, Any],
+    auditors: dict[str, Any] | None,
+) -> bool:
+    return bool(_filter_ready_tasks_for_auditors([task], auditors))
 
 
 def _control_plane_auditor_gate(auditors: dict[str, Any] | None) -> dict[str, Any]:
@@ -1106,6 +1114,56 @@ async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str
         {"task_id": str(candidate["_id"])},
     )
     return result
+
+
+async def _launch_ready_tasks_if_available(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+    project_slug: str,
+) -> bool:
+    ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
+    ready_tasks = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
+    if not ready_tasks:
+        return False
+
+    cancelled_task_ids = {str(t["_id"]) for t in tasks if t.get("status") == "cancelled"}
+    for event in await list_decision_events(project, status="open"):
+        referenced_cancelled = [
+            ref.removeprefix("task:")
+            for ref in event.evidenceRefs
+            if ref.startswith("task:")
+        ]
+        if event.type == "no_ready_tasks":
+            await mark_decision_event(project, event._id, "handled")
+        elif (
+            event.type == "task_cancelled_with_dependents"
+            and referenced_cancelled
+            and not any(task_id in cancelled_task_ids for task_id in referenced_cancelled)
+        ):
+            await mark_decision_event(project, event._id, "handled")
+    try:
+        launch_result = await _launch_ready_task(project, ready_tasks)
+    except Exception as exc:
+        logger.error("Autopilot: Failed to launch ready task for %s: %s", project_slug, exc)
+        launch_result = {"error": str(exc)}
+    if launch_result and not launch_result.get("error"):
+        logger.info("Autopilot: Launched ready task for %s", project_slug)
+        return True
+    if launch_result and launch_result.get("error"):
+        logger.info("Autopilot: Ready task launch deferred for %s: %s", project_slug, launch_result.get("error"))
+    return False
+
+
+async def _reload_tasks_and_auditors(
+    project: dict[str, Any],
+    board_id: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None, dict[str, Any]]:
+    tasks = await planner_service.list_tasks(board_id, project=project)
+    active_worker = await running_agent_service.find_active_worker(project["_id"])
+    auditor_sessions = [active_worker] if active_worker else []
+    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+    return tasks, active_worker, auditors
 
 
 async def _mark_project_completed(project: dict[str, Any]) -> None:
@@ -1281,38 +1339,28 @@ async def run_autopilot_loop(project_slug: str):
         config = _autopilot_configs.get(project_slug, {})
 
         board = await planner_service.ensure_main_board(project)
-        tasks = await planner_service.list_tasks(board["_id"], project=project)
-        active_worker = await running_agent_service.find_active_worker(project["_id"])
-        auditor_sessions = [active_worker] if active_worker else []
-        auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+        tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
         if await _ensure_ontology_lifecycle_tasks(project, tasks):
-            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
-            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_ontology_expansion_tasks(project, tasks):
-            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
-            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_project_reality_repair_tasks(project, tasks):
-            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
-            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_integrity_repair_tasks(project, tasks):
-            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
-            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_ontology_repair_task(project, tasks, auditors):
-            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
-            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _reconcile_ontology_lifecycle_state(project, tasks):
-            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
-            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         if await _ensure_control_plane_repair_tasks(project, tasks, auditors):
-            tasks = await planner_service.list_tasks(board["_id"], project=project)
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
-            auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
         control_plane_gate = _control_plane_auditor_gate(auditors)
         if control_plane_gate.get("blocked"):
             if _has_ready_task_title(tasks, "Reconcile control-plane drift and stale sessions"):
@@ -1349,9 +1397,8 @@ async def run_autopilot_loop(project_slug: str):
             closeout_auditor = auditors.get("closeout") or {}
             if closeout_auditor.get("status") == "blocked":
                 if await _ensure_closeout_repair_task(project, tasks, auditors):
-                    tasks = await planner_service.list_tasks(board["_id"], project=project)
+                    tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
                     consecutive_idle_turns = 0
-                    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
                     continue
                 closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
@@ -1391,30 +1438,7 @@ async def run_autopilot_loop(project_slug: str):
                 await _mark_project_completed(project)
                 break
 
-        # 2. Run the planner to see what it wants to do, unless a blocked auditor already has a ready repair task.
-        if _should_skip_planner_for_ready_repair(tasks, auditors):
-            _update_config(
-                project_slug,
-                last_action="Skipping planner turn for ready repair task",
-                last_turn_result="Blocked auditor already has matching ready remediation work.",
-            )
-        else:
-            _update_config(project_slug, last_action="Running Planner: Determining next task...")
-            try:
-                await planner_runtime.run_planner_turn(
-                    project=project,
-                    user_message=_planner_turn_message(auditors),
-                    persist=False # Do not spam the chat thread
-                )
-                _update_config(project_slug, last_turn_result="Planner turn completed.")
-                logger.info("Planner turn complete.")
-            except Exception as e:
-                logger.error(f"Planner turn failed in autopilot: {e}")
-                _update_config(project_slug, last_action="Idle (Recovering from error)", last_turn_result=f"Error: {e}")
-                await asyncio.sleep(60)
-                continue
-
-        # 3. Check if a worker is already running or was just launched
+        # 2. Check if a worker is already running before doing any new planning or launch work.
         _update_config(project_slug, last_action="Checking for active worker sessions...")
         if active_worker:
             session_id = active_worker["_id"]
@@ -1450,6 +1474,34 @@ async def run_autopilot_loop(project_slug: str):
             except Exception as e:
                 logger.error(f"Error polling worker in autopilot: {e}")
                 await asyncio.sleep(10)
+                continue
+
+        if await _launch_ready_tasks_if_available(project, tasks, auditors, project_slug):
+            consecutive_idle_turns = 0
+            continue
+
+        # 3. Run the planner to see what it wants to do, unless a blocked auditor already has a ready repair task.
+        if _should_skip_planner_for_ready_repair(tasks, auditors):
+            _update_config(
+                project_slug,
+                last_action="Skipping planner turn for ready repair task",
+                last_turn_result="Blocked auditor already has matching ready remediation work.",
+            )
+        else:
+            _update_config(project_slug, last_action="Running Planner: Determining next task...")
+            try:
+                await planner_runtime.run_planner_turn(
+                    project=project,
+                    user_message=_planner_turn_message(auditors),
+                    persist=False # Do not spam the chat thread
+                )
+                tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+                _update_config(project_slug, last_turn_result="Planner turn completed.")
+                logger.info("Planner turn complete.")
+            except Exception as e:
+                logger.error(f"Planner turn failed in autopilot: {e}")
+                _update_config(project_slug, last_action="Idle (Recovering from error)", last_turn_result=f"Error: {e}")
+                await asyncio.sleep(60)
                 continue
             
         # 4. Check tasks on the board to see if we are actually making progress
@@ -1510,9 +1562,21 @@ async def run_autopilot_loop(project_slug: str):
                 status = task.get("status")
                 if status not in {"ready", "awaiting_approval", "backlog", "blocked"}:
                     continue
+                if status == "ready" and task.get("approvalState") != "pending":
+                    continue
                 if status == "blocked" and task.get("blockerCategory") == "publish_failure":
                     continue
                 if not _dependencies_satisfied(task, task_by_id):
+                    continue
+                promotion_view = {
+                    "_id": task.get("_id"),
+                    "title": task.get("title"),
+                    "status": "ready",
+                    "agentRole": task.get("agentRole") or task.get("agent_role"),
+                    "agent_role": task.get("agent_role") or task.get("agentRole"),
+                    "priority": task.get("priority"),
+                }
+                if not _task_allowed_for_auditors(promotion_view, auditors):
                     continue
                 if task.get("approvalState") == "pending":
                     task_id = str(task["_id"])
@@ -1584,7 +1648,18 @@ async def run_autopilot_loop(project_slug: str):
                 ],
             )
             if config.get("auto_approve"):
+                requeued: list[str] = []
                 for task in cancelled_with_dependents:
+                    requeue_view = {
+                        "_id": task.get("_id"),
+                        "title": task.get("title"),
+                        "status": "ready",
+                        "agentRole": task.get("agentRole") or task.get("agent_role"),
+                        "agent_role": task.get("agent_role") or task.get("agentRole"),
+                        "priority": task.get("priority"),
+                    }
+                    if not _task_allowed_for_auditors(requeue_view, auditors):
+                        continue
                     await planner_service.update_task(
                         str(task["_id"]),
                         project=project,
@@ -1593,42 +1668,20 @@ async def run_autopilot_loop(project_slug: str):
                         approval_state="granted",
                         latestRunSummary="Requeued by Autopilot because downstream tasks still depend on it.",
                     )
-                await mark_decision_event(project, event._id, "handled")
-                await planner_service.sync_planner_files(project, board)
-                consecutive_idle_turns = 0
-                continue
+                    requeued.append(str(task["_id"]))
+                if requeued:
+                    await mark_decision_event(project, event._id, "handled")
+                    await planner_service.sync_planner_files(project, board)
+                    consecutive_idle_turns = 0
+                    continue
             
-        # Check if we have ready tasks that weren't launched
+        # Check if we have ready tasks that became available after planner/promotion/requeue work.
+        if await _launch_ready_tasks_if_available(project, tasks, auditors, project_slug):
+            consecutive_idle_turns = 0
+            continue
+
         ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
         ready_tasks = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
-        if ready_tasks:
-            cancelled_task_ids = {str(t["_id"]) for t in tasks if t.get("status") == "cancelled"}
-            for event in await list_decision_events(project, status="open"):
-                referenced_cancelled = [
-                    ref.removeprefix("task:")
-                    for ref in event.evidenceRefs
-                    if ref.startswith("task:")
-                ]
-                if event.type == "no_ready_tasks":
-                    await mark_decision_event(project, event._id, "handled")
-                elif (
-                    event.type == "task_cancelled_with_dependents"
-                    and referenced_cancelled
-                    and not any(task_id in cancelled_task_ids for task_id in referenced_cancelled)
-                ):
-                    await mark_decision_event(project, event._id, "handled")
-            try:
-                launch_result = await _launch_ready_task(project, ready_tasks)
-            except Exception as exc:
-                logger.error("Autopilot: Failed to launch ready task for %s: %s", project_slug, exc)
-                launch_result = {"error": str(exc)}
-            if launch_result and not launch_result.get("error"):
-                logger.info("Autopilot: Launched ready task for %s", project_slug)
-                consecutive_idle_turns = 0
-                continue
-            if launch_result and launch_result.get("error"):
-                logger.info("Autopilot: Ready task launch deferred for %s: %s", project_slug, launch_result.get("error"))
-
         if not ready_tasks:
             consecutive_idle_turns += 1
             logger.info(f"Autopilot: No ready tasks. Idle turns: {consecutive_idle_turns}")
