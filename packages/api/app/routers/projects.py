@@ -397,6 +397,7 @@ class IntegrityArtifactPromotionRequest(BaseModel):
 ALLOWED_SOURCE_ADMISSIBILITY_STATUSES = {"observed", "derived", "estimated", "synthetic", "missing"}
 ALLOWED_SOURCE_FRESHNESS_STATUSES = {"unknown", "fresh", "needs_refresh", "stale"}
 ALLOWED_SOURCE_QUALITY_STATUSES = {"candidate", "validated", "blocked", "rejected"}
+ALLOWED_SOURCE_IMPACT_LEVELS = {"low", "normal", "high", "critical"}
 ALLOWED_CLAIM_STATUSES = {"draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"}
 ALLOWED_EVIDENCE_KINDS = {"direct", "derived", "contextual", "semantic_suggestion"}
 ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially_verified", "verified", "stale", "blocked"}
@@ -405,11 +406,17 @@ ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
 
 def _validate_trusted_source_contract(
     *,
+    impact_level: str | None,
     quality_status: str | None,
     admissibility_status: str | None,
     freshness_status: str | None,
     provenance: dict | None,
 ) -> None:
+    if impact_level not in {None, ""} and impact_level not in ALLOWED_SOURCE_IMPACT_LEVELS:
+        raise HTTPException(
+            status_code=422,
+            detail="Source impact level must be one of: low, normal, high, critical.",
+        )
     if quality_status not in {None, ""} and quality_status not in ALLOWED_SOURCE_QUALITY_STATUSES:
         raise HTTPException(
             status_code=422,
@@ -1597,6 +1604,7 @@ async def patch_project_integrity_source(slug: str, source_key: str, data: Integ
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
     _validate_trusted_source_contract(
+        impact_level=data.impactLevel,
         quality_status=data.qualityStatus,
         admissibility_status=data.admissibilityStatus,
         freshness_status=data.freshnessStatus,
@@ -1908,6 +1916,7 @@ async def record_project_integrity_source(slug: str, data: IntegrityRecordSource
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
     _validate_trusted_source_contract(
+        impact_level=data.impactLevel,
         quality_status=data.qualityStatus,
         admissibility_status=data.admissibilityStatus,
         freshness_status=data.freshnessStatus,
