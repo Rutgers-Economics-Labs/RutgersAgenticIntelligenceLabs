@@ -1451,6 +1451,24 @@ def promote_artifact(
         or bool(artifact_claim_keys.intersection(set(gate.get("blockingClaims") or [])))
         or bool(artifact_run_ids.intersection(set(gate.get("blockingVerificationRuns") or [])))
     )
+    trusted_target = target_state in {"partially_verified", "verified"}
+    if trusted_target and wanted.artifact_type != "dataset":
+        ontology_duckdb = Path(project_root) / ".ontology" / "onto.duckdb"
+        hydration_meta = Path(project_root) / ".ontology" / ".rail_hydration.json"
+        if not ontology_duckdb.exists() or not hydration_meta.exists():
+            gate = {
+                **gate,
+                "blocked": True,
+                "reasons": list(dict.fromkeys([
+                    *[str(item) for item in (gate.get("reasons") or [])],
+                    "Ontology hydration must exist before non-dataset artifacts can be promoted as trusted outputs.",
+                ])),
+                "blockingArtifacts": list(dict.fromkeys([
+                    *[str(item) for item in (gate.get("blockingArtifacts") or [])],
+                    artifact_path,
+                ])),
+            }
+            blocked_by_gate = True
     if gate["blocked"] and blocked_by_gate:
         return {
             "status": "blocked",

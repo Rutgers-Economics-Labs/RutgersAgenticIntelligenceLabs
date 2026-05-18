@@ -1426,6 +1426,9 @@ def test_contradicting_supported_claims_become_conflicted_and_block_artifacts(tm
 def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
     repo = ResearchIntegrityRepo(root)
+    (root / ".ontology").mkdir(parents=True, exist_ok=True)
+    (root / ".ontology" / "onto.duckdb").write_bytes(b"")
+    (root / ".ontology" / ".rail_hydration.json").write_text("{}", encoding="utf-8")
     repo.write_sources(
         [
             {
@@ -1485,6 +1488,71 @@ def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
 
     assert result["status"] == "promoted"
     assert result["artifact"]["promotion_state"] == "verified"
+
+
+def test_promote_artifact_blocks_report_when_ontology_hydration_is_missing(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_sources(
+        [
+            {
+                "source_key": "bls-laus",
+                "source_type": "dataset",
+                "title": "BLS LAUS",
+                "url_or_path": "https://example.com/bls.csv",
+                "origin": "BLS",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "api",
+                "freshness_status": "fresh",
+                "quality_status": "validated",
+                "provenance": {"text": "BLS extract."},
+            }
+        ]
+    )
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "Unemployment fell after 2021.",
+                "artifact_path": "artifacts/report.md",
+                "evidence_paths": ["topics/labor/notes.md"],
+                "source_keys": ["bls-laus"],
+                "status": "supported",
+                "evidence_kind": "direct",
+            }
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "partially_verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "sources": ["research_plan/state/sources.json#bls-laus"],
+                "claims": ["research_plan/state/claims.json#claim-001"],
+                "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
+
+    result = promote_artifact(root, load_manifest(root), "artifacts/report.md", target_state="verified")
+
+    assert result["status"] == "blocked"
+    assert "artifacts/report.md" in result["gate"]["blockingArtifacts"]
+    assert any("Ontology hydration must exist" in reason for reason in result["gate"]["reasons"])
 
 
 def test_get_artifact_detail_returns_linked_records_and_trust_state(tmp_path):
