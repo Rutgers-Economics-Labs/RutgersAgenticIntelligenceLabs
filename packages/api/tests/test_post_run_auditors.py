@@ -1,0 +1,173 @@
+"""Tests for Milestone 6: Post-Run Auditors — all five auditors fire after every worker run."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+import yaml
+
+RAIL_PY_ROOT = Path(__file__).parents[3] / "rail-py"
+if str(RAIL_PY_ROOT) not in sys.path:
+    sys.path.insert(0, str(RAIL_PY_ROOT))
+
+
+MINIMAL_MANIFEST = """\
+version: 1
+project:
+  name: "Test"
+  slug: "test"
+  default_branch: "main"
+paths:
+  ontology_root: ".ontology"
+  topics_root: "topics"
+  specs_root: "specs"
+  plan_root: "research_plan"
+  agents_root: "agents"
+  skills_root: "skills"
+  artifacts_root: "artifacts"
+hydration:
+  ontology_file: ".ontology/ontology.yaml"
+  sources_dir: ".ontology/sources"
+  pipelines_dir: ".ontology/pipelines"
+agents:
+  roles_dir: "agents"
+  default_runner: "codex_cli"
+  sequential_execution: true
+  planner_thread_mode: "project"
+  default_planner_role: "planner"
+frontend:
+  topic_index_mode: "filesystem"
+  artifact_index_mode: "filesystem"
+"""
+
+
+def _setup_project(tmp_path: Path) -> tuple[dict, Path, Path]:
+    (tmp_path / "rail.yaml").write_text(MINIMAL_MANIFEST, encoding="utf-8")
+    state_dir = tmp_path / "research_plan" / "state"
+    state_dir.mkdir(parents=True)
+    for name in ["sources.json", "claims.json", "artifact_lineage.json",
+                 "verification_runs.json", "assumptions.json", "source_candidates.json",
+                 "claim_candidates.json", "entity_candidates.json", "conflicts.json"]:
+        (state_dir / name).write_text("[]", encoding="utf-8")
+
+    session_root = tmp_path / "research_plan" / "sessions" / "research" / "sess-001"
+    session_root.mkdir(parents=True)
+    state = {"session_id": "sess-001", "status": "completed", "review_status": "review"}
+    (session_root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path), "slug": "test"}
+    return project, tmp_path, session_root
+
+
+@pytest.mark.asyncio
+async def test_write_post_run_audit_includes_auditors_key(tmp_path):
+    from app.services.audit_service import write_post_run_audit
+
+    project, project_root, session_root = _setup_project(tmp_path)
+
+    mock_auditors = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+        "ontology": {"status": "ready", "blockers": []},
+        "integrity": {"status": "ready", "blockers": []},
+        "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+    }
+
+    with (
+        patch("app.services.audit_service.planner_service.ensure_main_board", new_callable=AsyncMock, return_value={"_id": "main"}),
+        patch("app.services.audit_service.planner_service.list_tasks", new_callable=AsyncMock, return_value=[]),
+        patch("app.services.auditor_service.project_reality_status", new_callable=AsyncMock, return_value={
+            "staleRuntimeSessionCount": 0,
+            "zombieSessionCount": 0,
+            "duplicateTaskFileCount": 0,
+            "taskSessionMismatchCount": 0,
+            "staleAuditSessionCount": 0,
+            "runningAgentStatusDriftCount": 0,
+            "runningAgentRoleDriftCount": 0,
+            "runningAgentRunnerDriftCount": 0,
+            "secretPolicyRoleDriftCount": 0,
+            "roleConfigAliasDriftCount": 0,
+            "details": {},
+        }),
+        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value=mock_auditors),
+    ):
+        result = await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id="sess-001",
+            session={"role": "research"},
+            changed_files=["research_plan/data.md"],
+        )
+
+    assert "auditors" in result["payload"]
+    auditors = result["payload"]["auditors"]
+    assert "session" in auditors
+    assert "planner" in auditors
+    assert "ontology" in auditors
+    assert "integrity" in auditors
+    assert "closeout" in auditors
+
+
+@pytest.mark.asyncio
+async def test_write_post_run_audit_auditors_key_empty_dict_on_failure(tmp_path):
+    """Auditor failure must not crash the audit write — auditors key is empty dict."""
+    from app.services.audit_service import write_post_run_audit
+
+    project, project_root, session_root = _setup_project(tmp_path)
+
+    with (
+        patch("app.services.audit_service.planner_service.ensure_main_board", new_callable=AsyncMock, return_value={"_id": "main"}),
+        patch("app.services.audit_service.planner_service.list_tasks", new_callable=AsyncMock, return_value=[]),
+        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, side_effect=RuntimeError("DB down")),
+    ):
+        result = await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id="sess-002",
+            session={"role": "research"},
+            changed_files=[],
+        )
+
+    assert result["payload"]["auditors"] == {}
+
+
+@pytest.mark.asyncio
+async def test_write_post_run_audit_persists_auditors_to_json(tmp_path):
+    """The written JSON file must contain the auditors snapshot."""
+    from app.services.audit_service import write_post_run_audit
+
+    project, project_root, session_root = _setup_project(tmp_path)
+
+    mock_auditors = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "blocked", "blockers": ["2 duplicate task file(s) detected."]},
+        "ontology": {"status": "ready", "blockers": []},
+        "integrity": {"status": "ready", "blockers": []},
+        "closeout": {"status": "ready", "blockers": []},
+    }
+
+    with (
+        patch("app.services.audit_service.planner_service.ensure_main_board", new_callable=AsyncMock, return_value={"_id": "main"}),
+        patch("app.services.audit_service.planner_service.list_tasks", new_callable=AsyncMock, return_value=[]),
+        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value=mock_auditors),
+    ):
+        result = await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id="sess-003",
+            session={"role": "planner"},
+            changed_files=[],
+        )
+
+    json_path = Path(result["jsonPath"])
+    assert json_path.exists()
+    on_disk = json.loads(json_path.read_text(encoding="utf-8"))
+    assert on_disk["auditors"]["planner"]["status"] == "blocked"
+    assert "2 duplicate" in on_disk["auditors"]["planner"]["blockers"][0]

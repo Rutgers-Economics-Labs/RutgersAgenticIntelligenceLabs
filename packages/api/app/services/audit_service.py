@@ -266,6 +266,14 @@ async def write_post_run_audit(
         except Exception:
             tasks = []
     planner = _planner_snapshot(tasks)
+
+    auditors: dict[str, Any] = {}
+    try:
+        from app.services.auditor_service import build_auditor_statuses
+        auditors = await build_auditor_statuses(project, tasks=tasks)
+    except Exception:
+        pass
+
     payload = {
         "generatedAt": session_files.utc_now_iso(),
         "session": {
@@ -284,6 +292,7 @@ async def write_post_run_audit(
             "blocked": bool(integrity_gate.get("blocked")),
             "reasons": [str(item) for item in (integrity_gate.get("reasons") or [])],
         },
+        "auditors": auditors,
         "completionSummary": state.get("completion_summary") or {},
     }
     payload["currentBlocker"] = _derive_current_blocker(
