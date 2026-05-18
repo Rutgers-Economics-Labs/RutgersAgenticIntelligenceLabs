@@ -326,6 +326,14 @@ export type CommandCenter = {
     count: number;
     statusCounts: Record<string, number>;
     freshnessCounts?: Record<string, number>;
+    admissibilityCounts?: Record<string, number>;
+    admissibilityHighlights?: Array<{
+      id: string;
+      name: string;
+      admissibilityStatus: string;
+      freshnessStatus: string;
+      qualityStatus: string;
+    }>;
     notesPath?: string | null;
   };
   skillSummary: {

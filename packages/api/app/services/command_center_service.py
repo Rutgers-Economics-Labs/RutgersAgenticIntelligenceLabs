@@ -276,12 +276,25 @@ def list_project_sources(project: dict) -> dict[str, Any]:
     status_counts: dict[str, int] = {}
     freshness_counts: dict[str, int] = {}
     admissibility_counts: dict[str, int] = {}
+    admissibility_highlights: list[dict[str, str]] = []
     for row in rows.values():
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
         freshness = str(row.get("freshnessStatus") or "unknown")
         freshness_counts[freshness] = freshness_counts.get(freshness, 0) + 1
         admissibility = str((row.get("sourceState") or {}).get("admissibilityStatus") or "unknown")
         admissibility_counts[admissibility] = admissibility_counts.get(admissibility, 0) + 1
+        if admissibility not in {"observed", "derived"}:
+            admissibility_highlights.append(
+                {
+                    "id": str(row.get("id") or ""),
+                    "name": str(row.get("name") or row.get("id") or "Source"),
+                    "admissibilityStatus": admissibility,
+                    "freshnessStatus": freshness,
+                    "qualityStatus": str(row.get("qualityStatus") or row.get("status") or "unknown"),
+                }
+            )
+
+    admissibility_highlights.sort(key=lambda item: (item["admissibilityStatus"], item["name"]))
 
     return {
         "sources": list(rows.values()),
@@ -290,6 +303,7 @@ def list_project_sources(project: dict) -> dict[str, Any]:
             "statusCounts": status_counts,
             "freshnessCounts": freshness_counts,
             "admissibilityCounts": admissibility_counts,
+            "admissibilityHighlights": admissibility_highlights[:6],
             "notesPath": _rel(notes_path, root) if notes_path.exists() else None,
         },
         "notes": source_notes,

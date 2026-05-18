@@ -250,9 +250,18 @@ export default async function ProjectHomePage({
       </SectionCard>
       <SectionCard eyebrow="Source Admissibility" noPad>
         <InlineStatus label="sources" value={center.sourceSummary.count} />
-        {Object.entries(center.integritySummary?.sourceAdmissibilityCounts ?? {}).map(([key, value]) => (
+        {Object.entries(center.sourceSummary.admissibilityCounts ?? center.integritySummary?.sourceAdmissibilityCounts ?? {}).map(([key, value]) => (
           <InlineStatus key={`admissibility-${key}`} label={`${key.replaceAll("_", " ")} admissibility`} value={value} />
         ))}
+        {center.sourceSummary.admissibilityHighlights?.length ? (
+          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
+            {center.sourceSummary.admissibilityHighlights.map((item) => (
+              <div key={item.id} className="mono-muted">
+                {item.name} · {item.admissibilityStatus} · {item.freshnessStatus} · {item.qualityStatus}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </SectionCard>
       <SectionCard eyebrow="Workflow Gates" noPad>
         {workflowSections.length ? workflowSections.map((section) => (

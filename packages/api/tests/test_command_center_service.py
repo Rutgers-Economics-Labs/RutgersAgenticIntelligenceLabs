@@ -369,6 +369,34 @@ def test_build_command_center_surfaces_source_admissibility_counts(tmp_path: Pat
     from app.services import command_center_service
 
     _write(
+        tmp_path / "rail.yaml",
+        """version: 1
+project:
+  name: Grid Study
+  slug: grid-study
+  default_branch: main
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+frontend:
+  topic_index_mode: filesystem
+  artifact_index_mode: filesystem
+""",
+    )
+    _write(
         tmp_path / "research_plan" / "state" / "sources.json",
         """[
   {
@@ -399,6 +427,16 @@ def test_build_command_center_surfaces_source_admissibility_counts(tmp_path: Pat
 
     assert center["integritySummary"]["sourceAdmissibilityCounts"]["observed"] == 1
     assert center["integritySummary"]["sourceAdmissibilityCounts"]["estimated"] == 1
+    assert center["sourceSummary"]["admissibilityCounts"]["estimated"] == 1
+    assert center["sourceSummary"]["admissibilityHighlights"] == [
+        {
+            "id": "estimated-series",
+            "name": "Estimated Series",
+            "admissibilityStatus": "estimated",
+            "freshnessStatus": "fresh",
+            "qualityStatus": "validated",
+        }
+    ]
 
 
 def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, monkeypatch):
