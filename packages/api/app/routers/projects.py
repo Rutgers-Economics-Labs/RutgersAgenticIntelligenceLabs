@@ -2617,9 +2617,7 @@ async def create_project_runner_session(
             field_name="Runner agentRoleForSecrets",
         )
 
-    repo_url = data.repoUrl or project.get("gitRepoUrl")
-    if not repo_url:
-        raise HTTPException(status_code=400, detail="Project has no gitRepoUrl and none provided")
+    repo_url = data.repoUrl or project.get("gitRepoUrl") or ""
     branch = data.branch or project.get("defaultBranch") or "main"
 
     policy_approval_granted = False
