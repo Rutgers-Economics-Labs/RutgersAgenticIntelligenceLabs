@@ -725,6 +725,32 @@ def _validate_artifact_lineage_references(
         )
 
 
+def _validate_trusted_artifact_lineage_contract(
+    *,
+    promotion_state: str | None,
+    inputs: list[str],
+    scripts: list[str],
+    verification_runs: list[str],
+) -> None:
+    has_workflow_support = bool(inputs or scripts or verification_runs)
+    if promotion_state == "verified" and not verification_runs:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Verified artifact lineage writes require recorded verification runs before the artifact "
+                "can be written in trusted state."
+            ),
+        )
+    if promotion_state == "partially_verified" and not has_workflow_support:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Partially verified artifact lineage writes require workflow support "
+                "(inputs, scripts, or verification runs)."
+            ),
+        )
+
+
 def _csv_query_param(value: str | None) -> list[str] | None:
     if not value:
         return None
@@ -2104,6 +2130,12 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    _validate_trusted_artifact_lineage_contract(
+        promotion_state=data.promotionState,
+        inputs=data.inputs,
+        scripts=data.scripts,
+        verification_runs=data.verificationRuns,
+    )
     if data.promotionState in {"partially_verified", "verified"}:
         auditors = await build_auditor_statuses(project)
         blocked: list[str] = []

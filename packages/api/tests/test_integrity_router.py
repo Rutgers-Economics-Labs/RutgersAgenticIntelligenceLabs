@@ -1328,6 +1328,87 @@ async def test_artifact_lineage_write_rejects_unknown_verification_runs(client, 
     assert "Artifact lineage references unknown verification runs: missing-run" in payload["detail"]
 
 
+async def test_artifact_lineage_write_rejects_verified_state_without_verification_runs(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    (root / "topics").mkdir(parents=True, exist_ok=True)
+    (root / "topics" / "data.csv").write_text("value\n1\n", encoding="utf-8")
+    (root / "topics" / "analyze.py").write_text("print('ok')\n", encoding="utf-8")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "verified",
+            "inputs": ["topics/data.csv"],
+            "scripts": ["topics/analyze.py"],
+        },
+    )
+
+    assert artifact_resp.status_code == 409
+    payload = artifact_resp.json()
+    assert "Verified artifact lineage writes require recorded verification runs" in payload["detail"]
+
+
+async def test_artifact_lineage_write_rejects_partially_verified_state_without_workflow_support(
+    client, convex_mock, tmp_path
+):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "partially_verified",
+        },
+    )
+
+    assert artifact_resp.status_code == 409
+    payload = artifact_resp.json()
+    assert "Partially verified artifact lineage writes require workflow support" in payload["detail"]
+
+
 async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     artifact_path = root / "artifacts" / "report.md"
