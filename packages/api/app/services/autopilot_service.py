@@ -1521,6 +1521,44 @@ async def run_autopilot_loop(project_slug: str):
             if poll_result == "polled":
                 consecutive_idle_turns = 0
             continue
+
+        control_plane_gate = _control_plane_auditor_gate(auditors)
+        if control_plane_gate.get("blocked"):
+            if await _ensure_control_plane_repair_tasks(project, tasks, auditors):
+                tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+                consecutive_idle_turns = 0
+                poll_result = await _poll_active_worker_if_present(project, active_worker, project_slug)
+                if poll_result:
+                    if poll_result == "polled":
+                        consecutive_idle_turns = 0
+                    continue
+                control_plane_gate = _control_plane_auditor_gate(auditors)
+            if not _has_ready_task_title(tasks, "Reconcile control-plane drift and stale sessions"):
+                blockers = control_plane_gate.get("blockers") or []
+                _update_config(
+                    project_slug,
+                    last_action="Waiting for control-plane repair",
+                    last_turn_result=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+                )
+                await raise_decision_event(
+                    project,
+                    source="autopilot",
+                    event_type="control_plane_auditor_blocked",
+                    severity="needs_planner",
+                    summary=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+                    evidence_refs=[f"project:{project.get('slug')}"],
+                    recommended_actions=[
+                        "Repair stale sessions or planner drift",
+                        "Rerun reconciliation until session and planner auditors are clear",
+                        "Advance only after control-plane blockers are removed",
+                    ],
+                )
+                _wake_events[project_slug].clear()
+                try:
+                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    pass
+                continue
             
         # 4. Check tasks on the board to see if we are actually making progress
         # If everything is 'done' or 'cancelled', we are finished
