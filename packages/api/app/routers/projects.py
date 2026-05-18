@@ -398,6 +398,7 @@ def _validate_trusted_source_contract(
     *,
     quality_status: str | None,
     admissibility_status: str | None,
+    freshness_status: str | None,
     provenance: dict | None,
 ) -> None:
     if quality_status != "validated":
@@ -414,6 +415,11 @@ def _validate_trusted_source_contract(
         raise HTTPException(
             status_code=422,
             detail="Validated sources require provenance metadata before they can be treated as trusted.",
+        )
+    if freshness_status in {None, "", "unknown"}:
+        raise HTTPException(
+            status_code=422,
+            detail="Validated sources require explicit freshness state before they can be treated as trusted.",
         )
 
 
@@ -1399,6 +1405,7 @@ async def patch_project_integrity_source(slug: str, source_key: str, data: Integ
     _validate_trusted_source_contract(
         quality_status=data.qualityStatus,
         admissibility_status=data.admissibilityStatus,
+        freshness_status=data.freshnessStatus,
         provenance=data.provenance,
     )
     changes = {
@@ -1704,6 +1711,7 @@ async def record_project_integrity_source(slug: str, data: IntegrityRecordSource
     _validate_trusted_source_contract(
         quality_status=data.qualityStatus,
         admissibility_status=data.admissibilityStatus,
+        freshness_status=data.freshnessStatus,
         provenance=data.provenance,
     )
     repo = get_integrity_repo(root)
