@@ -144,6 +144,7 @@ async def build_auditor_statuses(
     }
 
     ontology_status: dict[str, Any] = {"status": "ready", "blockers": [], "state": None}
+    ontology_reality = (reality.get("details") or {}).get("ontologyArtifactDrift") or {}
     if _is_ontology_project(project):
         try:
             hydration = await get_hydration_status(project=project)
@@ -163,6 +164,16 @@ async def build_auditor_statuses(
                 }
         except Exception as exc:
             ontology_status = {"status": "blocked", "blockers": [f"Could not read hydration status: {exc}"], "state": None}
+        if ontology_reality.get("hasDrift"):
+            blockers = list(ontology_status.get("blockers") or [])
+            blockers.append(
+                f"Active ontology artifact pointer drift detected: {ontology_reality.get('reason') or 'unknown_reason'}."
+            )
+            ontology_status = {
+                "status": "blocked",
+                "blockers": blockers,
+                "state": ontology_status.get("state"),
+            }
 
     integrity_status: dict[str, Any] = {"status": "ready", "blockers": []}
     closeout_status: dict[str, Any] = {"status": "ready", "blockers": []}
@@ -173,6 +184,19 @@ async def build_auditor_statuses(
             integrity_status = {
                 "status": "blocked",
                 "blockers": [str(item) for item in (artifact_gate.get("reasons") or [])],
+            }
+        artifact_registry_drift = (reality.get("details") or {}).get("artifactRegistryDrift") or {}
+        if artifact_registry_drift.get("hasDrift"):
+            blockers = list(integrity_status.get("blockers") or [])
+            untracked = list(artifact_registry_drift.get("untrackedArtifactPaths") or [])[:3]
+            missing = list(artifact_registry_drift.get("missingArtifactPaths") or [])[:3]
+            if untracked:
+                blockers.append(f"Artifacts exist on disk without lineage records: {', '.join(str(item) for item in untracked)}.")
+            if missing:
+                blockers.append(f"Artifact lineage points to missing files: {', '.join(str(item) for item in missing)}.")
+            integrity_status = {
+                "status": "blocked",
+                "blockers": blockers,
             }
         unfinished = [task for task in (tasks or []) if task.get("status") not in {"done", "cancelled"}]
         closeout_blockers: list[str] = []
