@@ -1275,6 +1275,70 @@ def test_evaluate_integrity_gate_blocks_artifacts_backed_by_blocked_sources(tmp_
     assert any("blocked or rejected sources" in reason for reason in gate["reasons"])
 
 
+def test_evaluate_integrity_gate_applies_closeout_requirements(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_sources(
+        [
+            {
+                "source_key": "semantic-lead",
+                "source_type": "document",
+                "title": "Related Blog Post",
+                "url_or_path": "https://example.com/blog",
+                "origin": "Example Blog",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "web",
+                "freshness_status": "fresh",
+                "quality_status": "candidate",
+            }
+        ]
+    )
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-002",
+                "claim_text": "A semantic lead suggests a similar pattern elsewhere.",
+                "artifact_path": "artifacts/report.md",
+                "source_keys": ["semantic-lead"],
+                "evidence_kind": "semantic_suggestion",
+                "status": "supported",
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "scope": "artifact",
+                "loop_type": "analysis_reproducibility",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "draft",
+                "inputs": [".ontology/onto.duckdb"],
+                "scripts": ["topics/analysis/analyze.py"],
+                "sources": ["research_plan/state/sources.json#semantic-lead"],
+                "claims": ["research_plan/state/claims.json#claim-002"],
+                "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
+            }
+        ]
+    )
+
+    gate = evaluate_integrity_gate(root, load_manifest(root), action="closeout")
+
+    assert gate["blocked"] is True
+    assert "claim-002" in gate["blockingClaims"]
+    assert any("Report claims need evidence" in reason for reason in gate["reasons"])
+
+
 def test_contradicting_supported_claims_become_conflicted_and_block_artifacts(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
     repo = ResearchIntegrityRepo(root)

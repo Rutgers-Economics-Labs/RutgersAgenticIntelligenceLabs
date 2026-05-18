@@ -408,6 +408,8 @@ def evaluate_integrity_gate(
 ) -> dict[str, Any]:
     indexes = load_integrity_indexes(project_root, plan_root=plan_root)
     integrity = manifest.integrity
+    gate_actions = set(getattr(manifest.verification, "require_integrity_gate_for", []) or [])
+    enforce_promotion_rules = action in PROMOTION_ACTIONS or action in gate_actions
     if action in REPAIR_ACTIONS:
         return {
             "blocked": False,
@@ -447,21 +449,21 @@ def evaluate_integrity_gate(
         if _source_admissibility_state(source) in {"estimated", "synthetic", "missing"}
         for artifact in repo.artifacts_for_source(source_key)
     ]
-    if action in PROMOTION_ACTIONS and integrity.stale_outputs_block_promotion and stale_outputs:
+    if enforce_promotion_rules and integrity.stale_outputs_block_promotion and stale_outputs:
         blocking_artifacts.extend(row.artifact_path for row in stale_outputs)
         reasons.append("Stale outputs must be rerun and revalidated before promotion.")
-    if action in PROMOTION_ACTIONS and stale_source_artifacts:
+    if enforce_promotion_rules and stale_source_artifacts:
         blocking_artifacts.extend(stale_source_artifacts)
         reasons.append("Artifacts that depend on stale sources must be rerun before promotion.")
-    if action in PROMOTION_ACTIONS and blocked_source_artifacts:
+    if enforce_promotion_rules and blocked_source_artifacts:
         blocking_artifacts.extend(blocked_source_artifacts)
         reasons.append("Artifacts that depend on blocked or rejected sources cannot be promoted.")
-    if action in PROMOTION_ACTIONS and inadmissible_source_artifacts:
+    if enforce_promotion_rules and inadmissible_source_artifacts:
         blocking_artifacts.extend(inadmissible_source_artifacts)
         reasons.append("Artifacts that depend on estimated, synthetic, or missing sources cannot be promoted as trusted outputs.")
 
     verification_failures = [run for run in indexes.verification_runs if run.status in {"failed", "blocked"}]
-    if action in PROMOTION_ACTIONS and verification_failures:
+    if enforce_promotion_rules and verification_failures:
         blocking_verification_runs.extend(run.run_id for run in verification_failures)
         reasons.append("Failed or blocked verification runs must be resolved before promotion.")
 
@@ -474,12 +476,12 @@ def evaluate_integrity_gate(
             for reference in artifact.claims
         }.intersection({row.claim_key for row in conflicted_claims})
     ]
-    if action in PROMOTION_ACTIONS and conflicted_claim_artifacts:
+    if enforce_promotion_rules and conflicted_claim_artifacts:
         blocking_artifacts.extend(conflicted_claim_artifacts)
         blocking_claims.extend(row.claim_key for row in conflicted_claims)
         reasons.append("Conflicted claims must be resolved before final artifacts can be promoted.")
 
-    if action in PROMOTION_ACTIONS and integrity.require_evidence_for_report_claims:
+    if enforce_promotion_rules and integrity.require_evidence_for_report_claims:
         unsupported_claims = [
             row
             for row in indexes.claims
@@ -501,7 +503,7 @@ def evaluate_integrity_gate(
             blocking_claims.extend(row.claim_key for row in unsupported_claims)
             reasons.append("Report claims need evidence before final artifacts can be promoted.")
 
-    if action in PROMOTION_ACTIONS and integrity.require_source_for_datasets:
+    if enforce_promotion_rules and integrity.require_source_for_datasets:
         unsourced_datasets = [
             row for row in indexes.artifact_lineage if row.artifact_type == "dataset" and not row.sources
         ]
@@ -519,7 +521,7 @@ def evaluate_integrity_gate(
             blocking_artifacts.extend(missing_provenance_datasets)
             reasons.append("Referenced sources must record provenance before datasets can be promoted.")
 
-    if action in PROMOTION_ACTIONS and integrity.require_lineage_for_final_artifacts:
+    if enforce_promotion_rules and integrity.require_lineage_for_final_artifacts:
         lineage_gaps = [
             row
             for row in indexes.artifact_lineage

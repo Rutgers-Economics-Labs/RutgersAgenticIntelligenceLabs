@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services.hydration_registry_service import get_hydration_status
-from app.services.integrity_service import evaluate_integrity_gate
+from app.services.integrity_service import evaluate_integrity_gate, load_integrity_indexes
 from app.services.reconciliation_service import project_reality_status
 from rail.manifest import load_manifest
 
@@ -104,6 +104,20 @@ def _missing_follow_up_task_blockers(tasks: list[dict[str, Any]], project_root: 
     return blockers
 
 
+def _list_final_artifact_files(project_root: Path, artifacts_root: str) -> list[str]:
+    root = (project_root / artifacts_root).resolve()
+    if not root.exists():
+        return []
+    files: list[str] = []
+    for path in root.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part.startswith(".") for part in path.relative_to(project_root).parts):
+            continue
+        files.append(str(path.relative_to(project_root)).replace("\\", "/"))
+    return sorted(files)
+
+
 async def build_auditor_statuses(
     project: dict[str, Any],
     *,
@@ -169,9 +183,31 @@ async def build_auditor_statuses(
         if ontology_status.get("status") == "blocked":
             closeout_blockers.extend(list(ontology_status.get("blockers") or [])[:1])
         closeout_blockers.extend(_missing_follow_up_task_blockers(tasks or [], root)[:3])
+        closeout_requirements = set(getattr(manifest.lifecycle, "closeout_requires", []) or [])
+        if "final_artifacts_present" in closeout_requirements:
+            artifact_files = _list_final_artifact_files(root, manifest.paths.artifacts_root)
+            if not artifact_files:
+                closeout_blockers.append("No final artifacts are present under the configured artifacts root.")
+            else:
+                indexes = load_integrity_indexes(root)
+                tracked = {
+                    str(item.artifact_path)
+                    for item in indexes.artifact_lineage
+                    if item.artifact_type != "dataset"
+                    and (
+                        str(item.artifact_path) == manifest.paths.artifacts_root
+                        or str(item.artifact_path).startswith(f"{manifest.paths.artifacts_root}/")
+                    )
+                }
+                untracked = [path for path in artifact_files if path not in tracked]
+                if untracked:
+                    sample = ", ".join(untracked[:3])
+                    closeout_blockers.append(
+                        f"Final artifacts exist on disk without lineage records: {sample}."
+                    )
         closeout_gate = evaluate_integrity_gate(root, manifest, action="closeout")
         if closeout_gate.get("blocked"):
-            closeout_blockers.extend([str(item) for item in (closeout_gate.get("reasons") or [])[:1]])
+            closeout_blockers.extend([str(item) for item in (closeout_gate.get("reasons") or [])[:3]])
         if closeout_blockers:
             closeout_status = {"status": "blocked", "blockers": closeout_blockers}
 
