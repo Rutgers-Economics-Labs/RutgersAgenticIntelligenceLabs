@@ -2447,15 +2447,16 @@ async def list_agent_secret_policies(slug: str):
 @router.post("/{slug}/settings/agent-secret-policies")
 async def upsert_agent_secret_policy(slug: str, data: AgentSecretPolicyUpsertRequest):
     project = await planner_service.get_project_by_slug(slug)
+    agent_role = _normalize_agent_role(data.agentRole, field_name="Agent secret policy role")
     policy_id = await convex.mutation(
         "agentSecretPolicies:upsert",
         {
             "projectId": project["_id"],
-            "agentRole": data.agentRole,
+            "agentRole": agent_role,
             "allowedSecretNames": data.allowedSecretNames,
         },
     )
-    return {"policyId": policy_id, "agentRole": data.agentRole}
+    return {"policyId": policy_id, "agentRole": agent_role}
 
 
 @router.delete("/{slug}/settings/secrets/{key_name}")
@@ -2471,11 +2472,12 @@ async def delete_project_secret(slug: str, key_name: str):
 @router.delete("/{slug}/settings/agent-secret-policies/{agent_role}")
 async def delete_agent_secret_policy(slug: str, agent_role: str):
     project = await planner_service.get_project_by_slug(slug)
+    normalized_role = _normalize_agent_role(agent_role, field_name="Agent secret policy role")
     await convex.mutation(
         "agentSecretPolicies:deleteByRole",
-        {"projectId": project["_id"], "agentRole": agent_role},
+        {"projectId": project["_id"], "agentRole": normalized_role},
     )
-    return {"deleted": True, "agentRole": agent_role}
+    return {"deleted": True, "agentRole": normalized_role}
 
 
 @router.get("/{slug}/secrets/resolve")
@@ -2488,8 +2490,9 @@ async def resolve_secrets_for_agent(slug: str, agentRole: str = Query(...)):
     """
     project = await planner_service.get_project_by_slug(slug)
     from app.services.secret_service import resolve_secrets_for_role
-    secrets = await resolve_secrets_for_role(project["_id"], agentRole)
-    return {"agentRole": agentRole, "secrets": secrets}
+    normalized_role = _normalize_agent_role(agentRole, field_name="Secrets resolve agentRole")
+    secrets = await resolve_secrets_for_role(project["_id"], normalized_role)
+    return {"agentRole": normalized_role, "secrets": secrets}
 
 
 @router.get("/{slug}/approvals")

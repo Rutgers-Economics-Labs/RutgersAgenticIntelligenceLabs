@@ -160,6 +160,39 @@ async def test_upsert_agent_secret_policy(client, convex_mock):
     assert "policyId" in data
 
 
+async def test_upsert_agent_secret_policy_normalizes_role_alias(client, convex_mock):
+    mutations_called = []
+
+    def _mutation(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        mutations_called.append((payload.get("path"), payload.get("args", {})))
+        return httpx.Response(200, json={"value": "policy-id-new"})
+
+    convex_mock.post("/api/query").mock(side_effect=_project_query)
+    convex_mock.post("/api/mutation").mock(side_effect=_mutation)
+
+    resp = await client.post(
+        f"/api/v1/projects/{PROJECT_SLUG}/settings/agent-secret-policies",
+        json={"agentRole": "developer", "allowedSecretNames": ["WEB_SEARCH_KEY"]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["agentRole"] == "coding"
+    _, args = next((p, a) for p, a in mutations_called if p == "agentSecretPolicies:upsert")
+    assert args["agentRole"] == "coding"
+
+
+async def test_upsert_agent_secret_policy_rejects_unknown_role(client, convex_mock):
+    convex_mock.post("/api/query").mock(side_effect=_project_query)
+
+    resp = await client.post(
+        f"/api/v1/projects/{PROJECT_SLUG}/settings/agent-secret-policies",
+        json={"agentRole": "writer", "allowedSecretNames": ["WEB_SEARCH_KEY"]},
+    )
+    assert resp.status_code == 422
+    assert "Agent secret policy role must be one of" in resp.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # Admin endpoints — delete
 # ---------------------------------------------------------------------------
@@ -214,6 +247,38 @@ async def test_delete_agent_secret_policy(client, convex_mock):
     assert "agentSecretPolicies:deleteByRole" in paths
 
 
+async def test_delete_agent_secret_policy_normalizes_role_alias(client, convex_mock):
+    mutations_called = []
+
+    def _mutation(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        mutations_called.append((payload.get("path"), payload.get("args", {})))
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_project_query)
+    convex_mock.post("/api/mutation").mock(side_effect=_mutation)
+
+    resp = await client.delete(
+        f"/api/v1/projects/{PROJECT_SLUG}/settings/agent-secret-policies/auditor"
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["agentRole"] == "health"
+
+    _, args = next((p, a) for p, a in mutations_called if p == "agentSecretPolicies:deleteByRole")
+    assert args["agentRole"] == "health"
+
+
+async def test_delete_agent_secret_policy_rejects_unknown_role(client, convex_mock):
+    convex_mock.post("/api/query").mock(side_effect=_project_query)
+
+    resp = await client.delete(
+        f"/api/v1/projects/{PROJECT_SLUG}/settings/agent-secret-policies/writer"
+    )
+    assert resp.status_code == 422
+    assert "Agent secret policy role must be one of" in resp.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # Runtime resolver
 # ---------------------------------------------------------------------------
@@ -239,17 +304,29 @@ async def test_resolve_secrets_for_role_returns_allowed_only(client, convex_mock
     assert "INTERNAL_DB_PASS" not in secrets
 
 
+async def test_resolve_secrets_for_role_normalizes_role_alias(client, convex_mock):
+    convex_mock.post("/api/query").mock(side_effect=_resolver_query)
+
+    resp = await client.get(
+        f"/api/v1/projects/{PROJECT_SLUG}/secrets/resolve",
+        params={"agentRole": "analyst"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["agentRole"] == "data"
+    assert data["secrets"]["FRED_API_KEY"] == "fred-abc123"
+
+
 async def test_resolve_secrets_no_policy_returns_empty(client, convex_mock):
-    """A role with no policy registered should get back an empty secrets dict."""
+    """Unknown roles are rejected instead of being treated as arbitrary strings."""
     convex_mock.post("/api/query").mock(side_effect=_resolver_query)
 
     resp = await client.get(
         f"/api/v1/projects/{PROJECT_SLUG}/secrets/resolve",
         params={"agentRole": "unknown-role"},
     )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["secrets"] == {}
+    assert resp.status_code == 422
+    assert "Secrets resolve agentRole must be one of" in resp.json()["detail"]
 
 
 async def test_resolve_secrets_service_unit(convex_mock):
