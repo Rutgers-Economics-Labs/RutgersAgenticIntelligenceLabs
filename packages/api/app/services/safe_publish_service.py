@@ -12,6 +12,7 @@ from app.services.repo_contract_service import (
     infer_github_repo,
     render_rail_manifest,
 )
+from rail.manifest import load_manifest
 
 
 SAFE_SYNC_MODES = {"auto_safe", "auto_all"}
@@ -89,13 +90,65 @@ def is_repo_publish_path_allowed(path: str, *, allowed_paths: list[str] | None =
     return any(normalized.startswith(prefix) for prefix in DEFAULT_REPO_PUBLISH_PREFIXES)
 
 
+def _read_publishable_content(path: Path) -> str | bytes:
+    raw = path.read_bytes()
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+
+
+def _is_artifact_publish_path(path: str, artifacts_root: str) -> bool:
+    normalized = normalize_repo_publish_path(path)
+    root = normalize_repo_publish_path(artifacts_root).rstrip("/")
+    return bool(root) and (normalized == root or normalized.startswith(f"{root}/"))
+
+
+async def _enforce_publish_auditors(
+    project: dict[str, Any],
+    *,
+    repo_root: Path,
+    files: list[dict[str, str | bytes]],
+) -> None:
+    from app.services.auditor_service import build_auditor_statuses
+
+    if not files:
+        return
+    try:
+        manifest = load_manifest(repo_root)
+    except Exception:
+        return
+
+    artifact_paths = [
+        str(file.get("path") or "")
+        for file in files
+        if _is_artifact_publish_path(str(file.get("path") or ""), manifest.paths.artifacts_root)
+    ]
+    if not artifact_paths:
+        return
+
+    auditors = await build_auditor_statuses(project)
+    blocked: list[str] = []
+    for key in ("ontology", "integrity"):
+        status = auditors.get(key) or {}
+        if str(status.get("status") or "") != "blocked":
+            continue
+        blocker = next((str(item) for item in (status.get("blockers") or []) if str(item).strip()), "blocked")
+        blocked.append(f"{key}: {blocker}")
+    if blocked:
+        raise RuntimeError(
+            "Artifact publish blocked by auditor state: "
+            + "; ".join(blocked)
+        )
+
+
 def collect_publishable_files(
     repo_root: Path,
     changed_paths: list[str],
     *,
     allowed_paths: list[str] | None = None,
-) -> tuple[list[dict[str, str]], list[str]]:
-    files: list[dict[str, str]] = []
+) -> tuple[list[dict[str, str | bytes]], list[str]]:
+    files: list[dict[str, str | bytes]] = []
     skipped: list[str] = []
     seen: set[str] = set()
     for raw_path in changed_paths:
@@ -115,7 +168,7 @@ def collect_publishable_files(
         if not absolute.exists() or not absolute.is_file():
             skipped.append(normalized)
             continue
-        files.append({"path": normalized, "content": absolute.read_text(encoding="utf-8")})
+        files.append({"path": normalized, "content": _read_publishable_content(absolute)})
     return files, skipped
 
 
@@ -136,6 +189,7 @@ async def publish_repo_files(
         changed_paths,
         allowed_paths=allowed_paths,
     )
+    await _enforce_publish_auditors(project, repo_root=repo_root, files=files)
     if not files:
         head_sha = await github_service.get_branch_head(repo, branch)
         return {
