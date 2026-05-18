@@ -467,6 +467,60 @@ def _validate_claim_reference_integrity(
         )
 
 
+def _normalize_integrity_reference(reference: str) -> str:
+    return str(reference).split("#", 1)[-1].strip()
+
+
+def _validate_artifact_lineage_references(
+    repo,
+    *,
+    sources: list[str],
+    claims: list[str],
+    verification_runs: list[str],
+) -> None:
+    known_sources = {item.source_key for item in repo.load_sources()}
+    missing_sources = sorted(
+        {
+            _normalize_integrity_reference(reference)
+            for reference in sources
+            if _normalize_integrity_reference(reference) not in known_sources
+        }
+    )
+    if missing_sources:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact lineage references unknown source keys: " + ", ".join(missing_sources),
+        )
+
+    known_claims = {item.claim_key for item in repo.load_claims()}
+    missing_claims = sorted(
+        {
+            _normalize_integrity_reference(reference)
+            for reference in claims
+            if _normalize_integrity_reference(reference) not in known_claims
+        }
+    )
+    if missing_claims:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact lineage references unknown claim keys: " + ", ".join(missing_claims),
+        )
+
+    known_runs = {item.run_id for item in repo.load_verification_runs()}
+    missing_runs = sorted(
+        {
+            _normalize_integrity_reference(reference)
+            for reference in verification_runs
+            if _normalize_integrity_reference(reference) not in known_runs
+        }
+    )
+    if missing_runs:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact lineage references unknown verification runs: " + ", ".join(missing_runs),
+        )
+
+
 def _csv_query_param(value: str | None) -> list[str] | None:
     if not value:
         return None
@@ -1846,6 +1900,12 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
                 detail="Artifact lineage write blocked by auditor state: " + "; ".join(blocked),
             )
     repo = get_integrity_repo(root)
+    _validate_artifact_lineage_references(
+        repo,
+        sources=data.sources,
+        claims=data.claims,
+        verification_runs=data.verificationRuns,
+    )
     record = repo.upsert_artifact_lineage(
         {
             "artifact_path": data.artifactPath,
