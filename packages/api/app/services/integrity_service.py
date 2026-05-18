@@ -157,6 +157,117 @@ def rebuild_integrity_indexes(project_root: str | Path, plan_root: str = "resear
     return get_integrity_repo(project_root, plan_root=plan_root).rebuild_all()
 
 
+def audit_source_admissibility(
+    project_root: str | Path,
+    manifest: Any,
+    *,
+    plan_root: str = "research_plan",
+) -> dict[str, Any]:
+    """Audit all sources against the manifest integrity policy.
+
+    Returns a dict with:
+      admissibleCount (int), inadmissibleCount (int),
+      inadmissibleSources (list of {sourceKey, admissibilityStatus, reason}),
+      blockers (list[str])
+    """
+    indexes = load_integrity_indexes(project_root, plan_root=plan_root)
+    allow_synthetic = bool(getattr(getattr(manifest, "integrity", None), "allow_synthetic_data", False))
+
+    inadmissible: list[dict[str, Any]] = []
+    admissible_count = 0
+
+    for source in indexes.sources:
+        state = _source_admissibility_state(source)
+        if state in {"estimated", "missing"}:
+            inadmissible.append({
+                "sourceKey": source.source_key,
+                "admissibilityStatus": state,
+                "reason": f"Source has admissibility status '{state}' which is not allowed.",
+            })
+        elif state == "synthetic" and not allow_synthetic:
+            inadmissible.append({
+                "sourceKey": source.source_key,
+                "admissibilityStatus": state,
+                "reason": "Synthetic sources are not permitted by this project's integrity policy.",
+            })
+        else:
+            admissible_count += 1
+
+    blockers: list[str] = []
+    if inadmissible:
+        sample = ", ".join(item["sourceKey"] for item in inadmissible[:3])
+        blockers.append(
+            f"{len(inadmissible)} inadmissible source(s) detected: {sample}."
+        )
+
+    return {
+        "admissibleCount": admissible_count,
+        "inadmissibleCount": len(inadmissible),
+        "inadmissibleSources": inadmissible,
+        "blockers": blockers,
+    }
+
+
+def audit_artifact_lineage(
+    project_root: str | Path,
+    manifest: Any,
+    *,
+    plan_root: str = "research_plan",
+) -> dict[str, Any]:
+    """Audit artifact lineage completeness against the manifest integrity policy.
+
+    Returns a dict with:
+      compliantCount (int),
+      nonCompliantArtifacts (list of {path, missingLineage, missingVerification}),
+      blockers (list[str])
+    """
+    require_lineage = bool(
+        getattr(getattr(manifest, "integrity", None), "require_lineage_for_final_artifacts", True)
+    )
+    if not require_lineage:
+        return {"compliantCount": 0, "nonCompliantArtifacts": [], "blockers": []}
+
+    indexes = load_integrity_indexes(project_root, plan_root=plan_root)
+    artifacts_root = str(getattr(getattr(manifest, "paths", None), "artifacts_root", "artifacts"))
+
+    non_compliant: list[dict[str, Any]] = []
+    compliant_count = 0
+
+    for row in indexes.artifact_lineage:
+        path = str(row.artifact_path)
+        if row.artifact_type == "dataset":
+            continue
+        if not (path == artifacts_root or path.startswith(f"{artifacts_root}/")):
+            continue
+        if row.reproducibility_mode in {"manual", "non_reproducible"}:
+            compliant_count += 1
+            continue
+
+        missing_lineage = not (row.inputs and row.scripts)
+        missing_verification = not row.verification_runs
+        if missing_lineage or missing_verification:
+            non_compliant.append({
+                "path": path,
+                "missingLineage": missing_lineage,
+                "missingVerification": missing_verification,
+            })
+        else:
+            compliant_count += 1
+
+    blockers: list[str] = []
+    if non_compliant:
+        sample = ", ".join(item["path"] for item in non_compliant[:3])
+        blockers.append(
+            f"{len(non_compliant)} final artifact(s) missing lineage or verification: {sample}."
+        )
+
+    return {
+        "compliantCount": compliant_count,
+        "nonCompliantArtifacts": non_compliant,
+        "blockers": blockers,
+    }
+
+
 def update_assumption_and_mark_stale(
     project_root: str | Path,
     assumption_key: str,
