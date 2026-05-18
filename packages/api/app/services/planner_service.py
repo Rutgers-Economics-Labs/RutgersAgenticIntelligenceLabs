@@ -24,6 +24,7 @@ TASK_STATUSES = [
     "review",
     "done",
     "cancelled",
+    "superseded",
 ]
 TASK_APPROVAL_STATES = [
     "pending",
@@ -166,7 +167,9 @@ def _latest_task_audit(root: Path, task_id: str) -> dict[str, Any] | None:
     return None
 
 
-def _enforce_worker_completion_gate(*, root: Path, task: dict[str, Any], patch: dict[str, Any]) -> None:
+def _enforce_worker_completion_gate(*, root: Path, task: dict[str, Any], patch: dict[str, Any], require_audit: bool = True) -> None:
+    if not require_audit:
+        return
     if str(patch.get("status") or "").strip().lower() != "done":
         return
     role = str(task.get("agentRole") or "").strip().lower()
@@ -363,7 +366,7 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
     status = _normalize_task_status(meta.get("status", "backlog"))
     approval_state = _normalize_task_approval_state(meta.get("approval_state"))
     blocker_category = meta.get("blocker_category") or None
-    if status in {"done", "cancelled"}:
+    if status in {"done", "cancelled", "superseded"}:
         approval_state = None
         blocker_category = None
     return {
@@ -382,6 +385,7 @@ def _task_to_runtime(path: Path) -> dict[str, Any]:
         "blockerCategory": blocker_category,
         "gitSnapshotPath": str(path.relative_to(path.parents[2])),
         "latestRunSummary": meta.get("latest_run_summary") or "Not started",
+        "supersededBy": meta.get("superseded_by") or None,
     }
 
 
@@ -581,6 +585,8 @@ def _render_task_markdown(task: dict[str, Any]) -> str:
         meta["runner"] = task["runner"]
     if task.get("blockerCategory"):
         meta["blocker_category"] = task["blockerCategory"]
+    if task.get("supersededBy"):
+        meta["superseded_by"] = task["supersededBy"]
     frontmatter = yaml.safe_dump(meta, sort_keys=False).strip()
     description = (task.get("description") or "").strip()
     body = "## Description\n\n" + (description or "No description provided.") + "\n"
@@ -664,7 +670,14 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
     if "approval_state" in patch:
         patch["approval_state"] = _normalize_task_approval_state(patch.get("approval_state"), strict=True)
     _enforce_planner_completion_gate(root=root, task=task, patch=patch)
-    _enforce_worker_completion_gate(root=root, task=task, patch=patch)
+    require_audit = True
+    try:
+        from rail.manifest import load_manifest
+        _manifest = load_manifest(root)
+        require_audit = _manifest.planner.require_audit_before_advance
+    except Exception:
+        pass
+    _enforce_worker_completion_gate(root=root, task=task, patch=patch, require_audit=require_audit)
     mapping = {
         "title": "title",
         "description": "description",
@@ -692,6 +705,21 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
     _write_file(path, _render_task_markdown(task))
     from app.services.autopilot_service import trigger_wake
     trigger_wake(project["slug"])
+    return task
+
+
+async def supersede_task(task_id: str, *, superseded_by_id: str, project: dict) -> dict | None:
+    """Mark a task as superseded by a newer task, recording the successor's ID."""
+    root = project_root_from_record(project)
+    if root is None:
+        return None
+    path = _task_root(root) / f"{task_id}.md"
+    if not path.exists():
+        return None
+    task = _task_to_runtime(path)
+    task["status"] = "superseded"
+    task["supersededBy"] = superseded_by_id
+    _write_file(path, _render_task_markdown(task))
     return task
 
 
