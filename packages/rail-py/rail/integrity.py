@@ -1214,15 +1214,37 @@ class ResearchIntegrityRepo:
         return self._load_records(self.source_candidates_path(), SourceCandidateRecord)
 
     def write_source_candidates(self, records: list[SourceCandidateRecord] | list[dict[str, Any]]) -> None:
-        self._write_records(self.source_candidates_path(), records, SourceCandidateRecord)
+        source_records = self.load_sources()
+        normalized_records: list[SourceCandidateRecord] = []
+        for record in records:
+            normalized = SourceCandidateRecord.model_validate(record)
+            if normalized.status == "promoted":
+                has_canonical_source = any(
+                    str(source.provenance.get("sourceCandidateKey")) == normalized.candidate_key
+                    or source.url_or_path == normalized.url_or_path
+                    for source in source_records
+                )
+                if not has_canonical_source:
+                    normalized = normalized.model_copy(update={"status": "candidate"})
+            normalized_records.append(normalized)
+        self._write_records(self.source_candidates_path(), normalized_records, SourceCandidateRecord)
 
     def upsert_source_candidate(self, record: SourceCandidateRecord | dict[str, Any]) -> SourceCandidateRecord:
+        normalized = SourceCandidateRecord.model_validate(record)
+        if normalized.status == "promoted":
+            has_canonical_source = any(
+                str(source.provenance.get("sourceCandidateKey")) == normalized.candidate_key
+                or source.url_or_path == normalized.url_or_path
+                for source in self.load_sources()
+            )
+            if not has_canonical_source:
+                normalized = normalized.model_copy(update={"status": "candidate"})
         return self._upsert_by_key(
             self.load_source_candidates,
             self.write_source_candidates,
             SourceCandidateRecord,
             "candidate_key",
-            record,
+            normalized,
         )
 
     def get_source_candidate(self, candidate_key: str) -> SourceCandidateRecord | None:
@@ -1235,15 +1257,29 @@ class ResearchIntegrityRepo:
         return self._load_records(self.claim_candidates_path(), ClaimCandidateRecord)
 
     def write_claim_candidates(self, records: list[ClaimCandidateRecord] | list[dict[str, Any]]) -> None:
-        self._write_records(self.claim_candidates_path(), records, ClaimCandidateRecord)
+        claim_records = self.load_claims()
+        normalized_records: list[ClaimCandidateRecord] = []
+        for record in records:
+            normalized = ClaimCandidateRecord.model_validate(record)
+            if normalized.status == "promoted":
+                has_canonical_claim = any(claim.claim_text == normalized.claim_text for claim in claim_records)
+                if not has_canonical_claim:
+                    normalized = normalized.model_copy(update={"status": "candidate"})
+            normalized_records.append(normalized)
+        self._write_records(self.claim_candidates_path(), normalized_records, ClaimCandidateRecord)
 
     def upsert_claim_candidate(self, record: ClaimCandidateRecord | dict[str, Any]) -> ClaimCandidateRecord:
+        normalized = ClaimCandidateRecord.model_validate(record)
+        if normalized.status == "promoted":
+            has_canonical_claim = any(claim.claim_text == normalized.claim_text for claim in self.load_claims())
+            if not has_canonical_claim:
+                normalized = normalized.model_copy(update={"status": "candidate"})
         return self._upsert_by_key(
             self.load_claim_candidates,
             self.write_claim_candidates,
             ClaimCandidateRecord,
             "candidate_key",
-            record,
+            normalized,
         )
 
     def get_claim_candidate(self, candidate_key: str) -> ClaimCandidateRecord | None:

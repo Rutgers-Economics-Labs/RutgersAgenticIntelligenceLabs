@@ -982,6 +982,43 @@ def test_write_artifact_lineage_drops_unknown_verification_runs_from_trusted_sta
     assert stored.verification_runs == []
 
 
+def test_write_source_candidates_downgrades_promoted_without_canonical_source(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_source_candidates(
+        [
+            {
+                "candidate_key": "source-candidate-1",
+                "title": "BLS Source",
+                "url_or_path": "https://example.com/bls.csv",
+                "status": "promoted",
+            }
+        ]
+    )
+
+    stored = repo.load_source_candidates()[0]
+    assert stored.status == "candidate"
+
+
+def test_write_claim_candidates_downgrades_promoted_without_canonical_claim(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_claim_candidates(
+        [
+            {
+                "candidate_key": "claim-candidate-1",
+                "claim_text": "Employment rose after the reform.",
+                "status": "promoted",
+            }
+        ]
+    )
+
+    stored = repo.load_claim_candidates()[0]
+    assert stored.status == "candidate"
+
+
 def test_source_refresh_clears_dependent_stale_state_when_revalidated(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)
