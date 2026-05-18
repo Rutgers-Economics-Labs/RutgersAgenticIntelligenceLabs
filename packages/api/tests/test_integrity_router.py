@@ -763,6 +763,44 @@ async def test_artifact_lineage_write_rejects_unknown_claim_references(client, c
     assert "Artifact lineage references unknown claim keys: missing-claim" in payload["detail"]
 
 
+async def test_artifact_lineage_write_rejects_unknown_assumption_references(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "draft",
+            "assumptions": ["research_plan/state/assumptions.json#missing-assumption"],
+        },
+    )
+
+    assert artifact_resp.status_code == 422
+    payload = artifact_resp.json()
+    assert "Artifact lineage references unknown assumption keys: missing-assumption" in payload["detail"]
+
+
 async def test_artifact_lineage_write_rejects_unknown_verification_runs(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
 

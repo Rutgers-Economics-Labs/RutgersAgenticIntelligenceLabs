@@ -475,6 +475,7 @@ def _validate_artifact_lineage_references(
     repo,
     *,
     sources: list[str],
+    assumptions: list[str],
     claims: list[str],
     verification_runs: list[str],
 ) -> None:
@@ -490,6 +491,20 @@ def _validate_artifact_lineage_references(
         raise HTTPException(
             status_code=422,
             detail="Artifact lineage references unknown source keys: " + ", ".join(missing_sources),
+        )
+
+    known_assumptions = {item.assumption_key for item in repo.load_assumptions()}
+    missing_assumptions = sorted(
+        {
+            _normalize_integrity_reference(reference)
+            for reference in assumptions
+            if _normalize_integrity_reference(reference) not in known_assumptions
+        }
+    )
+    if missing_assumptions:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact lineage references unknown assumption keys: " + ", ".join(missing_assumptions),
         )
 
     known_claims = {item.claim_key for item in repo.load_claims()}
@@ -1903,6 +1918,7 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
     _validate_artifact_lineage_references(
         repo,
         sources=data.sources,
+        assumptions=data.assumptions,
         claims=data.claims,
         verification_runs=data.verificationRuns,
     )
