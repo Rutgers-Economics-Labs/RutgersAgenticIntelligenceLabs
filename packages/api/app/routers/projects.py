@@ -399,6 +399,8 @@ ALLOWED_SOURCE_FRESHNESS_STATUSES = {"unknown", "fresh", "needs_refresh", "stale
 ALLOWED_SOURCE_QUALITY_STATUSES = {"candidate", "validated", "blocked", "rejected"}
 ALLOWED_CLAIM_STATUSES = {"draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"}
 ALLOWED_EVIDENCE_KINDS = {"direct", "derived", "contextual", "semantic_suggestion"}
+ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially_verified", "verified", "stale", "blocked"}
+ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
 
 
 def _validate_trusted_source_contract(
@@ -511,6 +513,8 @@ def _validate_artifact_lineage_references(
     repo,
     *,
     project_root: Path,
+    promotion_state: str | None,
+    reproducibility_mode: str | None,
     inputs: list[str],
     scripts: list[str],
     sources: list[str],
@@ -518,6 +522,16 @@ def _validate_artifact_lineage_references(
     claims: list[str],
     verification_runs: list[str],
 ) -> None:
+    if promotion_state not in {None, ""} and promotion_state not in ALLOWED_PROMOTION_STATES:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact promotion state must be one of: exploratory, draft, needs_evidence, partially_verified, verified, stale, blocked.",
+        )
+    if reproducibility_mode not in {None, ""} and reproducibility_mode not in ALLOWED_REPRODUCIBILITY_MODES:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact reproducibility mode must be one of: deterministic, manual, non_reproducible.",
+        )
     missing_inputs = sorted(
         {
             path
@@ -1987,6 +2001,8 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
     _validate_artifact_lineage_references(
         repo,
         project_root=root,
+        promotion_state=data.promotionState,
+        reproducibility_mode=data.reproducibilityMode,
         inputs=data.inputs,
         scripts=data.scripts,
         sources=data.sources,

@@ -1026,6 +1026,81 @@ async def test_artifact_lineage_write_rejects_missing_input_paths(client, convex
     assert "Artifact lineage references missing input paths: topics/missing.csv" in payload["detail"]
 
 
+async def test_artifact_lineage_write_rejects_unknown_promotion_state(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "trusted-ish",
+        },
+    )
+
+    assert artifact_resp.status_code == 422
+    payload = artifact_resp.json()
+    assert "Artifact promotion state must be one of" in payload["detail"]
+
+
+async def test_artifact_lineage_write_rejects_unknown_reproducibility_mode(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "draft",
+            "reproducibilityMode": "semi-manual",
+        },
+    )
+
+    assert artifact_resp.status_code == 422
+    payload = artifact_resp.json()
+    assert "Artifact reproducibility mode must be one of" in payload["detail"]
+
+
 async def test_artifact_lineage_write_rejects_missing_script_paths(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     (root / "topics").mkdir(parents=True, exist_ok=True)
