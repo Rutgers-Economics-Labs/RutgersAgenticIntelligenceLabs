@@ -509,13 +509,13 @@ def _validate_planner_task_priority(priority: str | None) -> None:
         )
 
 
-def _normalize_planner_task_agent_role(agent_role: str | None) -> str:
+def _normalize_agent_role(agent_role: str | None, *, field_name: str) -> str:
     normalized = str(agent_role or "").strip().lower()
     normalized = ROLE_ALIASES.get(normalized, normalized)
     if normalized not in ALLOWED_TASK_AGENT_ROLES:
         raise HTTPException(
             status_code=422,
-            detail="Planner task agent role must be one of: research, data, coding, artifact, health, planner.",
+            detail=f"{field_name} must be one of: research, data, coding, artifact, health, planner.",
         )
     return normalized
 
@@ -2252,7 +2252,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
     _validate_planner_task_approval_state(data.approvalState)
     _validate_planner_task_runner(data.runner)
     _validate_planner_task_priority(data.priority)
-    agent_role = _normalize_planner_task_agent_role(data.agentRole)
+    agent_role = _normalize_agent_role(data.agentRole, field_name="Planner task agent role")
     board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
         project=project,
@@ -2504,13 +2504,14 @@ async def create_project_approval(slug: str, data: ApprovalCreateRequest):
     project = await planner_service.get_project_by_slug(slug)
     _validate_approval_status(data.status)
     _validate_approval_type(data.approvalType)
+    requested_by_role = _normalize_agent_role(data.requestedByRole, field_name="Approval requestedByRole")
     approval_id = await planner_service.create_approval(
         project=project,
         task_id=data.taskId,
         agent_session_id=data.agentSessionId,
         approval_type=data.approvalType,
         status=data.status,
-        requested_by_role=data.requestedByRole,
+        requested_by_role=requested_by_role,
         granted_by_user_id=data.grantedByUserId,
     )
     from app.services.autopilot_service import trigger_wake
