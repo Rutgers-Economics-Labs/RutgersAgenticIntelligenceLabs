@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 
 from app.services import autopilot_service
+from app.services import reconciliation_service
 
 
 def test_autopilot_auto_approves_ready_pending_task(monkeypatch):
@@ -367,6 +368,20 @@ def test_autopilot_blocks_advance_until_audit_is_current(tmp_path: Path, monkeyp
     monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
     monkeypatch.setattr(
         autopilot_service,
+        "reconcile_project_reality",
+        lambda project_arg: asyncio.sleep(
+            0,
+            result={
+                "removedTaskFiles": [],
+                "updatedTaskIds": [],
+                "repairedSessionIds": [],
+                "repairedAuditSessionIds": [],
+                "hasChanges": False,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        autopilot_service,
         "audit_gate_status",
         lambda project_root: {
             "blocked": True,
@@ -421,6 +436,25 @@ def test_repair_stale_active_sessions_finalizes_runtime_rows(tmp_path: Path, mon
     assert finalized == [{"session_id": "sess-1", "status": "completed"}]
 
 
+def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+
+    monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_task_files", lambda project_arg: asyncio.sleep(0, result={"removed": ["research_plan/tasks/old.md"]}))
+    monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_task_session_states", lambda project_arg: asyncio.sleep(0, result={"updated": ["task-1"]}))
+    monkeypatch.setattr(reconciliation_service, "repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-1"]}))
+    monkeypatch.setattr(reconciliation_service, "repair_stale_session_audits", lambda project_arg, project_root: asyncio.sleep(0, result={"repairedSessionIds": ["sess-2"]}))
+
+    result = asyncio.run(reconciliation_service.reconcile_project_reality(project))
+
+    assert result == {
+        "removedTaskFiles": ["research_plan/tasks/old.md"],
+        "updatedTaskIds": ["task-1"],
+        "repairedSessionIds": ["sess-1"],
+        "repairedAuditSessionIds": ["sess-2"],
+        "hasChanges": True,
+    }
+
+
 def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "status": "ready", "localRepoPath": str(tmp_path)}
     planner_turns: list[str] = []
@@ -453,14 +487,19 @@ def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, 
         launches.append({"task_ids": [str(item["_id"]) for item in ready_tasks]})
         return {"convex_session_id": "session-1"}
 
-    gate_calls = {"count": 0}
-
     def _audit_gate_status(project_root: Path):
-        gate_calls["count"] += 1
-        return {"blocked": gate_calls["count"] == 1, "reason": "audit stale", "staleSessionIds": ["sess-1"] if gate_calls["count"] == 1 else []}
+        return {"blocked": False, "reason": None, "staleSessionIds": []}
 
-    async def _repair_stale_session_audits(project_arg, project_root: Path):
-        return {"repairedSessionIds": ["sess-1"]}
+    reconciled: list[str] = []
+    async def _reconcile_project_reality(project_arg):
+        reconciled.append(project_arg["slug"])
+        return {
+            "removedTaskFiles": [],
+            "updatedTaskIds": [],
+            "repairedSessionIds": [],
+            "repairedAuditSessionIds": ["sess-1"],
+            "hasChanges": True,
+        }
 
     monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
     monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
@@ -470,7 +509,7 @@ def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, 
     monkeypatch.setattr(autopilot_service, "_launch_ready_task", _launch_ready_task)
     monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
     monkeypatch.setattr(autopilot_service, "audit_gate_status", _audit_gate_status)
-    monkeypatch.setattr(autopilot_service, "repair_stale_session_audits", _repair_stale_session_audits)
+    monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _reconcile_project_reality)
 
     autopilot_service._active_autopilots["soccer-project"] = True
     autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
@@ -478,7 +517,7 @@ def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, 
 
     asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
 
-    assert gate_calls["count"] >= 2
+    assert reconciled == ["soccer-project"]
     assert planner_turns
     assert events == []
 
@@ -501,17 +540,21 @@ def test_autopilot_reconciles_task_states_from_session_truth(tmp_path: Path, mon
 
     repaired_calls: list[dict] = []
 
-    async def _reconcile_task_session_states(project_arg):
+    async def _reconcile_project_reality(project_arg):
         repaired_calls.append({"project": project_arg["slug"]})
-        return {"updated": ["task-1"]}
+        return {
+            "removedTaskFiles": [],
+            "updatedTaskIds": ["task-1"],
+            "repairedSessionIds": [],
+            "repairedAuditSessionIds": [],
+            "hasChanges": True,
+        }
 
     monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
     monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
     monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
-    monkeypatch.setattr(autopilot_service.planner_service, "reconcile_task_session_states", _reconcile_task_session_states)
-    monkeypatch.setattr(autopilot_service.planner_service, "reconcile_task_files", lambda project_arg: asyncio.sleep(0, result={"removed": []}))
-    monkeypatch.setattr(autopilot_service, "_repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": []}))
+    monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _reconcile_project_reality)
     monkeypatch.setattr(autopilot_service, "audit_gate_status", lambda project_root: {"blocked": False})
     monkeypatch.setattr(autopilot_service, "_closeout_gate", lambda project_arg, tasks: asyncio.sleep(0, result={"blocked": False, "reason": None}))
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", lambda project_arg: completed.append(str(project_arg["slug"])) or asyncio.sleep(0))

@@ -9,11 +9,15 @@ from typing import Any
 
 from app.services import planner_runtime, planner_service, running_agent_service
 from app.runners import session_lifecycle
-from app.services.audit_service import audit_gate_status, repair_stale_session_audits
+from app.services.audit_service import audit_gate_status
 from app.services.convex_client import convex
 from app.services.decision_service import list_decision_events, mark_decision_event, raise_decision_event
 from app.services.hydration_registry_service import get_hydration_status
 from app.services.integrity_service import evaluate_integrity_gate
+from app.services.reconciliation_service import (
+    reconcile_project_reality,
+    repair_stale_active_sessions as _repair_stale_active_sessions_impl,
+)
 from rail.manifest import load_manifest
 import yaml
 
@@ -234,29 +238,7 @@ def _find_existing_task(tasks: list[dict[str, Any]], needles: tuple[str, ...]) -
 
 
 async def _repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any]:
-    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
-    if not project_root or not project_root.exists():
-        return {"repairedSessionIds": []}
-    active_sessions = await running_agent_service.list_project_running_agents(
-        project["_id"],
-        active_only=True,
-        limit=50,
-    )
-    repaired: list[str] = []
-    for session in active_sessions:
-        root = session_lifecycle._resolve_session_root_path(session, project_root=project_root)
-        if root is None or not root.exists():
-            continue
-        state = session_lifecycle.session_files.read_state(root)
-        status = str(state.get("status") or "")
-        if status not in session_lifecycle.TERMINAL_STATUSES:
-            continue
-        await running_agent_service.finalize_running_agent(
-            str(session["_id"]),
-            status=status,
-        )
-        repaired.append(str(session["_id"]))
-    return {"repairedSessionIds": repaired}
+    return await _repair_stale_active_sessions_impl(project)
 
 
 async def _ensure_ontology_lifecycle_tasks(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
@@ -581,44 +563,33 @@ async def run_autopilot_loop(project_slug: str):
             
         logger.info(f"Autopilot iteration {i+1}/{max_iterations} for {project_slug}")
         project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
-        repaired = await planner_service.reconcile_task_files(project)
-        if repaired.get("removed"):
+        reconciliation = await reconcile_project_reality(project)
+        if reconciliation.get("removedTaskFiles"):
             _update_config(
                 project_slug,
                 last_action="Reconciled duplicate task files",
-                last_turn_result=", ".join(repaired["removed"][:5]),
+                last_turn_result=", ".join(reconciliation["removedTaskFiles"][:5]),
             )
-        repaired_task_states = await planner_service.reconcile_task_session_states(project)
-        if repaired_task_states.get("updated"):
+        if reconciliation.get("updatedTaskIds"):
             _update_config(
                 project_slug,
                 last_action="Reconciled task states from session truth",
-                last_turn_result=", ".join(repaired_task_states["updated"][:5]),
+                last_turn_result=", ".join(reconciliation["updatedTaskIds"][:5]),
             )
-        repaired_sessions = await _repair_stale_active_sessions(project)
-        if repaired_sessions.get("repairedSessionIds"):
+        if reconciliation.get("repairedSessionIds"):
             _update_config(
                 project_slug,
                 last_action="Reconciled stale active sessions",
-                last_turn_result=", ".join(repaired_sessions["repairedSessionIds"][:5]),
+                last_turn_result=", ".join(reconciliation["repairedSessionIds"][:5]),
+            )
+        if reconciliation.get("repairedAuditSessionIds"):
+            _update_config(
+                project_slug,
+                last_action="Rebuilt stale post-run audits",
+                last_turn_result=", ".join(reconciliation["repairedAuditSessionIds"][:5]),
             )
         audit_gate = audit_gate_status(project_root) if project_root and project_root.exists() else {"blocked": False}
         if audit_gate.get("blocked"):
-            repaired_audits = (
-                await repair_stale_session_audits(project, project_root)
-                if project_root and project_root.exists()
-                else {"repairedSessionIds": []}
-            )
-            if repaired_audits.get("repairedSessionIds"):
-                audit_gate = audit_gate_status(project_root) if project_root and project_root.exists() else {"blocked": False}
-                _update_config(
-                    project_slug,
-                    last_action="Rebuilt stale post-run audits",
-                    last_turn_result=", ".join(repaired_audits["repairedSessionIds"][:5]),
-                )
-                if not audit_gate.get("blocked"):
-                    consecutive_idle_turns = 0
-                    continue
             _update_config(
                 project_slug,
                 last_action="Waiting for audited truth",
