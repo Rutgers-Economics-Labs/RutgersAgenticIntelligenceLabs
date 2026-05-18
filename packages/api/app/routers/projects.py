@@ -2558,6 +2558,13 @@ async def create_project_runner_session(
 ):
     project = await planner_service.get_project_by_slug(slug)
     from app.runners import session_lifecycle
+    role = _normalize_agent_role(data.role, field_name="Runner session role")
+    agent_role_for_secrets = None
+    if data.agentRoleForSecrets not in {None, ""}:
+        agent_role_for_secrets = _normalize_agent_role(
+            data.agentRoleForSecrets,
+            field_name="Runner agentRoleForSecrets",
+        )
 
     repo_url = data.repoUrl or project.get("gitRepoUrl")
     if not repo_url:
@@ -2615,14 +2622,14 @@ async def create_project_runner_session(
             project_slug=project["slug"],
             task_id=data.taskId,
             runner_name=data.runnerName,
-            role=data.role,
+            role=role,
             task_description=data.taskDescription,
             repo_url=repo_url,
             branch=data.branch,
             local_repo_path=project.get("localRepoPath"),
             allowed_paths=data.allowedPaths,
             acceptance_criteria=data.acceptanceCriteria,
-            agent_role_for_secrets=data.agentRoleForSecrets,
+            agent_role_for_secrets=agent_role_for_secrets,
             policy_approval_granted=policy_approval_granted,
         )
     except PermissionError as exc:
