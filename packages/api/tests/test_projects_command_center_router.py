@@ -18,6 +18,7 @@ def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
         return {
             "removedTaskFiles": ["research_plan/tasks/duplicate.md"],
             "updatedTaskIds": ["task-1"],
+            "updatedApprovalIds": ["approval-1"],
             "repairedSessionIds": ["sess-1"],
             "repairedAuditSessionIds": ["sess-2"],
             "hasChanges": True,
@@ -32,6 +33,7 @@ def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
     assert response.json() == {
         "removedTaskFiles": ["research_plan/tasks/duplicate.md"],
         "updatedTaskIds": ["task-1"],
+        "updatedApprovalIds": ["approval-1"],
         "repairedSessionIds": ["sess-1"],
         "repairedAuditSessionIds": ["sess-2"],
         "hasChanges": True,

@@ -288,12 +288,17 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     root = planner_service.project_root_from_record(project)
     removed_task_files: list[str] = []
     updated_task_ids: list[str] = []
+    updated_approval_ids: list[str] = []
     repaired_session_ids: list[str] = []
     repaired_audit_session_ids: list[str] = []
     repaired_ontology_artifact: dict[str, Any] | None = None
 
     removed_task_files = list((await planner_service.reconcile_task_files(project)).get("removed") or [])
     updated_task_ids = list((await planner_service.reconcile_task_session_states(project)).get("updated") or [])
+    metadata_repair = await planner_service.reconcile_planner_metadata(project)
+    metadata_task_updates = [str(item) for item in (metadata_repair.get("updatedTaskIds") or []) if item]
+    updated_task_ids = list(dict.fromkeys(updated_task_ids + metadata_task_updates))
+    updated_approval_ids = [str(item) for item in (metadata_repair.get("updatedApprovalIds") or []) if item]
     repaired_session_ids = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
     if root is not None and root.exists():
         repaired_audit_session_ids = list((await repair_stale_session_audits(project, root)).get("repairedSessionIds") or [])
@@ -304,12 +309,14 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     return {
         "removedTaskFiles": removed_task_files,
         "updatedTaskIds": updated_task_ids,
+        "updatedApprovalIds": updated_approval_ids,
         "repairedSessionIds": repaired_session_ids,
         "repairedAuditSessionIds": repaired_audit_session_ids,
         "repairedOntologyArtifact": repaired_ontology_artifact,
         "hasChanges": bool(
             removed_task_files
             or updated_task_ids
+            or updated_approval_ids
             or repaired_session_ids
             or repaired_audit_session_ids
             or repaired_ontology_artifact

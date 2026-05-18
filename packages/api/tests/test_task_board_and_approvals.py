@@ -418,6 +418,52 @@ Legacy task approval-state alias.
     assert tasks[0]["approvalState"] == "granted"
 
 
+def test_reconcile_planner_metadata_rewrites_legacy_aliases_to_canonical_repo_state(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "legacy-task.md",
+        """---
+task_id: legacy-task
+title: Legacy task
+status: awaiting_approval
+assigned_role: developer
+approval_state: approved
+---
+
+## Description
+
+Legacy task metadata.
+""",
+    )
+    _write(
+        tmp_path / "research_plan" / "approvals" / "approval-1.md",
+        """---
+approval_id: approval-1
+project_id: project-id-abc
+task_id: legacy-task
+approval_type: run_task
+status: approved
+requested_by_role: auditor
+requested_at: 2026-01-01T00:00:00Z
+---
+
+Legacy approval metadata.
+""",
+    )
+
+    result = asyncio.run(planner_service.reconcile_planner_metadata(project))
+
+    assert result == {"updatedTaskIds": ["legacy-task"], "updatedApprovalIds": ["approval-1"]}
+    task_text = (tmp_path / "research_plan" / "tasks" / "legacy-task.md").read_text(encoding="utf-8")
+    approval_text = (tmp_path / "research_plan" / "approvals" / "approval-1.md").read_text(encoding="utf-8")
+    assert "assigned_role: coding" in task_text
+    assert "approval_state: granted" in task_text
+    assert "status: granted" in approval_text
+    assert "requested_by_role: health" in approval_text
+
+
 def test_reconcile_task_session_states_updates_terminal_task_from_session_truth(tmp_path: Path):
     from app.services import planner_service
 

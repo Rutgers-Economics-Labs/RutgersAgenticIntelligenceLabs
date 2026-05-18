@@ -395,6 +395,38 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
     return {"updated": updated}
 
 
+async def reconcile_planner_metadata(project: dict) -> dict[str, Any]:
+    root = project_root_from_record(project)
+    if root is None:
+        return {"updatedTaskIds": [], "updatedApprovalIds": []}
+
+    updated_task_ids: list[str] = []
+    task_dir = _task_root(root)
+    if task_dir.is_dir():
+        for path in sorted(task_dir.glob("*.md")):
+            task = _task_to_runtime(path)
+            canonical = _render_task_markdown(task)
+            current = _read_text(path)
+            if current == canonical:
+                continue
+            _write_file(path, canonical)
+            updated_task_ids.append(str(task.get("_id") or path.stem))
+
+    updated_approval_ids: list[str] = []
+    approval_dir = _approval_dir(root)
+    if approval_dir.is_dir():
+        for path in sorted(approval_dir.glob("*.md")):
+            approval = _approval_to_runtime(path)
+            canonical = _render_approval_markdown(approval)
+            current = _read_text(path)
+            if current == canonical:
+                continue
+            _write_file(path, canonical)
+            updated_approval_ids.append(str(approval.get("_id") or path.stem))
+
+    return {"updatedTaskIds": updated_task_ids, "updatedApprovalIds": updated_approval_ids}
+
+
 def _render_task_markdown(task: dict[str, Any]) -> str:
     meta = {
         "task_id": task["_id"],
