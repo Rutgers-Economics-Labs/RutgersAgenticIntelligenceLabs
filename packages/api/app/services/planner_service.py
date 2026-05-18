@@ -28,6 +28,10 @@ APPROVAL_STATUSES = [
     "granted",
     "rejected",
 ]
+APPROVAL_TYPES = [
+    "run_task",
+    "research_launch",
+]
 LEGACY_APPROVAL_STATUS_ALIASES = {
     "approved": "granted",
 }

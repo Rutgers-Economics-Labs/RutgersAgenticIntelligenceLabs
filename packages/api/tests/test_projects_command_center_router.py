@@ -380,6 +380,38 @@ def test_create_project_approval_rejects_unknown_type(monkeypatch):
     assert "Approval type must be one of" in response.json()["detail"]
 
 
+def test_create_project_approval_accepts_research_launch_type(monkeypatch):
+    import app.routers.projects as projects_router
+
+    created: list[dict] = []
+    wakes: list[str] = []
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _create_approval(**kwargs):
+        created.append(kwargs)
+        return "approval-launch"
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "create_approval", _create_approval)
+    monkeypatch.setattr("app.services.autopilot_service.trigger_wake", lambda slug: wakes.append(slug))
+
+    response = client.post(
+        "/api/v1/projects/demo-project/approvals",
+        json={
+            "approvalType": "research_launch",
+            "status": "pending",
+            "requestedByRole": "planner",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"approvalId": "approval-launch"}
+    assert created[0]["approval_type"] == "research_launch"
+    assert wakes == ["demo-project"]
+
+
 def test_create_project_approval_rejects_unknown_requested_by_role(monkeypatch):
     import app.routers.projects as projects_router
 

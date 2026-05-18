@@ -406,7 +406,7 @@ ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially
 ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
 ALLOWED_TASK_APPROVAL_STATES = {"pending", "granted"}
 ALLOWED_APPROVAL_STATUSES = {"pending", "granted", "rejected", "approved"}
-ALLOWED_APPROVAL_TYPES = {"run_task"}
+ALLOWED_APPROVAL_TYPES = {"run_task", "research_launch"}
 ALLOWED_TASK_RUNNERS = {"default", "jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
 ALLOWED_TASK_PRIORITIES = {"high", "medium", "low"}
 ALLOWED_TASK_AGENT_ROLES = {"research", "data", "coding", "artifact", "health", "planner"}
@@ -547,7 +547,7 @@ def _validate_approval_type(approval_type: str | None) -> None:
     if approval_type not in {None, ""} and approval_type not in ALLOWED_APPROVAL_TYPES:
         raise HTTPException(
             status_code=422,
-            detail="Approval type must be one of: run_task.",
+            detail="Approval type must be one of: run_task, research_launch.",
         )
 
 
