@@ -872,6 +872,29 @@ def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
     return False
 
 
+def _should_skip_planner_for_ready_repair(tasks: list[dict[str, Any]], auditors: dict[str, Any] | None) -> bool:
+    auditors = auditors or {}
+    if (auditors.get("ontology") or {}).get("status") == "blocked" and _has_ready_task_title(tasks, "Repair ontology readiness blockers"):
+        return True
+    if (auditors.get("integrity") or {}).get("status") == "blocked":
+        for title in (
+            "Repair unsupported claims and verification evidence",
+            "Refresh stale sources or rerun dependent analyses",
+            "Resolve failed verification runs before trusted promotion",
+            "Repair reproducibility metadata for trusted artifacts",
+            "Resolve inadmissible sources for trusted outputs",
+            "Repair dataset provenance and freshness metadata",
+            "Repair analysis lineage and verification metadata",
+        ):
+            if _has_ready_task_title(tasks, title):
+                return True
+    if (auditors.get("closeout") or {}).get("status") == "blocked" and _has_ready_task_title(tasks, "Resolve closeout blockers"):
+        return True
+    if _control_plane_auditor_gate(auditors).get("blocked") and _has_ready_task_title(tasks, "Reconcile control-plane drift and stale sessions"):
+        return True
+    return False
+
+
 def _apply_auditor_priority_boosts(
     ready_tasks: list[dict[str, Any]],
     auditors: dict[str, Any] | None,
@@ -1378,21 +1401,28 @@ async def run_autopilot_loop(project_slug: str):
                 await _mark_project_completed(project)
                 break
 
-        # 2. Run the planner to see what it wants to do
-        _update_config(project_slug, last_action="Running Planner: Determining next task...")
-        try:
-            await planner_runtime.run_planner_turn(
-                project=project,
-                user_message=_planner_turn_message(auditors),
-                persist=False # Do not spam the chat thread
+        # 2. Run the planner to see what it wants to do, unless a blocked auditor already has a ready repair task.
+        if _should_skip_planner_for_ready_repair(tasks, auditors):
+            _update_config(
+                project_slug,
+                last_action="Skipping planner turn for ready repair task",
+                last_turn_result="Blocked auditor already has matching ready remediation work.",
             )
-            _update_config(project_slug, last_turn_result="Planner turn completed.")
-            logger.info("Planner turn complete.")
-        except Exception as e:
-            logger.error(f"Planner turn failed in autopilot: {e}")
-            _update_config(project_slug, last_action="Idle (Recovering from error)", last_turn_result=f"Error: {e}")
-            await asyncio.sleep(60)
-            continue
+        else:
+            _update_config(project_slug, last_action="Running Planner: Determining next task...")
+            try:
+                await planner_runtime.run_planner_turn(
+                    project=project,
+                    user_message=_planner_turn_message(auditors),
+                    persist=False # Do not spam the chat thread
+                )
+                _update_config(project_slug, last_turn_result="Planner turn completed.")
+                logger.info("Planner turn complete.")
+            except Exception as e:
+                logger.error(f"Planner turn failed in autopilot: {e}")
+                _update_config(project_slug, last_action="Idle (Recovering from error)", last_turn_result=f"Error: {e}")
+                await asyncio.sleep(60)
+                continue
 
         # 3. Check if a worker is already running or was just launched
         _update_config(project_slug, last_action="Checking for active worker sessions...")

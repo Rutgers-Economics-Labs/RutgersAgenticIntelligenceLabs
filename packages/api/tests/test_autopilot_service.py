@@ -769,6 +769,37 @@ def test_filter_ready_tasks_prioritizes_matching_repair_tasks_for_blocked_audito
     assert ranked_ids[0] == "task-2"
 
 
+def test_should_skip_planner_for_ready_repair_when_blocked_auditor_has_match():
+    tasks = [
+        {"title": "Repair ontology readiness blockers", "status": "ready"},
+        {"title": "Launch ontology-backed research after hydration", "status": "ready"},
+    ]
+    auditors = {
+        "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+        "integrity": {"status": "ready", "blockers": []},
+        "closeout": {"status": "ready", "blockers": []},
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+    }
+
+    assert autopilot_service._should_skip_planner_for_ready_repair(tasks, auditors) is True
+
+
+def test_should_not_skip_planner_without_matching_ready_repair():
+    tasks = [
+        {"title": "Launch ontology-backed research after hydration", "status": "ready"},
+    ]
+    auditors = {
+        "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+        "integrity": {"status": "ready", "blockers": []},
+        "closeout": {"status": "ready", "blockers": []},
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+    }
+
+    assert autopilot_service._should_skip_planner_for_ready_repair(tasks, auditors) is False
+
+
 def test_autopilot_routes_planner_turn_toward_ontology_unblocking(monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": "/tmp/soccer-project"}
     planner_turns: list[str] = []
