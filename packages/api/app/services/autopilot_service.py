@@ -232,6 +232,32 @@ def _find_existing_task(tasks: list[dict[str, Any]], needles: tuple[str, ...]) -
     return None
 
 
+async def _repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any]:
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    if not project_root or not project_root.exists():
+        return {"repairedSessionIds": []}
+    active_sessions = await running_agent_service.list_project_running_agents(
+        project["_id"],
+        active_only=True,
+        limit=50,
+    )
+    repaired: list[str] = []
+    for session in active_sessions:
+        root = session_lifecycle._resolve_session_root_path(session, project_root=project_root)
+        if root is None or not root.exists():
+            continue
+        state = session_lifecycle.session_files.read_state(root)
+        status = str(state.get("status") or "")
+        if status not in session_lifecycle.TERMINAL_STATUSES:
+            continue
+        await running_agent_service.finalize_running_agent(
+            str(session["_id"]),
+            status=status,
+        )
+        repaired.append(str(session["_id"]))
+    return {"repairedSessionIds": repaired}
+
+
 async def _ensure_ontology_lifecycle_tasks(project: dict[str, Any], tasks: list[dict[str, Any]]) -> bool:
     if not _is_ontology_project(project):
         return False
@@ -514,6 +540,13 @@ async def run_autopilot_loop(project_slug: str):
                 project_slug,
                 last_action="Reconciled duplicate task files",
                 last_turn_result=", ".join(repaired["removed"][:5]),
+            )
+        repaired_sessions = await _repair_stale_active_sessions(project)
+        if repaired_sessions.get("repairedSessionIds"):
+            _update_config(
+                project_slug,
+                last_action="Reconciled stale active sessions",
+                last_turn_result=", ".join(repaired_sessions["repairedSessionIds"][:5]),
             )
         audit_gate = audit_gate_status(project_root) if project_root and project_root.exists() else {"blocked": False}
         if audit_gate.get("blocked"):

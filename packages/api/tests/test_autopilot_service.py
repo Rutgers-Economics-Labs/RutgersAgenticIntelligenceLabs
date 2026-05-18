@@ -336,6 +336,41 @@ def test_autopilot_blocks_advance_until_audit_is_current(tmp_path: Path, monkeyp
     assert events and events[0]["event_type"] == "audit_required_before_advance"
 
 
+def test_repair_stale_active_sessions_finalizes_runtime_rows(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    session_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        status="completed",
+    )
+    finalized: list[dict] = []
+
+    async def _list_project_running_agents(project_id: str, *, active_only: bool = True, limit: int = 50):
+        return [
+            {
+                "_id": "sess-1",
+                "projectId": "project-1",
+                "projectSlug": "soccer-project",
+                "role": "data",
+                "status": "running",
+                "sessionPath": str(session_root),
+            }
+        ]
+
+    async def _finalize_running_agent(session_id: str, *, status: str, ended_at: int | None = None):
+        finalized.append({"session_id": session_id, "status": status})
+        return None
+
+    monkeypatch.setattr(autopilot_service.running_agent_service, "list_project_running_agents", _list_project_running_agents)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "finalize_running_agent", _finalize_running_agent)
+
+    result = asyncio.run(autopilot_service._repair_stale_active_sessions(project))
+
+    assert result == {"repairedSessionIds": ["sess-1"]}
+    assert finalized == [{"session_id": "sess-1", "status": "completed"}]
+
+
 def test_autopilot_creates_pipeline_population_task_when_pipeline_has_no_steps(tmp_path: Path, monkeypatch):
     project = {
         "_id": "project-1",
