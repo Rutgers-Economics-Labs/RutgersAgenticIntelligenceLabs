@@ -701,7 +701,7 @@ def _summarize_current_plan(project: dict) -> dict[str, Any]:
     return {"path": _rel(path, root), "summary": _summary_from_markdown(content), "content": content}
 
 
-def _ontology_follow_up_summary(project: dict) -> dict[str, Any]:
+def _ontology_follow_up_summary(project: dict, tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     root = project_root(project)
     path = root / "research_plan" / "ontology_answerable_follow_up_questions.md"
     if not path.exists():
@@ -734,6 +734,20 @@ def _ontology_follow_up_summary(project: dict) -> dict[str, Any]:
             current["notes"].append(line.removeprefix("- ").strip())
     if current:
         questions.append(current)
+
+    task_by_title = {str(task.get("title") or ""): task for task in (tasks or [])}
+    for question in questions:
+        classification = str(question.get("classification") or "").strip().lower()
+        title = str(question.get("title") or "").strip()
+        expected_task_title: str | None = None
+        if classification == "requires_expansion":
+            expected_task_title = f"Expand ontology coverage for: {title}"
+        elif classification == "blocked_by_data":
+            expected_task_title = f"Resolve data blocker for: {title}"
+        question["expectedTaskTitle"] = expected_task_title
+        linked_task = task_by_title.get(expected_task_title or "")
+        question["taskPresent"] = linked_task is not None
+        question["taskStatus"] = str(linked_task.get("status") or "") if linked_task else None
 
     classification_counts: dict[str, int] = {}
     for question in questions:
@@ -824,7 +838,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     artifacts = list_project_artifacts(project)
     integrity = list_project_integrity(project)
     root = project_root(project)
-    ontology_follow_ups = _ontology_follow_up_summary(project)
+    ontology_follow_ups = _ontology_follow_up_summary(project, tasks=tasks)
     latest_audit = read_latest_audit(root)
     recent_audits = list_recent_audits(root)
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)

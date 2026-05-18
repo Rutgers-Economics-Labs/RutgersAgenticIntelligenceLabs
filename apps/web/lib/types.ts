@@ -344,6 +344,9 @@ export type CommandCenter = {
       title: string;
       classification?: string | null;
       notes?: string[];
+      expectedTaskTitle?: string | null;
+      taskPresent?: boolean;
+      taskStatus?: string | null;
     }>;
     classificationCounts: Record<string, number>;
   };

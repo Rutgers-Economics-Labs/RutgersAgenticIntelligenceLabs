@@ -506,9 +506,40 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
 def test_build_command_center_surfaces_ontology_follow_up_classifications(tmp_path: Path, monkeypatch):
     from app.services import command_center_service
 
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [
+            {
+                "_id": "task-1",
+                "title": "Expand ontology coverage for: 2. Which question requires expansion?",
+                "status": "ready",
+                "dependsOnTaskIds": [],
+            }
+        ]
+
     async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
         return {}
 
+    class _PlannerService:
+        async def ensure_main_board(self, project_arg):
+            return await _ensure_main_board(project_arg)
+
+        async def list_tasks(self, board_id: str, *, project=None):
+            return await _list_tasks(board_id, project=project)
+
+        async def list_approvals(self, project_arg):
+            return []
+
+        def project_root_from_record(self, project_arg):
+            return Path(str(project_arg["localRepoPath"]))
+
+    class _RunningAgentService:
+        async def list_project_running_agents(self, project_id, active_only=False, limit=20):
+            return []
+
+    monkeypatch.setattr(command_center_service, "_runtime_services", lambda: (_PlannerService(), _RunningAgentService()))
     monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
 
     _write(
@@ -535,6 +566,9 @@ def test_build_command_center_surfaces_ontology_follow_up_classifications(tmp_pa
     assert center["ontologyFollowUps"]["classificationCounts"]["current_ontology"] == 1
     assert center["ontologyFollowUps"]["classificationCounts"]["requires_expansion"] == 1
     assert center["ontologyFollowUps"]["questions"][0]["title"] == "1. Which question is answerable now?"
+    assert center["ontologyFollowUps"]["questions"][1]["expectedTaskTitle"] == "Expand ontology coverage for: 2. Which question requires expansion?"
+    assert center["ontologyFollowUps"]["questions"][1]["taskPresent"] is True
+    assert center["ontologyFollowUps"]["questions"][1]["taskStatus"] == "ready"
 
 
 def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):

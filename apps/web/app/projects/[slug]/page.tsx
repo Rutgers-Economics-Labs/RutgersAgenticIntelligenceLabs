@@ -161,8 +161,18 @@ export default async function ProjectHomePage({
                 <div className="mono-muted">
                   {question.notes?.[0] ?? "No ontology coverage note recorded."}
                 </div>
+                {question.expectedTaskTitle ? (
+                  <div className="mono-muted">
+                    {question.taskPresent ? `task: ${question.expectedTaskTitle}` : `missing task: ${question.expectedTaskTitle}`}
+                  </div>
+                ) : null}
               </div>
-              <StatusPill value={question.classification ?? "unknown"} />
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                <StatusPill value={question.classification ?? "unknown"} />
+                {question.expectedTaskTitle ? (
+                  <StatusPill value={question.taskStatus ?? (question.taskPresent ? "linked" : "missing_task")} />
+                ) : null}
+              </div>
             </div>
           ))
         ) : (
