@@ -52,6 +52,13 @@ def _normalize_approval_status(status: str | None) -> str:
     return normalized
 
 
+def _normalize_approval_type(approval_type: str | None) -> str:
+    normalized = str(approval_type or "run_task").strip().lower()
+    if normalized not in APPROVAL_TYPES:
+        raise ValueError(f"Unsupported approval type: {approval_type}")
+    return normalized
+
+
 def _normalize_role_alias(role: str | None, default: str) -> str:
     normalized = str(role or default).strip().lower()
     return ROLE_ALIASES.get(normalized, normalized)
@@ -560,7 +567,7 @@ def _approval_to_runtime(path: Path) -> dict[str, Any]:
         "projectId": meta.get("project_id"),
         "taskId": meta.get("task_id"),
         "agentSessionId": meta.get("agent_session_id"),
-        "approvalType": meta.get("approval_type", "run_task"),
+        "approvalType": _normalize_approval_type(meta.get("approval_type", "run_task")),
         "status": _normalize_approval_status(meta.get("status", "pending")),
         "requestedByRole": _normalize_role_alias(meta.get("requested_by_role"), "planner"),
         "grantedByUserId": meta.get("granted_by_user_id"),
@@ -611,6 +618,7 @@ async def create_approval(
     root = project_root_from_record(project)
     if root is None:
         raise ValueError("Project does not have a localRepoPath configured")
+    approval_type = _normalize_approval_type(approval_type)
     status = _normalize_approval_status(status)
     approval_id = _slugify(f"{approval_type}-{task_id or agent_session_id or session_files.utc_now_iso()}")
     approval = {

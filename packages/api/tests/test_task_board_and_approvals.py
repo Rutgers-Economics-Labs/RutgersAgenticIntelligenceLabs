@@ -155,6 +155,46 @@ def test_create_and_resolve_approval_use_repo_files(tmp_path: Path):
     assert "Looks good." in approval_path.read_text(encoding="utf-8")
 
 
+def test_create_approval_accepts_research_launch_type(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+
+    approval_id = asyncio.run(
+        planner_service.create_approval(
+            project=project,
+            task_id=None,
+            agent_session_id="session-1",
+            approval_type="research_launch",
+        )
+    )
+
+    approval_path = tmp_path / "research_plan" / "approvals" / f"{approval_id}.md"
+
+    assert approval_path.exists()
+    assert "approval_type: research_launch" in approval_path.read_text(encoding="utf-8")
+
+
+def test_create_approval_rejects_unknown_approval_type(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+
+    try:
+        asyncio.run(
+            planner_service.create_approval(
+                project=project,
+                task_id="task-1",
+                agent_session_id=None,
+                approval_type="manual_override",
+            )
+        )
+    except ValueError as exc:
+        assert "Unsupported approval type" in str(exc)
+    else:
+        raise AssertionError("Expected create_approval() to reject unknown approval types")
+
+
 def test_sync_planner_files_writes_indexes(tmp_path: Path):
     from app.services import planner_service
 
