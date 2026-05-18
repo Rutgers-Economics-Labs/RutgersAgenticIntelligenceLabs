@@ -1559,6 +1559,23 @@ async def run_autopilot_loop(project_slug: str):
                 except asyncio.TimeoutError:
                     pass
                 continue
+
+        if await _ensure_integrity_repair_tasks(project, tasks):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+            consecutive_idle_turns = 0
+            poll_result = await _poll_active_worker_if_present(project, active_worker, project_slug)
+            if poll_result:
+                if poll_result == "polled":
+                    consecutive_idle_turns = 0
+                continue
+        if await _ensure_ontology_repair_task(project, tasks, auditors):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+            consecutive_idle_turns = 0
+            poll_result = await _poll_active_worker_if_present(project, active_worker, project_slug)
+            if poll_result:
+                if poll_result == "polled":
+                    consecutive_idle_turns = 0
+                continue
             
         # 4. Check tasks on the board to see if we are actually making progress
         # If everything is 'done' or 'cancelled', we are finished
