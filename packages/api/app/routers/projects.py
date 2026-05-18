@@ -416,6 +416,11 @@ def _validate_trusted_source_contract(
             status_code=422,
             detail="Validated sources require provenance metadata before they can be treated as trusted.",
         )
+    if admissibility_status == "derived" and not (provenance.get("derived_from") or provenance.get("derivedFrom")):
+        raise HTTPException(
+            status_code=422,
+            detail="Validated derived sources must declare `derived_from` provenance before they can be treated as trusted.",
+        )
     if freshness_status in {None, "", "unknown"}:
         raise HTTPException(
             status_code=422,
