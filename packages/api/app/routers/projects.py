@@ -285,6 +285,7 @@ class IntegrityAssumptionUpdateRequest(BaseModel):
     value: str | None = None
     status: str | None = None
     notes: str | None = None
+    affectedPaths: list[str] | None = None
 
 
 class OntologyFollowUpTaskRequest(BaseModel):
@@ -398,6 +399,7 @@ ALLOWED_SOURCE_ADMISSIBILITY_STATUSES = {"observed", "derived", "estimated", "sy
 ALLOWED_SOURCE_FRESHNESS_STATUSES = {"unknown", "fresh", "needs_refresh", "stale"}
 ALLOWED_SOURCE_QUALITY_STATUSES = {"candidate", "validated", "blocked", "rejected"}
 ALLOWED_SOURCE_IMPACT_LEVELS = {"low", "normal", "high", "critical"}
+ALLOWED_ASSUMPTION_STATUSES = {"active", "needs_review", "superseded", "rejected"}
 ALLOWED_CLAIM_STATUSES = {"draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"}
 ALLOWED_EVIDENCE_KINDS = {"direct", "derived", "contextual", "semantic_suggestion"}
 ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially_verified", "verified", "stale", "blocked"}
@@ -458,6 +460,14 @@ def _validate_trusted_source_contract(
         raise HTTPException(
             status_code=422,
             detail="Validated sources require explicit freshness state before they can be treated as trusted.",
+        )
+
+
+def _validate_assumption_status(status: str | None) -> None:
+    if status not in {None, ""} and status not in ALLOWED_ASSUMPTION_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail="Assumption status must be one of: active, needs_review, superseded, rejected.",
         )
 
 
@@ -1553,6 +1563,7 @@ async def patch_project_integrity_assumption(slug: str, assumption_key: str, dat
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    _validate_assumption_status(data.status)
     changes = {
         key: value
         for key, value in {
@@ -1895,6 +1906,7 @@ async def record_project_integrity_assumption(slug: str, data: IntegrityRecordAs
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    _validate_assumption_status(data.status)
     repo = get_integrity_repo(root)
     record = repo.upsert_assumption(
         {

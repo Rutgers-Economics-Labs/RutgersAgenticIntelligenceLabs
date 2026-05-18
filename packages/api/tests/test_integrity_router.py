@@ -73,6 +73,85 @@ async def test_patch_assumption_returns_rerun_plan(client, convex_mock, tmp_path
     assert payload["rerunPlan"]["affectedPaths"] == [".ontology/onto.duckdb", "artifacts/report.md"]
 
 
+async def test_record_assumption_rejects_unknown_status(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/assumptions",
+        json={
+            "assumptionKey": "study-period",
+            "title": "Study period",
+            "value": "2010-2024",
+            "status": "tentative",
+        },
+    )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "Assumption status must be one of" in payload["detail"]
+
+
+async def test_patch_assumption_rejects_unknown_status(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_assumptions(
+        [
+            {
+                "assumption_key": "study-period",
+                "title": "Study period",
+                "value": "2010-2024",
+            }
+        ]
+    )
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.patch(
+        "/api/v1/projects/integrity-router-project/integrity/assumptions/study-period",
+        json={"status": "tentative"},
+    )
+
+    assert resp.status_code == 422
+    payload = resp.json()
+    assert "Assumption status must be one of" in payload["detail"]
+
+
 async def test_apply_rerun_plan_creates_tasks(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     repo = ResearchIntegrityRepo(root)
