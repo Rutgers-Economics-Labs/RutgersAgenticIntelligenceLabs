@@ -302,6 +302,42 @@ def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path
     assert center["auditedTruth"]["path"] == "research_plan/audits/sess-2.json"
 
 
+def test_build_command_center_surfaces_source_admissibility_counts(tmp_path: Path):
+    from app.services import command_center_service
+
+    _write(
+        tmp_path / "research_plan" / "state" / "sources.json",
+        """[
+  {
+    "source_key": "observed-series",
+    "source_type": "dataset",
+    "title": "Observed Series",
+    "url_or_path": "https://example.com/observed.csv",
+    "freshness_status": "fresh",
+    "quality_status": "validated",
+    "admissibility_status": "observed",
+    "source_path": "research_plan/state/sources.json"
+  },
+  {
+    "source_key": "estimated-series",
+    "source_type": "dataset",
+    "title": "Estimated Series",
+    "url_or_path": "https://example.com/estimated.csv",
+    "freshness_status": "fresh",
+    "quality_status": "validated",
+    "admissibility_status": "estimated",
+    "source_path": "research_plan/state/sources.json"
+  }
+]
+""",
+    )
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["integritySummary"]["sourceAdmissibilityCounts"]["observed"] == 1
+    assert center["integritySummary"]["sourceAdmissibilityCounts"]["estimated"] == 1
+
+
 def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):
     from app.services import command_center_service
 
@@ -327,6 +363,34 @@ def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):
     assert row["freshnessStatus"] == "stale"
     assert row["sourceState"]["isStale"] is True
     assert sources["summary"]["freshnessCounts"]["stale"] == 1
+
+
+def test_source_listing_summarizes_admissibility_state(tmp_path: Path):
+    from app.services import command_center_service
+
+    _write(
+        tmp_path / "research_plan" / "state" / "sources.json",
+        """[
+  {
+    "source_key": "estimated-series",
+    "source_type": "dataset",
+    "title": "Estimated Series",
+    "url_or_path": "https://example.com/estimated.csv",
+    "freshness_status": "fresh",
+    "quality_status": "validated",
+    "admissibility_status": "estimated",
+    "source_path": "research_plan/state/sources.json"
+  }
+]
+""",
+    )
+
+    sources = command_center_service.list_project_sources(_project(tmp_path))
+    row = next(item for item in sources["sources"] if item["id"] == "estimated-series")
+
+    assert row["sourceState"]["admissibilityStatus"] == "estimated"
+    assert row["sourceState"]["isAdmissible"] is False
+    assert sources["summary"]["admissibilityCounts"]["estimated"] == 1
 
 
 def test_artifact_listing_surfaces_blocked_and_stale_trust_states(tmp_path: Path):

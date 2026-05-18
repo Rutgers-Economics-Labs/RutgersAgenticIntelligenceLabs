@@ -273,10 +273,13 @@ def list_project_sources(project: dict) -> dict[str, Any]:
     source_notes = _read(notes_path, 40_000) if notes_path.exists() else ""
     status_counts: dict[str, int] = {}
     freshness_counts: dict[str, int] = {}
+    admissibility_counts: dict[str, int] = {}
     for row in rows.values():
         status_counts[row["status"]] = status_counts.get(row["status"], 0) + 1
         freshness = str(row.get("freshnessStatus") or "unknown")
         freshness_counts[freshness] = freshness_counts.get(freshness, 0) + 1
+        admissibility = str((row.get("sourceState") or {}).get("admissibilityStatus") or "unknown")
+        admissibility_counts[admissibility] = admissibility_counts.get(admissibility, 0) + 1
 
     return {
         "sources": list(rows.values()),
@@ -284,6 +287,7 @@ def list_project_sources(project: dict) -> dict[str, Any]:
             "count": len(rows),
             "statusCounts": status_counts,
             "freshnessCounts": freshness_counts,
+            "admissibilityCounts": admissibility_counts,
             "notesPath": _rel(notes_path, root) if notes_path.exists() else None,
         },
         "notes": source_notes,
@@ -523,6 +527,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
                 "assumptionCount": 0,
                 "sourceCount": 0,
                 "sourceFreshnessCounts": {},
+                "sourceAdmissibilityCounts": {},
                 "claimCount": 0,
                 "artifactCount": 0,
                 "staleArtifactCount": 0,
@@ -553,8 +558,11 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
     promotion_state_counts: dict[str, int] = {}
     verification_status_counts: dict[str, int] = {}
     source_freshness_counts: dict[str, int] = {}
+    source_admissibility_counts: dict[str, int] = {}
     for row in indexes.sources:
         source_freshness_counts[row.freshness_status] = source_freshness_counts.get(row.freshness_status, 0) + 1
+        admissibility = str(_source_state(row).get("admissibilityStatus") or "unknown")
+        source_admissibility_counts[admissibility] = source_admissibility_counts.get(admissibility, 0) + 1
     for row in indexes.artifact_lineage:
         promotion_state_counts[row.promotion_state] = promotion_state_counts.get(row.promotion_state, 0) + 1
         status = _artifact_verification_status(row.artifact_path, row, indexes.verification_runs)
@@ -583,6 +591,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
             "assumptionCount": len(assumptions),
             "sourceCount": len(sources),
             "sourceFreshnessCounts": source_freshness_counts,
+            "sourceAdmissibilityCounts": source_admissibility_counts,
             "claimCount": len(claims),
             "artifactCount": len(artifact_lineage),
             "staleArtifactCount": len(stale_outputs),
@@ -744,6 +753,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         "integritySummary": {
             "staleArtifactCount": integrity["summary"]["staleArtifactCount"],
             "sourceFreshnessCounts": integrity["summary"]["sourceFreshnessCounts"],
+            "sourceAdmissibilityCounts": integrity["summary"]["sourceAdmissibilityCounts"],
             "agentWorkflow": integrity["agentWorkflow"],
         },
         "auditedTruth": latest_audit,

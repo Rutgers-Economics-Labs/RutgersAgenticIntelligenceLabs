@@ -335,6 +335,7 @@ export type CommandCenter = {
   integritySummary?: {
     staleArtifactCount: number;
     sourceFreshnessCounts: Record<string, number>;
+    sourceAdmissibilityCounts: Record<string, number>;
     agentWorkflow: AgentWorkflowSummary;
   };
   auditedTruth?: {
@@ -372,10 +373,12 @@ export type CommandCenter = {
 export type SourceState = {
   freshnessStatus: string;
   qualityStatus: string;
+  admissibilityStatus?: string;
   isFresh: boolean;
   isStale: boolean;
   needsRefresh: boolean;
   isBlocked: boolean;
+  isAdmissible?: boolean;
 };
 
 export type ArtifactTrustState = {

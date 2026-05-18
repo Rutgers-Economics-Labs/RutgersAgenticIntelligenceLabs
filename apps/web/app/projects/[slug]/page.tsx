@@ -56,6 +56,9 @@ export default async function ProjectHomePage({
         {Object.entries(center.integritySummary?.sourceFreshnessCounts ?? {}).map(([key, value]) => (
           <InlineStatus key={`freshness-${key}`} label={key.replaceAll("_", " ")} value={value} />
         ))}
+        {Object.entries(center.integritySummary?.sourceAdmissibilityCounts ?? {}).map(([key, value]) => (
+          <InlineStatus key={`admissibility-${key}`} label={`${key.replaceAll("_", " ")} admissibility`} value={value} />
+        ))}
       </SectionCard>
       <SectionCard eyebrow="Workflow Gates" noPad>
         {workflowSections.length ? workflowSections.map((section) => (
