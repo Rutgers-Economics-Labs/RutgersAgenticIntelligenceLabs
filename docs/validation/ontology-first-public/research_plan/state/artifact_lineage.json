@@ -1,0 +1,29 @@
+[
+  {
+    "artifact_path": "artifacts/us_macro_indicators_analysis.md",
+    "artifact_type": "report",
+    "title": "US Economic Indicators Ontology Study",
+    "promotion_state": "draft",
+    "reproducibility_mode": null,
+    "inputs": [
+      ".ontology/onto.duckdb"
+    ],
+    "scripts": [
+      "scripts/analyze_macro.py"
+    ],
+    "verification_commands": [
+      "scripts/run-verification.sh"
+    ],
+    "sources": [],
+    "assumptions": [],
+    "claims": [],
+    "verification_runs": [
+      "run-macro-001"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-18T22:18:53Z",
+    "updated_at": "2026-05-18T22:18:53Z"
+  }
+]

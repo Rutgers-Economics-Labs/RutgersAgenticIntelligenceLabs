@@ -1,0 +1,44 @@
+role: data
+label: Data Agent
+purpose: Author and validate ontology-backed ingestion configs.
+runner:
+  default: codex_cli
+  approval_required: false
+  max_retries: 3
+  timeout_minutes: 20
+  bash_access: true
+threading:
+  mode: task_scoped
+permissions:
+  read:
+  - .ontology
+  - topics
+  - specs
+  - research_plan
+  - skills
+  write:
+  - .ontology/sources
+  - .ontology/pipelines
+  - .ontology/transforms
+  - topics
+  deny: []
+secrets:
+  allow:
+  - FRED_API_KEY
+skills:
+  allow_use: true
+  root: skills
+tools:
+  allow:
+  - read_repo
+  - write_repo
+  - validate_yaml
+  - run_hydration_dry_run
+  - grepai_search
+  deny: []
+prompts:
+  system: agents/prompts/data.md
+  checklist: agents/checklists/data.md
+completion:
+  requires:
+  - task_documented

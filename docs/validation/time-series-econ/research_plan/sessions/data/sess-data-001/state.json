@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-data-001",
+  "role": "data",
+  "status": "completed",
+  "review_status": "review",
+  "verification_status": "passed",
+  "publish_status": "published",
+  "task_id": "task-001",
+  "updated_at": "2026-05-18T22:18:53Z"
+}

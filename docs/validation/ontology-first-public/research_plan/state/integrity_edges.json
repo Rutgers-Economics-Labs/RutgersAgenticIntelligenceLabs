@@ -1,0 +1,26 @@
+[
+  {
+    "edge_key": "artifact:artifacts/us_macro_indicators_analysis.md|generated_by|method:scripts/analyze_macro.py",
+    "from_id": "artifact:artifacts/us_macro_indicators_analysis.md",
+    "to_id": "method:scripts/analyze_macro.py",
+    "relationship": "generated_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/us_macro_indicators_analysis.md",
+    "target_record_key": "scripts/analyze_macro.py",
+    "metadata": {},
+    "created_at": "2026-05-18T22:18:53Z",
+    "updated_at": "2026-05-18T22:18:53Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/us_macro_indicators_analysis.md|verified_by|verification_run:run-macro-001",
+    "from_id": "artifact:artifacts/us_macro_indicators_analysis.md",
+    "to_id": "verification_run:run-macro-001",
+    "relationship": "verified_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/us_macro_indicators_analysis.md",
+    "target_record_key": "run-macro-001",
+    "metadata": {},
+    "created_at": "2026-05-18T22:18:53Z",
+    "updated_at": "2026-05-18T22:18:53Z"
+  }
+]
