@@ -1,0 +1,31 @@
+[
+  {
+    "artifact_path": "artifacts/nj_housing_affordability_analysis.md",
+    "artifact_type": "report",
+    "title": "NJ Housing Affordability and Labor Market Analysis",
+    "promotion_state": "partially_verified",
+    "reproducibility_mode": "manual",
+    "inputs": [
+      ".ontology/onto.duckdb"
+    ],
+    "scripts": [],
+    "verification_commands": [
+      "python scripts/run_live_agent_loop.py --verify"
+    ],
+    "sources": [
+      "research_plan/state/sources.json#fred-njsthpi",
+      "research_plan/state/sources.json#fred-njurn",
+      "research_plan/state/sources.json#fred-cpiaucsl"
+    ],
+    "assumptions": [],
+    "claims": [],
+    "verification_runs": [
+      "research_plan/state/verification_runs.json#live-data-hydration-verification"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-18T22:41:29Z",
+    "updated_at": "2026-05-18T22:41:29Z"
+  }
+]

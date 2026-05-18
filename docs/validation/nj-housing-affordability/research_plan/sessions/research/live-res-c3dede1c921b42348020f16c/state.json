@@ -1,0 +1,59 @@
+{
+  "session_id": "live-res-c3dede1c921b42348020f16c",
+  "role": "research",
+  "status": "completed",
+  "review_status": "review",
+  "task_id": "analyze-nj-housing-affordability-from-duckdb",
+  "created_at": "2026-05-18T22:41:29Z",
+  "completed_at": "2026-05-18T22:41:29Z",
+  "completion_summary": {
+    "status": "completed",
+    "assumptions_added": [],
+    "assumptions_changed": [],
+    "sources_used": [
+      "research_plan/state/sources.json#fred-njsthpi",
+      "research_plan/state/sources.json#fred-njurn",
+      "research_plan/state/sources.json#fred-cpiaucsl"
+    ],
+    "datasets_created": [],
+    "artifacts_created": [
+      "artifacts/nj_housing_affordability_analysis.md"
+    ],
+    "claims_created": [
+      "NJ housing prices rose 99% nominally from 2015-01-01 to 2025-10-01",
+      "Real (inflation-adjusted) housing price change: +57%",
+      "NJ unemployment fell from 6.9% to 4.7% over the period"
+    ],
+    "verification_results": [
+      {
+        "run_id": "live-res-c3dede1c921b42348020f16c-verification",
+        "loop_type": "claim_evidence",
+        "status": "passed",
+        "scope": "research",
+        "task_id": "analyze-nj-housing-affordability-from-duckdb",
+        "artifacts_checked": [
+          "artifacts/nj_housing_affordability_analysis.md"
+        ],
+        "claims_checked": [
+          "housing price trend claim",
+          "real affordability calculation",
+          "unemployment relationship"
+        ],
+        "checks": [
+          {
+            "name": "claim_grounded_in_fred_data",
+            "status": "passed"
+          }
+        ],
+        "blockers": []
+      }
+    ],
+    "open_questions": [],
+    "blockers": [],
+    "recommended_next_tasks": [
+      "synthesize-final-report"
+    ]
+  },
+  "llm_model": "gemini-2.5-flash",
+  "llm_generated": true
+}

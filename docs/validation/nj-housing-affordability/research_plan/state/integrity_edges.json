@@ -1,0 +1,50 @@
+[
+  {
+    "edge_key": "artifact:artifacts/nj_housing_affordability_analysis.md|derived_from|source:fred-njsthpi",
+    "from_id": "artifact:artifacts/nj_housing_affordability_analysis.md",
+    "to_id": "source:fred-njsthpi",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/nj_housing_affordability_analysis.md",
+    "target_record_key": "fred-njsthpi",
+    "metadata": {},
+    "created_at": "2026-05-18T22:41:29Z",
+    "updated_at": "2026-05-18T22:41:29Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/nj_housing_affordability_analysis.md|derived_from|source:fred-njurn",
+    "from_id": "artifact:artifacts/nj_housing_affordability_analysis.md",
+    "to_id": "source:fred-njurn",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/nj_housing_affordability_analysis.md",
+    "target_record_key": "fred-njurn",
+    "metadata": {},
+    "created_at": "2026-05-18T22:41:29Z",
+    "updated_at": "2026-05-18T22:41:29Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/nj_housing_affordability_analysis.md|derived_from|source:fred-cpiaucsl",
+    "from_id": "artifact:artifacts/nj_housing_affordability_analysis.md",
+    "to_id": "source:fred-cpiaucsl",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/nj_housing_affordability_analysis.md",
+    "target_record_key": "fred-cpiaucsl",
+    "metadata": {},
+    "created_at": "2026-05-18T22:41:29Z",
+    "updated_at": "2026-05-18T22:41:29Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/nj_housing_affordability_analysis.md|verified_by|verification_run:live-data-hydration-verification",
+    "from_id": "artifact:artifacts/nj_housing_affordability_analysis.md",
+    "to_id": "verification_run:live-data-hydration-verification",
+    "relationship": "verified_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/nj_housing_affordability_analysis.md",
+    "target_record_key": "live-data-hydration-verification",
+    "metadata": {},
+    "created_at": "2026-05-18T22:41:29Z",
+    "updated_at": "2026-05-18T22:41:29Z"
+  }
+]

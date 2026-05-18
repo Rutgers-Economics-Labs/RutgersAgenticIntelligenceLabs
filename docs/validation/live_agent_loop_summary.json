@@ -1,0 +1,46 @@
+{
+  "project": "nj-housing-affordability",
+  "archetype": "time-series-econ",
+  "llmModel": "gemini-2.5-flash",
+  "llmUsed": true,
+  "realFredData": true,
+  "phasesCompleted": [
+    "1-clarify-briefs (Gemini planner)",
+    "2-compliant-repo (bootstrap)",
+    "3-discover-sources (FRED typed)",
+    "4-build-pipeline (config written)",
+    "5-hydrate-verify (real FRED HTTP)",
+    "6-run-research (Gemini analysis of DuckDB)",
+    "7-artifacts (lineage-backed report)",
+    "8-self-audit (post-run auditors)",
+    "9-follow-ups (ontology-answerable questions)"
+  ],
+  "sessionsWritten": {
+    "planner": "live-pla-dc3056ea8329463896cc0f77",
+    "research": "live-res-c3dede1c921b42348020f16c"
+  },
+  "dbStats": {
+    "hpiRows": 44,
+    "unempRows": 134,
+    "cpiRows": 135,
+    "hpiNominalChange": "99.0%",
+    "realAffordabilityChange": "57.4%"
+  },
+  "auditorStatus": {
+    "session": "ready",
+    "planner": "ready",
+    "ontology": "ready",
+    "integrity": "ready",
+    "closeout": "ready"
+  },
+  "auditorBlockers": {
+    "session": [],
+    "planner": [],
+    "ontology": [],
+    "integrity": [],
+    "closeout": []
+  },
+  "allReady": true,
+  "zeroFabrication": true,
+  "zeroMetaOperatorReconciliation": true
+}

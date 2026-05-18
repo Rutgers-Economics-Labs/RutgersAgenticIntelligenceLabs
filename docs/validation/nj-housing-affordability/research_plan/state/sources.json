@@ -1,0 +1,41 @@
+[
+  {
+    "source_key": "fred-njsthpi",
+    "source_type": "api",
+    "title": "NJ House Price Index (FRED NJSTHPI)",
+    "url_or_path": "https://api.stlouisfed.org/fred/series/observations?series_id=NJSTHPI",
+    "origin": "https://fred.stlouisfed.org/series/NJSTHPI",
+    "access_method": "rest_api",
+    "acquired_at": "2026-05-18T22:41:19Z",
+    "retrieved_at": "2026-05-18T22:41:19Z",
+    "admissibility_status": "observed",
+    "quality_status": "validated",
+    "freshness_status": "fresh"
+  },
+  {
+    "source_key": "fred-njurn",
+    "source_type": "api",
+    "title": "NJ Unemployment Rate (FRED NJURN)",
+    "url_or_path": "https://api.stlouisfed.org/fred/series/observations?series_id=NJURN",
+    "origin": "https://fred.stlouisfed.org/series/NJURN",
+    "access_method": "rest_api",
+    "acquired_at": "2026-05-18T22:41:19Z",
+    "retrieved_at": "2026-05-18T22:41:19Z",
+    "admissibility_status": "observed",
+    "quality_status": "validated",
+    "freshness_status": "fresh"
+  },
+  {
+    "source_key": "fred-cpiaucsl",
+    "source_type": "api",
+    "title": "CPI All Urban Consumers (FRED CPIAUCSL)",
+    "url_or_path": "https://api.stlouisfed.org/fred/series/observations?series_id=CPIAUCSL",
+    "origin": "https://fred.stlouisfed.org/series/CPIAUCSL",
+    "access_method": "rest_api",
+    "acquired_at": "2026-05-18T22:41:19Z",
+    "retrieved_at": "2026-05-18T22:41:19Z",
+    "admissibility_status": "observed",
+    "quality_status": "validated",
+    "freshness_status": "fresh"
+  }
+]

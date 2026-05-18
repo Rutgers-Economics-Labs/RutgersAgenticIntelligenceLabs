@@ -1,0 +1,21 @@
+{
+  "pipeline_id": "nj-housing-fred-pipeline",
+  "sources": [
+    {
+      "series_id": "NJSTHPI",
+      "frequency": "q",
+      "units": "index"
+    },
+    {
+      "series_id": "NJURN",
+      "frequency": "m",
+      "units": "percent"
+    },
+    {
+      "series_id": "CPIAUCSL",
+      "frequency": "m",
+      "units": "index"
+    }
+  ],
+  "output": "onto.duckdb"
+}

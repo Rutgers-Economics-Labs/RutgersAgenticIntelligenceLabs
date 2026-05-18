@@ -1,0 +1,21 @@
+[
+  {
+    "run_id": "live-data-hydration-verification",
+    "loop_type": "analysis_reproducibility",
+    "status": "passed",
+    "scope": "data",
+    "task_id": "hydrate-fred-data-into-duckdb",
+    "artifacts_checked": [
+      ".ontology/onto.duckdb"
+    ],
+    "claims_checked": [],
+    "checks": [
+      {
+        "name": "duckdb_rows_populated",
+        "status": "passed",
+        "detail": "313 rows"
+      }
+    ],
+    "blockers": []
+  }
+]
