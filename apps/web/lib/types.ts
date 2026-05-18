@@ -398,6 +398,14 @@ export type CommandCenter = {
     staleAuditSessionCount: number;
     terminalSessionCount: number;
     activeRuntimeSessionCount: number;
+    details?: {
+      duplicateTaskFiles: string[];
+      taskSessionMismatchTaskIds: string[];
+      staleRuntimeSessionIds: string[];
+      staleAuditSessionIds: string[];
+      terminalSessionIds: string[];
+      activeRuntimeSessionIds: string[];
+    };
   };
   auditors?: Record<
     string,

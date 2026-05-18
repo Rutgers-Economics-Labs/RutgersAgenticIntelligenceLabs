@@ -99,6 +99,27 @@ export default async function ProjectHomePage({
         <InlineStatus label="stale runtime" value={center.projectReality?.staleRuntimeSessionCount ?? 0} />
         <InlineStatus label="stale audits" value={center.projectReality?.staleAuditSessionCount ?? 0} />
         <InlineStatus label="duplicate tasks" value={center.projectReality?.duplicateTaskFileCount ?? 0} />
+        {center.projectReality?.details?.duplicateTaskFiles?.length ? (
+          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
+            {center.projectReality.details.duplicateTaskFiles.slice(0, 5).map((item) => (
+              <div key={item} className="mono-muted">{item}</div>
+            ))}
+          </div>
+        ) : null}
+        {center.projectReality?.details?.taskSessionMismatchTaskIds?.length ? (
+          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
+            {center.projectReality.details.taskSessionMismatchTaskIds.slice(0, 5).map((item) => (
+              <div key={item} className="mono-muted">task mismatch: {item}</div>
+            ))}
+          </div>
+        ) : null}
+        {center.projectReality?.details?.staleRuntimeSessionIds?.length ? (
+          <div style={{ padding: "12px 14px", borderTop: "1px solid var(--border)", display: "grid", gap: 6 }}>
+            {center.projectReality.details.staleRuntimeSessionIds.slice(0, 5).map((item) => (
+              <div key={item} className="mono-muted">stale runtime: {item}</div>
+            ))}
+          </div>
+        ) : null}
       </SectionCard>
       <SectionCard eyebrow="Approvals" noPad>
         <ApprovalPanel approvals={center.pendingApprovals} slug={slug} />

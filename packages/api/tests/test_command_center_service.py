@@ -413,6 +413,14 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
             "staleAuditSessionCount": 3,
             "terminalSessionCount": 4,
             "activeRuntimeSessionCount": 1,
+            "details": {
+                "duplicateTaskFiles": ["research_plan/tasks/task-b.md"],
+                "taskSessionMismatchTaskIds": ["task-1", "task-2"],
+                "staleRuntimeSessionIds": ["sess-1"],
+                "staleAuditSessionIds": ["sess-2", "sess-3", "sess-4"],
+                "terminalSessionIds": ["sess-1", "sess-2", "sess-3", "sess-4"],
+                "activeRuntimeSessionIds": ["sess-1"],
+            },
         }
 
     async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
@@ -432,6 +440,7 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
     assert center["projectReality"]["hasDrift"] is True
     assert center["projectReality"]["taskSessionMismatchCount"] == 2
     assert center["projectReality"]["staleAuditSessionCount"] == 3
+    assert center["projectReality"]["details"]["duplicateTaskFiles"] == ["research_plan/tasks/task-b.md"]
 
 
 def test_build_command_center_surfaces_auditor_statuses(tmp_path: Path, monkeypatch):

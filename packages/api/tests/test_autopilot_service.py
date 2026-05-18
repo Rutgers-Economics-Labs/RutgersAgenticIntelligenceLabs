@@ -951,6 +951,78 @@ Duplicate task file.
     assert status["taskSessionMismatchCount"] == 1
     assert status["staleRuntimeSessionCount"] == 1
     assert status["terminalSessionCount"] == 1
+    assert status["details"]["duplicateTaskFiles"] == ["research_plan/tasks/task-b.md"]
+    assert status["details"]["taskSessionMismatchTaskIds"] == ["task-a"]
+    assert status["details"]["staleRuntimeSessionIds"] == ["sess-1"]
+
+
+def test_project_reality_snapshot_returns_drift_details(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-a.md").write_text(
+        """---
+task_id: task-a
+title: Same Task
+status: running
+assigned_role: data
+---
+
+## Description
+
+Task A.
+""",
+        encoding="utf-8",
+    )
+    (task_dir / "task-b.md").write_text(
+        """---
+title: Same Task
+status: done
+assigned_role: data
+---
+
+## Description
+
+Duplicate task file.
+""",
+        encoding="utf-8",
+    )
+
+    session_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="task-a",
+        status="completed",
+        review_status="review",
+        publish_commit_sha="abc123",
+    )
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(
+            0,
+            result=[
+                {
+                    "_id": "sess-1",
+                    "projectId": "project-1",
+                    "projectSlug": "soccer-project",
+                    "role": "data",
+                    "status": "running",
+                    "sessionPath": str(session_root),
+                }
+            ],
+        ),
+    )
+
+    snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
+
+    assert snapshot["duplicateTaskFiles"] == ["research_plan/tasks/task-b.md"]
+    assert snapshot["taskSessionMismatchTaskIds"] == ["task-a"]
+    assert snapshot["staleRuntimeSessionIds"] == ["sess-1"]
+    assert snapshot["terminalSessionIds"] == ["sess-1"]
+    assert snapshot["activeRuntimeSessionIds"] == ["sess-1"]
 
 
 def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, monkeypatch):
