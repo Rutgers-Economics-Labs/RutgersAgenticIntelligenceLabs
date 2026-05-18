@@ -911,6 +911,43 @@ async def _ensure_control_plane_repair_tasks(
     return True
 
 
+async def _ensure_closeout_repair_task(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> bool:
+    closeout = (auditors or {}).get("closeout") or {}
+    if closeout.get("status") != "blocked":
+        return False
+
+    board = await planner_service.ensure_main_board(project)
+    task_title = "Resolve closeout blockers"
+    if any(str(task.get("title") or "") == task_title for task in tasks):
+        return False
+
+    await planner_service.create_task(
+        project=project,
+        board_id=board["_id"],
+        title=task_title,
+        description=(
+            "Repair remaining closeout blockers so the project can complete cleanly. "
+            "This includes unresolved ontology, integrity, final-artifact, or follow-up-question obligations that still block finalization."
+        ),
+        status="ready",
+        agent_role="health",
+        repo_paths=["research_plan", "research_plan/state", "artifacts", ".ontology"],
+        acceptance_criteria=[
+            "closeout blockers are documented and resolved or explicitly rerouted into durable planner work",
+            "final artifacts, ontology state, and integrity state satisfy closeout requirements",
+            "the closeout auditor no longer reports blockers after the repair",
+        ],
+        runner="codex_cli",
+    )
+    await planner_service.sync_planner_files(project, board)
+    logger.info("Autopilot: ensured closeout repair task for %s", project.get("slug"))
+    return True
+
+
 def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
     base = (
         "[AUTOPILOT MODE] Analyze the project state. If any tasks are 'ready', use launch_task_runner to start them. "
@@ -1203,6 +1240,11 @@ async def run_autopilot_loop(project_slug: str):
         if all_done and tasks:
             closeout_auditor = auditors.get("closeout") or {}
             if closeout_auditor.get("status") == "blocked":
+                if await _ensure_closeout_repair_task(project, tasks, auditors):
+                    tasks = await planner_service.list_tasks(board["_id"], project=project)
+                    consecutive_idle_turns = 0
+                    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+                    closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
                 await raise_decision_event(
                     project,
@@ -1300,6 +1342,11 @@ async def run_autopilot_loop(project_slug: str):
         if all_done and tasks:
             closeout_auditor = auditors.get("closeout") or {}
             if closeout_auditor.get("status") == "blocked":
+                if await _ensure_closeout_repair_task(project, tasks, auditors):
+                    tasks = await planner_service.list_tasks(board["_id"], project=project)
+                    consecutive_idle_turns = 0
+                    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=auditor_sessions)
+                    closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
                 await raise_decision_event(
                     project,
