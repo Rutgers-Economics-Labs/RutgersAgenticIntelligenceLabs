@@ -246,7 +246,7 @@ class ProjectRunnerSessionCreateRequest(BaseModel):
     branch: str = "main"
     allowedPaths: list[str] = []
     acceptanceCriteria: list[str] = []
-    runnerName: str = "jules"
+    runnerName: str = "default"
     agentRoleForSecrets: str | None = None
 
 
