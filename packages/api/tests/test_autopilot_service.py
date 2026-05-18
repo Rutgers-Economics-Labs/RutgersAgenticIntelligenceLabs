@@ -759,6 +759,100 @@ def test_autopilot_reenters_integrity_gate_after_planner_refresh(monkeypatch):
     assert events == ["integrity_auditor_blocked"]
 
 
+def test_autopilot_reenters_ontology_gate_after_planner_refresh(monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project"}
+    planner_turns: list[str] = []
+    events: list[str] = []
+    auditor_call_count = {"value": 0}
+
+    class _ImmediateWakeEvent:
+        def clear(self):
+            return None
+
+        async def wait(self):
+            return True
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _run_planner_turn(**kwargs):
+        planner_turns.append("ran")
+        return None
+
+    async def _find_active_worker(project_id: str):
+        return None
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [
+            {
+                "_id": "task-1",
+                "title": "Continue downstream research synthesis",
+                "status": "backlog",
+                "dependsOnTaskIds": [],
+            }
+        ]
+
+    async def _raise_decision_event(project_arg, **kwargs):
+        events.append(kwargs["event_type"])
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return {"_id": "event-1"}
+
+    async def _reconcile_project_reality(project_arg):
+        return {
+            "removedTaskFiles": [],
+            "updatedTaskIds": [],
+            "repairedSessionIds": [],
+            "repairedAuditSessionIds": [],
+            "hasChanges": False,
+        }
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        auditor_call_count["value"] += 1
+        if auditor_call_count["value"] == 1:
+            return {
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "ready", "blockers": []},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+            }
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+        }
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
+    monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _reconcile_project_reality)
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_expansion_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_project_reality_repair_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_integrity_repair_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_repair_task", lambda project_arg, tasks, auditors: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_reconcile_ontology_lifecycle_state", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_control_plane_repair_tasks", lambda project_arg, tasks, auditors: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _build_auditor_statuses)
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+    autopilot_service._wake_events["soccer-project"] = _ImmediateWakeEvent()
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    assert planner_turns == ["ran"]
+    assert events == ["ontology_auditor_blocked"]
+
+
 def test_autopilot_control_plane_gate_only_launches_repair_task(monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project"}
     tasks = [
