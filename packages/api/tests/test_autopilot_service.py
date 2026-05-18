@@ -1117,7 +1117,7 @@ def test_autopilot_launches_created_closeout_repair_task_before_waiting(tmp_path
                     "dependsOnTaskIds": [],
                 },
             ]
-        return [{"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []}]
+        return [{"_id": "task-1", "title": "Existing completed task", "status": "backlog", "dependsOnTaskIds": []}]
 
     async def _create_task(**kwargs):
         created["value"] = True
@@ -1222,7 +1222,7 @@ def test_autopilot_refreshes_active_worker_after_closeout_repair_task_creation(t
                     "dependsOnTaskIds": [],
                 },
             ]
-        return [{"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []}]
+        return [{"_id": "task-1", "title": "Existing completed task", "status": "backlog", "dependsOnTaskIds": []}]
 
     async def _create_task(**kwargs):
         created["value"] = True
@@ -1287,6 +1287,116 @@ def test_autopilot_refreshes_active_worker_after_closeout_repair_task_creation(t
 
     assert launches == []
     assert polled == [{"session_id": "sess-closeout", "project_id": "project-1"}]
+
+
+def test_autopilot_creates_closeout_repair_after_planner_refresh(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "status": "draft", "localRepoPath": str(tmp_path)}
+    planner_turns: list[str] = []
+    launches: list[dict] = []
+    created = {"value": False}
+    task_snapshots = [
+        [{"_id": "task-1", "title": "Existing completed task", "status": "backlog", "dependsOnTaskIds": []}],
+        [{"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []}],
+    ]
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _run_planner_turn(**kwargs):
+        planner_turns.append("ran")
+        return None
+
+    async def _find_active_worker(project_id: str):
+        return None
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        if created["value"]:
+            return [
+                {"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []},
+                {
+                    "_id": "repair-closeout",
+                    "title": "Resolve closeout blockers",
+                    "status": "ready",
+                    "agentRole": "health",
+                    "approvalState": "granted",
+                    "priority": "medium",
+                    "dependsOnTaskIds": [],
+                },
+            ]
+        if len(task_snapshots) > 1:
+            return task_snapshots.pop(0)
+        return task_snapshots[0]
+
+    async def _create_task(**kwargs):
+        created["value"] = True
+        return {"_id": "repair-closeout", "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        return None
+
+    async def _launch_ready_task(project_arg, ready_tasks: list[dict]):
+        launches.append({"task_ids": [str(item["_id"]) for item in ready_tasks]})
+        autopilot_service._active_autopilots["soccer-project"] = False
+        return {"convex_session_id": "session-closeout"}
+
+    async def _list_decision_events(*args, **kwargs):
+        return []
+
+    async def _raise_decision_event(*args, **kwargs):
+        return {"_id": "event-1"}
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _run_planner_turn)
+    monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _find_active_worker)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+    monkeypatch.setattr(autopilot_service, "_launch_ready_task", _launch_ready_task)
+    monkeypatch.setattr(autopilot_service, "list_decision_events", _list_decision_events)
+    monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
+    monkeypatch.setattr(
+        autopilot_service,
+        "reconcile_project_reality",
+        lambda project_arg: asyncio.sleep(
+            0,
+            result={
+                "removedTaskFiles": [],
+                "updatedTaskIds": [],
+                "repairedSessionIds": [],
+                "repairedAuditSessionIds": [],
+                "hasChanges": False,
+            },
+        ),
+    )
+    monkeypatch.setattr(autopilot_service, "audit_gate_status", lambda project_root: {"blocked": False})
+    monkeypatch.setattr(
+        autopilot_service,
+        "build_auditor_statuses",
+        lambda project_arg, *, tasks=None, active_sessions=None: asyncio.sleep(
+            0,
+            result={
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "ready", "blockers": []},
+                "ontology": {"status": "ready", "blockers": []},
+                "integrity": {"status": "ready", "blockers": []},
+                "closeout": {"status": "blocked", "blockers": ["Integrity closeout gate is blocked."]},
+            },
+        ),
+    )
+
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
+    autopilot_service._wake_events["soccer-project"] = asyncio.Event()
+
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+
+    assert planner_turns == ["ran"]
+    assert created["value"] is True
+    assert launches == [{"task_ids": ["repair-closeout"]}]
 
 
 def test_mark_project_completed_uses_repo_pipeline_when_project_record_is_stale(tmp_path, monkeypatch):
