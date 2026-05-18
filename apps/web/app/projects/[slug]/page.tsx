@@ -247,6 +247,9 @@ export default async function ProjectHomePage({
         {Object.entries(center.integritySummary?.sourceFreshnessCounts ?? {}).map(([key, value]) => (
           <InlineStatus key={`freshness-${key}`} label={key.replaceAll("_", " ")} value={value} />
         ))}
+      </SectionCard>
+      <SectionCard eyebrow="Source Admissibility" noPad>
+        <InlineStatus label="sources" value={center.sourceSummary.count} />
         {Object.entries(center.integritySummary?.sourceAdmissibilityCounts ?? {}).map(([key, value]) => (
           <InlineStatus key={`admissibility-${key}`} label={`${key.replaceAll("_", " ")} admissibility`} value={value} />
         ))}
