@@ -1761,6 +1761,60 @@ async def run_autopilot_loop(project_slug: str):
 
         ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
         ready_tasks = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
+        ontology_auditor = auditors.get("ontology") or {}
+        if not ready_tasks and ontology_auditor.get("status") == "blocked":
+            blockers = ontology_auditor.get("blockers") or []
+            _update_config(
+                project_slug,
+                last_action="Waiting for ontology repair",
+                last_turn_result=str(blockers[0] if blockers else "Ontology auditor blocked autopilot."),
+            )
+            await raise_decision_event(
+                project,
+                source="autopilot",
+                event_type="ontology_auditor_blocked",
+                severity="needs_planner",
+                summary=str(blockers[0] if blockers else "Ontology auditor blocked autopilot."),
+                evidence_refs=[f"project:{project.get('slug')}"],
+                recommended_actions=[
+                    "Repair ontology readiness blockers",
+                    "Hydrate or repair source/pipeline coverage",
+                    "Advance only after ontology blockers are cleared",
+                ],
+            )
+            _wake_events[project_slug].clear()
+            try:
+                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                pass
+            continue
+        integrity_auditor = auditors.get("integrity") or {}
+        if not ready_tasks and integrity_auditor.get("status") == "blocked":
+            blockers = integrity_auditor.get("blockers") or []
+            _update_config(
+                project_slug,
+                last_action="Waiting for integrity repair",
+                last_turn_result=str(blockers[0] if blockers else "Integrity auditor blocked autopilot."),
+            )
+            await raise_decision_event(
+                project,
+                source="autopilot",
+                event_type="integrity_auditor_blocked",
+                severity="needs_planner",
+                summary=str(blockers[0] if blockers else "Integrity auditor blocked autopilot."),
+                evidence_refs=[f"project:{project.get('slug')}"],
+                recommended_actions=[
+                    "Repair unsupported claims or missing evidence",
+                    "Refresh stale sources or verification state",
+                    "Advance only after integrity blockers are cleared",
+                ],
+            )
+            _wake_events[project_slug].clear()
+            try:
+                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+            except asyncio.TimeoutError:
+                pass
+            continue
         if not ready_tasks:
             consecutive_idle_turns += 1
             logger.info(f"Autopilot: No ready tasks. Idle turns: {consecutive_idle_turns}")
