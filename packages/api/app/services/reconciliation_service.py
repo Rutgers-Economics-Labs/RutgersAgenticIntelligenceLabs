@@ -162,6 +162,18 @@ async def project_reality_snapshot(
 ) -> dict[str, Any]:
     root = planner_service.project_root_from_record(project)
     if root is None or not root.exists():
+        running_agent_status_drift: dict[str, Any] = {
+            "hasDrift": False,
+            "sessions": [],
+        }
+        try:
+            status_drift = await running_agent_service.list_running_agent_status_drift(project["_id"], limit=50)
+            running_agent_status_drift = {
+                "hasDrift": bool(status_drift),
+                "sessions": status_drift,
+            }
+        except Exception:
+            pass
         return {
             "duplicateTaskFiles": [],
             "taskSessionMismatchTaskIds": [],
@@ -169,6 +181,7 @@ async def project_reality_snapshot(
             "staleAuditSessionIds": [],
             "terminalSessionIds": [],
             "activeRuntimeSessionIds": [str(item.get("_id")) for item in (active_sessions or []) if item.get("_id")],
+            "runningAgentStatusDrift": running_agent_status_drift,
         }
 
     runtime_tasks = tasks if tasks is not None else await planner_service.list_tasks("main", project=project)

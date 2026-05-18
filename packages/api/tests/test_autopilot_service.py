@@ -1627,6 +1627,38 @@ frontend:
     assert status["runningAgentStatusDriftCount"] == 1
 
 
+def test_project_reality_snapshot_without_repo_root_still_reports_running_agent_status_drift(monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": None}
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(
+            0,
+            result=[{"sessionId": "sess-legacy", "status": "done", "canonicalStatus": "completed"}],
+        ),
+    )
+
+    snapshot = asyncio.run(
+        reconciliation_service.project_reality_snapshot(
+            project,
+            active_sessions=[{"_id": "sess-1"}],
+        )
+    )
+    status = asyncio.run(
+        reconciliation_service.project_reality_status(
+            project,
+            active_sessions=[{"_id": "sess-1"}],
+        )
+    )
+
+    assert snapshot["activeRuntimeSessionIds"] == ["sess-1"]
+    assert snapshot["runningAgentStatusDrift"]["hasDrift"] is True
+    assert snapshot["runningAgentStatusDrift"]["sessions"][0]["sessionId"] == "sess-legacy"
+    assert status["hasDrift"] is True
+    assert status["runningAgentStatusDriftCount"] == 1
+
+
 def test_repair_active_ontology_registry_drift_promotes_reusable_artifact(tmp_path: Path, monkeypatch):
     project = {
         "_id": "project-1",
