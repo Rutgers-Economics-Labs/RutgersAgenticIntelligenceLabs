@@ -394,6 +394,29 @@ class IntegrityArtifactPromotionRequest(BaseModel):
     targetState: str
 
 
+def _validate_trusted_source_contract(
+    *,
+    quality_status: str | None,
+    admissibility_status: str | None,
+    provenance: dict | None,
+) -> None:
+    if quality_status != "validated":
+        return
+    if admissibility_status not in {"observed", "derived"}:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Validated sources require explicit admissibility state. "
+                "Use `observed` or `derived` for trusted source records."
+            ),
+        )
+    if not isinstance(provenance, dict) or not provenance:
+        raise HTTPException(
+            status_code=422,
+            detail="Validated sources require provenance metadata before they can be treated as trusted.",
+        )
+
+
 def _csv_query_param(value: str | None) -> list[str] | None:
     if not value:
         return None
@@ -1373,14 +1396,11 @@ async def patch_project_integrity_source(slug: str, source_key: str, data: Integ
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
-    if data.qualityStatus == "validated" and data.admissibilityStatus not in {"observed", "derived"}:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Validated sources require explicit admissibility state. "
-                "Use `observed` or `derived` for trusted source records."
-            ),
-        )
+    _validate_trusted_source_contract(
+        quality_status=data.qualityStatus,
+        admissibility_status=data.admissibilityStatus,
+        provenance=data.provenance,
+    )
     changes = {
         key: value
         for key, value in {
@@ -1681,15 +1701,11 @@ async def record_project_integrity_source(slug: str, data: IntegrityRecordSource
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
-    if data.qualityStatus == "validated":
-        if data.admissibilityStatus not in {"observed", "derived"}:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Validated sources require explicit admissibility state. "
-                    "Use `observed` or `derived` for trusted source records."
-                ),
-            )
+    _validate_trusted_source_contract(
+        quality_status=data.qualityStatus,
+        admissibility_status=data.admissibilityStatus,
+        provenance=data.provenance,
+    )
     repo = get_integrity_repo(root)
     record = repo.upsert_source(
         {
