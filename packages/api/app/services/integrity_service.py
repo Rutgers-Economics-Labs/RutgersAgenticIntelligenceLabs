@@ -268,6 +268,78 @@ def audit_artifact_lineage(
     }
 
 
+def register_final_artifact(
+    project_root: str | Path,
+    *,
+    artifact_path: str,
+    artifact_type: str,
+    title: str,
+    inputs: list[str] | None = None,
+    scripts: list[str] | None = None,
+    sources: list[str] | None = None,
+    claims: list[str] | None = None,
+    verification_commands: list[str] | None = None,
+    reproducibility_mode: str | None = None,
+    plan_root: str = "research_plan",
+) -> dict[str, Any]:
+    """Register or update a final artifact with full lineage in the integrity index.
+
+    Returns the upserted artifact record as a dict.
+    """
+    repo = get_integrity_repo(project_root, plan_root=plan_root)
+    record = ArtifactLineageRecord(
+        artifact_path=artifact_path,
+        artifact_type=artifact_type,
+        title=title,
+        inputs=inputs or [],
+        scripts=scripts or [],
+        sources=sources or [],
+        claims=claims or [],
+        verification_commands=verification_commands or [],
+        reproducibility_mode=reproducibility_mode,
+    )
+    upserted = repo.upsert_artifact_lineage(record)
+    return upserted.model_dump(mode="json")
+
+
+def write_verification_certificate(
+    project_root: str | Path,
+    artifact_path: str,
+    *,
+    run_id: str,
+    session_id: str | None = None,
+    verified_at: str | None = None,
+    notes: str | None = None,
+    plan_root: str = "research_plan",
+) -> dict[str, Any]:
+    """Write a human-readable verification certificate for a verified artifact.
+
+    The certificate is written to research_plan/verification_certificates/<run_id>.md
+    and can be committed as part of the project's audit trail.
+    Returns a dict with certificatePath and content.
+    """
+    now = verified_at or _utc_datetime_now().isoformat().replace("+00:00", "Z")
+    cert_dir = Path(project_root) / plan_root / "verification_certificates"
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    cert_path = cert_dir / f"{run_id}.md"
+
+    lines = [
+        "# Verification Certificate",
+        "",
+        f"**Artifact:** `{artifact_path}`",
+        f"**Run ID:** `{run_id}`",
+        f"**Verified At:** {now}",
+    ]
+    if session_id:
+        lines.append(f"**Session:** `{session_id}`")
+    if notes:
+        lines.extend(["", "## Notes", "", notes])
+    lines.append("")
+    content = "\n".join(lines)
+    cert_path.write_text(content, encoding="utf-8")
+    return {"certificatePath": str(cert_path), "content": content}
+
+
 def update_assumption_and_mark_stale(
     project_root: str | Path,
     assumption_key: str,
