@@ -369,6 +369,54 @@ def test_integrity_repo_persists_explicit_edge_records(tmp_path):
     assert supports_edge.source_record_key == "briefing-note"
 
 
+def test_write_integrity_edges_rebuilds_canonical_edge_view(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.upsert_source(
+        {
+            "source_key": "briefing-note",
+            "source_type": "document",
+            "title": "Briefing Note",
+            "url_or_path": "topics/briefing.md",
+            "origin": "Internal",
+            "acquired_at": "2026-05-14T00:00:00Z",
+            "access_method": "manual",
+            "freshness_status": "fresh",
+            "quality_status": "validated",
+            "provenance": {"text": "Congestion increased queue delays in the region."},
+        }
+    )
+    chunk_key = repo.chunks_for_source("briefing-note")[0].chunk_key
+    repo.upsert_claim(
+        {
+            "claim_key": "claim-001",
+            "claim_text": "Queue delays increased after congestion worsened.",
+            "source_keys": ["briefing-note"],
+            "evidence_chunk_keys": [chunk_key],
+            "status": "supported",
+            "evidence_kind": "direct",
+        }
+    )
+
+    repo.write_integrity_edges(
+        [
+            {
+                "edge_key": "source:fake|supports|claim:fake",
+                "from_id": "source:fake",
+                "to_id": "claim:fake",
+                "relationship": "supports",
+                "edge_class": "explicit",
+            }
+        ]
+    )
+
+    edge_keys = {item.edge_key for item in repo.load_integrity_edges()}
+
+    assert "source:fake|supports|claim:fake" not in edge_keys
+    assert "source:briefing-note|supports|claim:claim-001" in edge_keys
+    assert f"chunk:{chunk_key}|supports|claim:claim-001" in edge_keys
+
+
 def test_integrity_repo_compile_truth_report_writes_outputs(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)

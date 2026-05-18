@@ -1538,10 +1538,13 @@ class ResearchIntegrityRepo:
     def load_integrity_edges(self) -> list[IntegrityEdgeRecord]:
         return self._load_records(self.integrity_edges_path(), IntegrityEdgeRecord)
 
-    def write_integrity_edges(self, records: list[IntegrityEdgeRecord] | list[dict[str, Any]]) -> None:
+    def _persist_integrity_edges(self, records: list[IntegrityEdgeRecord] | list[dict[str, Any]]) -> None:
         self._write_records(self.integrity_edges_path(), records, IntegrityEdgeRecord)
 
-    def rebuild_integrity_edges(self) -> list[IntegrityEdgeRecord]:
+    def write_integrity_edges(self, records: list[IntegrityEdgeRecord] | list[dict[str, Any]]) -> None:
+        self._persist_integrity_edges(self._compute_integrity_edges())
+
+    def _compute_integrity_edges(self) -> list[IntegrityEdgeRecord]:
         sources = self.load_sources()
         assumptions = self.load_assumptions()
         claims = self.load_claims()
@@ -1684,7 +1687,11 @@ class ResearchIntegrityRepo:
                         target_record_key=upstream.artifact_path,
                     )
 
-        self.write_integrity_edges(edges)
+        return edges
+
+    def rebuild_integrity_edges(self) -> list[IntegrityEdgeRecord]:
+        edges = self._compute_integrity_edges()
+        self._persist_integrity_edges(edges)
         return edges
 
     def chunks_for_source(self, source_key: str) -> list[EvidenceChunkRecord]:

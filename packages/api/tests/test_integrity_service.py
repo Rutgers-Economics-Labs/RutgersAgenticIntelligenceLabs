@@ -2274,17 +2274,10 @@ def test_hybrid_retrieve_uses_persisted_edges_for_explicit_expansion(tmp_path):
                 "claim_key": "claim-001",
                 "claim_text": "Queue delays are tied to transmission congestion.",
                 "source_keys": ["policy-note"],
-                "evidence_chunk_keys": [chunk_key],
+                "evidence_chunk_keys": [],
                 "status": "supported",
                 "evidence_kind": "direct",
             }
-        ]
-    )
-    repo.write_integrity_edges(
-        [
-            edge
-            for edge in repo.load_integrity_edges()
-            if not (edge.from_id == f"chunk:{chunk_key}" and edge.to_id == "claim:claim-001" and edge.relationship == "supports")
         ]
     )
 
