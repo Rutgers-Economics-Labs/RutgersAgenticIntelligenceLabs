@@ -61,8 +61,19 @@ export async function fetchCommandCenter(slug: string): Promise<CommandCenter> {
 export async function reconcileCommandCenter(slug: string): Promise<{
   removedTaskFiles: string[];
   updatedTaskIds: string[];
+  updatedApprovalIds?: string[];
+  repairedSecretPolicyRoles?: string[];
+  repairedRoleConfigPaths?: string[];
+  repairedRunningAgentStatusSessionIds?: string[];
+  repairedRunningAgentRoleSessionIds?: string[];
+  repairedRunningAgentRunnerSessionIds?: string[];
   repairedSessionIds: string[];
   repairedAuditSessionIds: string[];
+  repairedOntologyArtifact?: {
+    repaired?: boolean;
+    previousDuckdbPath?: string | null;
+    nextDuckdbPath?: string | null;
+  } | null;
   hasChanges: boolean;
 }> {
   return postJson(`/projects/${slug}/command-center/reconcile`, {});

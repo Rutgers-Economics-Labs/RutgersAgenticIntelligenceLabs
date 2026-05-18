@@ -5,6 +5,25 @@ import { useState } from "react";
 import { Wrench } from "lucide-react";
 import { reconcileCommandCenter } from "@/lib/api";
 
+function summarizeReconcileResult(result: Awaited<ReturnType<typeof reconcileCommandCenter>>): string {
+  const repairBuckets = [
+    result.removedTaskFiles.length,
+    result.updatedTaskIds.length,
+    result.updatedApprovalIds?.length ?? 0,
+    result.repairedSecretPolicyRoles?.length ?? 0,
+    result.repairedRoleConfigPaths?.length ?? 0,
+    result.repairedRunningAgentStatusSessionIds?.length ?? 0,
+    result.repairedRunningAgentRoleSessionIds?.length ?? 0,
+    result.repairedRunningAgentRunnerSessionIds?.length ?? 0,
+    result.repairedSessionIds.length,
+    result.repairedAuditSessionIds.length,
+    result.repairedOntologyArtifact?.repaired ? 1 : 0,
+  ];
+  const repairedItemCount = repairBuckets.reduce((sum, count) => sum + count, 0);
+  const repairedClassCount = repairBuckets.filter((count) => count > 0).length;
+  return `Reconciled ${repairedItemCount} item(s) across ${repairedClassCount} drift class(es).`;
+}
+
 export function ReconcileProjectButton({ slug }: { slug: string }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -18,13 +37,7 @@ export function ReconcileProjectButton({ slug }: { slug: string }) {
       if (!result.hasChanges) {
         setMessage("No drift repairs were needed.");
       } else {
-        const changed = [
-          ...result.removedTaskFiles,
-          ...result.updatedTaskIds,
-          ...result.repairedSessionIds,
-          ...result.repairedAuditSessionIds,
-        ];
-        setMessage(`Reconciled ${changed.length} item(s).`);
+        setMessage(summarizeReconcileResult(result));
       }
       router.refresh();
     } catch (error) {
