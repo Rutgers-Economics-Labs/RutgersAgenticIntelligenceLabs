@@ -410,6 +410,7 @@ ALLOWED_APPROVAL_TYPES = {"run_task"}
 ALLOWED_TASK_RUNNERS = {"default", "jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
 ALLOWED_TASK_PRIORITIES = {"high", "medium", "low"}
 ALLOWED_TASK_AGENT_ROLES = {"research", "data", "coding", "artifact", "health", "planner"}
+ALLOWED_PLANNER_MESSAGE_ROLES = {"user", "assistant", "system"} | ALLOWED_TASK_AGENT_ROLES
 
 
 def _validate_trusted_source_contract(
@@ -516,6 +517,20 @@ def _normalize_agent_role(agent_role: str | None, *, field_name: str) -> str:
         raise HTTPException(
             status_code=422,
             detail=f"{field_name} must be one of: research, data, coding, artifact, health, planner.",
+        )
+    return normalized
+
+
+def _normalize_planner_message_role(role: str | None, *, field_name: str) -> str:
+    normalized = str(role or "").strip().lower()
+    normalized = ROLE_ALIASES.get(normalized, normalized)
+    if normalized not in ALLOWED_PLANNER_MESSAGE_ROLES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"{field_name} must be one of: user, assistant, system, "
+                "research, data, coding, artifact, health, planner."
+            ),
         )
     return normalized
 
@@ -2190,9 +2205,10 @@ async def get_planner_home(slug: str):
 async def append_planner_message(slug: str, data: PlannerMessageRequest):
     project = await planner_service.get_project_by_slug(slug)
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
+    role = _normalize_planner_message_role(data.role, field_name="Planner message role")
     await planner_service.append_planner_message(
         project=project,
-        role=data.role,
+        role=role,
         content=data.content,
         message_type=data.messageType,
         session_id=data.sessionId,
@@ -2217,10 +2233,11 @@ async def planner_chat(slug: str, data: PlannerChatRequest):
 @router.post("/{slug}/planner/worker-update")
 async def worker_update_planner(slug: str, data: WorkerUpdateRequest):
     project = await planner_service.get_project_by_slug(slug)
+    role = _normalize_planner_message_role(data.role, field_name="Worker update role")
     # Append to planner history as a system/agent message
     await planner_service.append_planner_message(
         project=project,
-        role=data.role,
+        role=role,
         content=data.message,
         message_type="worker_update"
     )

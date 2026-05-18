@@ -507,3 +507,108 @@ def test_create_runner_session_rejects_unknown_secret_role(monkeypatch):
 
     assert response.status_code == 422
     assert "Runner agentRoleForSecrets must be one of" in response.json()["detail"]
+
+
+def test_append_planner_message_rejects_unknown_role(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/planner/messages",
+        json={
+            "role": "narrator",
+            "content": "hello",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Planner message role must be one of" in response.json()["detail"]
+
+
+def test_append_planner_message_normalizes_role_alias(monkeypatch):
+    import app.routers.projects as projects_router
+
+    appended: list[dict] = []
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _ensure_planner_thread(project_id: str):
+        return "planner"
+
+    async def _append_planner_message(**kwargs):
+        appended.append(kwargs)
+        return None
+
+    async def _list_planner_messages(project_arg, thread_id: str = "planner", limit: int = 200):
+        return [{"role": "research", "content": "hello", "messageType": "chat"}]
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_planner_thread", _ensure_planner_thread)
+    monkeypatch.setattr(projects_router.planner_service, "append_planner_message", _append_planner_message)
+    monkeypatch.setattr(projects_router.planner_service, "list_planner_messages", _list_planner_messages)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/planner/messages",
+        json={
+            "role": "researcher",
+            "content": "hello",
+        },
+    )
+
+    assert response.status_code == 200
+    assert appended[0]["role"] == "research"
+
+
+def test_worker_update_planner_rejects_unknown_role(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/planner/worker-update",
+        json={
+            "role": "narrator",
+            "message": "done",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "Worker update role must be one of" in response.json()["detail"]
+
+
+def test_worker_update_planner_normalizes_role_alias(monkeypatch):
+    import app.routers.projects as projects_router
+
+    appended: list[dict] = []
+    wakes: list[str] = []
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _append_planner_message(**kwargs):
+        appended.append(kwargs)
+        return None
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "append_planner_message", _append_planner_message)
+    monkeypatch.setattr("app.services.autopilot_service.trigger_wake", lambda slug: wakes.append(slug))
+
+    response = client.post(
+        "/api/v1/projects/demo-project/planner/worker-update",
+        json={
+            "role": "auditor",
+            "message": "done",
+        },
+    )
+
+    assert response.status_code == 200
+    assert appended[0]["role"] == "health"
+    assert wakes == ["demo-project"]
