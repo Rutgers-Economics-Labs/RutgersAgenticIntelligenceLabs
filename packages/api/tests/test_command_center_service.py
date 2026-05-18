@@ -352,13 +352,44 @@ def test_build_command_center_surfaces_project_reality_summary(tmp_path: Path, m
             "activeRuntimeSessionCount": 1,
         }
 
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": [], "state": None},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
     monkeypatch.setattr(command_center_service, "project_reality_status", _project_reality_status)
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
 
     center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
 
     assert center["projectReality"]["hasDrift"] is True
     assert center["projectReality"]["taskSessionMismatchCount"] == 2
     assert center["projectReality"]["staleAuditSessionCount"] == 3
+
+
+def test_build_command_center_surfaces_auditor_statuses(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "blocked", "blockers": ["1 stale runtime session(s) still marked active."]},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+        }
+
+    monkeypatch.setattr(command_center_service, "build_auditor_statuses", _build_auditor_statuses)
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["auditors"]["session"]["status"] == "blocked"
+    assert center["auditors"]["ontology"]["state"] == "not_hydrated"
+    assert center["auditors"]["closeout"]["blockers"] == ["1 non-terminal task(s) remain."]
 
 
 def test_source_listing_surfaces_repo_backed_freshness_state(tmp_path: Path):

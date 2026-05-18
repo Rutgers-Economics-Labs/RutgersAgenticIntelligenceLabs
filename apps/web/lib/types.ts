@@ -372,6 +372,14 @@ export type CommandCenter = {
     terminalSessionCount: number;
     activeRuntimeSessionCount: number;
   };
+  auditors?: Record<
+    string,
+    {
+      status: string;
+      blockers?: string[];
+      state?: string | null;
+    }
+  >;
   repoHealth: {
     hasLocalRepo: boolean;
     hasRailYaml: boolean;

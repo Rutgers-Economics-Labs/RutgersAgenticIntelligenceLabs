@@ -80,6 +80,21 @@ export default async function ProjectHomePage({
           <div className="empty-state">No integrity workflow summary yet.</div>
         )}
       </SectionCard>
+      <SectionCard eyebrow="Auditors" noPad>
+        {Object.entries(center.auditors ?? {}).length ? Object.entries(center.auditors ?? {}).map(([key, value]) => (
+          <div key={key} className="approval-row">
+            <div>
+              <div style={{ fontWeight: 600, color: "var(--fg)", textTransform: "capitalize" }}>{key}</div>
+              <div className="mono-muted">
+                {value.blockers?.length ? value.blockers[0] : value.state ? `state: ${value.state}` : "ready"}
+              </div>
+            </div>
+            <StatusPill value={value.status} />
+          </div>
+        )) : (
+          <div className="empty-state">No auditor summary yet.</div>
+        )}
+      </SectionCard>
       <SectionCard eyebrow="Repo Health" noPad>
         <InlineStatus label="local repo" value={center.repoHealth.hasLocalRepo ? "yes" : "no"} />
         <InlineStatus label="rail.yaml" value={center.repoHealth.hasRailYaml ? "present" : "missing"} />

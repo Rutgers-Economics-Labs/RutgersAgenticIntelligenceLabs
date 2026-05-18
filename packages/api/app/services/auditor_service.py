@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from app.services.hydration_registry_service import get_hydration_status
+from app.services.integrity_service import evaluate_integrity_gate
+from app.services.reconciliation_service import project_reality_status
+from rail.manifest import load_manifest
+
+ONTOLOGY_READY_STATES = {"hydrated_on_this_device", "hydrated_on_another_device", "hydrating"}
+
+
+def _is_ontology_project(project: dict[str, Any]) -> bool:
+    root = project.get("localRepoPath")
+    if not root:
+        return False
+    if project.get("approach") == "ontology-first":
+        return True
+    return (Path(root).resolve() / ".ontology").exists()
+
+
+def _duckdb_has_populated_rows(duckdb_path: str | None) -> bool:
+    if not duckdb_path:
+        return False
+    try:
+        import duckdb  # type: ignore
+    except Exception:
+        return False
+    try:
+        conn = duckdb.connect(str(duckdb_path), read_only=True)
+        tables = conn.execute("SHOW TABLES").fetchall()
+        if not tables:
+            conn.close()
+            return False
+        for (table_name,) in tables:
+            try:
+                count = conn.execute(f"SELECT COUNT(*) FROM \"{table_name}\"").fetchone()[0]
+            except Exception:
+                continue
+            if isinstance(count, int) and count > 0:
+                conn.close()
+                return True
+        conn.close()
+    except Exception:
+        return False
+    return False
+
+
+def _hydration_duckdb_path(hydration: dict[str, Any]) -> str | None:
+    reusable = hydration.get("reusableArtifact") or {}
+    if reusable.get("duckdbArtifactPath"):
+        return str(reusable["duckdbArtifactPath"])
+    current_artifacts = hydration.get("currentDeviceArtifacts") or []
+    for artifact in current_artifacts:
+        if artifact.get("duckdbArtifactPath"):
+            return str(artifact["duckdbArtifactPath"])
+    return None
+
+
+async def build_auditor_statuses(
+    project: dict[str, Any],
+    *,
+    tasks: list[dict[str, Any]] | None = None,
+    active_sessions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
+
+    session_status = {
+        "status": "blocked" if reality["staleRuntimeSessionCount"] else "ready",
+        "blockers": (
+            [f"{reality['staleRuntimeSessionCount']} stale runtime session(s) still marked active."]
+            if reality["staleRuntimeSessionCount"]
+            else []
+        ),
+    }
+    planner_status = {
+        "status": "blocked" if reality["duplicateTaskFileCount"] or reality["taskSessionMismatchCount"] else "ready",
+        "blockers": [
+            *([f"{reality['duplicateTaskFileCount']} duplicate task file(s) detected."] if reality["duplicateTaskFileCount"] else []),
+            *([f"{reality['taskSessionMismatchCount']} task/session state mismatch(es) detected."] if reality["taskSessionMismatchCount"] else []),
+        ],
+    }
+
+    ontology_status: dict[str, Any] = {"status": "ready", "blockers": [], "state": None}
+    if _is_ontology_project(project):
+        try:
+            hydration = await get_hydration_status(project=project)
+            ontology_status["state"] = hydration.get("state")
+            duckdb_path = _hydration_duckdb_path(hydration) or project.get("activeOntologyDuckdbPath")
+            if hydration.get("state") not in ONTOLOGY_READY_STATES:
+                ontology_status = {
+                    "status": "blocked",
+                    "blockers": [f"Ontology hydration state is `{hydration.get('state')}`."],
+                    "state": hydration.get("state"),
+                }
+            elif not _duckdb_has_populated_rows(duckdb_path):
+                ontology_status = {
+                    "status": "blocked",
+                    "blockers": ["Ontology artifact exists but does not contain populated rows."],
+                    "state": hydration.get("state"),
+                }
+        except Exception as exc:
+            ontology_status = {"status": "blocked", "blockers": [f"Could not read hydration status: {exc}"], "state": None}
+
+    integrity_status: dict[str, Any] = {"status": "ready", "blockers": []}
+    closeout_status: dict[str, Any] = {"status": "ready", "blockers": []}
+    if root and root.exists():
+        manifest = load_manifest(root)
+        artifact_gate = evaluate_integrity_gate(root, manifest, action="artifact_generation")
+        if artifact_gate.get("blocked"):
+            integrity_status = {
+                "status": "blocked",
+                "blockers": [str(item) for item in (artifact_gate.get("reasons") or [])],
+            }
+        unfinished = [task for task in (tasks or []) if task.get("status") not in {"done", "cancelled"}]
+        closeout_blockers: list[str] = []
+        if (active_sessions or []):
+            closeout_blockers.append(f"{len(active_sessions or [])} active session(s) still exist.")
+        if unfinished:
+            closeout_blockers.append(f"{len(unfinished)} non-terminal task(s) remain.")
+        if ontology_status.get("status") == "blocked":
+            closeout_blockers.extend(list(ontology_status.get("blockers") or [])[:1])
+        closeout_gate = evaluate_integrity_gate(root, manifest, action="closeout")
+        if closeout_gate.get("blocked"):
+            closeout_blockers.extend([str(item) for item in (closeout_gate.get("reasons") or [])[:1]])
+        if closeout_blockers:
+            closeout_status = {"status": "blocked", "blockers": closeout_blockers}
+
+    return {
+        "session": session_status,
+        "planner": planner_status,
+        "ontology": ontology_status,
+        "integrity": integrity_status,
+        "closeout": closeout_status,
+    }

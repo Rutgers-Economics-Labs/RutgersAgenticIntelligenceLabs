@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from app.services.audit_service import read_latest_audit
+from app.services.auditor_service import build_auditor_statuses
 from app.services.integrity_service import load_integrity_indexes, summarize_agent_workflow_health
 from app.services.reconciliation_service import project_reality_status
 from rail.integrity import build_artifact_trust_summary, build_source_state
@@ -720,6 +721,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     root = project_root(project)
     latest_audit = read_latest_audit(root)
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
+    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
 
     status_counts: dict[str, int] = {}
     for task in tasks:
@@ -761,6 +763,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         "auditedTruth": latest_audit,
         "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
         "projectReality": reality,
+        "auditors": auditors,
         "repoHealth": {
             "hasLocalRepo": bool(project.get("localRepoPath")),
             "hasRailYaml": bool(project.get("localRepoPath") and (Path(project["localRepoPath"]) / "rail.yaml").exists()),
