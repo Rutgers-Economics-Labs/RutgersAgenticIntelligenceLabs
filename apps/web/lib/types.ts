@@ -431,6 +431,7 @@ export type CommandCenter = {
     terminalSessionCount: number;
     activeRuntimeSessionCount: number;
     runningAgentStatusDriftCount?: number;
+    runningAgentRoleDriftCount?: number;
     ontologyArtifactDriftCount?: number;
     artifactRegistryDriftCount?: number;
     secretPolicyRoleDriftCount?: number;
@@ -448,6 +449,14 @@ export type CommandCenter = {
           sessionId: string;
           status: string;
           canonicalStatus: string;
+        }>;
+      };
+      runningAgentRoleDrift?: {
+        hasDrift: boolean;
+        sessions: Array<{
+          sessionId: string;
+          role: string;
+          canonicalRole: string;
         }>;
       };
       ontologyArtifactDrift?: {
