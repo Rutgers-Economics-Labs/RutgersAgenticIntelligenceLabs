@@ -1828,6 +1828,11 @@ async def apply_project_integrity_artifact_promotion(slug: str, data: IntegrityA
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    if data.targetState not in ALLOWED_PROMOTION_STATES:
+        raise HTTPException(
+            status_code=422,
+            detail="Artifact promotion target state must be one of: exploratory, draft, needs_evidence, partially_verified, verified, stale, blocked.",
+        )
     if data.targetState in {"partially_verified", "verified"}:
         auditors = await build_auditor_statuses(project)
         blocked: list[str] = []

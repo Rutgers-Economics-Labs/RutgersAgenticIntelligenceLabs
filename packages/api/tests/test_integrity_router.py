@@ -912,6 +912,38 @@ async def test_artifact_lineage_write_rejects_trusted_state_when_ontology_audito
     assert "Artifact lineage write blocked by auditor state: ontology:" in payload["detail"]
 
 
+async def test_artifact_promotion_rejects_unknown_target_state(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    promote_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts/promote",
+        json={"artifactPath": "artifacts/report.md", "targetState": "trusted-ish"},
+    )
+
+    assert promote_resp.status_code == 422
+    payload = promote_resp.json()
+    assert "Artifact promotion target state must be one of" in payload["detail"]
+
+
 async def test_artifact_lineage_write_rejects_unknown_claim_references(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
 
