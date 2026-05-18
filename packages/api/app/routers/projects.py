@@ -408,6 +408,7 @@ ALLOWED_TASK_APPROVAL_STATES = {"pending", "granted"}
 ALLOWED_APPROVAL_STATUSES = {"pending", "granted", "rejected", "approved"}
 ALLOWED_APPROVAL_TYPES = {"run_task"}
 ALLOWED_TASK_RUNNERS = {"default", "jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
+ALLOWED_TASK_PRIORITIES = {"high", "medium", "low"}
 
 
 def _validate_trusted_source_contract(
@@ -496,6 +497,14 @@ def _validate_planner_task_runner(runner: str | None) -> None:
         raise HTTPException(
             status_code=422,
             detail="Planner task runner must be one of: default, jules, claude_code, gemini_cli, cursor_cli, codex_cli.",
+        )
+
+
+def _validate_planner_task_priority(priority: str | None) -> None:
+    if priority not in {None, ""} and priority not in ALLOWED_TASK_PRIORITIES:
+        raise HTTPException(
+            status_code=422,
+            detail="Planner task priority must be one of: high, medium, low.",
         )
 
 
@@ -2230,6 +2239,7 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
     _validate_planner_task_status(data.status)
     _validate_planner_task_approval_state(data.approvalState)
     _validate_planner_task_runner(data.runner)
+    _validate_planner_task_priority(data.priority)
     board = await planner_service.ensure_main_board(project, session_id=data.sessionId)
     task = await planner_service.create_task(
         project=project,
@@ -2256,6 +2266,7 @@ async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRe
     _validate_planner_task_status(data.status)
     _validate_planner_task_approval_state(data.approvalState)
     _validate_planner_task_runner(data.runner)
+    _validate_planner_task_priority(data.priority)
     board = await planner_service.ensure_main_board(project)
     await planner_service.update_task(task_id, project=project, **data.model_dump())
     await planner_service.sync_planner_files(project, board)
