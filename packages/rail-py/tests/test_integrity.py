@@ -921,6 +921,93 @@ def test_write_claims_strips_unknown_references_before_persisting(tmp_path):
     assert stored.evidence_chunk_keys == []
 
 
+def test_write_evidence_chunks_strips_orphan_chunks_before_claim_support(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_evidence_chunks(
+        [
+            {
+                "chunk_key": "orphan-chunk",
+                "source_key": "missing-source",
+                "text": "Unsupported chunk body.",
+                "ordinal": 0,
+                "char_count": 1,
+                "content_hash": "bogus",
+            }
+        ]
+    )
+
+    assert repo.load_evidence_chunks() == []
+
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "This should not be marked supported from an orphan chunk.",
+                "status": "supported",
+                "evidence_kind": "direct",
+                "evidence_chunk_keys": ["orphan-chunk"],
+            }
+        ]
+    )
+
+    stored = repo.get_claim("claim-001")
+    assert stored is not None
+    assert stored.status == "needs_evidence"
+    assert stored.evidence_chunk_keys == []
+
+
+def test_write_evidence_chunks_recomputes_trust_fields_from_canonical_source(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.upsert_source(
+        {
+            "source_key": "briefing-note",
+            "source_type": "document",
+            "title": "Briefing Note",
+            "url_or_path": "topics/briefing.md",
+            "origin": "Internal",
+            "acquired_at": "2026-05-14T00:00:00Z",
+            "access_method": "manual",
+            "freshness_status": "fresh",
+            "quality_status": "validated",
+            "admissibility_status": "observed",
+            "provenance": {"text": "Queue delays increased in the region."},
+        }
+    )
+
+    repo.write_evidence_chunks(
+        [
+            {
+                "chunk_key": "briefing-note#manual-1",
+                "source_key": "briefing-note",
+                "text": "Queue delays increased in the region.",
+                "ordinal": 0,
+                "char_count": 1,
+                "content_hash": "bogus",
+                "embedding_model": "legacy-model",
+                "embedding": [0.5],
+                "chunk_type": "text",
+                "status": "blocked",
+                "metadata": {"custom": "kept"},
+            }
+        ]
+    )
+
+    chunk = repo.load_evidence_chunks()[0]
+
+    assert chunk.status == "active"
+    assert chunk.char_count == len(chunk.text)
+    assert chunk.content_hash != "bogus"
+    assert chunk.embedding_model == "token_hash_v1"
+    assert len(chunk.embedding) == 256
+    assert chunk.metadata["source_title"] == "Briefing Note"
+    assert chunk.metadata["quality_status"] == "validated"
+    assert chunk.metadata["custom"] == "kept"
+
+
 def test_upsert_source_downgrades_validated_status_without_provenance(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)

@@ -593,6 +593,45 @@ def _normalize_verification_run_record_for_write(
     )
 
 
+def _normalize_evidence_chunk_record_for_write(
+    record: EvidenceChunkRecord,
+    *,
+    source_index: dict[str, SourceRecord],
+) -> EvidenceChunkRecord | None:
+    source = source_index.get(record.source_key)
+    if source is None:
+        return None
+    status: Literal["active", "stale", "blocked"]
+    if source.quality_status in {"blocked", "rejected"}:
+        status = "blocked"
+    elif source.freshness_status == "stale":
+        status = "stale"
+    else:
+        status = "active"
+    metadata = dict(record.metadata or {})
+    metadata.update(
+        {
+            "source_title": source.title,
+            "source_type": source.source_type,
+            "url_or_path": source.url_or_path,
+            "origin": source.origin,
+            "freshness_status": source.freshness_status,
+            "quality_status": source.quality_status,
+        }
+    )
+    return record.model_copy(
+        update={
+            "char_count": len(record.text),
+            "content_hash": hashlib.sha1(record.text.encode("utf-8")).hexdigest(),
+            "embedding_model": EMBEDDING_MODEL,
+            "embedding": _hash_embedding(record.text),
+            "chunk_type": str(source.provenance.get("chunk_type") or record.chunk_type or "text"),
+            "status": status,
+            "metadata": metadata,
+        }
+    )
+
+
 def build_claim_state(
     claim: ClaimRecord,
     *,
@@ -1465,7 +1504,16 @@ class ResearchIntegrityRepo:
         return self._load_records(self.evidence_chunks_path(), EvidenceChunkRecord)
 
     def write_evidence_chunks(self, records: list[EvidenceChunkRecord] | list[dict[str, Any]]) -> None:
-        self._write_records(self.evidence_chunks_path(), records, EvidenceChunkRecord)
+        source_index = {item.source_key: item for item in self.load_sources()}
+        normalized_records: list[EvidenceChunkRecord] = []
+        for record in records:
+            normalized = _normalize_evidence_chunk_record_for_write(
+                EvidenceChunkRecord.model_validate(record),
+                source_index=source_index,
+            )
+            if normalized is not None:
+                normalized_records.append(normalized)
+        self._write_records(self.evidence_chunks_path(), normalized_records, EvidenceChunkRecord)
         self.rebuild_integrity_edges()
 
     def load_integrity_edges(self) -> list[IntegrityEdgeRecord]:
