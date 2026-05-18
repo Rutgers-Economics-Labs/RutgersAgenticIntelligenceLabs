@@ -1030,6 +1030,37 @@ def test_write_artifact_lineage_drops_unknown_verification_runs_from_trusted_sta
     assert stored.verification_runs == []
 
 
+def test_write_artifact_lineage_strips_unknown_references_before_persisting(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "partially_verified",
+                "inputs": ["topics/missing-input.md"],
+                "scripts": ["topics/missing-script.py"],
+                "sources": ["research_plan/state/sources.json#missing-source"],
+                "assumptions": ["research_plan/state/assumptions.json#missing-assumption"],
+                "claims": ["research_plan/state/claims.json#missing-claim"],
+                "verification_runs": ["research_plan/state/verification_runs.json#missing-run"],
+            }
+        ]
+    )
+
+    stored = repo.load_artifact_lineage()[0]
+    assert stored.promotion_state == "draft"
+    assert stored.inputs == []
+    assert stored.scripts == []
+    assert stored.sources == []
+    assert stored.assumptions == []
+    assert stored.claims == []
+    assert stored.verification_runs == []
+
+
 def test_write_source_candidates_downgrades_promoted_without_canonical_source(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     repo = ResearchIntegrityRepo(root)

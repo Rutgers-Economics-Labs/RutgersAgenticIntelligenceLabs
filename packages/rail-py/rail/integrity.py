@@ -531,12 +531,27 @@ def _normalize_validated_source_quality(
 def _normalize_artifact_record_for_write(
     record: ArtifactLineageRecord,
     *,
+    project_root: Path,
+    valid_source_keys: set[str],
+    valid_assumption_keys: set[str],
+    valid_claim_keys: set[str],
     valid_verification_run_keys: set[str],
 ) -> ArtifactLineageRecord:
+    normalized_inputs = [path for path in record.inputs if path and (project_root / path).exists()]
+    normalized_scripts = [path for path in record.scripts if path and (project_root / path).exists()]
+    normalized_sources = [
+        ref for ref in record.sources if _normalize_reference_key(ref) in valid_source_keys
+    ]
+    normalized_assumptions = [
+        ref for ref in record.assumptions if _normalize_reference_key(ref) in valid_assumption_keys
+    ]
+    normalized_claims = [
+        ref for ref in record.claims if _normalize_reference_key(ref) in valid_claim_keys
+    ]
     normalized_verification_runs = [
         ref for ref in record.verification_runs if _normalize_reference_key(ref) in valid_verification_run_keys
     ]
-    has_workflow_support = bool(record.inputs or record.scripts or normalized_verification_runs)
+    has_workflow_support = bool(normalized_inputs or normalized_scripts or normalized_verification_runs)
     promotion_state = record.promotion_state
     if promotion_state == "verified" and not normalized_verification_runs:
         promotion_state = "partially_verified" if has_workflow_support else "draft"
@@ -544,6 +559,11 @@ def _normalize_artifact_record_for_write(
         promotion_state = "draft"
     return record.model_copy(
         update={
+            "inputs": normalized_inputs,
+            "scripts": normalized_scripts,
+            "sources": normalized_sources,
+            "assumptions": normalized_assumptions,
+            "claims": normalized_claims,
             "verification_runs": normalized_verification_runs,
             "promotion_state": promotion_state,
         }
@@ -1344,6 +1364,9 @@ class ResearchIntegrityRepo:
         return self._load_records(self.artifact_lineage_path(), ArtifactLineageRecord)
 
     def write_artifact_lineage(self, records: list[ArtifactLineageRecord] | list[dict[str, Any]]) -> None:
+        valid_source_keys = {item.source_key for item in self.load_sources()}
+        valid_assumption_keys = {item.assumption_key for item in self.load_assumptions()}
+        valid_claim_keys = {item.claim_key for item in self.load_claims()}
         valid_verification_run_keys = {item.run_id for item in self.load_verification_runs()}
         normalized_records: list[ArtifactLineageRecord] = []
         for record in records:
@@ -1351,6 +1374,10 @@ class ResearchIntegrityRepo:
             normalized_records.append(
                 _normalize_artifact_record_for_write(
                     normalized,
+                    project_root=self.project_root,
+                    valid_source_keys=valid_source_keys,
+                    valid_assumption_keys=valid_assumption_keys,
+                    valid_claim_keys=valid_claim_keys,
                     valid_verification_run_keys=valid_verification_run_keys,
                 )
             )
@@ -1358,10 +1385,17 @@ class ResearchIntegrityRepo:
         self.rebuild_integrity_edges()
 
     def upsert_artifact_lineage(self, record: ArtifactLineageRecord | dict[str, Any]) -> ArtifactLineageRecord:
+        valid_source_keys = {item.source_key for item in self.load_sources()}
+        valid_assumption_keys = {item.assumption_key for item in self.load_assumptions()}
+        valid_claim_keys = {item.claim_key for item in self.load_claims()}
         valid_verification_run_keys = {item.run_id for item in self.load_verification_runs()}
         normalized = ArtifactLineageRecord.model_validate(record)
         normalized = _normalize_artifact_record_for_write(
             normalized,
+            project_root=self.project_root,
+            valid_source_keys=valid_source_keys,
+            valid_assumption_keys=valid_assumption_keys,
+            valid_claim_keys=valid_claim_keys,
             valid_verification_run_keys=valid_verification_run_keys,
         )
         stored = self._upsert_by_key(
