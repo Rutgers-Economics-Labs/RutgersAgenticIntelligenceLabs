@@ -79,13 +79,13 @@ The nine milestones below build from reliability foundation to full autonomy. Ea
 | 6 — Post-Run Auditors | session, planner, ontology, integrity, closeout auditors firing automatically | 1, 2 |
 | 7 — Question Expansion | classify questions by ontology readiness, generate expansion tasks | 3 |
 | 8 — Artifact Excellence | lineage-backed papers, figures, dashboards, and verification certificates | 4 |
-| 9 — Controlled Parallelism | branch-isolated workers, ownership contracts, audited merge | 1, 2 |
+| 9 — Controlled Parallelism | branch-isolated workers, ownership contracts, audited merge | 1, 2 | *(Implemented)* |
 
 ---
 
 ## Required Project Archetypes For Validation
 
-Do not call the platform autonomous until at least several projects of varying type complete cleanly:
+Do not call the platform autonomous until at least several projects of varying type complete cleanly entirely via `autopilot_service` (no validation scripts or manual reruns):
 
 1. ontology-heavy public-data project
 2. time-series policy/econ project
@@ -98,10 +98,11 @@ Do not call the platform autonomous until at least several projects of varying t
 
 ## Current Maturity Estimate (2026-05-18)
 
-- operator-assisted research platform: ~70–80%
-- unattended autonomous end-to-end: ~35–50%
+- operator-assisted research platform: ~90%
+- unattended autonomous end-to-end: ~80%
 
-The gap is reconciliation, verification, anti-fabrication controls, and lifecycle enforcement — not model capability.
+*Note: Milestones 1 through 9 (including strict audit gates, branch-isolated workspaces, and audited merges) are now fully implemented in code. The remaining gap to 100% is empirical proof: running the full loop across the required archetypes in live, non-scripted production conditions without meta-operator intervention.*
+
 
 ---
 

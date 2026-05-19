@@ -179,11 +179,12 @@ async def publish_repo_files(
     changed_paths: list[str],
     commit_message: str,
     allowed_paths: list[str] | None = None,
+    branch: str | None = None,
 ) -> dict[str, Any]:
     repo = infer_github_repo(project.get("github") or project.get("gitRepoUrl"))
     if not repo:
         raise RuntimeError("Project is not linked to a GitHub repository")
-    branch = project.get("defaultBranch") or "main"
+    target_branch = branch or project.get("defaultBranch") or "main"
     files, skipped = collect_publishable_files(
         repo_root,
         changed_paths,
@@ -191,22 +192,22 @@ async def publish_repo_files(
     )
     await _enforce_publish_auditors(project, repo_root=repo_root, files=files)
     if not files:
-        head_sha = await github_service.get_branch_head(repo, branch)
+        head_sha = await github_service.get_branch_head(repo, target_branch)
         return {
             "published": False,
             "strategy": "github_app_commit",
             "commit_sha": head_sha,
-            "branch": branch,
+            "branch": target_branch,
             "changed": False,
             "files": [],
             "skipped_files": skipped,
         }
-    result = await github_service.commit_files(repo, branch, files, commit_message)
+    result = await github_service.commit_files(repo, target_branch, files, commit_message)
     return {
         "published": True,
         "strategy": "github_app_commit",
         "commit_sha": result.get("commit_sha"),
-        "branch": result.get("branch") or branch,
+        "branch": result.get("branch") or target_branch,
         "changed": result.get("changed", False),
         "files": result.get("files") or [],
         "skipped_files": skipped,

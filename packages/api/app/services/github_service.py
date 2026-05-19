@@ -5,9 +5,14 @@ import hmac
 import httpx
 import jwt  # PyJWT
 from app.core.config import settings
+from typing import Any
 
 class GitHubService:
     BASE = "https://api.github.com"
+
+    @staticmethod
+    def _content_to_bytes(content: str | bytes) -> bytes:
+        return content if isinstance(content, bytes) else content.encode("utf-8")
 
     async def _request(self, method: str, repo: str, path: str, *, token: str | None = None, **kwargs):
         auth_token = token or await self.get_installation_token(repo)
@@ -106,8 +111,12 @@ class GitHubService:
                 return None
             resp.raise_for_status()
             data = resp.json()
-            raw = base64.b64decode(data["content"]).decode("utf-8")
-            return {"sha": data.get("sha"), "content": raw, "path": path}
+            raw_bytes = base64.b64decode(data["content"])
+            try:
+                raw_text: str | None = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                raw_text = None
+            return {"sha": data.get("sha"), "content": raw_text, "content_bytes": raw_bytes, "path": path}
 
     async def put_file(self, repo: str, path: str, content: str,
                        message: str, sha: str | None = None) -> dict:
@@ -132,8 +141,8 @@ class GitHubService:
         resp = await self._request("GET", repo, f"/git/commits/{commit_sha}")
         return resp.json()
 
-    async def create_blob(self, repo: str, content: str, *, token: str | None = None) -> str:
-        encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+    async def create_blob(self, repo: str, content: str | bytes, *, token: str | None = None) -> str:
+        encoded = base64.b64encode(self._content_to_bytes(content)).decode("utf-8")
         resp = await self._request(
             "POST",
             repo,
@@ -163,6 +172,42 @@ class GitHubService:
         )
         return resp.json()["sha"]
 
+    async def create_ref(self, repo: str, branch: str, sha: str, *, token: str | None = None) -> None:
+        await self._request(
+            "POST",
+            repo,
+            "/git/refs",
+            token=token,
+            json={"ref": f"refs/heads/{branch}", "sha": sha},
+        )
+
+    async def create_branch(self, repo: str, branch: str, base_branch: str = "main") -> str:
+        """Create a new branch from base_branch. Returns the head SHA."""
+        token = await self.get_installation_token(repo)
+        base_sha = await self.get_branch_head(repo, base_branch)
+        try:
+            await self.create_ref(repo, branch, base_sha, token=token)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 422 and "already exists" in exc.response.text:
+                return await self.get_branch_head(repo, branch)
+            raise
+        return base_sha
+
+    async def merge_branch(self, repo: str, base: str, head: str, commit_message: str | None = None) -> dict:
+        """Merge head branch into base branch."""
+        token = await self.get_installation_token(repo)
+        payload = {"base": base, "head": head}
+        if commit_message:
+            payload["commit_message"] = commit_message
+        resp = await self._request(
+            "POST",
+            repo,
+            "/merges",
+            token=token,
+            json=payload,
+        )
+        return resp.json()
+
     async def update_ref(self, repo: str, branch: str, commit_sha: str, *, token: str | None = None) -> None:
         await self._request(
             "PATCH",
@@ -172,45 +217,73 @@ class GitHubService:
             json={"sha": commit_sha, "force": False},
         )
 
-    async def commit_files(self, repo: str, branch: str, files: list[dict], message: str) -> dict:
+    async def commit_files(self, repo: str, branch: str, files: list[dict[str, Any]], message: str) -> dict:
         token = await self.get_installation_token(repo)
-        filtered: list[dict] = []
+        filtered: list[dict[str, Any]] = []
         for file in files:
             existing = await self.get_file_metadata(repo, file["path"], ref=branch)
-            if existing and existing["content"] == file["content"]:
+            incoming_bytes = self._content_to_bytes(file["content"])
+            if existing and existing.get("content_bytes") == incoming_bytes:
                 continue
             filtered.append(file)
-
-        head_sha = await self.get_branch_head(repo, branch)
         if not filtered:
+            head_sha = await self.get_branch_head(repo, branch)
             return {
                 "commit_sha": head_sha,
                 "branch": branch,
                 "changed": False,
                 "files": [{"path": f["path"], "changed": False} for f in files],
             }
+        last_exc: Exception | None = None
+        for _attempt in range(2):
+            head_sha = await self.get_branch_head(repo, branch)
+            commit = await self.get_commit(repo, head_sha)
+            base_tree_sha = commit["tree"]["sha"]
+            tree_entries = []
+            for file in filtered:
+                blob_sha = await self.create_blob(repo, file["content"], token=token)
+                tree_entries.append({
+                    "path": file["path"],
+                    "mode": "100644",
+                    "type": "blob",
+                    "sha": blob_sha,
+                })
 
-        commit = await self.get_commit(repo, head_sha)
-        base_tree_sha = commit["tree"]["sha"]
-        tree_entries = []
-        for file in filtered:
-            blob_sha = await self.create_blob(repo, file["content"], token=token)
-            tree_entries.append({
-                "path": file["path"],
-                "mode": "100644",
-                "type": "blob",
-                "sha": blob_sha,
-            })
-
-        tree_sha = await self.create_tree(repo, base_tree_sha, tree_entries, token=token)
-        commit_sha = await self.create_commit(repo, message, tree_sha, head_sha, token=token)
-        await self.update_ref(repo, branch, commit_sha, token=token)
-        return {
-            "commit_sha": commit_sha,
-            "branch": branch,
-            "changed": True,
-            "files": [{"path": f["path"], "changed": True} for f in filtered],
-        }
+            tree_sha = await self.create_tree(repo, base_tree_sha, tree_entries, token=token)
+            commit_sha = await self.create_commit(repo, message, tree_sha, head_sha, token=token)
+            try:
+                await self.update_ref(repo, branch, commit_sha, token=token)
+                return {
+                    "commit_sha": commit_sha,
+                    "branch": branch,
+                    "changed": True,
+                    "files": [{"path": f["path"], "changed": True} for f in filtered],
+                }
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code not in {409, 422}:
+                    raise
+                # Another publish may have advanced the branch head after we read
+                # it. Retry once against the latest head instead of failing the
+                # entire worker publish.
+                continue
+        if last_exc is not None:
+            head_sha = await self.get_branch_head(repo, branch)
+            remote_matches = True
+            for file in filtered:
+                existing = await self.get_file_metadata(repo, file["path"], ref=head_sha)
+                if not existing or existing.get("content_bytes") != self._content_to_bytes(file["content"]):
+                    remote_matches = False
+                    break
+            if remote_matches:
+                return {
+                    "commit_sha": head_sha,
+                    "branch": branch,
+                    "changed": False,
+                    "files": [{"path": f["path"], "changed": False} for f in filtered],
+                }
+            raise last_exc
+        raise RuntimeError("commit_files exhausted retries without producing a result")
 
     def verify_webhook(self, payload_bytes: bytes, signature: str) -> bool:
         """Verify X-Hub-Signature-256 header."""

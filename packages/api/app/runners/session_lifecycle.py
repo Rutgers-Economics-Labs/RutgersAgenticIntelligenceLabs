@@ -126,28 +126,21 @@ def _runner_launch_blocked_by_auditors(
     ontology_auditor = auditors.get("ontology") or {}
     integrity_auditor = auditors.get("integrity") or {}
 
-    for auditor in (session_auditor, planner_auditor):
+    # Milestone 9 / Core Req 1: Strict Audit Gates.
+    # No manual or autopilot runner should launch if ANY core auditor is blocked, 
+    # except for system-level repair tasks (which bypass this check entirely at the autopilot layer).
+    for auditor_name, auditor in [
+        ("session", session_auditor),
+        ("planner", planner_auditor),
+        ("ontology", ontology_auditor),
+        ("integrity", integrity_auditor),
+    ]:
         if auditor.get("status") == "blocked":
             blockers = [str(item) for item in (auditor.get("blockers") or []) if item]
             if blockers:
-                return blockers[0]
-
-    role_name = str(role or "").strip().lower()
-    description = str(task_description or "").strip().lower()
-
-    if ontology_auditor.get("status") == "blocked":
-        if role_name not in {"planner", "data", "health"}:
-            blockers = [str(item) for item in (ontology_auditor.get("blockers") or []) if item]
-            return blockers[0] if blockers else "Ontology auditor blocked this launch."
-
-    if integrity_auditor.get("status") == "blocked":
-        allowed_roles = {"planner", "health", "data", "coding"}
-        if role_name not in allowed_roles and not any(
-            token in description for token in ("verify", "evidence", "source", "provenance", "claim")
-        ):
-            blockers = [str(item) for item in (integrity_auditor.get("blockers") or []) if item]
-            return blockers[0] if blockers else "Integrity auditor blocked this launch."
-
+                return f"{auditor_name.capitalize()} auditor blocked this launch: {blockers[0]}"
+            return f"{auditor_name.capitalize()} auditor blocked this launch."
+    
     return None
 STATE_INDEX_FILE_NAMES = (
     "assumptions.json",
@@ -689,12 +682,17 @@ async def _publish_completed_session_outputs(
     commit_message = (
         f"chore({session.get('role') or 'agent'}): publish task {session.get('taskId') or session.get('title') or 'session outputs'}"
     )
+    # Milestone 9: Publish to the isolated workspace branch
+    state = session_files.read_state(session_root)
+    publish_branch = state.get("workspace_branch") or project.get("defaultBranch") or "main"
+
     result = await publish_repo_files(
         project,
         repo_root=project_root,
         changed_paths=mirrored,
         commit_message=commit_message,
         allowed_paths=allowed_paths,
+        branch=publish_branch,
     )
     session_files.update_state(
         session_root,
@@ -1416,6 +1414,7 @@ def _validate_artifact_output_contract(workspace_root: Path, changed_files: list
 
 async def _materialize_workspace(
     *,
+    project: dict[str, Any],
     project_root: Path,
     workspace_root: Path,
     base_branch: str,
@@ -1424,22 +1423,33 @@ async def _materialize_workspace(
     if (workspace_root / ".git").exists():
         return {"status": "ready", "mode": "existing"}
 
+    repo = infer_github_repo(project.get("github") or project.get("gitRepoUrl"))
+    if repo:
+        try:
+            from app.services.github_service import github_service
+            await github_service.create_branch(repo, workspace_branch, base_branch=base_branch)
+        except Exception:
+            pass # Best effort remote branch creation
+
     git_dir = project_root / ".git"
     if not git_dir.exists():
         return {"status": "ready", "mode": "directory"}
 
     resolved_base_ref = base_branch
+    # First try to fetch the workspace branch if it exists, otherwise use base
     fetch_result = await _run_process(
-        ["git", "-C", str(project_root), "fetch", "origin", base_branch],
+        ["git", "-C", str(project_root), "fetch", "origin", workspace_branch],
         cwd=project_root,
     )
     if fetch_result["returncode"] == 0:
-        remote_ref = f"refs/remotes/origin/{base_branch}"
-        show_ref = await _run_process(
-            ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", remote_ref],
+        resolved_base_ref = f"origin/{workspace_branch}"
+    else:
+        # Fallback to base branch
+        fetch_base = await _run_process(
+            ["git", "-C", str(project_root), "fetch", "origin", base_branch],
             cwd=project_root,
         )
-        if show_ref["returncode"] == 0:
+        if fetch_base["returncode"] == 0:
             resolved_base_ref = f"origin/{base_branch}"
 
     result = await _run_process(
@@ -1835,6 +1845,40 @@ async def _finalize_workspace_review(
     elif terminal_status == "completed" and state.get("verification_status") in {"passed", "skipped"} and not publish_error:
         review_status = "review"
 
+    # Milestone 9: Audited Merges
+    # Automatically merge the isolated workspace branch back to the base branch if verification passed.
+    if review_status == "review" and str(state.get("publish_status") or "") == "published":
+        try:
+            repo = infer_github_repo(project.get("github") or project.get("gitRepoUrl"))
+            if repo:
+                from app.services.github_service import github_service
+                await github_service.merge_branch(
+                    repo,
+                    base=base_branch,
+                    head=workspace_branch,
+                    commit_message=f"Merge verified workspace {workspace_branch} into {base_branch}"
+                )
+                session_files.append_event(
+                    session_root,
+                    "branch_merged",
+                    content=f"Audited merge successful: {workspace_branch} -> {base_branch}",
+                    status=state.get("status"),
+                )
+        except Exception as exc:
+            publish_error = str(exc)
+            review_status = "needs_changes"
+            session_files.update_state(
+                session_root,
+                publish_status="failed",
+                publish_error=f"Audited merge failed: {publish_error}",
+            )
+            session_files.append_event(
+                session_root,
+                "merge_failed",
+                content=str(exc),
+                status=state.get("status"),
+            )
+
     summary = await _normalize_completion_summary(
         project_root=project_root,
         workspace_root=workspace_root,
@@ -2215,6 +2259,7 @@ async def create_runner_session(
     session_root = session_files.ensure_session_root(project_root, role, running_session_id)
     workspace_root, workspace_branch, workspace_config = _prepare_workspace(project_root, role, running_session_id)
     materialized = await _materialize_workspace(
+        project=project or {},
         project_root=project_root,
         workspace_root=workspace_root,
         base_branch=branch,
