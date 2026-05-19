@@ -1319,14 +1319,13 @@ async def stop_autopilot(project_slug: str):
     """
     _active_autopilots[project_slug] = False
 
-async def run_autopilot_loop(project_slug: str):
+async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
     """
     God Mode: Continuously run the planner and agents until the project is done.
     """
     logger.info(f"Starting Autopilot God Mode for project: {project_slug}")
     
     project = await planner_service.get_project_by_slug(project_slug)
-    max_iterations = 40
     consecutive_idle_turns = 0
     
     for i in range(max_iterations):

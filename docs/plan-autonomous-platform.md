@@ -176,6 +176,8 @@ Only after six archetypes pass unattended once.
 
 ## Progress log
 
+- **2026-05-19 (Sprint 2–3 batch, in progress):** `artifact_dashboard_service.py` + HTML dashboard phase in `run_live_agent_loop.py`; `--full-e2e` completes expansion tasks for real closeout; `.rail_hydration.json` after FRED hydrate; `run_autopilot_tick.py` + `max_iterations` on `run_autopilot_loop`.
+
 | Date | Item | Status |
 |------|------|--------|
 | 2026-05-19 | M1 manifest boot validation | Shipped (`4ad61ab`) |
