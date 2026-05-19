@@ -64,6 +64,8 @@ def _canonicalize_role(role: str | None, default_role: str) -> str:
 
 def detect_role_config_alias_drift(project: dict[str, Any]) -> list[dict[str, str]]:
     project_root = _project_root(project)
+    if not (project_root / "rail.yaml").is_file():
+        return []
     manifest = load_manifest(project_root)
     roles_dir = project_root / manifest.agents.roles_dir
     if not roles_dir.is_dir():
@@ -92,6 +94,8 @@ def detect_role_config_alias_drift(project: dict[str, Any]) -> list[dict[str, st
 
 def reconcile_role_config_aliases(project: dict[str, Any]) -> dict[str, list[str]]:
     project_root = _project_root(project)
+    if not (project_root / "rail.yaml").is_file():
+        return {"updatedConfigPaths": []}
     manifest = load_manifest(project_root)
     roles_dir = project_root / manifest.agents.roles_dir
     if not roles_dir.is_dir():

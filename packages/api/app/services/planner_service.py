@@ -874,12 +874,16 @@ def _render_blockers(project_root: Path) -> str:
 
 
 def _current_plan_markdown(project: dict, tasks: list[dict]) -> str:
-    next_tasks = [f"- {task['title']}" for task in tasks if task.get("status") in {"ready", "awaiting_approval", "running"}]
+    next_tasks = [
+        f"- {task.get('title') or task.get('_id') or 'task'}"
+        for task in tasks
+        if task.get("status") in {"ready", "awaiting_approval", "running"}
+    ]
     if not next_tasks:
         next_tasks = ["- Define the next execution step"]
     return (
         f"# Current Plan\n\n"
-        f"Project: {project['name']}\n\n"
+        f"Project: {project.get('name') or project.get('slug') or 'project'}\n\n"
         f"## Objective\n\n"
         f"{project.get('description') or 'Define and execute the next approved step for this project.'}\n\n"
         f"## Next Steps\n\n"
