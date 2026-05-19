@@ -1773,13 +1773,35 @@ async def _finalize_workspace_review(
 ) -> None:
     state = session_files.read_state(session_root)
     workspace_path = state.get("workspace_path")
+    terminal_status = state.get("status")
     if not workspace_path:
         session_files.refresh_summary(session_root)
+        if terminal_status in TERMINAL_STATUSES:
+            summary = state.get("completion_summary") or {}
+            changed_files = list(
+                dict.fromkeys(
+                    str(path)
+                    for path in (summary.get("artifacts_created") or [])
+                    if path
+                )
+            )
+            for item in session_files.list_events(session_root):
+                if item.get("type") == "file_change_detected" and item.get("path"):
+                    path = str(item["path"])
+                    if path not in changed_files:
+                        changed_files.append(path)
+            await write_post_run_audit(
+                project=project,
+                project_root=project_root,
+                session_root=session_root,
+                session_id=convex_session_id,
+                session=session,
+                changed_files=changed_files,
+            )
         return
     workspace_root = Path(workspace_path)
     workspace_branch = state.get("workspace_branch") or f"{session.get('role') or 'agent'}-{convex_session_id}"
     review_status = state.get("review_status") or "pending"
-    terminal_status = state.get("status")
     config = _workspace_config(project_root)
     changed_files = await _list_changed_files(workspace_root)
     if terminal_status in {"failed", "cancelled"}:

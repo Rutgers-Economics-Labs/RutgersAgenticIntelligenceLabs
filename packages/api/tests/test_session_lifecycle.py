@@ -127,6 +127,44 @@ def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path, monke
     assert "# Post-Run Audit" in audit_text
 
 
+def test_finalize_workspace_review_writes_post_run_audit_without_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    bootstrap_future_project(tmp_path, name="No Workspace Audit Project")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "planner", "sess-no-workspace")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        review_status="review",
+        completion_summary={
+            "status": "completed",
+            "artifacts_created": ["research_plan/current_plan.md"],
+        },
+    )
+
+    async def _mock_write_post_run_audit(**kwargs):
+        audit_path = tmp_path / "research_plan" / "audits" / f"{kwargs['session_id']}.json"
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        audit_path.write_text(json.dumps({"session": {"id": kwargs["session_id"]}}), encoding="utf-8")
+        return {"auditors": {}}
+
+    monkeypatch.setattr(session_lifecycle, "write_post_run_audit", _mock_write_post_run_audit)
+
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-no-workspace",
+            session={"role": "planner", "taskId": "task-1"},
+            project={"slug": "no-workspace-audit", "defaultBranch": "main"},
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    audit_path = tmp_path / "research_plan" / "audits" / "sess-no-workspace.json"
+    assert audit_path.is_file()
+
+
 def test_finalize_workspace_review_writes_blocker_audit_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bootstrap_future_project(tmp_path, name="Audit Snapshot Project")
     _init_repo(tmp_path)

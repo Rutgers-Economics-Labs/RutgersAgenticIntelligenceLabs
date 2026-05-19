@@ -736,6 +736,35 @@ async def main() -> int:
         )
     print(f"  Created 3 completed task files for planner convergence")
 
+    # ── Verification certificate (closeout artifact) ───────────────────────────
+    print("\n── Verification Certificate ─────────────────────────────────────────────")
+    cert_dir = PROJECT_ROOT / "research_plan" / "verification_certificates"
+    cert_dir.mkdir(parents=True, exist_ok=True)
+    cert_path = cert_dir / "nj-housing-affordability-analysis.md"
+    cert_path.write_text(
+        f"""# Verification Certificate: NJ Housing Affordability Analysis
+
+**What was analyzed:**
+Housing affordability and labor-market linkage in New Jersey (2015–2025) using FRED series NJSTHPI, NJURN, and CPIAUCSL.
+
+**Sources:**
+- NJSTHPI: https://fred.stlouisfed.org/series/NJSTHPI
+- NJURN: https://fred.stlouisfed.org/series/NJURN
+- CPIAUCSL: https://fred.stlouisfed.org/series/CPIAUCSL
+
+**Key findings (from hydrated DuckDB):**
+- NJ House Price Index: {db_stats['hpi']['first']:.2f} → {db_stats['hpi']['last']:.2f} ({db_stats['hpi']['pct_change']:+.1f}% nominal)
+- Real housing change (nominal minus CPI): {db_stats['hpi']['pct_change'] - db_stats['cpi']['pct_change']:+.1f}%
+- NJ unemployment: {db_stats['unemp']['first']:.1f}% → {db_stats['unemp']['last']:.1f}%
+
+**Verification status:** partially_verified
+**Generated at:** {_utc_now()}
+**Live loop:** `packages/api/scripts/run_live_agent_loop.py`
+""",
+        encoding="utf-8",
+    )
+    print(f"  Certificate written: {cert_path.relative_to(REPO_ROOT)}")
+
     # ── Final audit: all five auditors ────────────────────────────────────────
     print("\n── Final Verification: All Five Auditors ────────────────────────────────")
     from app.services.planner_service import _task_to_runtime, _task_root
