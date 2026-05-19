@@ -104,7 +104,7 @@ async def _run_single_agent(
 
         try:
             response = client.models.generate_content(
-                model="gemini-3-flash-preview",
+                model="gemini-flash-latest",
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=_SYSTEM_PROMPT,

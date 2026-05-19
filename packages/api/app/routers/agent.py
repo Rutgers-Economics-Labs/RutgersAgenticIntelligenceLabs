@@ -146,7 +146,8 @@ AVAILABLE_MODELS = [
     {"id": "claude-sonnet-4-6",                          "label": "Claude Sonnet 4.6 (Anthropic)"},
     {"id": "claude-opus-4-6",                            "label": "Claude Opus 4.6 (Anthropic)"},
     {"id": "claude-haiku-4-5-20251001",                  "label": "Claude Haiku 4.5 (Anthropic)"},
-    # Google — Gemini 3 series
+    # Google — Gemini 3 series + moving-alias latest flash
+    {"id": "gemini/gemini-flash-latest",                 "label": "Gemini Flash (latest, Google)"},
     {"id": "gemini/gemini-3.1-pro-preview",              "label": "Gemini 3.1 Pro Preview (Google)"},
     {"id": "gemini/gemini-3-flash-preview",              "label": "Gemini 3 Flash Preview (Google)"},
     {"id": "gemini/gemini-3.1-flash-lite-preview",       "label": "Gemini 3.1 Flash Lite Preview (Google)"},
@@ -155,7 +156,6 @@ AVAILABLE_MODELS = [
     {"id": "gpt-4o-mini",                                "label": "GPT-4o Mini (OpenAI)"},
     # OpenRouter
     {"id": "openrouter/anthropic/claude-3.5-sonnet",     "label": "Claude 3.5 Sonnet (OpenRouter)"},
-    {"id": "openrouter/google/gemini-flash-1.5",         "label": "Gemini Flash (OpenRouter)"},
     {"id": "openrouter/meta-llama/llama-3.1-70b-instruct", "label": "Llama 3.1 70B (OpenRouter)"},
 ]
 

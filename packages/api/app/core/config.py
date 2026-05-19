@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     fred_api_key: str = ""
 
     # AI / LLM (provider-agnostic via LiteLLM)
-    # Examples: "claude-sonnet-4-6", "gemini/gemini-2.0-flash", "openrouter/anthropic/claude-3.5-sonnet", "gpt-4o"
+    # Examples: "claude-sonnet-4-6", "gemini/gemini-flash-latest", "openrouter/anthropic/claude-3.5-sonnet", "gpt-4o"
     ai_model: str = "claude-opus-4-6"
     ai_temperature: float = 0.3
     ai_max_tokens: int = 8192

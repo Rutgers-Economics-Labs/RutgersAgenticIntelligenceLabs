@@ -37,7 +37,7 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-_MODEL = "gemini-3-flash-preview"
+_MODEL = "gemini-flash-latest"
 _MAX_TURNS = 25
 _MAX_FILE_READ = 40_000   # chars
 _MAX_BROWSE_CHARS = 20_000

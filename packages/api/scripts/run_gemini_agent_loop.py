@@ -51,7 +51,7 @@ load_dotenv(REPO_ROOT / ".env")
 
 FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-flash-latest"
 VALIDATION_ROOT = REPO_ROOT / "docs" / "validation"
 
 ARCHETYPES = [

@@ -177,6 +177,7 @@ Only after six archetypes pass unattended once.
 ## Progress log
 
 - **2026-05-19 (Sprint 2–3 batch, in progress):** `artifact_dashboard_service.py` + HTML dashboard phase in `run_live_agent_loop.py`; `--full-e2e` completes expansion tasks for real closeout; `.rail_hydration.json` after FRED hydrate; `run_autopilot_tick.py` + `max_iterations` on `run_autopilot_loop`.
+- **2026-05-19 (Sprint 2–3 closeout):** `--full-e2e` now exercises **all five worker roles** (planner / data / research / coding / artifact). Research phase persists three grounded claims to `claims.json` with `status=supported` and FRED `source_keys` via the new `research_integrity_service.publish_grounded_claims` helper; artifact lineage references real `claims.json#claim-*` keys (no more free-text). Hydrate phase calls `hydration_registry_service.attach_local_hydration_to_convex` which registers + promotes the artifact in Convex when a project is registered, and skips silently otherwise — unblocks the ontology auditor for live autopilot ticks. Finalize hooks added on the `cancel_runner_session`, setup-failure, and runner-create-failure paths in `session_lifecycle.py`. Live model swapped from `gemini-2.5-flash` to `gemini-flash-latest` across all scripts, services, and frontend selector. Final summary: `auditorStatus = { session, planner, ontology, integrity, closeout: ready }`, `allReady: true` on `--full-e2e` with `gemini-flash-latest` + real FRED data, real claims persisted (run on `nj-housing-affordability`, 313 DuckDB rows, 3 supported claims, dashboard registered).
 
 | Date | Item | Status |
 |------|------|--------|
@@ -189,3 +190,9 @@ Only after six archetypes pass unattended once.
 | 2026-05-19 | Live loop all auditors ready (`--defer-expansion`) | Verified |
 | 2026-05-19 | Convex register + API `/reality` smoke test | Verified |
 | 2026-05-19 | `validate_autonomous_loop.py` (3 archetypes) | PASS |
+| 2026-05-19 | claims.json grounded persistence (`research_integrity_service.py`) | Shipped |
+| 2026-05-19 | Hydration artifact promotion in Convex (`attach_local_hydration_to_convex`) | Shipped |
+| 2026-05-19 | All-five-roles live loop + post-run audits per role | Shipped |
+| 2026-05-19 | `write_post_run_audit` on cancel / setup-fail / runner-fail paths | Shipped |
+| 2026-05-19 | `gemini-flash-latest` swap (scripts, services, frontend selector) | Shipped |
+| 2026-05-19 | Live `--full-e2e`: all five auditors `ready`, no `--defer-expansion` | PASS |

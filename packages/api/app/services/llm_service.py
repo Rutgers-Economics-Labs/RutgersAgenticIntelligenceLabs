@@ -3,7 +3,7 @@ Provider-agnostic LLM service backed by LiteLLM.
 
 Supports any model string LiteLLM understands:
   - "claude-sonnet-4-6"                           → Anthropic (ANTHROPIC_API_KEY)
-  - "gemini/gemini-2.0-flash"                     → Google (GOOGLE_API_KEY)
+  - "gemini/gemini-flash-latest"                  → Google (GOOGLE_API_KEY)
   - "openrouter/anthropic/claude-3.5-sonnet"      → OpenRouter (OPENROUTER_API_KEY)
   - "gpt-4o"                                      → OpenAI (OPENAI_API_KEY)
 

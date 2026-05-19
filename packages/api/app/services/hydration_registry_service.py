@@ -11,7 +11,7 @@ import yaml
 from rail.integrity import ResearchIntegrityRepo, sync_sources_from_configs
 from rail.manifest import load_manifest, parse_manifest_content
 
-from app.services.convex_client import convex
+from app.services.convex_client import convex, ConvexBackendConfigurationError
 from app.services.device_service import get_device_id
 
 
@@ -111,6 +111,72 @@ async def register_hydration_artifact(
             "status": status,
         },
     )
+
+
+async def attach_local_hydration_to_convex(
+    *,
+    slug: str,
+    duckdb_artifact_path: str,
+    ontology_artifact_path: str | None = None,
+    pipeline_slug: str | None = None,
+    hydration_mode: str = "full",
+) -> dict[str, Any]:
+    """Register + promote a locally-produced hydration artifact in Convex.
+
+    Looks up the project by slug. If Convex is not configured or the project
+    is not registered, returns `{"status": "skipped", "reason": ...}` instead
+    of raising. Use this after a local hydrate (e.g., the live agent loop) to
+    unblock the ontology auditor for autopilot ticks against that project.
+    """
+    try:
+        convex._require_backend_convex()
+    except ConvexBackendConfigurationError as exc:
+        return {"status": "skipped", "reason": f"convex_not_configured: {exc}"}
+
+    try:
+        project = await convex.query("projects:getBySlug", {"slug": slug})
+    except Exception as exc:
+        return {"status": "skipped", "reason": f"convex_query_failed: {exc}"}
+    if not project or not project.get("_id"):
+        return {"status": "skipped", "reason": "project_not_registered"}
+
+    root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
+    if root is None:
+        return {"status": "skipped", "reason": "missing_local_repo_path"}
+    pipeline_slug = pipeline_slug or resolve_pipeline_slug(project, root)
+
+    # Convex's hydrationArtifacts.register requires a non-null ontologyArtifactPath
+    # (v.string()). Fall back to .ontology/ontology.yaml if the caller did not
+    # pass one explicitly — the manifest writer always produces this file.
+    if not ontology_artifact_path:
+        candidate = Path(duckdb_artifact_path).parent / "ontology.yaml"
+        if candidate.exists():
+            ontology_artifact_path = str(candidate)
+        else:
+            ontology_artifact_path = str(candidate)  # still pass path, file may be created later
+
+    artifact_id = await register_hydration_artifact(
+        project=project,
+        pipeline_slug=pipeline_slug,
+        hydration_mode=hydration_mode,
+        ontology_artifact_path=ontology_artifact_path,
+        duckdb_artifact_path=duckdb_artifact_path,
+        status="valid",
+    )
+    await promote_project_hydration_artifact(
+        project=project,
+        ontology_artifact_path=ontology_artifact_path,
+        duckdb_artifact_path=duckdb_artifact_path,
+        status="hydrated",
+    )
+    return {
+        "status": "promoted",
+        "projectId": project["_id"],
+        "artifactId": artifact_id,
+        "pipelineSlug": pipeline_slug,
+        "duckdbArtifactPath": duckdb_artifact_path,
+        "ontologyArtifactPath": ontology_artifact_path,
+    }
 
 
 async def promote_project_hydration_artifact(

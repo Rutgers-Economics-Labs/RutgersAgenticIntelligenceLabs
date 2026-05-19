@@ -2327,6 +2327,17 @@ async def create_runner_session(
             status="failed",
             ended_at=int(time.time() * 1000),
         )
+        try:
+            await write_post_run_audit(
+                project=project or {},
+                project_root=project_root,
+                session_root=session_root,
+                session_id=running_session_id,
+                session={"_id": running_session_id, "role": role, "taskId": task_id},
+                changed_files=[],
+            )
+        except Exception:
+            pass
         raise RuntimeError(
             setup_result["stderr"].strip()
             or setup_result["stdout"].strip()
@@ -2372,6 +2383,17 @@ async def create_runner_session(
             status="failed",
             ended_at=int(time.time() * 1000),
         )
+        try:
+            await write_post_run_audit(
+                project=project or {},
+                project_root=project_root,
+                session_root=session_root,
+                session_id=running_session_id,
+                session={"_id": running_session_id, "role": role, "taskId": task_id},
+                changed_files=[],
+            )
+        except Exception:
+            pass
         raise RuntimeError(f"Runner session creation failed: {exc}") from exc
 
     external_id = result["session_id"]
@@ -2638,6 +2660,20 @@ async def cancel_runner_session(
             status="cancelled",
         )
         _sync_file_status(root, "cancelled")
+        if project_root is not None:
+            # Run the finalize hook so post-run auditors fire on the cancelled
+            # session and reconciliation does not flag it as a stale audit.
+            try:
+                await _finalize_workspace_review(
+                    convex_session_id=convex_session_id,
+                    session=session,
+                    project=project or {},
+                    project_root=project_root,
+                    session_root=root,
+                    base_branch=(project or {}).get("defaultBranch") or "main",
+                )
+            except Exception:
+                pass
 
     if had_runtime_session:
         await running_agent_service.finalize_running_agent(

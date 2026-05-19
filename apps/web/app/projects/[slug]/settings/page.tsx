@@ -110,7 +110,7 @@ function GeneralSection({ slug }: { slug: string }) {
       </div>
       <div style={FIELD}>
         <div style={LABEL}>Agent model override</div>
-        <input style={INPUT} value={form.agentModel} onChange={(e) => setForm({ ...form, agentModel: e.target.value })} placeholder="e.g. claude-opus-4-6, gemini/gemini-2.5-pro" />
+        <input style={INPUT} value={form.agentModel} onChange={(e) => setForm({ ...form, agentModel: e.target.value })} placeholder="e.g. claude-opus-4-6, gemini/gemini-flash-latest" />
         <div style={{ fontSize: 10, color: "var(--muted)", marginTop: 4, fontFamily: "JetBrains Mono, monospace" }}>
           Leave blank to use the server default. Supports LiteLLM model strings.
         </div>
