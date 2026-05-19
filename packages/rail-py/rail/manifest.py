@@ -24,7 +24,7 @@ QuestionClassification = Literal[
     "answerable_after_expansion",
     "blocked_by_data",
 ]
-AuditStage = Literal["session", "planner", "ontology", "integrity", "closeout"]
+AuditStage = Literal["session", "planner", "ontology", "integrity", "critic", "closeout"]
 
 
 def _validate_repo_relative_path(value: str) -> str:
@@ -206,6 +206,14 @@ class ResearchSection(BaseModel):
         return _validate_repo_relative_path(value)
 
 
+class ResearchBurstSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    max_parallel: int = Field(default=1, ge=1, le=8)
+    max_cost_usd: float | None = Field(default=None, ge=0)
+
+
 class PlannerSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -296,6 +304,7 @@ class RailManifest(BaseModel):
     autonomy: AutonomySection = Field(default_factory=AutonomySection)
     integrity: IntegritySection = Field(default_factory=IntegritySection)
     verification: VerificationSection = Field(default_factory=VerificationSection)
+    research_burst: ResearchBurstSection = Field(default_factory=ResearchBurstSection)
     secrets: SecretsSection = Field(default_factory=SecretsSection)
     lifecycle: LifecycleSection = Field(default_factory=LifecycleSection)
     workspaces: WorkspacesSection = Field(default_factory=WorkspacesSection)

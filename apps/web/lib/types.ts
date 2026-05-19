@@ -345,6 +345,16 @@ export type CommandCenter = {
     sourceFreshnessCounts: Record<string, number>;
     sourceAdmissibilityCounts: Record<string, number>;
     agentWorkflow: AgentWorkflowSummary;
+    hypothesisRanking?: Array<{
+      id: string;
+      computedScore: number;
+      scoreBreakdown: {
+        evidenceCoverage: number;
+        dataReady: number;
+        reproducibility: number;
+      };
+      rankingReasons: string[];
+    }>;
   };
   ontologyFollowUps?: {
     path?: string | null;
@@ -605,6 +615,22 @@ export type ClaimRecord = {
   updated_at?: string | null;
 };
 
+export type HypothesisRecord = {
+  id: string;
+  statement: string;
+  scope?: string | null;
+  falsifiers: string[];
+  status: "draft" | "supported" | "weakened" | "rejected" | "archived";
+  score?: number | null;
+  parent_id?: string | null;
+  claim_keys: string[];
+  task_ids: string[];
+  artifact_paths: string[];
+  human_notes?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
 export type ArtifactLineageRecord = {
   artifact_path: string;
   artifact_type: string;
@@ -642,6 +668,7 @@ export type IntegrityIndexes = {
   assumptions: AssumptionRecord[];
   sources: SourceRecord[];
   claims: ClaimRecord[];
+  hypotheses: HypothesisRecord[];
   artifact_lineage: ArtifactLineageRecord[];
   verification_runs: VerificationRunRecord[];
 };
@@ -714,6 +741,16 @@ export type ProjectIntegrityResponse = {
   };
   agentWorkflow: AgentWorkflowSummary;
   staleOutputs: ArtifactLineageRecord[];
+  hypothesisRanking?: Array<{
+    id: string;
+    computedScore: number;
+    scoreBreakdown: {
+      evidenceCoverage: number;
+      dataReady: number;
+      reproducibility: number;
+    };
+    rankingReasons: string[];
+  }>;
 };
 
 export type IntegrityRerunPlan = {

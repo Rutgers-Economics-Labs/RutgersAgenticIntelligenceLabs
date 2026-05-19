@@ -2340,6 +2340,7 @@ def test_filter_ready_tasks_prioritizes_matching_repair_tasks_for_blocked_audito
     ]
 
     filtered = autopilot_service._filter_ready_tasks_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
         ready_tasks,
         {
             "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
@@ -2354,6 +2355,7 @@ def test_filter_ready_tasks_prioritizes_matching_repair_tasks_for_blocked_audito
 
 def test_task_allowed_for_auditors_blocks_unrelated_ontology_promotion():
     allowed = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
         {
             "_id": "hydrate-task",
             "title": "Hydrate ontology and refresh source registry",
@@ -2369,6 +2371,7 @@ def test_task_allowed_for_auditors_blocks_unrelated_ontology_promotion():
         },
     )
     blocked = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
         {
             "_id": "research-task",
             "title": "Continue downstream research synthesis",
@@ -2390,6 +2393,7 @@ def test_task_allowed_for_auditors_blocks_unrelated_ontology_promotion():
 
 def test_task_allowed_for_auditors_blocks_unrelated_integrity_promotion():
     allowed = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
         {
             "_id": "integrity-repair",
             "title": "Repair analysis lineage and verification metadata",
@@ -2405,6 +2409,7 @@ def test_task_allowed_for_auditors_blocks_unrelated_integrity_promotion():
         },
     )
     blocked = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
         {
             "_id": "coding-task",
             "title": "Refactor chart rendering helpers",

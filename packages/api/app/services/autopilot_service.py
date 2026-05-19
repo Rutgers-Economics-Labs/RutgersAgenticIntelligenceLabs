@@ -15,6 +15,7 @@ from app.services.decision_service import list_decision_events, mark_decision_ev
 from app.services.hydration_registry_service import get_hydration_status
 from app.services.integrity_service import evaluate_integrity_gate, summarize_agent_workflow_health
 from app.services.auditor_service import build_auditor_statuses
+from app.services import command_center_service
 from app.services.reconciliation_service import (
     project_reality_status,
     ensure_execution_lane_available,
@@ -869,7 +870,8 @@ async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: li
 def _task_priority(task: dict[str, Any]) -> tuple[int, str]:
     boost = int(task.get("_autopilotPriorityBoost") or 0)
     weight = {"high": 0, "medium": 1, "low": 2, None: 3}.get(task.get("priority"), 3)
-    return (boost, weight, str(task.get("_id") or ""))
+    hypothesis_boost = -int(task.get("_hypothesisPriorityBoost") or 0)
+    return (boost + hypothesis_boost, weight, str(task.get("_id") or ""))
 
 
 def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
@@ -885,7 +887,7 @@ def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
 def _should_skip_planner_for_ready_repair(tasks: list[dict[str, Any]], auditors: dict[str, Any] | None) -> bool:
     auditors = auditors or {}
     ready_tasks = [task for task in tasks if str(task.get("status") or "") == "ready" and task.get("approvalState") != "pending"]
-    filtered_ready = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
+    filtered_ready = _filter_ready_tasks_for_auditors(project, ready_tasks, auditors)
     if (auditors.get("ontology") or {}).get("status") == "blocked" and filtered_ready:
         return True
     if (auditors.get("integrity") or {}).get("status") == "blocked" and filtered_ready:
@@ -898,6 +900,7 @@ def _should_skip_planner_for_ready_repair(tasks: list[dict[str, Any]], auditors:
 
 
 def _apply_auditor_priority_boosts(
+    project: dict[str, Any],
     ready_tasks: list[dict[str, Any]],
     auditors: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
@@ -937,6 +940,41 @@ def _apply_auditor_priority_boosts(
             boost = min(boost, -5)
         if boost:
             task["_autopilotPriorityBoost"] = boost
+    if not project.get("localRepoPath"):
+        return boosted
+    ranked_hypotheses = command_center_service.rank_hypotheses(project)
+    ranking_by_id = {str(item.get("id")): item for item in ranked_hypotheses}
+    hypothesis_path = Path(str(project.get("localRepoPath") or "")) / "research_plan" / "state" / "hypotheses.json"
+    task_links: dict[str, list[str]] = {}
+    if hypothesis_path.exists():
+        try:
+            payload = json.loads(hypothesis_path.read_text(encoding="utf-8"))
+        except Exception:
+            payload = []
+        if isinstance(payload, list):
+            for item in payload:
+                if not isinstance(item, dict):
+                    continue
+                hypothesis_id = str(item.get("id") or item.get("hypothesis_id") or "").strip()
+                if not hypothesis_id:
+                    continue
+                for task_id in item.get("task_ids") or []:
+                    task_key = str(task_id).strip()
+                    if task_key:
+                        task_links.setdefault(task_key, []).append(hypothesis_id)
+    for task in boosted:
+        task_id = str(task.get("_id") or "")
+        linked_ids = task_links.get(task_id, [])
+        if not linked_ids:
+            continue
+        best = max(
+            (ranking_by_id.get(item) for item in linked_ids if ranking_by_id.get(item)),
+            key=lambda x: float(x.get("computedScore") or 0),
+            default=None,
+        )
+        if best is None:
+            continue
+        task["_hypothesisPriorityBoost"] = int(round(float(best.get("computedScore") or 0) * 100))
     return boosted
 
 
@@ -970,13 +1008,14 @@ def _task_matches_integrity_repair_work(task: dict[str, Any]) -> bool:
 
 
 def _filter_ready_tasks_for_auditors(
+    project: dict[str, Any],
     ready_tasks: list[dict[str, Any]],
     auditors: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
     if not ready_tasks:
         return []
     ontology_auditor = (auditors or {}).get("ontology") or {}
-    filtered = _apply_auditor_priority_boosts(ready_tasks, auditors)
+    filtered = _apply_auditor_priority_boosts(project, ready_tasks, auditors)
     if _control_plane_auditor_gate(auditors).get("blocked"):
         filtered = [
             task for task in filtered
@@ -992,10 +1031,11 @@ def _filter_ready_tasks_for_auditors(
 
 
 def _task_allowed_for_auditors(
+    project: dict[str, Any],
     task: dict[str, Any],
     auditors: dict[str, Any] | None,
 ) -> bool:
-    return bool(_filter_ready_tasks_for_auditors([task], auditors))
+    return bool(_filter_ready_tasks_for_auditors(project, [task], auditors))
 
 
 def _control_plane_auditor_gate(auditors: dict[str, Any] | None) -> dict[str, Any]:
@@ -1210,7 +1250,7 @@ async def _launch_ready_tasks_if_available(
         return False
 
     ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
-    ready_tasks = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
+    ready_tasks = _filter_ready_tasks_for_auditors(project, ready_tasks, auditors)
     if not ready_tasks:
         return False
 
@@ -1753,7 +1793,7 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     "agent_role": task.get("agent_role") or task.get("agentRole"),
                     "priority": task.get("priority"),
                 }
-                if not _task_allowed_for_auditors(promotion_view, auditors):
+                if not _task_allowed_for_auditors(project, promotion_view, auditors):
                     continue
                 if task.get("approvalState") == "pending":
                     task_id = str(task["_id"])
@@ -1835,7 +1875,7 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                         "agent_role": task.get("agent_role") or task.get("agentRole"),
                         "priority": task.get("priority"),
                     }
-                    if not _task_allowed_for_auditors(requeue_view, auditors):
+                    if not _task_allowed_for_auditors(project, requeue_view, auditors):
                         continue
                     await planner_service.update_task(
                         str(task["_id"]),
@@ -1864,7 +1904,7 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
             continue
 
         ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
-        ready_tasks = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
+        ready_tasks = _filter_ready_tasks_for_auditors(project, ready_tasks, auditors)
         ontology_auditor = auditors.get("ontology") or {}
         if not ready_tasks and ontology_auditor.get("status") == "blocked":
             blockers = ontology_auditor.get("blockers") or []

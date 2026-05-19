@@ -17,6 +17,7 @@ from rail.integrity import (
     AssumptionRecord,
     ClaimRecord,
     EvidenceChunkRecord,
+    HypothesisRecord,
     IntegrityEdgeRecord,
     ResearchIntegrityRepo,
     STATE_FILE_NAMES,
@@ -70,6 +71,15 @@ def test_integrity_repo_upserts_and_rebuilds_indexes(tmp_path):
             "evidence_paths": ["topics/labor-market/notes.md"],
         }
     )
+    repo.upsert_hypothesis(
+        {
+            "id": "hyp-001",
+            "statement": "Post-2021 unemployment decline is structural.",
+            "status": "draft",
+            "claim_keys": ["claim-001"],
+            "artifact_paths": ["artifacts/report.md"],
+        }
+    )
     repo.upsert_artifact_lineage(
         {
             "artifact_path": "artifacts/report.md",
@@ -98,6 +108,7 @@ def test_integrity_repo_upserts_and_rebuilds_indexes(tmp_path):
     assert rebuilt.assumptions[0].assumption_key == "years-2010-2024"
     assert rebuilt.sources[0].source_key == "bls-laus"
     assert rebuilt.claims[0].claim_key == "claim-001"
+    assert rebuilt.hypotheses[0].hypothesis_id == "hyp-001"
     assert rebuilt.artifact_lineage[0].artifact_path == "artifacts/report.md"
     assert rebuilt.verification_runs[0].run_id == "run-001"
     assert any(item.relationship == "supports" for item in rebuilt.integrity_edges)
@@ -184,6 +195,8 @@ def test_integrity_record_models_validate_required_fields():
         SourceRecord.model_validate({"source_key": "src-1", "title": "Missing type", "url_or_path": "x"})
     with pytest.raises(ValidationError):
         ClaimRecord.model_validate({"claim_key": "claim-1"})
+    with pytest.raises(ValidationError):
+        HypothesisRecord.model_validate({"id": "hyp-1"})
     with pytest.raises(ValidationError):
         ArtifactLineageRecord.model_validate({"artifact_path": "artifacts/report.md", "title": "Missing type"})
     with pytest.raises(ValidationError):

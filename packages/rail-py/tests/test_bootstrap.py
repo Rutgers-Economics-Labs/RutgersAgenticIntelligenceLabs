@@ -31,6 +31,7 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
     assert (root / "research_plan/state/assumptions.json").exists()
     assert (root / "research_plan/state/sources.json").exists()
     assert (root / "research_plan/state/claims.json").exists()
+    assert (root / "research_plan/state/hypotheses.json").exists()
     assert (root / "research_plan/state/source_candidates.json").exists()
     assert (root / "research_plan/state/claim_candidates.json").exists()
     assert (root / "research_plan/state/entity_candidates.json").exists()
@@ -66,6 +67,7 @@ def test_bootstrap_future_project_creates_workspace_scaffold(tmp_path):
     assert rail_data["auditors"]["fail_closed"] is True
 
     assert yaml.safe_load((root / "research_plan/state/assumptions.json").read_text(encoding="utf-8")) == []
+    assert yaml.safe_load((root / "research_plan/state/hypotheses.json").read_text(encoding="utf-8")) == []
     assert yaml.safe_load((root / "research_plan/state/verification_runs.json").read_text(encoding="utf-8")) == []
 
     planner_prompt = (root / "agents/prompts/planner.md").read_text(encoding="utf-8")

@@ -217,6 +217,57 @@ export async function fetchProjectIntegrity(slug: string): Promise<ProjectIntegr
   return getJson(`/projects/${slug}/integrity`);
 }
 
+export async function fetchProjectHypotheses(slug: string): Promise<{ hypotheses: Array<Record<string, unknown>> }> {
+  return getJson(`/projects/${slug}/hypotheses`);
+}
+
+export async function createOrUpdateHypothesis(
+  slug: string,
+  payload: {
+    id: string;
+    statement: string;
+    scope?: string | null;
+    falsifiers?: string[];
+    status?: "draft" | "supported" | "weakened" | "rejected" | "archived";
+    score?: number | null;
+    parentId?: string | null;
+    claimKeys?: string[];
+    taskIds?: string[];
+    artifactPaths?: string[];
+    humanNotes?: string | null;
+  },
+): Promise<Record<string, unknown>> {
+  return postJson(`/projects/${slug}/hypotheses`, payload);
+}
+
+export async function patchHypothesis(
+  slug: string,
+  hypothesisId: string,
+  payload: {
+    statement?: string;
+    scope?: string | null;
+    falsifiers?: string[];
+    status?: "draft" | "supported" | "weakened" | "rejected" | "archived";
+    score?: number | null;
+    parentId?: string | null;
+    claimKeys?: string[];
+    taskIds?: string[];
+    artifactPaths?: string[];
+    humanNotes?: string | null;
+  },
+): Promise<Record<string, unknown>> {
+  const response = await fetch(`${API_ROOT}/projects/${slug}/hypotheses/${encodeURIComponent(hypothesisId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`API /projects/${slug}/hypotheses/${hypothesisId} failed: ${response.status}`);
+  }
+  return response.json();
+}
+
 export async function updateIntegrityAssumption(
   slug: string,
   assumptionKey: string,

@@ -5,6 +5,7 @@ import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
 import { StatusPill } from "@/components/status-pill";
 import { IntegrityAssumptionsPanel } from "@/components/integrity-assumptions-panel";
+import { HypothesesPanel } from "@/components/hypotheses-panel";
 import { buildIntegrityPageModel } from "@/lib/integrity-page";
 
 function RepoLink({ slug, path, label }: { slug: string; path: string; label?: string }) {
@@ -25,8 +26,11 @@ export default async function IntegrityPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { indexes, summary, staleOutputs, agentWorkflow } = await fetchProjectIntegrity(slug);
+  const { indexes, summary, staleOutputs, agentWorkflow, hypothesisRanking = [] } = await fetchProjectIntegrity(slug);
   const { sourceRows, artifactRows, workflowSections } = buildIntegrityPageModel({ indexes, summary, staleOutputs, agentWorkflow });
+  const rankingById = Object.fromEntries(
+    hypothesisRanking.map((item) => [item.id, item.computedScore] as const),
+  );
 
   const rightRail = (
     <div>
@@ -34,6 +38,7 @@ export default async function IntegrityPage({
         <InlineStatus label="assumptions" value={summary.assumptionCount} />
         <InlineStatus label="sources" value={summary.sourceCount} />
         <InlineStatus label="claims" value={summary.claimCount} />
+        <InlineStatus label="hypotheses" value={indexes.hypotheses.length} />
         <InlineStatus label="artifacts" value={summary.artifactCount} />
         <InlineStatus label="verification" value={summary.verificationRunCount} />
         <InlineStatus label="stale" value={summary.staleArtifactCount} />
@@ -137,6 +142,17 @@ export default async function IntegrityPage({
           ) : (
             <EmptyStateRow text="No claim-evidence mappings recorded yet." />
           )}
+        </div>
+      </SectionCard>
+
+      <SectionCard eyebrow="Hypothesis Portfolio" noPad>
+        <div id="hypotheses" className="integrity-section">
+          <HypothesesPanel
+            slug={slug}
+            hypotheses={indexes.hypotheses}
+            claims={indexes.claims}
+            rankingById={rankingById}
+          />
         </div>
       </SectionCard>
 

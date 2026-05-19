@@ -77,6 +77,7 @@ from app.services.integrity_service import (
     update_source_and_mark_stale,
     update_assumption_and_mark_stale,
 )
+from app.services.hypothesis_service import run_critic_review, run_research_burst
 from app.services.role_runtime_service import ROLE_ALIASES, load_role_runtime_config
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy, is_write_capable
 
@@ -372,6 +373,42 @@ class IntegrityRecordClaimRequest(BaseModel):
     confidence: float | None = None
 
 
+class HypothesisUpsertRequest(BaseModel):
+    id: str
+    statement: str
+    scope: str | None = None
+    falsifiers: list[str] = []
+    status: str = "draft"
+    score: float | None = None
+    parentId: str | None = None
+    claimKeys: list[str] = []
+    taskIds: list[str] = []
+    artifactPaths: list[str] = []
+    humanNotes: str | None = None
+
+
+class HypothesisPatchRequest(BaseModel):
+    statement: str | None = None
+    scope: str | None = None
+    falsifiers: list[str] | None = None
+    status: str | None = None
+    score: float | None = None
+    parentId: str | None = None
+    claimKeys: list[str] | None = None
+    taskIds: list[str] | None = None
+    artifactPaths: list[str] | None = None
+    humanNotes: str | None = None
+
+
+class CriticReviewRequest(BaseModel):
+    hypothesisIds: list[str] | None = None
+
+
+class ResearchBurstRequest(BaseModel):
+    objective: str
+    maxParallel: int | None = None
+
+
 class IntegrityRecordLineageRequest(BaseModel):
     artifactPath: str
     artifactType: str
@@ -408,6 +445,7 @@ ALLOWED_SOURCE_QUALITY_STATUSES = {"candidate", "validated", "blocked", "rejecte
 ALLOWED_SOURCE_IMPACT_LEVELS = {"low", "normal", "high", "critical"}
 ALLOWED_ASSUMPTION_STATUSES = {"active", "needs_review", "superseded", "rejected"}
 ALLOWED_CLAIM_STATUSES = {"draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"}
+ALLOWED_HYPOTHESIS_STATUSES = {"draft", "supported", "weakened", "rejected", "archived"}
 ALLOWED_EVIDENCE_KINDS = {"direct", "derived", "contextual", "semantic_suggestion"}
 ALLOWED_PROMOTION_STATES = {"exploratory", "draft", "needs_evidence", "partially_verified", "verified", "stale", "blocked"}
 ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
@@ -482,6 +520,14 @@ def _validate_assumption_status(status: str | None) -> None:
         raise HTTPException(
             status_code=422,
             detail="Assumption status must be one of: active, needs_review, superseded, rejected.",
+        )
+
+
+def _validate_hypothesis_status(status: str | None) -> None:
+    if status not in {None, ""} and status not in ALLOWED_HYPOTHESIS_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail="Hypothesis status must be one of: draft, supported, weakened, rejected, archived.",
         )
 
 
@@ -1801,6 +1847,106 @@ async def get_project_integrity_claims(slug: str):
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
     return {"claims": list_claim_summaries(root)}
+
+
+@router.get("/{slug}/hypotheses")
+async def get_project_hypotheses(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    repo = get_integrity_repo(root)
+    return {"hypotheses": [item.model_dump(mode="json", by_alias=True) for item in repo.load_hypotheses()]}
+
+
+@router.post("/{slug}/hypotheses")
+async def upsert_project_hypothesis(slug: str, data: HypothesisUpsertRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    _validate_hypothesis_status(data.status)
+    if data.score is not None and not (0 <= data.score <= 1):
+        raise HTTPException(status_code=422, detail="Hypothesis score must be between 0 and 1.")
+    repo = get_integrity_repo(root)
+    record = repo.upsert_hypothesis(
+        {
+            "id": data.id,
+            "statement": data.statement,
+            "scope": data.scope,
+            "falsifiers": data.falsifiers,
+            "status": data.status,
+            "score": data.score,
+            "parent_id": data.parentId,
+            "claim_keys": data.claimKeys,
+            "task_ids": data.taskIds,
+            "artifact_paths": data.artifactPaths,
+            "human_notes": data.humanNotes,
+        }
+    )
+    return record.model_dump(mode="json", by_alias=True)
+
+
+@router.patch("/{slug}/hypotheses/{hypothesis_id}")
+async def patch_project_hypothesis(slug: str, hypothesis_id: str, data: HypothesisPatchRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    root = planner_service.project_root_from_record(project)
+    if root is None:
+        raise HTTPException(status_code=404, detail="Project repo not found")
+    _validate_hypothesis_status(data.status)
+    if data.score is not None and not (0 <= data.score <= 1):
+        raise HTTPException(status_code=422, detail="Hypothesis score must be between 0 and 1.")
+    changes = {
+        key: value
+        for key, value in {
+            "statement": data.statement,
+            "scope": data.scope,
+            "falsifiers": data.falsifiers,
+            "status": data.status,
+            "score": data.score,
+            "parent_id": data.parentId,
+            "claim_keys": data.claimKeys,
+            "task_ids": data.taskIds,
+            "artifact_paths": data.artifactPaths,
+            "human_notes": data.humanNotes,
+        }.items()
+        if value is not None
+    }
+    repo = get_integrity_repo(root)
+    try:
+        record = repo.update_hypothesis(hypothesis_id, **changes)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return record.model_dump(mode="json", by_alias=True)
+
+
+@router.post("/{slug}/critic/review")
+async def run_project_critic_review(slug: str, data: CriticReviewRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    try:
+        result = run_critic_review(project, hypothesis_ids=data.hypothesisIds)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result
+
+
+@router.post("/{slug}/research-burst")
+async def run_project_research_burst(slug: str, data: ResearchBurstRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    objective = (data.objective or "").strip()
+    if not objective:
+        raise HTTPException(status_code=422, detail="objective is required.")
+    if data.maxParallel is not None and data.maxParallel < 1:
+        raise HTTPException(status_code=422, detail="maxParallel must be >= 1.")
+    try:
+        result = await run_research_burst(
+            project,
+            objective=objective,
+            max_parallel=data.maxParallel,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return result
 
 
 @router.get("/{slug}/integrity/claims/{claim_key}")

@@ -265,6 +265,7 @@ async def build_auditor_statuses(
     }
 
     integrity_status: dict[str, Any] = {"status": "ready", "blockers": []}
+    critic_status: dict[str, Any] = {"status": "ready", "blockers": []}
     closeout_status: dict[str, Any] = {"status": "ready", "blockers": []}
     if root and root.exists() and (root / "rail.yaml").is_file():
         manifest = load_manifest(root)
@@ -287,6 +288,14 @@ async def build_auditor_statuses(
                 "status": "blocked",
                 "blockers": blockers,
             }
+        indexes = load_integrity_indexes(root)
+        critic_blockers: list[str] = []
+        weakened_or_rejected = [item for item in indexes.hypotheses if item.status in {"weakened", "rejected"}]
+        if weakened_or_rejected:
+            sample = ", ".join(item.hypothesis_id for item in weakened_or_rejected[:5])
+            critic_blockers.append(f"{len(weakened_or_rejected)} hypothesis(es) flagged by critic review: {sample}.")
+        if critic_blockers:
+            critic_status = {"status": "blocked", "blockers": critic_blockers}
         unfinished = [task for task in (tasks or []) if task.get("status") not in {"done", "cancelled"}]
         closeout_blockers: list[str] = []
         if (active_sessions or []):
@@ -333,5 +342,6 @@ async def build_auditor_statuses(
         "planner": planner_status,
         "ontology": ontology_status,
         "integrity": integrity_status,
+        "critic": critic_status,
         "closeout": closeout_status,
     }

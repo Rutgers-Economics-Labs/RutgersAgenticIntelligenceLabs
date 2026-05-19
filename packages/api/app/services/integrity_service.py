@@ -782,6 +782,32 @@ def evaluate_integrity_gate(
                 "Final artifacts need inputs, scripts, verification commands, and verification runs before promotion."
             )
 
+    hypothesis_blocking_artifacts: list[str] = []
+    if enforce_promotion_rules and indexes.hypotheses:
+        open_blocked_hypotheses = {
+            item.hypothesis_id
+            for item in indexes.hypotheses
+            if item.status in {"weakened", "rejected"}
+        }
+        if open_blocked_hypotheses:
+            for artifact in indexes.artifact_lineage:
+                claim_keys = {_normalize_reference_key(reference) for reference in artifact.claims}
+                if not claim_keys:
+                    continue
+                for hypothesis in indexes.hypotheses:
+                    if hypothesis.hypothesis_id not in open_blocked_hypotheses:
+                        continue
+                    if not set(hypothesis.claim_keys).intersection(claim_keys):
+                        continue
+                    hypothesis_blocking_artifacts.append(artifact.artifact_path)
+                    blocking_claims.extend(list(hypothesis.claim_keys))
+                    break
+        if hypothesis_blocking_artifacts:
+            blocking_artifacts.extend(hypothesis_blocking_artifacts)
+            reasons.append(
+                "Artifact promotion blocked by critic-reviewed hypotheses marked weakened or rejected."
+            )
+
     return {
         "blocked": bool(reasons),
         "reasons": reasons,

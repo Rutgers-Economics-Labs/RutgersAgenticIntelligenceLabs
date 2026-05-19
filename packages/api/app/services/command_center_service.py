@@ -178,6 +178,22 @@ def list_project_skills(project: dict) -> dict[str, Any]:
             }
         )
 
+    task_hypothesis_overview = []
+    if tasks:
+        boosted_tasks = _boost_ready_tasks_with_hypotheses(project, tasks)
+        for task in boosted_tasks:
+            if not task.get("hypothesisLinks"):
+                continue
+            task_hypothesis_overview.append(
+                {
+                    "taskId": str(task.get("_id") or ""),
+                    "title": str(task.get("title") or ""),
+                    "hypothesisLinks": list(task.get("hypothesisLinks") or []),
+                    "hypothesisScore": float(task.get("hypothesisScore") or 0),
+                    "priorityBoost": int(task.get("_hypothesisPriorityBoost") or 0),
+                }
+            )
+
     return {
         "skills": skill_rows,
         "summary": {
@@ -357,6 +373,56 @@ def _project_integrity_indexes(project: dict) -> Any | None:
         return None
 
 
+def _task_hypothesis_links(root: Path) -> dict[str, list[str]]:
+    hypothesis_path = root / "research_plan" / "state" / "hypotheses.json"
+    if not hypothesis_path.exists():
+        return {}
+    try:
+        payload = json.loads(hypothesis_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    links: dict[str, list[str]] = {}
+    if not isinstance(payload, list):
+        return links
+    for row in payload:
+        if not isinstance(row, dict):
+            continue
+        hypothesis_id = str(row.get("id") or row.get("hypothesis_id") or "").strip()
+        if not hypothesis_id:
+            continue
+        for task_id in row.get("task_ids") or []:
+            task_key = str(task_id).strip()
+            if not task_key:
+                continue
+            links.setdefault(task_key, []).append(hypothesis_id)
+    return links
+
+
+def _boost_ready_tasks_with_hypotheses(project: dict, tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranking = rank_hypotheses(project)
+    if not ranking:
+        return tasks
+    ranking_by_id = {str(item.get("id")): item for item in ranking}
+    root = project_root(project)
+    task_links = _task_hypothesis_links(root)
+    boosted: list[dict[str, Any]] = []
+    for task in tasks:
+        task_id = str(task.get("_id") or "")
+        links = task_links.get(task_id, [])
+        best = max(
+            (ranking_by_id.get(item) for item in links if ranking_by_id.get(item)),
+            key=lambda x: x["computedScore"],
+            default=None,
+        )
+        updated = dict(task)
+        if best is not None:
+            updated["_hypothesisPriorityBoost"] = int(round(float(best["computedScore"]) * 100))
+            updated["hypothesisLinks"] = links
+            updated["hypothesisScore"] = float(best["computedScore"])
+        boosted.append(updated)
+    return boosted
+
+
 def _reference_key(reference: str) -> str:
     return reference.split("#", 1)[-1].strip()
 
@@ -526,6 +592,71 @@ def _artifact_trust_state(lineage: Any, verification_status: str) -> dict[str, A
     )
 
 
+def rank_hypotheses(project: dict) -> list[dict[str, Any]]:
+    indexes = _project_integrity_indexes(project)
+    if indexes is None:
+        return []
+    source_by_key = {item.source_key: item for item in indexes.sources}
+    claim_by_key = {item.claim_key: item for item in indexes.claims}
+
+    ranked: list[dict[str, Any]] = []
+    for hypothesis in indexes.hypotheses:
+        linked_claims = [claim_by_key[key] for key in hypothesis.claim_keys if key in claim_by_key]
+        claim_count = len(linked_claims)
+        supported_count = sum(1 for claim in linked_claims if claim.status == "supported")
+        stale_count = sum(1 for claim in linked_claims if claim.status in {"stale", "needs_evidence", "unsupported", "conflicted"})
+        linked_source_keys = sorted({key for claim in linked_claims for key in claim.source_keys})
+        linked_sources = [source_by_key[key] for key in linked_source_keys if key in source_by_key]
+        fresh_sources = sum(1 for source in linked_sources if source.freshness_status == "fresh")
+        reproducible_artifacts = sum(
+            1
+            for artifact in indexes.artifact_lineage
+            if artifact.artifact_path in hypothesis.artifact_paths
+            and (
+                artifact.reproducibility_mode in {"deterministic", "manual"}
+                or bool(artifact.inputs and artifact.scripts and artifact.verification_runs)
+            )
+        )
+        artifact_count = len(hypothesis.artifact_paths)
+        evidence_coverage = (supported_count / claim_count) if claim_count else 0.0
+        data_ready = (fresh_sources / len(linked_sources)) if linked_sources else 0.0
+        reproducibility = (reproducible_artifacts / artifact_count) if artifact_count else 0.0
+        score = round((0.5 * evidence_coverage) + (0.3 * data_ready) + (0.2 * reproducibility), 4)
+        reasons: list[str] = []
+        reasons.append(f"evidence_coverage={evidence_coverage:.2f} ({supported_count}/{claim_count or 1} claims supported)")
+        reasons.append(f"data_ready={data_ready:.2f} ({fresh_sources}/{len(linked_sources) or 1} linked sources fresh)")
+        reasons.append(f"reproducibility={reproducibility:.2f} ({reproducible_artifacts}/{artifact_count or 1} linked artifacts reproducible)")
+        if stale_count:
+            reasons.append(f"{stale_count} linked claims are stale or under-supported")
+        ranked.append(
+            {
+                **hypothesis.model_dump(mode="json", by_alias=True),
+                "computedScore": score,
+                "scoreBreakdown": {
+                    "evidenceCoverage": round(evidence_coverage, 4),
+                    "dataReady": round(data_ready, 4),
+                    "reproducibility": round(reproducibility, 4),
+                },
+                "rankingReasons": reasons,
+            }
+        )
+    ranked.sort(key=lambda item: item["computedScore"], reverse=True)
+    return ranked
+
+
+def _write_hypothesis_ranking_decisions(project: dict, rankings: list[dict[str, Any]]) -> None:
+    root = project_root(project)
+    decision_path = root / "research_plan" / "decisions.md"
+    lines = ["## Hypothesis ranking", ""]
+    if not rankings:
+        lines.append("- No hypotheses available for ranking.")
+    for item in rankings[:5]:
+        lines.append(f"- `{item['id']}` score={item['computedScore']:.2f} status={item.get('status') or 'draft'}")
+    lines.extend(["", ""])
+    with decision_path.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+
+
 def list_project_integrity(project: dict) -> dict[str, Any]:
     root = project_root(project)
     indexes = _project_integrity_indexes(project)
@@ -553,6 +684,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
             },
             "agentWorkflow": _build_agent_workflow_summary([], [], [], [], []),
             "staleOutputs": [],
+            "hypothesisRanking": [],
         }
 
     assumptions = [row.model_dump(mode="json") for row in indexes.assumptions]
@@ -600,6 +732,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
             "assumptions": assumptions,
             "sources": sources,
             "claims": claims,
+            "hypotheses": [row.model_dump(mode="json", by_alias=True) for row in indexes.hypotheses],
             "artifact_lineage": artifact_lineage,
             "verification_runs": verification_runs,
         },
@@ -609,6 +742,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
             "sourceFreshnessCounts": source_freshness_counts,
             "sourceAdmissibilityCounts": source_admissibility_counts,
             "claimCount": len(claims),
+            "hypothesisCount": len(indexes.hypotheses),
             "artifactCount": len(artifact_lineage),
             "staleArtifactCount": len(stale_outputs),
             "verificationRunCount": len(verification_runs),
@@ -617,6 +751,7 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
         },
         "agentWorkflow": agent_workflow,
         "staleOutputs": stale_outputs,
+        "hypothesisRanking": rank_hypotheses(project),
     }
 
 
@@ -962,6 +1097,8 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     skills = list_project_skills(project)
     artifacts = list_project_artifacts(project)
     integrity = list_project_integrity(project)
+    ranking = integrity.get("hypothesisRanking") or []
+    _write_hypothesis_ranking_decisions(project, ranking)
     root = project_root(project)
     ontology_follow_ups = _ontology_follow_up_summary(project, tasks=tasks)
     latest_audit = read_latest_audit(root)
@@ -1008,7 +1145,9 @@ async def build_command_center(project: dict) -> dict[str, Any]:
             "sourceFreshnessCounts": integrity["summary"]["sourceFreshnessCounts"],
             "sourceAdmissibilityCounts": integrity["summary"]["sourceAdmissibilityCounts"],
             "agentWorkflow": integrity["agentWorkflow"],
+            "hypothesisRanking": ranking,
         },
+        "hypothesisTaskLinks": task_hypothesis_overview,
         "ontologyFollowUps": ontology_follow_ups,
         "auditedTruth": latest_audit,
         "recentAudits": recent_audits,
@@ -1061,6 +1200,7 @@ def build_launch_preview(project: dict, payload: dict[str, Any]) -> dict[str, An
             acceptance_criteria.append("Analysis outputs declare inputs, scripts, and verification commands.")
         elif preset["role"] == "artifact":
             acceptance_criteria.append("Artifacts preserve evidence links and avoid unsupported trusted narratives.")
+            acceptance_criteria.append("Closeout includes ranked hypotheses, falsifiers, and next data pulls.")
         elif preset["role"] == "health":
             acceptance_criteria.append("Missing evidence, stale sources, and reproducibility gaps are reported explicitly.")
         tasks.append(
@@ -1083,6 +1223,31 @@ def build_launch_preview(project: dict, payload: dict[str, Any]) -> dict[str, An
                 "status": "awaiting_approval" if approval_before_writes else "ready",
                 "repoPaths": preset["outputs"],
                 "acceptanceCriteria": acceptance_criteria,
+            }
+        )
+
+    if not any(task["agentRole"] == "artifact" and "Meta-synthesis" in task["title"] for task in tasks):
+        tasks.append(
+            {
+                "title": f"Meta-synthesis closeout: {question[:80] or project.get('name', 'Research Project')}",
+                "description": "\n".join(
+                    part
+                    for part in [
+                        f"Research question: {question or 'TBD'}",
+                        "Build a closeout synthesis grounded in ranked hypotheses and critic blockers.",
+                        "Use artifacts/meta_synthesis.md as the output structure.",
+                    ]
+                    if part
+                ),
+                "agentRole": "artifact",
+                "status": "awaiting_approval" if approval_before_writes else "ready",
+                "repoPaths": ["artifacts/meta_synthesis.md", "research_plan/state/hypotheses.json", "research_plan/state/conflicts.json"],
+                "acceptanceCriteria": [
+                    "Meta-synthesis includes ranked hypotheses and computed score context.",
+                    "Evidence table links hypotheses to claims and sources.",
+                    "Falsifiers and unresolved conflicts are clearly surfaced.",
+                    "Next data pulls are documented with linked hypotheses.",
+                ],
             }
         )
 

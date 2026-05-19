@@ -10,6 +10,7 @@ const AUDITOR_LABELS: Record<string, string> = {
   planner: "Planner",
   ontology: "Ontology",
   integrity: "Integrity",
+  critic: "Critic",
   closeout: "Closeout",
 };
 
@@ -36,13 +37,11 @@ export function OperatorOverviewStrip({
         <div style={{ display: "flex", flexWrap: "wrap", gap: 24, flex: 1 }}>
           <OverviewCell label="Phase" value={derivePhase(center)} />
           <OverviewCell
-            label="Active agents"
+            label="Active worker"
             value={
               center.activeSessions.length
-                ? center.activeSessions
-                    .map((s) => `${s.role ?? "agent"} (${s.status})`)
-                    .join(", ")
-                : "None"
+                ? `${center.activeSessions[0]?.role ?? "agent"} (${center.activeSessions[0]?.status ?? "unknown"})`
+                : "none"
             }
           />
           <OverviewCell
@@ -50,7 +49,7 @@ export function OperatorOverviewStrip({
             value={center.currentBlocker || center.blockerSummary?.headline || "Clear"}
           />
           <OverviewCell label="Ontology" value={hydrationState} />
-          <OverviewCell label="Next" value={center.nextAction} muted />
+          <OverviewCell label="Next action" value={center.nextAction} muted />
         </div>
         <FetchDataHydrateButton slug={slug} pipelineSlug={pipelineSlug} />
       </div>

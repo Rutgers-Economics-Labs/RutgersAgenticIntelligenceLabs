@@ -122,6 +122,7 @@ def bootstrap_future_project(
             - "planner"
             - "ontology"
             - "integrity"
+            - "critic"
             - "closeout"
           fail_closed: true
 
@@ -395,6 +396,21 @@ Your mission is to ensure that all research outputs are auditable, verified, and
 
 Do not mark an artifact as verified if there is a semantic gap between the claim and the source evidence.
 """
+        if role == "critic":
+            return """# Critic Prompt
+
+You are the critic/reflection worker for this RAIL project.
+
+Your role is to stress-test hypotheses and linked claims before trusted promotion.
+
+1. Inspect `research_plan/state/hypotheses.json`, `claims.json`, and `conflicts.json`.
+2. For each hypothesis under review, identify falsifiers and contradiction evidence.
+3. Open or update critic blockers in `conflicts.json` and propose claim-candidate follow-ups.
+4. Mark hypotheses as `weakened` or `supported` based on evidence quality and coverage.
+5. Keep decisions concise and traceable to repo-backed evidence paths.
+
+Never promote hypotheses that still rely on unsupported or stale claims.
+"""
         return f"# {role.title()} Prompt\n\nProject-specific system guidance for the {role} role. Use relevant project skills from `skills/` before doing specialized work.\n"
     def checklist_template(role: str) -> str:
         if role == "planner":
@@ -454,6 +470,17 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
                 "- prefer tables, figures, and captions that can be traced to repo-backed evidence\n"
                 "- satisfy deterministic completion checks\n"
             )
+        if role == "critic":
+            return (
+                "# Critic Checklist\n\n"
+                "- follow repo contract\n"
+                "- stay inside allowed paths\n"
+                "- review hypothesis links against claim and source evidence\n"
+                "- record blockers as conflicts when falsifiers or evidence gaps remain\n"
+                "- downgrade hypothesis status when linked claims are stale or unsupported\n"
+                "- only mark hypotheses supported when linked claims are evidence-backed\n"
+                "- satisfy deterministic completion checks\n"
+            )
         if role == "health":
             return (
                 "# Health Checklist\n\n"
@@ -485,6 +512,7 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
         "assumptions.json": "[]\n",
         "sources.json": "[]\n",
         "claims.json": "[]\n",
+        "hypotheses.json": "[]\n",
         "source_candidates.json": "[]\n",
         "claim_candidates.json": "[]\n",
         "entity_candidates.json": "[]\n",
@@ -731,6 +759,13 @@ Do not mark an artifact as verified if there is a semantic gap between the claim
             "write": ["artifacts", "topics"],
             "secrets": [],
             "tools": ["read_repo", "write_repo", "render_artifact", "grepai_search"],
+        },
+        "critic": {
+            "purpose": "Challenge weak evidence links and propose falsifiers before promotion.",
+            "read": [".ontology", "topics", "specs", "research_plan", "artifacts", "agents"],
+            "write": ["research_plan", "artifacts"],
+            "secrets": [],
+            "tools": ["read_repo", "write_repo", "grepai_search"],
         },
         "health": {
             "purpose": "Audit repo hygiene, cleanup generated debris, and verify outputs.",

@@ -73,6 +73,89 @@ async def test_patch_assumption_returns_rerun_plan(client, convex_mock, tmp_path
     assert payload["rerunPlan"]["affectedPaths"] == [".ontology/onto.duckdb", "artifacts/report.md"]
 
 
+async def test_critic_review_marks_hypothesis_and_writes_conflict(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    repo = ResearchIntegrityRepo(root)
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "Insufficiently supported claim.",
+                "status": "needs_evidence",
+                "artifact_path": "artifacts/report.md",
+            }
+        ]
+    )
+    repo.upsert_hypothesis(
+        {
+            "id": "hyp-001",
+            "statement": "A test hypothesis.",
+            "claim_keys": ["claim-001"],
+            "status": "draft",
+        }
+    )
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/critic/review",
+        json={"hypothesisIds": ["hyp-001"]},
+    )
+
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "hyp-001" in payload["reviewedHypothesisIds"]
+    assert payload["createdConflicts"]
+
+
+async def test_research_burst_requires_enabled_manifest(client, convex_mock, tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.post(
+        "/api/v1/projects/integrity-router-project/research-burst",
+        json={"objective": "Stress-test housing affordability hypotheses", "maxParallel": 3},
+    )
+
+    assert resp.status_code == 422
+    assert "disabled" in resp.json()["detail"]
+
+
 async def test_record_assumption_rejects_unknown_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
 

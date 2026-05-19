@@ -147,7 +147,7 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
         },
         "auditors": {
             "enabled": True,
-            "order": ["session", "planner", "ontology", "integrity", "closeout"],
+            "order": ["session", "planner", "ontology", "integrity", "critic", "closeout"],
             "fail_closed": True,
         },
         "autonomy": {
@@ -185,6 +185,11 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "require_ontology_health_before": ["research", "artifact"],
             "required_artifact_lineage": True,
             "required_claim_evidence": True,
+        },
+        "research_burst": {
+            "enabled": False,
+            "max_parallel": 1,
+            "max_cost_usd": 20,
         },
         "secrets": {
             "project_scope": True,

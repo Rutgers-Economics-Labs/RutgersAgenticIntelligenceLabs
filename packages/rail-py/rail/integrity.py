@@ -18,6 +18,7 @@ SourceFreshnessStatus = Literal["unknown", "fresh", "needs_refresh", "stale"]
 SourceAdmissibilityStatus = Literal["observed", "derived", "estimated", "synthetic", "missing"]
 SourceImpactLevel = Literal["low", "normal", "high", "critical"]
 ClaimStatus = Literal["draft", "supported", "unsupported", "needs_evidence", "superseded", "stale", "conflicted"]
+HypothesisStatus = Literal["draft", "supported", "weakened", "rejected", "archived"]
 EvidenceKind = Literal["direct", "derived", "contextual", "semantic_suggestion"]
 CandidateStatus = Literal["candidate", "promoted", "rejected"]
 ConflictStatus = Literal["open", "reviewing", "resolved", "dismissed"]
@@ -38,6 +39,7 @@ STATE_FILE_NAMES = {
     "assumptions": "assumptions.json",
     "sources": "sources.json",
     "claims": "claims.json",
+    "hypotheses": "hypotheses.json",
     "source_candidates": "source_candidates.json",
     "claim_candidates": "claim_candidates.json",
     "entity_candidates": "entity_candidates.json",
@@ -253,6 +255,29 @@ class ClaimRecord(BaseModel):
     updated_at: str | None = None
 
 
+class HypothesisRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hypothesis_id: str = Field(alias="id")
+    statement: str
+    scope: str | None = None
+    falsifiers: list[str] = Field(default_factory=list)
+    status: HypothesisStatus = "draft"
+    score: float | None = Field(default=None, ge=0, le=1)
+    parent_id: str | None = None
+    claim_keys: list[str] = Field(default_factory=list)
+    task_ids: list[str] = Field(default_factory=list)
+    artifact_paths: list[str] = Field(default_factory=list)
+    human_notes: str | None = None
+    source_path: str = Field(default_factory=lambda: _default_source_path(STATE_FILE_NAMES["hypotheses"]))
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @property
+    def id(self) -> str:
+        return self.hypothesis_id
+
+
 class SourceCandidateRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -446,6 +471,7 @@ class IntegrityIndexes(BaseModel):
     assumptions: list[AssumptionRecord] = Field(default_factory=list)
     sources: list[SourceRecord] = Field(default_factory=list)
     claims: list[ClaimRecord] = Field(default_factory=list)
+    hypotheses: list[HypothesisRecord] = Field(default_factory=list)
     source_candidates: list[SourceCandidateRecord] = Field(default_factory=list)
     claim_candidates: list[ClaimCandidateRecord] = Field(default_factory=list)
     entity_candidates: list[EntityCandidateRecord] = Field(default_factory=list)
@@ -760,6 +786,9 @@ class ResearchIntegrityRepo:
     def claims_path(self) -> Path:
         return self.state_root / STATE_FILE_NAMES["claims"]
 
+    def hypotheses_path(self) -> Path:
+        return self.state_root / STATE_FILE_NAMES["hypotheses"]
+
     def source_candidates_path(self) -> Path:
         return self.state_root / STATE_FILE_NAMES["source_candidates"]
 
@@ -847,6 +876,7 @@ class ResearchIntegrityRepo:
             assumptions=self.load_assumptions(),
             sources=self.load_sources(),
             claims=self.load_claims(),
+            hypotheses=self.load_hypotheses(),
             source_candidates=self.load_source_candidates(),
             claim_candidates=self.load_claim_candidates(),
             entity_candidates=self.load_entity_candidates(),
@@ -862,6 +892,7 @@ class ResearchIntegrityRepo:
         self.write_assumptions(indexes.assumptions)
         self.write_sources(indexes.sources)
         self.write_claims(indexes.claims)
+        self.write_hypotheses(indexes.hypotheses)
         self.write_source_candidates(indexes.source_candidates)
         self.write_claim_candidates(indexes.claim_candidates)
         self.write_entity_candidates(indexes.entity_candidates)
@@ -1134,6 +1165,7 @@ class ResearchIntegrityRepo:
             "sourceCandidates": [item.model_dump(mode="json") for item in indexes.source_candidates],
             "claimCandidates": [item.model_dump(mode="json") for item in indexes.claim_candidates],
             "entityCandidates": [item.model_dump(mode="json") for item in indexes.entity_candidates],
+            "hypotheses": [item.model_dump(mode="json", by_alias=True) for item in indexes.hypotheses],
         }
         conflict_summary = [item.model_dump(mode="json") for item in indexes.conflicts]
 
@@ -1148,6 +1180,7 @@ class ResearchIntegrityRepo:
                 "sourceCandidateCount": len(indexes.source_candidates),
                 "claimCandidateCount": len(indexes.claim_candidates),
                 "entityCandidateCount": len(indexes.entity_candidates),
+                "hypothesisCount": len(indexes.hypotheses),
                 "conflictCount": len(indexes.conflicts),
                 "verificationRunCount": len(indexes.verification_runs),
                 "claimStatusCounts": claim_bucket_counts,
@@ -1326,6 +1359,52 @@ class ResearchIntegrityRepo:
         self.reconcile_claim_conflicts()
         self.reconcile_artifact_claim_support()
         return self.get_claim(stored.claim_key) or stored
+
+    def load_hypotheses(self) -> list[HypothesisRecord]:
+        return self._load_records(self.hypotheses_path(), HypothesisRecord)
+
+    def _normalize_hypothesis_record_for_write(self, record: HypothesisRecord | dict[str, Any]) -> HypothesisRecord:
+        normalized = HypothesisRecord.model_validate(record)
+        known_claim_keys = {item.claim_key for item in self.load_claims()}
+        normalized_claim_keys = sorted({key for key in normalized.claim_keys if key in known_claim_keys})
+        normalized_artifact_paths = [
+            path
+            for path in normalized.artifact_paths
+            if path and (self.project_root / path).exists()
+        ]
+        return normalized.model_copy(
+            update={
+                "claim_keys": normalized_claim_keys,
+                "artifact_paths": normalized_artifact_paths,
+            }
+        )
+
+    def write_hypotheses(self, records: list[HypothesisRecord] | list[dict[str, Any]]) -> None:
+        normalized_records = [self._normalize_hypothesis_record_for_write(record) for record in records]
+        self._write_records(self.hypotheses_path(), normalized_records, HypothesisRecord)
+        self.rebuild_integrity_edges()
+
+    def upsert_hypothesis(self, record: HypothesisRecord | dict[str, Any]) -> HypothesisRecord:
+        return self._upsert_by_key(
+            self.load_hypotheses,
+            self.write_hypotheses,
+            HypothesisRecord,
+            "hypothesis_id",
+            self._normalize_hypothesis_record_for_write(record),
+        )
+
+    def update_hypothesis(self, hypothesis_id: str, **changes: Any) -> HypothesisRecord:
+        records = self.load_hypotheses()
+        for idx, record in enumerate(records):
+            if record.hypothesis_id != hypothesis_id:
+                continue
+            updated = record.model_copy(update=changes)
+            updated = self._normalize_hypothesis_record_for_write(updated)
+            updated = self._normalize_timestamps(updated, preserve_created_at=record.created_at)
+            records[idx] = updated
+            self.write_hypotheses(records)
+            return updated
+        raise KeyError(f"Unknown hypothesis_id: {hypothesis_id}")
 
     def load_source_candidates(self) -> list[SourceCandidateRecord]:
         return self._load_records(self.source_candidates_path(), SourceCandidateRecord)
@@ -1638,6 +1717,34 @@ class ResearchIntegrityRepo:
                     source_record_key=row.claim_key,
                     target_record_key=other_key if other_key in claim_index else row.claim_key,
                 )
+
+        for row in self.load_hypotheses():
+            for claim_key in row.claim_keys:
+                _add_edge(
+                    f"hypothesis:{row.hypothesis_id}",
+                    f"claim:{claim_key}",
+                    "linked_to",
+                    source_record_key=row.hypothesis_id,
+                    target_record_key=claim_key if claim_key in claim_index else row.hypothesis_id,
+                )
+            if row.parent_id:
+                _add_edge(
+                    f"hypothesis:{row.hypothesis_id}",
+                    f"hypothesis:{row.parent_id}",
+                    "child_of",
+                    source_record_key=row.hypothesis_id,
+                    target_record_key=row.parent_id,
+                )
+            for artifact_path in row.artifact_paths:
+                upstream = artifact_index.get(artifact_path)
+                if upstream is not None:
+                    _add_edge(
+                        f"hypothesis:{row.hypothesis_id}",
+                        self.artifact_node_id(upstream),
+                        "linked_to",
+                        source_record_key=row.hypothesis_id,
+                        target_record_key=upstream.artifact_path,
+                    )
 
         for row in artifacts:
             artifact_id = self.artifact_node_id(row)
@@ -3789,7 +3896,10 @@ class ResearchIntegrityRepo:
 
     def _write_records(self, path: Path, records: list[Any], model_cls: type[BaseModel]) -> None:
         self.ensure_files_exist()
-        normalized = [self._ensure_record_timestamps(model_cls.model_validate(item)).model_dump(mode="json") for item in records]
+        normalized = [
+            self._ensure_record_timestamps(model_cls.model_validate(item)).model_dump(mode="json", by_alias=True)
+            for item in records
+        ]
         path.write_text(json.dumps(normalized, indent=2) + "\n", encoding="utf-8")
 
     def _write_compiled_truth_outputs(self, report: dict[str, Any]) -> None:
