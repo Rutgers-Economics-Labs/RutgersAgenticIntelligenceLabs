@@ -699,30 +699,29 @@ async def main() -> int:
     print(f"  Follow-up questions written: {follow_up_path.name}")
     print(f"  Classifications: 2 requires_expansion, 1 blocked_by_data, 1 answerable_after_requery, 1 answerable_now")
 
-    # Create expansion tasks (cancelled — deferred for future expansion project)
+    # Create expansion tasks from classified follow-up questions (Milestone 7)
+    from app.services.question_expansion_service import expansion_task_specs_for_question, parse_follow_up_questions
+
     tasks_dir = PROJECT_ROOT / "research_plan" / "tasks"
     tasks_dir.mkdir(exist_ok=True)
-    expansion_questions = [
-        (
-            "Expand ontology coverage for: 1. How did NJ housing price growth compare to neighboring states (NY, PA, CT)?",
-            "expand-ontology-coverage-for-neighboring-state-comparison",
-        ),
-        (
-            "Expand ontology coverage for: 2. What was the real mortgage affordability index for NJ during peak rate periods (2022-2023)?",
-            "expand-ontology-coverage-for-mortgage-affordability-index",
-        ),
-        (
-            "Resolve data blocker for: 3. Which NJ county-level markets showed the highest price volatility?",
-            "resolve-data-blocker-for-county-level-price-volatility",
-        ),
-    ]
-    for title, slug in expansion_questions:
-        task_path = tasks_dir / f"{slug}.md"
-        task_path.write_text(
-            f"---\ntitle: {title}\nstatus: cancelled\nassigned_role: data\nrunner: codex_cli\ndependencies: []\nacceptance_criteria:\n  - expansion or blocker resolution documented\n---\n\n## Description\n\n{title}. Deferred as future work.\n",
-            encoding="utf-8",
-        )
-    print(f"  Created {len(expansion_questions)} follow-up tasks (status: cancelled)")
+    expansion_count = 0
+    for question in parse_follow_up_questions(PROJECT_ROOT):
+        title = str(question.get("title") or "").strip()
+        classification = str(question.get("classification") or "").strip().lower()
+        if not title:
+            continue
+        for spec in expansion_task_specs_for_question(title, classification):
+            slug = spec["title"].lower().replace(" ", "-")[:80]
+            task_path = tasks_dir / f"{slug}.md"
+            role = "data" if "Expand ontology" in spec["title"] else "research"
+            task_path.write_text(
+                f"---\ntitle: {spec['title']}\nstatus: ready\nassigned_role: {role}\nrunner: codex_cli\ndependencies: []\nacceptance_criteria:\n"
+                + "".join(f"  - {item}\n" for item in spec.get("acceptance_criteria") or ["expansion or blocker resolution documented"])
+                + f"---\n\n## Description\n\n{spec.get('description', spec['title'])}\n",
+                encoding="utf-8",
+            )
+            expansion_count += 1
+    print(f"  Created {expansion_count} follow-up expansion/blocker tasks (status: ready)")
 
     # Create task files for completed research tasks so planner auditor shows convergence
     for task_title, task_slug in [
