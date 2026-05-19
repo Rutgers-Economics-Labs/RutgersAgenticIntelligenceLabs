@@ -3043,3 +3043,151 @@ async def get_autopilot_status(slug: str):
         "enabled": autopilot_service.is_autopilot_active(slug),
         "autoApprove": autopilot_service.get_autopilot_config(slug).get("auto_approve", False)
     }
+
+
+@router.get("/{slug}/phase")
+async def get_project_phase(slug: str):
+    """Single authoritative phase projection for a project.
+
+    Returns the current lifecycle phase, the top blocker, the next recommended
+    action, and all five auditor statuses in one call.  This is the canonical
+    control-plane endpoint: the UI, autopilot, and any operator query should
+    use this instead of assembling partial signals.
+    """
+    project = await planner_service.get_project_by_slug(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+    root = planner_service.project_root_from_record(project)
+    manifest = load_manifest(root) if root else None
+
+    tasks: list[dict] = []
+    active_sessions: list[dict] = []
+    try:
+        board = await planner_service.ensure_main_board(project)
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
+    except Exception:
+        pass
+    try:
+        from app.services.running_agent_service import list_running_agents
+        active_sessions = await list_running_agents(project_id=project.get("_id"))
+    except Exception:
+        pass
+
+    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
+
+    # Infer current lifecycle phase from auditor and repo state
+    phase = _infer_lifecycle_phase(root, manifest, auditors, tasks, active_sessions)
+
+    # Top blocker: first non-ready auditor's first blocker
+    top_blocker: str | None = None
+    for key in ("session", "planner", "ontology", "integrity", "closeout"):
+        a = auditors.get(key) or {}
+        if str(a.get("status") or "") == "blocked":
+            blockers = a.get("blockers") or []
+            if blockers:
+                top_blocker = f"{key}: {blockers[0]}"
+                break
+
+    # Recommended next action
+    next_action = _recommend_next_action(phase, auditors, tasks, active_sessions)
+
+    return {
+        "slug": slug,
+        "phase": phase,
+        "topBlocker": top_blocker,
+        "nextAction": next_action,
+        "auditors": auditors,
+        "activeSessions": len(active_sessions),
+        "openTasks": sum(1 for t in tasks if t.get("status") not in {"done", "cancelled"}),
+    }
+
+
+def _infer_lifecycle_phase(
+    root: Any,
+    manifest: Any,
+    auditors: dict[str, Any],
+    tasks: list[dict],
+    active_sessions: list[dict],
+) -> str:
+    if not root or not root.exists():
+        return "brief"
+
+    phases = list(manifest.lifecycle.phases) if manifest else [
+        "brief", "scoped", "source_discovery", "config_ready",
+        "hydration_ready", "hydrated", "ontology_healthy",
+        "research_active", "synthesis_ready", "closed",
+    ]
+
+    closeout = auditors.get("closeout") or {}
+    if str(closeout.get("status") or "") == "ready":
+        return "closed"
+
+    ontology = auditors.get("ontology") or {}
+    ont_state = str(ontology.get("state") or ontology.get("stateClassification") or "")
+    if "hydrated" in ont_state or ont_state == "hydrated_on_this_device":
+        if str(ontology.get("status") or "") == "ready":
+            open_tasks = [t for t in tasks if t.get("status") not in {"done", "cancelled"}]
+            if not open_tasks and not active_sessions:
+                return "synthesis_ready"
+            return "research_active"
+        return "ontology_healthy" if "ontology_healthy" in phases else "hydrated"
+
+    integrity = auditors.get("integrity") or {}
+    if str(integrity.get("status") or "") == "ready":
+        return "hydration_ready"
+
+    sources_exist = root and (root / "research_plan" / "state" / "sources.json").exists()
+    if sources_exist:
+        try:
+            import json
+            raw = json.loads((root / "research_plan" / "state" / "sources.json").read_text(encoding="utf-8"))
+            if isinstance(raw, list) and raw:
+                return "source_discovery"
+        except Exception:
+            pass
+
+    topics = root and (root / "topics").is_dir() and any((root / "topics").iterdir())
+    if topics:
+        return "scoped"
+
+    return "brief"
+
+
+def _recommend_next_action(
+    phase: str,
+    auditors: dict[str, Any],
+    tasks: list[dict],
+    active_sessions: list[dict],
+) -> str:
+    if active_sessions:
+        roles = {str(s.get("role") or "agent") for s in active_sessions}
+        return f"Wait for {len(active_sessions)} active session(s) to complete ({', '.join(sorted(roles))})."
+
+    planner = auditors.get("planner") or {}
+    if str(planner.get("status") or "") == "blocked":
+        b = (planner.get("blockers") or ["planner blocked"])[0]
+        return f"Resolve planner blocker before launching new work: {b}"
+
+    if phase == "brief":
+        return "Add a research brief to topics/ and scope the project."
+    if phase == "scoped":
+        return "Discover and register sources in research_plan/state/sources.json."
+    if phase == "source_discovery":
+        return "Configure data pipelines and ontology for source ingestion."
+    if phase == "config_ready":
+        return "Run the data agent to hydrate the ontology."
+    if phase == "hydration_ready":
+        return "Run the data agent to hydrate the ontology."
+    if phase == "hydrated":
+        return "Run ontology health checks and verify hydration quality."
+    if phase == "ontology_healthy":
+        return "Run research and analysis sessions."
+    if phase == "research_active":
+        ready = [t for t in tasks if t.get("status") == "ready"]
+        return f"Launch next research task ({ready[0]['title'][:60]}…)." if ready else "Create or assign research tasks."
+    if phase == "synthesis_ready":
+        return "Run artifact synthesis session to produce final outputs."
+    if phase == "closed":
+        return "Project is closed. Review artifacts and consider follow-up questions."
+    return "Review auditor statuses to determine next step."

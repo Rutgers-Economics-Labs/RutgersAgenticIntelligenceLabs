@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -8,9 +10,36 @@ from app.services import planner_service, session_files
 from app.services.integrity_service import evaluate_integrity_gate
 from rail.manifest import load_manifest
 
+_log = logging.getLogger(__name__)
+
 
 def _audit_root(project_root: Path) -> Path:
     return project_root / "research_plan" / "audits"
+
+
+async def _commit_audit_to_git(project_root: Path, paths: list[Path]) -> None:
+    """Stage and commit audit files as a durable record in the project repo."""
+    if not (project_root / ".git").exists():
+        return
+    rel_paths = [str(p.relative_to(project_root)) for p in paths if p.exists()]
+    if not rel_paths:
+        return
+    try:
+        add = await asyncio.create_subprocess_exec(
+            "git", "-C", str(project_root), "add", "--", *rel_paths,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(add.wait(), timeout=15)
+        commit = await asyncio.create_subprocess_exec(
+            "git", "-C", str(project_root), "commit", "--no-gpg-sign",
+            "-m", f"audit: durable post-run certificates ({', '.join(rel_paths[:2])}{'…' if len(rel_paths) > 2 else ''})",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(commit.wait(), timeout=15)
+    except Exception as exc:
+        _log.debug("audit git commit skipped: %s", exc)
 
 
 def _session_roots(project_root: Path) -> list[Path]:
@@ -306,4 +335,5 @@ async def write_post_run_audit(
     md_path = audit_root / f"{session_id}.md"
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     md_path.write_text(_render_audit_markdown(payload), encoding="utf-8")
+    await _commit_audit_to_git(project_root, [json_path, md_path])
     return {"jsonPath": str(json_path), "markdownPath": str(md_path), "payload": payload}

@@ -148,6 +148,15 @@ def _runner_launch_blocked_by_auditors(
             blockers = [str(item) for item in (integrity_auditor.get("blockers") or []) if item]
             return blockers[0] if blockers else "Integrity auditor blocked this launch."
 
+    # Planner drift suppression: block the planner role from creating more tasks
+    # when the task graph is already saturated with open work.
+    saturation_count = int(planner_auditor.get("taskSaturationCount") or 0)
+    if saturation_count > 0 and role_name == "planner":
+        return (
+            f"Planner task graph saturated: {saturation_count} open task(s) already exceed the "
+            f"saturation threshold. Resolve or cancel existing work before creating new tasks."
+        )
+
     return None
 STATE_INDEX_FILE_NAMES = (
     "assumptions.json",
@@ -1924,6 +1933,36 @@ async def _finalize_workspace_review(
             session=session,
             changed_files=changed_files,
         )
+    # Audited merge: once a session is published and passes review, merge the
+    # workspace branch back into the base branch via the GitHub API.
+    github_repo = infer_github_repo(project.get("github") or project.get("gitRepoUrl"))
+    if (
+        terminal_status == "completed"
+        and review_status == "review"
+        and not publish_error
+        and github_repo
+    ):
+        try:
+            from app.services.github_service import github_service
+            await github_service.merge_branch(
+                github_repo,
+                base_branch,
+                workspace_branch,
+                commit_message=f"chore(autopilot): merge audited workspace {workspace_branch} → {base_branch} [{convex_session_id}]",
+            )
+        except Exception as merge_exc:
+            merge_error = str(merge_exc)
+            session_files.update_state(
+                session_root,
+                publish_status="failed",
+                publish_error=merge_error,
+            )
+            session_files.append_event(
+                session_root,
+                "publish_failed",
+                content=f"Audited branch merge failed: {merge_error}",
+                status=session_files.read_state(session_root).get("status"),
+            )
     if publish_error and resolved_task_id:
         await planner_service.update_task(
             resolved_task_id,

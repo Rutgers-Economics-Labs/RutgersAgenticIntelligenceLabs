@@ -199,6 +199,9 @@ async def build_auditor_statuses(
             ),
         ],
     }
+    _PLANNER_SATURATION_THRESHOLD = 10
+    open_tasks = [t for t in (tasks or []) if t.get("status") not in {"done", "cancelled"}]
+    task_saturation_count = len(open_tasks) if len(open_tasks) > _PLANNER_SATURATION_THRESHOLD else 0
     planner_status = {
         "status": "blocked"
         if reality["duplicateTaskFileCount"] or reality["taskSessionMismatchCount"] or reality["staleAuditSessionCount"] or reality.get("secretPolicyRoleDriftCount") or reality.get("roleConfigAliasDriftCount")
@@ -218,6 +221,7 @@ async def build_auditor_statuses(
                 else []
             ),
         ],
+        "taskSaturationCount": task_saturation_count,
     }
 
     ontology_reality = (reality.get("details") or {}).get("ontologyArtifactDrift") or {}

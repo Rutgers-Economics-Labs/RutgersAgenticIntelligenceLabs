@@ -212,6 +212,31 @@ class GitHubService:
             "files": [{"path": f["path"], "changed": True} for f in filtered],
         }
 
+    async def merge_branch(
+        self,
+        repo: str,
+        base: str,
+        head: str,
+        *,
+        commit_message: str | None = None,
+        token: str | None = None,
+    ) -> dict:
+        """Merge `head` branch into `base` via the GitHub merges API.
+
+        Returns the merge commit object or raises on conflict / missing ref.
+        """
+        message = commit_message or f"chore(autopilot): merge audited workspace branch {head} into {base}"
+        resp = await self._request(
+            "POST",
+            repo,
+            "/merges",
+            token=token,
+            json={"base": base, "head": head, "commit_message": message},
+        )
+        if resp.status_code == 204:
+            return {"sha": None, "merged": False, "message": "Already up to date"}
+        return resp.json()
+
     def verify_webhook(self, payload_bytes: bytes, signature: str) -> bool:
         """Verify X-Hub-Signature-256 header."""
         expected = "sha256=" + hmac.new(
