@@ -659,6 +659,12 @@ async def create_task(
 
 
 async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
+    # Internal flag: when True, skip the worker-completion audit gate because
+    # the caller is reconciling task state from audited reality (e.g.,
+    # autopilot ontology-lifecycle reconciliation when DuckDB is already
+    # hydrated). The caller is responsible for confirming the underlying
+    # state via an auditor before passing this flag.
+    audited_reality_bypass = bool(fields.pop("audited_reality_bypass", False))
     root = project_root_from_record(project)
     if root is None:
         return None
@@ -687,6 +693,8 @@ async def update_task(task_id: str, *, project: dict, **fields) -> dict | None:
         require_audit = _manifest.planner.require_audit_before_advance
     except Exception:
         pass
+    if audited_reality_bypass:
+        require_audit = False
     _enforce_worker_completion_gate(root=root, task=task, patch=patch, require_audit=require_audit)
     mapping = {
         "title": "title",

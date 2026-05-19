@@ -196,3 +196,11 @@ Only after six archetypes pass unattended once.
 | 2026-05-19 | `write_post_run_audit` on cancel / setup-fail / runner-fail paths | Shipped |
 | 2026-05-19 | `gemini-flash-latest` swap (scripts, services, frontend selector) | Shipped |
 | 2026-05-19 | Live `--full-e2e`: all five auditors `ready`, no `--defer-expansion` | PASS |
+| 2026-05-19 | Pipeline-slug alignment (`project-default`) so Convex `get_hydration_status` matches local hydrate | Shipped |
+| 2026-05-19 | **API autopilot `run_autopilot_tick --iterations 5` → `Completed`. All 5 auditors `ready` via `/reality`. 18 task/session mismatches reconciled to 0. 6 tasks `done`, 1 `cancelled`. Project `status=hydrated` in Convex.** | PASS |
+| 2026-05-19 | `run_archetype_autopilot.py` driver (hydration alignment + provenance backfill + stale-repair cancel) | Shipped |
+| 2026-05-19 | `audited_reality_bypass` flag on `update_task` so autopilot reconcile can mark hydrate-task done without per-task audit | Shipped |
+| 2026-05-19 | `_wake_events` auto-init in `run_autopilot_loop` so CLI entry doesn't KeyError | Shipped |
+| 2026-05-19 | `audit_service.write_post_run_audit` tolerates missing `rail.yaml` (fixes pre-existing `test_get_runner_session_falls_back_to_file_backed_session_when_runtime_row_missing`) | Shipped |
+| 2026-05-19 | **6 ontology-first archetypes ALL READY via API autopilot:** `nj-housing-affordability`, `us-econ-indicators`, `nj-housing-unemployment`, `nj-housing-rates-study`, `nj-labor-market-synthesis`, `northeast-housing-comparison` | PASS |
+| 2026-05-19 | `document-heavy-literature` archetype (no `.ontology`) — needs non-ontology integrity path | OPEN |

@@ -980,7 +980,25 @@ async def main(*, defer_expansion: bool = False, full_e2e: bool = False) -> int:
     (ontology_dir / "pipelines" / "nj-housing-pipeline.json").write_text(
         json.dumps(pipeline_config, indent=2), encoding="utf-8"
     )
-    print("  Pipeline config written: nj-housing-fred-pipeline")
+    # Also write the pipeline yaml under the slug the manifest declares
+    # (`hydration.default_pipeline = project-default`). Convex's
+    # get_hydration_status filters by this slug, so a mismatch causes the
+    # ontology auditor to report `not_hydrated` even when DuckDB is full.
+    pipeline_yaml = """version: 1
+pipeline_id: project-default
+description: FRED-backed hydration pipeline for nj-housing-affordability
+linked_sources:
+  - fred-njsthpi
+  - fred-njurn
+  - fred-cpiaucsl
+steps:
+  - api: fred-njsthpi
+  - api: fred-njurn
+  - api: fred-cpiaucsl
+output: .ontology/onto.duckdb
+"""
+    (ontology_dir / "pipelines" / "project-default.yaml").write_text(pipeline_yaml, encoding="utf-8")
+    print("  Pipeline config written: nj-housing-fred-pipeline (+ project-default.yaml)")
 
     # ── Phase 5: Hydrate/verify ontology with real FRED data ─────────────────
     print("\n── Phase 5: Hydrate Ontology (Real FRED API) ────────────────────────────")
@@ -1017,11 +1035,16 @@ async def main(*, defer_expansion: bool = False, full_e2e: bool = False) -> int:
     db.close()
     print(f"  DuckDB populated: {total} total rows at {db_path}")
 
+    # Convex's get_hydration_status queries by the manifest-declared pipeline
+    # slug (here: "project-default"). The .rail_hydration.json and the
+    # promotion call must use the same slug or the ontology auditor will
+    # report `not_hydrated` even when DuckDB is fully populated.
+    PIPELINE_SLUG = "project-default"
     hydration_meta = ontology_dir / ".rail_hydration.json"
     hydration_meta.write_text(
         json.dumps(
             {
-                "pipeline_slug": "nj-housing-pipeline",
+                "pipeline_slug": PIPELINE_SLUG,
                 "hydration_mode": "full",
                 "hydrated_at": _utc_now(),
             },
@@ -1029,7 +1052,7 @@ async def main(*, defer_expansion: bool = False, full_e2e: bool = False) -> int:
         ),
         encoding="utf-8",
     )
-    print("  Hydration metadata written: .ontology/.rail_hydration.json")
+    print(f"  Hydration metadata written: .ontology/.rail_hydration.json (pipeline={PIPELINE_SLUG})")
 
     # Promote the hydration artifact in Convex if the project is registered.
     # This unblocks the ontology auditor for autopilot ticks. Skipped silently
@@ -1038,7 +1061,7 @@ async def main(*, defer_expansion: bool = False, full_e2e: bool = False) -> int:
     promotion = await attach_local_hydration_to_convex(
         slug="nj-housing-affordability",
         duckdb_artifact_path=str(db_path),
-        pipeline_slug="nj-housing-pipeline",
+        pipeline_slug=PIPELINE_SLUG,
         hydration_mode="full",
     )
     if promotion.get("status") == "promoted":

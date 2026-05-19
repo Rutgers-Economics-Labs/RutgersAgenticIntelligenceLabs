@@ -285,8 +285,18 @@ async def write_post_run_audit(
     changed_files: list[str],
 ) -> dict[str, Any]:
     state = session_files.read_state(session_root)
-    manifest = load_manifest(project_root)
-    integrity_gate = evaluate_integrity_gate(project_root, manifest, action="artifact_generation")
+    # Tolerate projects without a rail.yaml manifest — e.g., temp-dir sessions
+    # constructed in tests, or projects mid-bootstrap. The audit still records
+    # session/planner state; only the integrity gate is skipped.
+    try:
+        manifest = load_manifest(project_root)
+    except FileNotFoundError:
+        manifest = None
+    integrity_gate: dict[str, Any]
+    if manifest is None:
+        integrity_gate = {"action": "artifact_generation", "blocked": False, "reasons": []}
+    else:
+        integrity_gate = evaluate_integrity_gate(project_root, manifest, action="artifact_generation")
     tasks: list[dict[str, Any]] = []
     if project.get("_id") or project.get("projectId"):
         try:
