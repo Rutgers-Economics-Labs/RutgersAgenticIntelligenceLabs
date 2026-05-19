@@ -1057,10 +1057,26 @@ def test_autopilot_does_not_complete_when_closeout_gate_is_blocked(monkeypatch):
     monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", _mark_project_completed)
+    monkeypatch.setattr(autopilot_service.planner_service, "load_validated_manifest", lambda project: None)
+    monkeypatch.setattr(autopilot_service, "cancel_stale_repair_tasks", lambda *args, **kwargs: asyncio.sleep(0, result=0))
+
+    async def _ensure_closeout_repair_task(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(autopilot_service, "_ensure_closeout_repair_task", _ensure_closeout_repair_task)
     monkeypatch.setattr(
         autopilot_service,
-        "_closeout_gate",
-        lambda project_arg, tasks: asyncio.sleep(0, result={"blocked": True, "reason": "Integrity closeout gate is blocked."}),
+        "reconcile_project_reality",
+        lambda project_arg: asyncio.sleep(
+            0,
+            result={
+                "removedTaskFiles": [],
+                "updatedTaskIds": [],
+                "repairedSessionIds": [],
+                "repairedAuditSessionIds": [],
+                "hasChanges": False,
+            },
+        ),
     )
     monkeypatch.setattr(
         autopilot_service,
@@ -1078,7 +1094,9 @@ def test_autopilot_does_not_complete_when_closeout_gate_is_blocked(monkeypatch):
     )
     monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
 
-    asyncio.run(autopilot_service.start_autopilot("soccer-project"))
+    autopilot_service._active_autopilots["soccer-project"] = True
+    autopilot_service._wake_events["soccer-project"] = asyncio.Event()
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project", max_iterations=2))
 
     assert completions == []
     assert events and events[0]["event_type"] == "closeout_gate_blocked"
@@ -1104,9 +1122,11 @@ def test_autopilot_launches_created_closeout_repair_task_before_waiting(tmp_path
         return {"_id": "main"}
 
     async def _list_tasks(board_id: str, *, project=None):
+        tasks = [
+            {"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []},
+        ]
         if created["value"]:
-            return [
-                {"_id": "task-1", "title": "Existing completed task", "status": "done", "dependsOnTaskIds": []},
+            tasks.append(
                 {
                     "_id": "repair-closeout",
                     "title": "Resolve closeout blockers",
@@ -1115,9 +1135,9 @@ def test_autopilot_launches_created_closeout_repair_task_before_waiting(tmp_path
                     "approvalState": "granted",
                     "priority": "medium",
                     "dependsOnTaskIds": [],
-                },
-            ]
-        return [{"_id": "task-1", "title": "Existing completed task", "status": "backlog", "dependsOnTaskIds": []}]
+                }
+            )
+        return tasks
 
     async def _create_task(**kwargs):
         created["value"] = True
@@ -1144,8 +1164,10 @@ def test_autopilot_launches_created_closeout_repair_task_before_waiting(tmp_path
     monkeypatch.setattr(autopilot_service.planner_service, "list_tasks", _list_tasks)
     monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
     monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+    monkeypatch.setattr(autopilot_service.planner_service, "load_validated_manifest", lambda project: None)
     monkeypatch.setattr(autopilot_service, "_launch_ready_task", _launch_ready_task)
     monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
+    monkeypatch.setattr(autopilot_service, "cancel_stale_repair_tasks", lambda *args, **kwargs: asyncio.sleep(0, result=0))
     monkeypatch.setattr(
         autopilot_service,
         "reconcile_project_reality",
@@ -1180,7 +1202,7 @@ def test_autopilot_launches_created_closeout_repair_task_before_waiting(tmp_path
     autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
     autopilot_service._wake_events["soccer-project"] = asyncio.Event()
 
-    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
+    asyncio.run(autopilot_service.run_autopilot_loop("soccer-project", max_iterations=3))
 
     assert created_titles == ["Resolve closeout blockers"]
     assert launches == [{"task_ids": ["repair-closeout"]}]

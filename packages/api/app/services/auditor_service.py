@@ -25,13 +25,43 @@ def classify_hydration_state(state: str) -> str:
     return _HYDRATION_STATE_CLASSIFICATIONS.get(str(state or "").strip(), "unavailable")
 
 
+def _manifest_project_mode(project: dict[str, Any]) -> str | None:
+    """Read project.mode from rail.yaml when localRepoPath is available."""
+    root = project.get("localRepoPath")
+    if not root:
+        return None
+    rail_yaml = Path(str(root)).resolve() / "rail.yaml"
+    if not rail_yaml.is_file():
+        return None
+    try:
+        import yaml
+
+        data = yaml.safe_load(rail_yaml.read_text(encoding="utf-8")) or {}
+        return str((data.get("project") or {}).get("mode") or "").strip() or None
+    except Exception:
+        return None
+
+
 def _is_ontology_project(project: dict[str, Any]) -> bool:
+    """True when ontology hydration health gates apply to this project."""
+    mode = _manifest_project_mode(project)
+    if mode == "research_first":
+        return False
+    if mode == "ontology_first":
+        return True
+    approach = str(project.get("approach") or "").strip().lower()
+    if approach in {"research-first", "research_first"}:
+        return False
+    if approach == "ontology-first":
+        return True
     root = project.get("localRepoPath")
     if not root:
         return False
-    if project.get("approach") == "ontology-first":
-        return True
-    return (Path(root).resolve() / ".ontology").exists()
+    ontology_root = Path(str(root)).resolve() / ".ontology"
+    if not ontology_root.exists():
+        return False
+    # A bare .ontology scaffold without DuckDB is not an ontology-first archetype.
+    return (ontology_root / "onto.duckdb").is_file()
 
 
 def _duckdb_has_populated_rows(duckdb_path: str | None) -> bool:

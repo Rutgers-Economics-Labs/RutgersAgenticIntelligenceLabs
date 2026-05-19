@@ -5,11 +5,10 @@ project:
   slug: "nj-labor-lit-review"
   default_branch: "main"
   description: "RAIL future project"
-  mode: "ontology_first"
+  mode: "research_first"
 
 repo_contract:
   required_paths:
-    - ".ontology"
     - "specs"
     - "research_plan"
     - "topics"
@@ -18,6 +17,7 @@ repo_contract:
   flexible_paths:
     - "artifacts"
     - "topics/**"
+    - ".ontology"
   source_of_truth: "git"
 
 paths:
@@ -34,6 +34,7 @@ hydration:
   sources_dir: ".ontology/sources"
   pipelines_dir: ".ontology/pipelines"
   transforms_dir: ".ontology/transforms"
+  default_pipeline: "project-default"
   hydration_mode: "full"
 
 research:
@@ -106,9 +107,7 @@ verification:
   require_integrity_gate_for:
     - "artifact_generation"
     - "closeout"
-  require_ontology_health_before:
-    - "research"
-    - "artifact"
+  require_ontology_health_before: []
   required_artifact_lineage: true
   required_claim_evidence: true
 
@@ -125,8 +124,6 @@ lifecycle:
     - "source_discovery"
     - "config_ready"
     - "hydration_ready"
-    - "hydrated"
-    - "ontology_healthy"
     - "research_active"
     - "synthesis_ready"
     - "closed"

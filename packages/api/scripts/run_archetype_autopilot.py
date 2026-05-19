@@ -50,71 +50,13 @@ def _resolve_pipeline_slug(manifest: dict) -> str:
     return str(hydration.get("default_pipeline") or "project-default")
 
 
-async def _cancel_stale_repair_tasks(project: dict, project_root: Path, auditors: dict) -> int:
-    """Cancel autopilot-created repair tasks whose underlying condition is
-    already satisfied. Without real workers, these tasks sit `awaiting_approval`
-    forever and block closeout. Each cancellation cites why the task is moot.
-    Safe: only triggers when the corresponding auditor reports `ready`.
-    """
-    from app.services import planner_service
+def _is_ontology_archetype(manifest: dict) -> bool:
+    return str((manifest.get("project") or {}).get("mode") or "ontology_first") == "ontology_first"
 
-    stale_titles_by_satisfied_auditor = {
-        "ontology": [
-            "Populate ontology pipeline steps for attachable sources",
-            "Verify hydrated ontology health before research",
-        ],
-        "integrity": [
-            "Repair dataset provenance and freshness metadata",
-        ],
-        "session": [
-            "Reconcile control-plane drift and stale sessions",
-        ],
-        "planner": [
-            "Reconcile control-plane drift and stale sessions",
-        ],
-    }
-    # Research follow-up tasks are moot if the hydrated ontology + a research
-    # artifact already exist on disk; the previous Gemini-loop run wrote one.
-    research_followup_titles = {
-        "Launch ontology-backed research after hydration",
-        "Propose ontology-answerable follow-up questions",
-    }
-    research_already_exists = any(
-        (project_root / "artifacts").glob("*.md")
-    ) if (project_root / "artifacts").exists() else False
 
-    titles_to_cancel: set[str] = set()
-    for auditor_key, titles in stale_titles_by_satisfied_auditor.items():
-        if (auditors.get(auditor_key) or {}).get("status") == "ready":
-            titles_to_cancel.update(titles)
-    if research_already_exists and (auditors.get("ontology") or {}).get("status") == "ready":
-        titles_to_cancel.update(research_followup_titles)
-
-    if not titles_to_cancel:
-        return 0
-
-    board = await planner_service.ensure_main_board(project)
-    tasks = await planner_service.list_tasks(board["_id"], project=project)
-    cancelled = 0
-    for task in tasks:
-        if str(task.get("status") or "") in {"done", "cancelled"}:
-            continue
-        title = str(task.get("title") or "")
-        if title not in titles_to_cancel:
-            continue
-        await planner_service.update_task(
-            str(task["_id"]),
-            project=project,
-            status="cancelled",
-            blockerCategory=None,
-            approvalState=None,
-            latestRunSummary=(
-                f"Superseded: the corresponding auditor is now `ready` so this "
-                f"repair task is no longer needed. Cancelled by archetype-closeout driver."
-            ),
-        )
-        cancelled += 1
-    return cancelled
+def _convex_approach(manifest: dict) -> str:
+    mode = str((manifest.get("project") or {}).get("mode") or "ontology_first")
+    return "research-first" if mode == "research_first" else "ontology-first"
 
 
 def _backfill_source_provenance(project_root: Path) -> int:
@@ -232,7 +174,7 @@ async def _ensure_convex_project(project_root: Path, manifest: dict) -> dict:
         "name": project_meta.get("name") or slug,
         "slug": slug,
         "description": project_meta.get("description") or "RAIL archetype",
-        "approach": "ontology-first",
+        "approach": _convex_approach(manifest),
         "localRepoPath": str(project_root.resolve()),
         "manifestPath": "rail.yaml",
     }
@@ -255,16 +197,98 @@ async def _ensure_convex_project(project_root: Path, manifest: dict) -> dict:
     return {**payload, "_id": project_id}
 
 
+async def _run_document_archetype(project_root: Path, manifest: dict, iterations: int) -> int:
+    """Drive a research_first / document-heavy archetype without DuckDB hydration."""
+    slug = (manifest.get("project") or {}).get("slug")
+    print(f"\n══ Document archetype: {slug} (research_first, no DuckDB) ══")
+
+    patched = _backfill_source_provenance(project_root)
+    if patched:
+        print(f"  Backfilled provenance metadata on {patched} source(s)")
+
+    from app.services.repo_contract_service import ensure_project_boot
+    ensure_project_boot(project_root)
+
+    project = await _ensure_convex_project(project_root, manifest)
+
+    from app.services import autopilot_service
+    autopilot_service._active_autopilots[slug] = True
+    try:
+        await autopilot_service.run_autopilot_loop(slug, max_iterations=iterations)
+    finally:
+        autopilot_service._active_autopilots[slug] = False
+
+    return await _finalize_archetype_status(project, project_root, slug, iterations)
+
+
+async def _finalize_archetype_status(
+    project: dict,
+    project_root: Path,
+    slug: str,
+    iterations: int,
+) -> int:
+    from app.services import autopilot_service, planner_service
+    from app.services.auditor_service import build_auditor_statuses
+
+    config = autopilot_service.get_autopilot_config(slug)
+    print(f"  Autopilot last_action: {config.get('last_action')}")
+
+    fresh_project = await planner_service.get_project_by_slug(slug) or project
+    deduped = await planner_service.reconcile_task_files(fresh_project)
+    if deduped.get("removed"):
+        print(f"  Removed {len(deduped['removed'])} duplicate task file(s)")
+    board = await planner_service.ensure_main_board(fresh_project)
+    tasks = await planner_service.list_tasks(board["_id"], project=fresh_project)
+    interim_status = await build_auditor_statuses(fresh_project, tasks=tasks)
+    cancelled = await autopilot_service.cancel_stale_repair_tasks(
+        fresh_project, tasks, interim_status
+    )
+    if cancelled:
+        print(f"  Cancelled {cancelled} stale repair task(s)")
+        tasks = await planner_service.list_tasks(board["_id"], project=fresh_project)
+    interim_status2 = await build_auditor_statuses(fresh_project, tasks=tasks)
+    cancelled2 = await autopilot_service.cancel_stale_repair_tasks(
+        fresh_project, tasks, interim_status2
+    )
+    if cancelled2:
+        print(f"  Cancelled {cancelled2} additional stale repair task(s)")
+        tasks = await planner_service.list_tasks(board["_id"], project=fresh_project)
+
+    if cancelled or cancelled2:
+        autopilot_service._active_autopilots[slug] = True
+        try:
+            await autopilot_service.run_autopilot_loop(
+                slug, max_iterations=max(3, iterations // 2)
+            )
+        finally:
+            autopilot_service._active_autopilots[slug] = False
+
+    status = await build_auditor_statuses(fresh_project, tasks=tasks)
+    all_ready = True
+    for key in ["session", "planner", "ontology", "integrity", "closeout"]:
+        s = status[key]["status"]
+        blockers = status[key].get("blockers") or []
+        suffix = f" — {blockers[:1]}" if blockers else ""
+        print(f"  {key}: {s}{suffix}")
+        if s != "ready":
+            all_ready = False
+    print(f"  ALL READY: {all_ready}")
+    return 0 if all_ready else 2
+
+
 async def _run_one_archetype(project_root: Path, iterations: int) -> int:
     if not (project_root / "rail.yaml").is_file():
         print(f"ERROR: no rail.yaml at {project_root}")
         return 1
+
+    manifest = _read_manifest(project_root)
+    if not _is_ontology_archetype(manifest):
+        return await _run_document_archetype(project_root, manifest, iterations)
+
     duckdb_path = project_root / ".ontology" / "onto.duckdb"
     if not duckdb_path.exists():
         print(f"ERROR: no DuckDB at {duckdb_path} — archetype must be hydrated first")
         return 1
-
-    manifest = _read_manifest(project_root)
     pipeline_slug = _resolve_pipeline_slug(manifest)
     slug = (manifest.get("project") or {}).get("slug")
     print(f"\n══ Archetype: {slug} (pipeline={pipeline_slug}) ══")
@@ -302,56 +326,7 @@ async def _run_one_archetype(project_root: Path, iterations: int) -> int:
     finally:
         autopilot_service._active_autopilots[slug] = False
 
-    config = autopilot_service.get_autopilot_config(slug)
-    print(f"  Pass 1 last_action: {config.get('last_action')}")
-
-    # Cancel stale repair tasks whose underlying condition is now satisfied,
-    # then run a short second autopilot pass to let closeout re-evaluate.
-    from app.services.auditor_service import build_auditor_statuses
-    from app.services import planner_service
-    fresh_project = await planner_service.get_project_by_slug(slug) or project
-    board = await planner_service.ensure_main_board(fresh_project)
-    tasks = await planner_service.list_tasks(board["_id"], project=fresh_project)
-    interim_status = await build_auditor_statuses(fresh_project, tasks=tasks)
-    cancelled = await _cancel_stale_repair_tasks(fresh_project, project_root, interim_status)
-    if cancelled:
-        print(f"  Cancelled {cancelled} stale repair task(s)")
-        autopilot_service._active_autopilots[slug] = True
-        try:
-            await autopilot_service.run_autopilot_loop(slug, max_iterations=max(3, iterations // 2))
-        finally:
-            autopilot_service._active_autopilots[slug] = False
-        config = autopilot_service.get_autopilot_config(slug)
-        print(f"  Pass 2 last_action: {config.get('last_action')}")
-
-    fresh_project = await planner_service.get_project_by_slug(slug) or project
-    # Final dedupe: planner runtime / other paths can recreate slugified-title
-    # task files between autopilot iterations. Drop duplicates now so the
-    # planner auditor sees a clean board.
-    deduped = await planner_service.reconcile_task_files(fresh_project)
-    if deduped.get("removed"):
-        print(f"  Removed {len(deduped['removed'])} duplicate task file(s)")
-    board = await planner_service.ensure_main_board(fresh_project)
-    tasks = await planner_service.list_tasks(board["_id"], project=fresh_project)
-    # Second-pass cleanup: any backlog/awaiting_approval/ready repair tasks
-    # left over after autopilot are cancelled if their underlying auditor is
-    # already ready (no real worker is going to pick them up here).
-    interim_status2 = await build_auditor_statuses(fresh_project, tasks=tasks)
-    cancelled2 = await _cancel_stale_repair_tasks(fresh_project, project_root, interim_status2)
-    if cancelled2:
-        print(f"  Cancelled {cancelled2} additional stale repair task(s) post-autopilot")
-        tasks = await planner_service.list_tasks(board["_id"], project=fresh_project)
-    status = await build_auditor_statuses(fresh_project, tasks=tasks)
-    all_ready = True
-    for key in ["session", "planner", "ontology", "integrity", "closeout"]:
-        s = status[key]["status"]
-        blockers = status[key].get("blockers") or []
-        suffix = f" — {blockers[:1]}" if blockers else ""
-        print(f"  {key}: {s}{suffix}")
-        if s != "ready":
-            all_ready = False
-    print(f"  ALL READY: {all_ready}")
-    return 0 if all_ready else 2
+    return await _finalize_archetype_status(project, project_root, slug, iterations)
 
 
 def main() -> int:

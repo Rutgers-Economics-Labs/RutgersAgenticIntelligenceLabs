@@ -1048,6 +1048,74 @@ async def _ensure_control_plane_repair_tasks(
     return True
 
 
+async def cancel_stale_repair_tasks(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> int:
+    """Cancel autopilot repair tasks whose underlying auditor is already ready."""
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve()
+    stale_titles_by_auditor = {
+        "ontology": [
+            "Populate ontology pipeline steps for attachable sources",
+            "Verify hydrated ontology health before research",
+        ],
+        "integrity": [
+            "Repair dataset provenance and freshness metadata",
+        ],
+        "session": [
+            "Reconcile control-plane drift and stale sessions",
+        ],
+        "planner": [
+            "Reconcile control-plane drift and stale sessions",
+        ],
+    }
+    research_followup_titles = {
+        "Launch ontology-backed research after hydration",
+        "Propose ontology-answerable follow-up questions",
+    }
+    research_exists = (
+        any(project_root.joinpath("artifacts").glob("*.md"))
+        if project_root.joinpath("artifacts").is_dir()
+        else False
+    )
+
+    titles_to_cancel: set[str] = set()
+    for auditor_key, titles in stale_titles_by_auditor.items():
+        if (auditors or {}).get(auditor_key, {}).get("status") == "ready":
+            titles_to_cancel.update(titles)
+    if research_exists and (auditors or {}).get("ontology", {}).get("status") == "ready":
+        titles_to_cancel.update(research_followup_titles)
+
+    if not titles_to_cancel:
+        return 0
+
+    cancelled = 0
+    for task in tasks:
+        if str(task.get("status") or "") in {"done", "cancelled"}:
+            continue
+        title = str(task.get("title") or "")
+        if title not in titles_to_cancel:
+            continue
+        await planner_service.update_task(
+            str(task["_id"]),
+            project=project,
+            status="cancelled",
+            blockerCategory=None,
+            approvalState=None,
+            latestRunSummary=(
+                "Superseded: the corresponding auditor is now `ready` so this "
+                "repair task is no longer needed. Cancelled by autopilot."
+            ),
+            audited_reality_bypass=True,
+        )
+        cancelled += 1
+    if cancelled:
+        board = await planner_service.ensure_main_board(project)
+        await planner_service.sync_planner_files(project, board)
+    return cancelled
+
+
 async def _ensure_closeout_repair_task(
     project: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -1416,6 +1484,8 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
 
         board = await planner_service.ensure_main_board(project)
         tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+        if await cancel_stale_repair_tasks(project, tasks, auditors):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
         if await _ensure_ontology_lifecycle_tasks(project, tasks):
             tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0
