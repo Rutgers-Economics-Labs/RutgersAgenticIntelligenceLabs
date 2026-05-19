@@ -10,49 +10,127 @@ RAIL (Rutgers Agentic Intelligence Labs) is a repo-centric **Data Operating Syst
 
 ---
 
-## Quick Start
+## First-time setup
 
-### 1. Initial Setup
-Run the one-step setup to install the platform and the `rail` CLI:
+Use this checklist the first time you install RAIL on a machine.
+
+### Requirements
+
+| Tool | Version |
+|------|---------|
+| Python | 3.11+ |
+| Node.js | 18+ |
+| git | any recent |
+| Convex | deployment URL + deploy key (cloud mode) |
+
+Optional: [FRED API key](https://fred.stlouisfed.org/docs/api/api_key.html) and other provider keys for hydration pipelines.
+
+### Option A — Install from GitHub Release (recommended)
+
+After [releases](https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs/releases) exist for your version:
 
 ```bash
-make setup
-make install-rail
+curl -fsSL https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs/releases/latest/download/install.sh | bash
 ```
 
-### 2. Manage Secrets
-RAIL handles API keys securely. Set your FRED key via the CLI:
+The installer downloads a source bundle, creates a virtualenv, installs Python packages and the web app, and prints the install path (default `~/rail-platform`).
+
+### Option B — Install from a git clone (developers)
 
 ```bash
-make secrets-set KEY=FRED_API_KEY VAL=your_key_here
+git clone https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs.git
+cd RutgersAgenticIntelligenceLabs
+./scripts/install-rail.sh
+# equivalent: make setup
 ```
 
-### 3. Operate via CLI
-The `rail` CLI is the primary interface for humans and agents alike:
+### Configure environment
 
 ```bash
-# Search for data sources
-rail search "unemployment"
-
-# Query the knowledge graph
-rail query sql "SELECT * FROM Measure WHERE val > 5.0"
-
-# Trigger hydration
-rail hydrate --pipeline nj_hydration
+cd RutgersAgenticIntelligenceLabs   # or your install path
+cp .env.example .env
 ```
 
-### 4. Start the Platform
-Launch both the FastAPI backend and the Next.js Command Center:
+Edit `.env` and set at minimum:
+
+```bash
+CONVEX_URL=https://your-deployment.convex.cloud
+CONVEX_DEPLOY_KEY=your_deploy_key
+FRED_API_KEY=your_fred_key          # for FRED hydration pipelines
+```
+
+### Start the platform
 
 ```bash
 make run
 ```
 
-- **API**: [http://localhost:8000](http://localhost:8000)
-- **Command Center**: [http://localhost:3000](http://localhost:3000)
+| Service | URL |
+|---------|-----|
+| Command Center (UI) | http://localhost:3000 |
+| API | http://localhost:8000 |
+| API docs | http://localhost:8000/docs |
 
-### 4. Hydrate the Ontology (Optional)
-If you need to fetch fresh data and rebuild the knowledge graph:
+Open a project in the UI → **Overview**. Use **Fetch data & hydrate** to reconcile state, run pipelines, and refresh the ontology DuckDB in one step.
+
+### Create or open a research project
+
+**Cloud (Convex):** use the web UI to create a project, or connect an existing slug via the project picker.
+
+**Local (no Convex):** work inside a directory that contains `rail.yaml`:
+
+```bash
+export RAIL_LOCAL=1
+export RAIL_PATH=/path/to/your/project
+rail query classes
+```
+
+### Optional: agent CLIs
+
+RAIL does not bundle Cursor, Copilot, or other proprietary tools. To install or check Codex, Claude Code, Gemini CLI, and similar:
+
+```bash
+./scripts/install-agent-clis.sh
+```
+
+### Optional: MCP for Cursor / Claude Desktop
+
+```bash
+pip install -e packages/mcp-server
+```
+
+See [AGENTS.md](AGENTS.md) for MCP tool reference and example config.
+
+### Verify the install
+
+```bash
+make install-rail
+rail --help
+curl -s http://localhost:8000/health
+```
+
+More detail: [docs/INSTALL.md](docs/INSTALL.md) · Release process: [RELEASE.md](RELEASE.md) · [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md)
+
+---
+
+## Quick reference
+
+### Secrets
+
+```bash
+make secrets-set KEY=FRED_API_KEY VAL=your_key_here
+```
+
+### CLI
+
+```bash
+rail search "unemployment"
+rail query sql "SELECT * FROM county LIMIT 5"
+rail hydrate
+rail integrity status
+```
+
+### Hydrate from the terminal
 
 ```bash
 make hydrate
