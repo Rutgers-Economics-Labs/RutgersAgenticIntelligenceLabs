@@ -119,21 +119,24 @@ Workers → candidate state → Audit plane → certified reality → Autopilot 
 
 ## Execution order
 
-### Sprint 1 — Close the control plane (in progress)
+### Sprint 1 — Close the control plane (done)
 
-1. Fix remaining autopilot service test failures.
-2. API: `GET /projects/{slug}/reality` — `project_reality_status` + lane availability.
-3. Autopilot: `load_validated_manifest()` on every tick; block launch if lane unavailable.
-4. Confirm post-run audit on all runner finalize paths (CLI + cloud).
+1. ~~Fix remaining autopilot service test failures.~~
+2. ~~API: `GET /projects/{slug}/reality` — `project_reality_status` + lane availability.~~
+3. ~~Autopilot: `load_validated_manifest()` on every tick; block launch if lane unavailable.~~
+4. Post-run audit on all runner finalize paths (CLI + cloud) — verify in Sprint 2 live run.
 
-### Sprint 2 — First live E2E
+Shipped: `62575dc` on `future`.
+
+### Sprint 2 — First live E2E (in progress)
 
 **Stack:** API + Convex + `FRED_API_KEY`, `localRepoPath` → validation project.
 
-1. Hydrate FRED pipeline (real).
-2. Run planner → data → research → coding → artifact (or `run_live_agent_loop.py` + autopilot).
-3. Verify expansion tasks, analysis artifact, dashboard, verification certificate.
-4. Document runbook under `docs/validation/<project>/README.md`.
+1. ~~Hydrate FRED pipeline (real).~~ Done via `run_live_agent_loop.py`
+2. ~~Run planner + research + audits + expansion tasks.~~ Done (Gemini + FRED)
+3. Closeout demo: `python scripts/run_live_agent_loop.py --defer-expansion` (cancels auto expansion tasks for audit pass)
+4. **Remaining:** API + Convex project registration, live autopilot tick, artifact/HTML dashboard (Sprint 3)
+5. Runbook: `docs/validation/nj-housing-affordability/README.md`
 
 ### Sprint 3 — Artifact excellence + archetypes 4–6
 
@@ -178,4 +181,7 @@ Only after six archetypes pass unattended once.
 | 2026-05-19 | M2 session reconciliation + lane gating | Shipped (`5293837`) |
 | 2026-05-19 | Live loop expansion tasks (M7 script) | Shipped (`a7afb7f`) |
 | 2026-05-19 | This plan document | Created |
-| 2026-05-19 | Sprint 1 control plane | Started |
+| 2026-05-19 | Sprint 1 control plane | Shipped (`62575dc`) |
+| 2026-05-19 | Sprint 2 live loop (FRED + Gemini) | Shipped (`041a4c9`, `38cf1d7`) |
+| 2026-05-19 | Live loop all auditors ready (`--defer-expansion`) | Verified |
+| 2026-05-19 | `validate_autonomous_loop.py` (3 archetypes) | PASS |

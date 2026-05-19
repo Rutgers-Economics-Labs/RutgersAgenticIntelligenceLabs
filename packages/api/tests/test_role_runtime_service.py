@@ -147,6 +147,12 @@ completion:
     assert summarize_role_config(config)["role"] == "coding"
 
 
+def test_reconcile_role_config_aliases_noops_without_local_repo_path():
+    project = {"slug": "cloud-only", "name": "Cloud Only"}
+    assert detect_role_config_alias_drift(project) == []
+    assert reconcile_role_config_aliases(project) == {"updatedConfigPaths": []}
+
+
 def test_reconcile_role_config_aliases_rewrites_legacy_role_alias_in_repo(tmp_path: Path):
     _bootstrap_manifest(tmp_path)
     _write(
