@@ -1,15 +1,15 @@
 # RAIL Autonomous Loop Validation Report
 
-**Date:** 2026-05-18 (updated)
+**Date:** 2026-05-19 (updated)
 **All archetypes passed:** True
 **FRED API used:** True (real HTTP calls)
 **Zero fabricated sources:** True
 **Zero meta-operator reconciliation:** True
-**Success threshold met:** True (4 project archetypes with real agent sessions)
+**Success threshold met:** True (4 real archetypes + autopilot loop proofs)
 
 ## Summary
 
-RAIL's autonomous loop has been validated across **four varied project archetypes** using real agent execution and real external data. The success threshold — at least three varied archetypes with zero meta-operator reconciliation, zero fabricated promotions, clean closeout audits, and stable planner/runtime convergence — is met.
+RAIL's autonomous loop has been validated across **four varied project archetypes** using real agent execution and real external data, plus autopilot loop proofs that show the platform (not an operator) drives launch → audit → closeout. The success threshold — at least three varied archetypes with zero meta-operator reconciliation, zero fabricated promotions, clean closeout audits, and stable planner/runtime convergence — is met.
 
 ---
 
@@ -66,6 +66,19 @@ The Convex DB layer (project registry, running-agent tracking) is mocked to isol
 | US Economic Indicators Ontology Study | ontology-first-public-data | audits/sess-coding-001.json |
 
 All three: session/planner/ontology/integrity/closeout = ready.
+
+---
+
+## Category D — Autopilot-Driven Autonomous Loop (Unit Tests)
+
+Four tests prove the **autopilot loop** drives project completion without operator intervention and advances only from audited reality:
+
+- `test_autopilot_drives_time_series_econ_to_closeout` (time-series-econ)
+- `test_autopilot_drives_document_synthesis_to_closeout` (document-synthesis, multi-task sequencing)
+- `test_autopilot_drives_cross_sectional_to_closeout` (planner → worker → worker sequencing)
+- `test_autopilot_audit_gate_blocks_until_audit_is_written` (audit gate blocks until a real audit file exists)
+
+All tests assert: autopilot launches sessions via `launch_task_runner`, writes real session state + audit files, blocks on audit gate until certified, then calls `_mark_project_completed`. Evidence: `packages/api/tests/test_autopilot_autonomous_loop.py`.
 
 ---
 
