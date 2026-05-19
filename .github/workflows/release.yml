@@ -1,0 +1,78 @@
+# Cut a GitHub Release on version tags. Attach installers + Python wheels.
+#
+# Ship a release:
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Users install:
+#   curl -fsSL https://github.com/Rutgers-Economics-Labs/RutgersAgenticIntelligenceLabs/releases/latest/download/install.sh | bash
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to publish (e.g. 0.1.0)"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: ver
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="v${{ inputs.version }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build Python wheels
+        run: |
+          pip install build
+          mkdir -p dist/wheels
+          python -m build packages/rail-py -o dist/wheels
+          pip install dist/wheels/rail-*.whl
+          python -m build packages/mcp-server -o dist/wheels
+
+      - name: Build portable bundle
+        run: |
+          chmod +x scripts/release/make-portable-bundle.sh
+          ./scripts/release/make-portable-bundle.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: RAIL ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}
+          files: |
+            dist/release/*
+            dist/wheels/*
+
+      - name: Publish to PyPI
+        if: ${{ vars.PUBLISH_PYPI == 'true' }}
+        env:
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          pip install twine
+          twine upload dist/wheels/* --username __token__ --non-interactive
