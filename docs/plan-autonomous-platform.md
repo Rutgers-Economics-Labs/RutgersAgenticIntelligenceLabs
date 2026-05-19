@@ -135,7 +135,8 @@ Shipped: `62575dc` on `future`.
 1. ~~Hydrate FRED pipeline (real).~~ Done via `run_live_agent_loop.py`
 2. ~~Run planner + research + audits + expansion tasks.~~ Done (Gemini + FRED)
 3. Closeout demo: `python scripts/run_live_agent_loop.py --defer-expansion` (cancels auto expansion tasks for audit pass)
-4. **Remaining:** API + Convex project registration, live autopilot tick, artifact/HTML dashboard (Sprint 3)
+4. ~~API + Convex registration + `GET /reality` smoke test.~~ Done (`register_validation_project.py`)
+5. **Remaining:** live autopilot tick to closeout, artifact/HTML dashboard (Sprint 3)
 5. Runbook: `docs/validation/nj-housing-affordability/README.md`
 
 ### Sprint 3 — Artifact excellence + archetypes 4–6
@@ -184,4 +185,5 @@ Only after six archetypes pass unattended once.
 | 2026-05-19 | Sprint 1 control plane | Shipped (`62575dc`) |
 | 2026-05-19 | Sprint 2 live loop (FRED + Gemini) | Shipped (`041a4c9`, `38cf1d7`) |
 | 2026-05-19 | Live loop all auditors ready (`--defer-expansion`) | Verified |
+| 2026-05-19 | Convex register + API `/reality` smoke test | Verified |
 | 2026-05-19 | `validate_autonomous_loop.py` (3 archetypes) | PASS |
