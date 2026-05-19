@@ -44,6 +44,13 @@ const RUNNERS = [
     icon: "X",
     color: "#8b5cf6",
   },
+  {
+    id: "copilot_cli",
+    label: "Copilot CLI",
+    sub: "GitHub Copilot · local CLI",
+    icon: "GH",
+    color: "#111827",
+  },
 ];
 
 // ── Task launch modal ──────────────────────────────────────────────────

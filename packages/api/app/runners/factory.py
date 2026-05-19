@@ -27,6 +27,7 @@ from app.runners.base import BaseRunner
 def _build_registry() -> dict[str, Type[BaseRunner]]:
     """Lazy-import adapters so the factory never hard-fails at import time."""
     from app.runners.claude_code import ClaudeCodeRunner
+    from app.runners.copilot_cli import CopilotCliRunner
     from app.runners.codex_cli import CodexCliRunner
     from app.runners.cursor_cli import CursorCliRunner
     from app.runners.gemini_cli import GeminiCliRunner
@@ -38,6 +39,7 @@ def _build_registry() -> dict[str, Type[BaseRunner]]:
         "codex_cli": CodexCliRunner,
         "gemini_cli": GeminiCliRunner,
         "cursor_cli": CursorCliRunner,
+        "copilot_cli": CopilotCliRunner,
     }
 
 
@@ -120,6 +122,10 @@ class RunnerFactory:
             return instance
         if name == "cursor_cli":
             instance = cls(command=getattr(settings, "cursor_cli_command", "agent"))
+            RunnerFactory._instances[name] = instance
+            return instance
+        if name == "copilot_cli":
+            instance = cls(command=getattr(settings, "copilot_cli_command", "gh copilot suggest"))
             RunnerFactory._instances[name] = instance
             return instance
 

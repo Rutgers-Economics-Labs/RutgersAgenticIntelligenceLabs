@@ -408,7 +408,7 @@ ALLOWED_REPRODUCIBILITY_MODES = {"deterministic", "manual", "non_reproducible"}
 ALLOWED_TASK_APPROVAL_STATES = {"pending", "granted"}
 ALLOWED_APPROVAL_STATUSES = {"pending", "granted", "rejected", "approved"}
 ALLOWED_APPROVAL_TYPES = {"run_task", "research_launch"}
-ALLOWED_TASK_RUNNERS = {"default", "jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"}
+ALLOWED_TASK_RUNNERS = {"default", "jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli", "copilot_cli"}
 ALLOWED_TASK_PRIORITIES = {"high", "medium", "low"}
 ALLOWED_TASK_AGENT_ROLES = {"research", "data", "coding", "artifact", "health", "planner"}
 ALLOWED_PLANNER_MESSAGE_ROLES = {"user", "assistant", "system"} | ALLOWED_TASK_AGENT_ROLES
@@ -499,7 +499,7 @@ def _validate_planner_task_runner(runner: str | None) -> None:
     if runner not in {None, ""} and runner not in ALLOWED_TASK_RUNNERS:
         raise HTTPException(
             status_code=422,
-            detail="Planner task runner must be one of: default, jules, claude_code, gemini_cli, cursor_cli, codex_cli.",
+            detail="Planner task runner must be one of: default, jules, claude_code, gemini_cli, cursor_cli, codex_cli, copilot_cli.",
         )
 
 
@@ -508,7 +508,7 @@ def _normalize_runner_name(runner: str | None) -> str:
     if normalized not in ALLOWED_TASK_RUNNERS:
         raise HTTPException(
             status_code=422,
-            detail="Runner session runnerName must be one of: default, jules, claude_code, gemini_cli, cursor_cli, codex_cli.",
+            detail="Runner session runnerName must be one of: default, jules, claude_code, gemini_cli, cursor_cli, codex_cli, copilot_cli.",
         )
     return normalized
 

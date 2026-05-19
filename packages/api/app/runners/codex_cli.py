@@ -10,12 +10,14 @@ class CodexCliRunner(LocalCLIRunner):
 
     def _command_args(self, prompt: str, task_payload: TaskPayload) -> list[str]:
         parts = self._base_command_parts()
+        sandbox = "danger-full-access" if task_payload.role == "data" else "workspace-write"
         args = [
             *parts,
             "exec",
             "--skip-git-repo-check",
-            "--full-auto",
             "--json",
+            "--sandbox",
+            sandbox,
         ]
         if task_payload.local_repo_path:
             args.extend(["--cd", task_payload.local_repo_path])

@@ -326,6 +326,7 @@ function RunnersSection({ slug }: { slug: string }) {
           { id: "cursor_cli", label: "Cursor Agent", icon: "A", color: "#0ea5e9" },
           { id: "jules", label: "Jules", icon: "J", color: "#16a34a" },
           { id: "codex_cli", label: "Codex CLI", icon: "X", color: "#8b5cf6" },
+          { id: "copilot_cli", label: "Copilot CLI", icon: "GH", color: "#111827" },
         ].map(r => (
           <div key={r.id} style={{
             border: "1px solid var(--border)", padding: "10px 12px",

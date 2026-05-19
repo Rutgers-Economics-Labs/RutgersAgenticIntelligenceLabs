@@ -4,6 +4,7 @@ from app.runners.base import TaskPayload
 from app.runners.base import RunnerEvent
 from app.runners.base import RunnerEventType
 from app.runners.claude_code import ClaudeCodeRunner
+from app.runners.copilot_cli import CopilotCliRunner
 from app.runners.codex_cli import CodexCliRunner
 from app.runners.cursor_cli import CursorCliRunner
 from app.runners.gemini_cli import GeminiCliRunner
@@ -77,6 +78,15 @@ def test_cursor_cli_uses_agent_subcommand():
     args = runner._command_args("hello", _task_payload())
 
     assert args[:1] == ["agent"]
+    assert args[-1] == "hello"
+
+
+def test_copilot_cli_uses_prompt_flag():
+    runner = CopilotCliRunner(command="gh copilot suggest")
+    args = runner._command_args("hello", _task_payload())
+
+    assert args[:3] == ["gh", "copilot", "suggest"]
+    assert "-p" in args
     assert args[-1] == "hello"
 
 

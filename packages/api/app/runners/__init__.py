@@ -7,11 +7,12 @@ Public surface:
     RunnerEventType — canonical event type enum
     TaskPayload     — structured task payload sent to a runner
     JulesRunner     — Jules (jules.googleapis.com) adapter
-    ClaudeCodeRunner / GeminiCliRunner / CursorCliRunner — local CLI adapters
+    ClaudeCodeRunner / GeminiCliRunner / CursorCliRunner / CopilotCliRunner — local CLI adapters
     RunnerFactory   — resolves runner instances by name
 """
 from app.runners.base import BaseRunner, RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.claude_code import ClaudeCodeRunner
+from app.runners.copilot_cli import CopilotCliRunner
 from app.runners.codex_cli import CodexCliRunner
 from app.runners.cursor_cli import CursorCliRunner
 from app.runners.gemini_cli import GeminiCliRunner
@@ -25,6 +26,7 @@ __all__ = [
     "TaskPayload",
     "JulesRunner",
     "ClaudeCodeRunner",
+    "CopilotCliRunner",
     "CodexCliRunner",
     "GeminiCliRunner",
     "CursorCliRunner",

@@ -174,7 +174,7 @@ DATASET_SUFFIXES = {".csv", ".tsv", ".json", ".jsonl", ".parquet", ".xlsx", ".xl
 ARTIFACT_SUFFIXES = {".md", ".pdf", ".png", ".svg", ".jpg", ".jpeg", ".html", ".htm", ".pptx", ".docx"}
 SCRIPT_LINEAGE_SUFFIXES = {".py", ".sh", ".sql", ".ipynb", ".r", ".js", ".ts", ".tsx", ".jsx"}
 _VERIFICATION_PATH_RE = re.compile(r"([A-Za-z0-9_./\\-]+\.(?:ya?ml|csv|tsv|jsonl?|parquet|xlsx?|md|pdf|png|svg|jpe?g|html?|py|sh))")
-LOCAL_CLI_RUNNERS = {"claude_code", "codex_cli", "gemini_cli", "cursor_cli"}
+LOCAL_CLI_RUNNERS = {"claude_code", "codex_cli", "gemini_cli", "cursor_cli", "copilot_cli"}
 ALLOWED_RUNNER_NAMES = LOCAL_CLI_RUNNERS | {"default", "jules"}
 INTERNAL_WORKFLOW_DATASET_PATHS = {"ontology/.rail_hydration.json"}
 

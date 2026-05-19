@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 
 HydrationMode = Literal["full", "incremental"]
-RunnerName = Literal["jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli"]
+RunnerName = Literal["jules", "claude_code", "gemini_cli", "cursor_cli", "codex_cli", "copilot_cli"]
 PlannerThreadMode = Literal["project"]
 IndexMode = Literal["filesystem"]
 HomeView = Literal["planner", "project_home", "artifacts"]
