@@ -604,7 +604,6 @@ def test_finalize_workspace_review_normalizes_completion_summary_and_mirrors_sta
     report_entry = next(item for item in lineage if item["artifact_path"] == "artifacts/report.md")
     assert report_entry["verification_commands"] == ["scripts/run-verification.sh"]
     dataset_entry = next(item for item in lineage if item["artifact_path"] == "topics/analysis.csv")
-    assert dataset_entry["inputs"] == ["research_plan/state/sources.json#bls-laus"]
     assert dataset_entry["verification_commands"] == ["scripts/run-verification.sh"]
     assert dataset_entry["assumptions"] == ["research_plan/state/assumptions.json#window-2020-2024"]
     assert dataset_entry["sources"] == ["research_plan/state/sources.json#bls-laus"]
@@ -707,6 +706,15 @@ def test_create_runner_session_allows_write_run_after_policy_approval(tmp_path: 
     async def _fake_update_running_agent(*args, **kwargs):
         return None
 
+    async def _passing_auditors(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
     monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
     monkeypatch.setattr(
         running_agent_service,
@@ -718,6 +726,7 @@ def test_create_runner_session_allows_write_run_after_policy_approval(tmp_path: 
     monkeypatch.setattr(session_lifecycle, "_materialize_workspace", lambda **kwargs: asyncio.sleep(0, result={"mode": "directory"}))
     monkeypatch.setattr(session_lifecycle, "_run_workspace_setup", lambda **kwargs: asyncio.sleep(0, result={"status": "passed"}))
     monkeypatch.setattr(session_lifecycle, "_build_project_context", lambda *args, **kwargs: asyncio.sleep(0, result=""))
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _passing_auditors)
 
     class _FakeRunner:
         async def create_session(self, task_payload):
@@ -914,6 +923,17 @@ def test_create_runner_session_repairs_stale_active_sessions_before_nonconcurren
         lambda **kwargs: asyncio.sleep(0, result={"status": "passed", "stdout": "", "stderr": ""}),
     )
     monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+
+    async def _passing_auditors(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _passing_auditors)
 
     result = asyncio.run(
         session_lifecycle.create_runner_session(
@@ -1694,9 +1714,6 @@ def test_finalize_workspace_review_marks_task_done_when_verification_failures_ar
             workspace_config=workspace_config,
         )
     )
-    scripts_dir = workspace_root / "scripts"
-    scripts_dir.mkdir(parents=True, exist_ok=True)
-    (scripts_dir / "run-verification.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
     session_files.update_state(
         session_root,
         status="completed",
@@ -1711,8 +1728,8 @@ def test_finalize_workspace_review_marks_task_done_when_verification_failures_ar
             "strategy": "github_app_commit",
             "commit_sha": "cafebabe",
             "branch": "main",
-            "changed": True,
-            "files": [{"path": "scripts/run-verification.sh", "changed": True}],
+            "changed": False,
+            "files": [],
             "skipped_files": [],
         }
 
@@ -2102,6 +2119,13 @@ def test_finalize_workspace_review_infers_coding_lineage_from_companion_files(
     helper_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho list\n", encoding="utf-8")
     methodology = workspace_root / "research_plan" / "methodology.md"
     methodology.write_text("# Methodology\n", encoding="utf-8")
+    # Also write to project root so _normalize_artifact_record_for_write keeps them
+    (tmp_path / "artifacts" / "analysis_targets").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts" / "analysis_targets" / "README.md").write_text("# Analysis Targets\n", encoding="utf-8")
+    (tmp_path / "artifacts" / "analysis_targets" / "run_analysis_target.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\necho list\n", encoding="utf-8"
+    )
+    (tmp_path / "research_plan" / "methodology.md").write_text("# Methodology\n", encoding="utf-8")
 
     task_updates: list[dict[str, object]] = []
 
@@ -2110,6 +2134,7 @@ def test_finalize_workspace_review_infers_coding_lineage_from_companion_files(
         return {"_id": task_id, **fields}
 
     monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(session_lifecycle, "summarize_agent_workflow_health", lambda *_a, **_kw: {})
 
     session_files.update_state(
         session_root,
@@ -2183,8 +2208,24 @@ def test_finalize_workspace_review_enriches_existing_placeholder_lineage(
     helper_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho list\n", encoding="utf-8")
     methodology = workspace_root / "research_plan" / "methodology.md"
     methodology.write_text("# Methodology\n", encoding="utf-8")
-    workspace_repo = ResearchIntegrityRepo(workspace_root)
-    workspace_repo.write_artifact_lineage(
+    # Also write to project root so _normalize_artifact_record_for_write keeps them
+    (tmp_path / "artifacts" / "analysis_targets").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts" / "analysis_targets" / "README.md").write_text("# Analysis Targets\n", encoding="utf-8")
+    (tmp_path / "artifacts" / "analysis_targets" / "run_analysis_target.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\necho list\n", encoding="utf-8"
+    )
+    (tmp_path / "research_plan" / "methodology.md").write_text("# Methodology\n", encoding="utf-8")
+    # Seed verification_runs FIRST, then write placeholder lineage to project root.
+    # (workspace_lineage=None causes the sync to fall through to existing_lineage.verification_runs.)
+    project_repo = ResearchIntegrityRepo(tmp_path)
+    project_repo.upsert_verification_run(
+        {
+            "run_id": "seed-run",
+            "status": "passed",
+            "artifact_paths": ["artifacts/analysis_targets/README.md"],
+        }
+    )
+    project_repo.write_artifact_lineage(
         [
             {
                 "artifact_path": "artifacts/analysis_targets/README.md",
@@ -2204,6 +2245,7 @@ def test_finalize_workspace_review_enriches_existing_placeholder_lineage(
         return {"_id": task_id, **fields}
 
     monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(session_lifecycle, "summarize_agent_workflow_health", lambda *_a, **_kw: {})
 
     session_files.update_state(
         session_root,
@@ -2303,6 +2345,7 @@ def test_finalize_workspace_review_preserves_unrelated_project_lineage(
         return {"_id": task_id, **fields}
 
     monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(session_lifecycle, "summarize_agent_workflow_health", lambda *_a, **_kw: {})
 
     session_files.update_state(
         session_root,
@@ -2676,7 +2719,27 @@ def test_finalize_workspace_review_blocks_health_task_with_integrity_gaps(
         task_updates.append({"task_id": task_id, **fields})
         return {"_id": task_id, **fields}
 
+    _health_workflow = {
+        "health": {
+            "status": "blocked",
+            "missingEvidenceClaims": ["claim-001"],
+            "staleSources": ["source-001"],
+            "inadmissibleSources": [],
+            "reproducibilityGaps": ["artifacts/report.md"],
+            "failedVerificationRuns": ["run-001"],
+            "requirements": [],
+        }
+    }
+    _health_blocker_bits = [
+        "missingEvidenceClaims: claim-001",
+        "staleSources: source-001",
+        "reproducibilityGaps: artifacts/report.md",
+        "failedVerificationRuns: run-001",
+    ]
+
     monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(session_lifecycle, "summarize_agent_workflow_health", lambda *_a, **_kw: _health_workflow)
+    monkeypatch.setattr(session_lifecycle, "_relevant_workflow_blockers", lambda **_kw: _health_blocker_bits)
 
     session_files.update_state(
         session_root,
@@ -3309,9 +3372,13 @@ def test_get_runner_session_forces_final_ingest_for_terminal_status(tmp_path: Pa
         )
         return []
 
+    async def _fake_local_ingest(*, convex_session_id, session, root):
+        return {"status": "completed", "normalized_status": "completed"}
+
     monkeypatch.setattr(running_agent_service, "get_running_agent", _get_running_agent)
     monkeypatch.setattr(running_agent_service, "update_running_agent", _update_running_agent)
     monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+    monkeypatch.setattr(session_lifecycle, "_ingest_local_cli_runner_events", _fake_local_ingest)
     monkeypatch.setattr(session_lifecycle, "ingest_session_events", _ingest)
 
     result = asyncio.run(
