@@ -3,9 +3,11 @@ import textwrap
 from app.services.repo_contract_service import (
     build_config_files,
     dedupe_changed_paths,
+    ensure_project_boot,
     manifest_updates_from_content,
     render_rail_manifest,
 )
+from rail.bootstrap import bootstrap_future_project
 
 
 def test_build_config_files_emits_current_and_legacy_paths():
@@ -65,6 +67,15 @@ def test_dedupe_changed_paths_prefers_current_layout():
     assert "configs/apis/fred.yaml" not in watched
     assert "configs/pipelines/nj.yaml" not in watched
     assert "rail.yaml" in watched
+
+
+def test_ensure_project_boot_validates_bootstrapped_repo(tmp_path):
+    root = bootstrap_future_project(tmp_path / "boot-project", name="Boot Project", slug="boot-project")
+
+    manifest = ensure_project_boot(root)
+
+    assert manifest.hydration.default_pipeline == "project-default"
+    assert manifest.planner.approval_root == "research_plan/approvals"
 
 
 def test_render_manifest_preserves_existing_sections():

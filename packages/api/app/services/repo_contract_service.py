@@ -8,6 +8,14 @@ from urllib.parse import urlparse
 
 import yaml
 
+from rail.manifest import (
+    ContractViolation,
+    ManifestValidationError,
+    RailManifest,
+    boot_validate_project,
+    load_and_validate_manifest,
+)
+
 
 ConfigKind = Literal["apis", "ontologies", "pipelines"]
 
@@ -31,6 +39,23 @@ LEGACY_PREFIXES = {
     "ontologies": "configs/ontology",
     "pipelines": "configs/pipelines",
 }
+
+
+def ensure_project_boot(project_root: str | Path) -> RailManifest:
+    """Parse rail.yaml and enforce repo-contract validation for local project boot."""
+    return boot_validate_project(project_root)
+
+
+def load_project_manifest(project_root: str | Path) -> tuple[RailManifest, list[ContractViolation]]:
+    """Load rail.yaml and return manifest plus non-fatal contract violations."""
+    return load_and_validate_manifest(project_root)
+
+
+def manifest_validation_http_detail(exc: ManifestValidationError) -> dict[str, object]:
+    return {
+        "message": str(exc),
+        "violations": [{"path": item.path, "reason": item.reason} for item in exc.violations],
+    }
 
 
 def infer_github_repo(value: str | None) -> str | None:

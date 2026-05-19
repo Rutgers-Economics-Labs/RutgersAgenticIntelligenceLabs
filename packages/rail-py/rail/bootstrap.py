@@ -84,6 +84,7 @@ def bootstrap_future_project(
           sources_dir: ".ontology/sources"
           pipelines_dir: ".ontology/pipelines"
           transforms_dir: ".ontology/transforms"
+          default_pipeline: "project-default"
           hydration_mode: "full"
 
         research:

@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
+from app.services.repo_contract_service import ensure_project_boot, manifest_validation_http_detail
 from rail.bootstrap import bootstrap_future_project
+from rail.manifest import ManifestValidationError
 
 router = APIRouter(prefix="/projects", tags=["repo"])
 
@@ -64,6 +66,10 @@ async def init_repo(slug: str, data: RepoInitRequest):
     target.mkdir(parents=True, exist_ok=True)
 
     bootstrap_future_project(target, name=project["name"], slug=slug)
+    try:
+        ensure_project_boot(target)
+    except ManifestValidationError as exc:
+        raise HTTPException(status_code=422, detail=manifest_validation_http_detail(exc)) from exc
 
     # git init if not already a git repo
     git_dir = target / ".git"

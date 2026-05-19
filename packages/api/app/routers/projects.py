@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks
 from pydantic import BaseModel
 from rail.bootstrap import bootstrap_future_project
-from rail.manifest import load_manifest
+from rail.manifest import ManifestValidationError, load_manifest
 
 from app.services.convex_client import convex
 from app.services import ontology_service, sql_service
@@ -30,7 +30,12 @@ from app.services.hydration_registry_service import (
     register_hydration_artifact,
     resolve_pipeline_slug,
 )
-from app.services.repo_contract_service import infer_github_repo, render_rail_manifest
+from app.services.repo_contract_service import (
+    ensure_project_boot,
+    infer_github_repo,
+    manifest_validation_http_detail,
+    render_rail_manifest,
+)
 from app.services.github_service import GitHubService
 from app.services.brief_project_service import (
     READY,
@@ -1119,6 +1124,10 @@ async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest)
             raise HTTPException(500, f"git clone failed: {result.stderr or result.stdout}")
 
     project = await _upsert_known_project_record(defn, root)
+    try:
+        ensure_project_boot(root)
+    except ManifestValidationError as exc:
+        raise HTTPException(status_code=422, detail=manifest_validation_http_detail(exc)) from exc
     row = await _catalog_row(defn)
     return {"status": "ready", "project": project, "catalogProject": row}
 
@@ -1132,7 +1141,10 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
         default_branch=data.defaultBranch,
     )
 
-    manifest = load_manifest(root)
+    try:
+        manifest = ensure_project_boot(root)
+    except ManifestValidationError as exc:
+        raise HTTPException(status_code=422, detail=manifest_validation_http_detail(exc)) from exc
     manifest_slug = manifest.project.slug
     project_id = await convex.mutation(
         "projects:create",

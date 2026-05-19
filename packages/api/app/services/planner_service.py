@@ -272,6 +272,16 @@ def project_root_from_record(project: dict) -> Path | None:
     return Path(local_repo_path).resolve()
 
 
+def load_validated_manifest(project: dict):
+    """Load rail.yaml for a project record and enforce repo-contract validation."""
+    from app.services.repo_contract_service import ensure_project_boot
+
+    root = project_root_from_record(project)
+    if root is None:
+        raise ValueError("Project does not have a localRepoPath configured")
+    return ensure_project_boot(root)
+
+
 def _planner_session_root(project: dict, thread_id: str = PLANNER_THREAD_ID) -> Path | None:
     root = project_root_from_record(project)
     if root is None:

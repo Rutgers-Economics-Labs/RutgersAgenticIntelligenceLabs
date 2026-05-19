@@ -12,8 +12,11 @@ if str(RAIL_PY_ROOT) not in sys.path:
 
 from rail.manifest import (
     ContractViolation,
+    ManifestValidationError,
+    boot_validate_project,
     load_and_validate_manifest,
     parse_manifest_content,
+    validate_manifest_semantics,
     validate_repo_contract,
 )
 
@@ -218,3 +221,38 @@ def test_load_and_validate_manifest_no_violations_when_structure_complete(tmp_pa
     _loaded, violations = load_and_validate_manifest(tmp_path)
 
     assert violations == []
+
+
+def test_parse_manifest_content_reports_field_paths_for_invalid_values():
+    content = MINIMAL_RAIL_YAML.replace('default_branch: "main"', 'default_branch: 123')
+
+    with pytest.raises(ValueError, match="project.default_branch"):
+        parse_manifest_content(content)
+
+
+def test_boot_validate_project_raises_on_repo_contract_violations(tmp_path):
+    (tmp_path / "rail.yaml").write_text(MINIMAL_RAIL_YAML, encoding="utf-8")
+
+    with pytest.raises(ManifestValidationError) as exc_info:
+        boot_validate_project(tmp_path)
+
+    assert exc_info.value.violations
+    assert any(item.path == ".ontology" for item in exc_info.value.violations)
+
+
+def test_boot_validate_project_returns_manifest_when_contract_is_valid(tmp_path):
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+    (tmp_path / "rail.yaml").write_text(MINIMAL_RAIL_YAML, encoding="utf-8")
+    for rel in manifest.repo_contract.required_paths:
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
+
+    loaded = boot_validate_project(tmp_path)
+
+    assert loaded.project.slug == "test-project"
+
+
+def test_validate_manifest_semantics_delegates_to_repo_contract(tmp_path):
+    manifest = parse_manifest_content(MINIMAL_RAIL_YAML)
+    violations = validate_manifest_semantics(manifest, tmp_path)
+
+    assert {item.path for item in violations} == set(manifest.repo_contract.required_paths)

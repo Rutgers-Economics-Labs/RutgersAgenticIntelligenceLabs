@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 
 from rail.integrity import ResearchIntegrityRepo, sync_sources_from_configs
-from rail.manifest import RailManifest, load_manifest
+from rail.manifest import RailManifest, boot_validate_project
 
 
 class LocalEngine:
@@ -40,7 +40,7 @@ class LocalEngine:
         return importlib.import_module("app.services.integrity_service")
 
     def read_rail_yaml(self) -> RailManifest:
-        self._manifest = load_manifest(self.project_path)
+        self._manifest = boot_validate_project(self.project_path)
         return self._manifest
 
     @property

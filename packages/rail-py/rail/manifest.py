@@ -349,6 +349,39 @@ class ContractViolation:
     reason: str
 
 
+class ManifestValidationError(ValueError):
+    """Raised when rail.yaml parsing or repo-contract validation fails at project boot."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        violations: list[ContractViolation] | None = None,
+        cause: Exception | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.violations = violations or []
+        self.__cause__ = cause
+
+
+def format_contract_violations(violations: list[ContractViolation]) -> str:
+    if not violations:
+        return ""
+    return "\n".join(f"- {item.path}: {item.reason}" for item in violations)
+
+
+def format_pydantic_validation_error(exc: ValidationError) -> str:
+    lines: list[str] = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error.get("loc", ()))
+        message = error.get("msg", "invalid value")
+        if location:
+            lines.append(f"{location}: {message}")
+        else:
+            lines.append(message)
+    return "\n".join(lines)
+
+
 def validate_repo_contract(manifest: RailManifest, project_root: str | Path) -> list[ContractViolation]:
     """Check that every required_path in the manifest exists on disk."""
     root = Path(project_root).resolve()
@@ -359,11 +392,38 @@ def validate_repo_contract(manifest: RailManifest, project_root: str | Path) -> 
     return violations
 
 
+def validate_manifest_semantics(manifest: RailManifest, project_root: str | Path) -> list[ContractViolation]:
+    """Apply manifest-level rules beyond Pydantic field validation."""
+    violations = list(validate_repo_contract(manifest, project_root))
+    if not manifest.planner.task_root.strip():
+        violations.append(ContractViolation(path="planner.task_root", reason="task_root is required"))
+    if not manifest.planner.approval_root.strip():
+        violations.append(ContractViolation(path="planner.approval_root", reason="approval_root is required"))
+    return violations
+
+
 def load_and_validate_manifest(project_root: str | Path) -> tuple[RailManifest, list[ContractViolation]]:
     """Load manifest and validate the repo structure against its contract."""
     manifest = load_manifest(project_root)
-    violations = validate_repo_contract(manifest, project_root)
+    violations = validate_manifest_semantics(manifest, project_root)
     return manifest, violations
+
+
+def boot_validate_project(project_root: str | Path) -> RailManifest:
+    """Load rail.yaml and enforce repo-contract validation. Raises ManifestValidationError on failure."""
+    try:
+        manifest, violations = load_and_validate_manifest(project_root)
+    except FileNotFoundError as exc:
+        raise ManifestValidationError(str(exc), cause=exc) from exc
+    except ValueError as exc:
+        raise ManifestValidationError(str(exc), cause=exc) from exc
+    if violations:
+        detail = format_contract_violations(violations)
+        raise ManifestValidationError(
+            "Project failed rail.yaml / repo-contract validation:\n" + detail,
+            violations=violations,
+        )
+    return manifest
 
 
 def parse_manifest_content(content: str) -> RailManifest:
@@ -376,7 +436,8 @@ def parse_manifest_content(content: str) -> RailManifest:
     try:
         return RailManifest.model_validate(raw)
     except ValidationError as exc:
-        raise ValueError(f"Invalid rail.yaml: {exc}") from exc
+        detail = format_pydantic_validation_error(exc)
+        raise ValueError("Invalid rail.yaml:\n" + detail) from exc
 
 
 def load_manifest(project_root: str | Path) -> RailManifest:
