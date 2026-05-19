@@ -2159,23 +2159,22 @@ async def create_runner_session(
     workspace_config = _workspace_config(project_root)
 
     if project_id:
-        active_sessions = await running_agent_service.list_project_running_agents(
-            project_id,
-            active_only=True,
-            limit=50,
-        )
-        active_sessions = await _repair_stale_running_agents_for_project(
+        from app.services.reconciliation_service import ensure_execution_lane_available
+
+        lane_state = await ensure_execution_lane_available(
             project or {"_id": project_id, "localRepoPath": str(project_root)},
-            active_sessions,
-            project_root=project_root,
         )
-        if workspace_config.get("nonconcurrent_run", True) and active_sessions:
-            active_session = active_sessions[0]
-            active_role = active_session.get("role") or "agent"
-            raise RuntimeError(
-                "Sequential execution enforced: "
-                f"{active_role} session {active_session['_id']} is still active"
-            )
+        active_sessions = list(lane_state.get("activeSessions") or [])
+        nonconcurrent = workspace_config.get("nonconcurrent_run", True)
+        if not lane_state.get("available") and (nonconcurrent or lane_state.get("policy") == "single_active_worker"):
+            if active_sessions:
+                active_session = active_sessions[0]
+                active_role = active_session.get("role") or "agent"
+                raise RuntimeError(
+                    "Sequential execution enforced: "
+                    f"{active_role} session {active_session['_id']} is still active"
+                )
+            raise RuntimeError(str(lane_state.get("reason") or "Execution lane blocked."))
     if project:
         role_config = None
         try:

@@ -98,6 +98,58 @@ async def repair_zombie_sessions(project: dict[str, Any]) -> dict[str, Any]:
     return {"repairedSessionIds": repaired}
 
 
+async def ensure_execution_lane_available(
+    project: dict[str, Any],
+    *,
+    active_sessions: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Repair stale/zombie sessions, then report whether a new worker may start."""
+    repaired_stale = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
+    repaired_zombie = list((await repair_zombie_sessions(project)).get("repairedSessionIds") or [])
+    repaired_session_ids = list(dict.fromkeys(repaired_stale + repaired_zombie))
+
+    project_id = project.get("_id")
+    if project_id:
+        active_sessions = await running_agent_service.list_project_running_agents(
+            str(project_id),
+            active_only=True,
+            limit=50,
+        )
+    else:
+        active_sessions = list(active_sessions or [])
+
+    root = planner_service.project_root_from_record(project)
+    lane: dict[str, Any]
+    if root is not None and root.exists():
+        try:
+            manifest = load_manifest(root)
+            lane = check_lane_availability(manifest, len(active_sessions))
+        except Exception:
+            lane = {
+                "available": len(active_sessions) == 0,
+                "policy": "unknown",
+                "activeSessionCount": len(active_sessions),
+                "reason": None
+                if len(active_sessions) == 0
+                else f"Lane blocked: {len(active_sessions)} active session(s).",
+            }
+    else:
+        lane = {
+            "available": len(active_sessions) == 0,
+            "policy": "no_local_root",
+            "activeSessionCount": len(active_sessions),
+            "reason": None
+            if len(active_sessions) == 0
+            else f"Lane blocked: {len(active_sessions)} active session(s) (no local manifest).",
+        }
+
+    return {
+        **lane,
+        "repairedSessionIds": repaired_session_ids,
+        "activeSessions": active_sessions,
+    }
+
+
 def check_lane_availability(
     manifest: RailManifest,
     active_session_count: int,

@@ -1,5 +1,5 @@
 {
-  "validatedAt": "2026-05-18T22:18:53Z",
+  "validatedAt": "2026-05-19T04:41:04Z",
   "fredApiUsed": true,
   "note": "Convex sessions mocked; file-based integrity, auditors, session state, and DuckDB are real.",
   "archetypes": [
@@ -19,7 +19,8 @@
         },
         "planner": {
           "status": "ready",
-          "blockers": []
+          "blockers": [],
+          "taskSaturationCount": 0
         },
         "ontology": {
           "status": "ready",
@@ -62,7 +63,8 @@
         },
         "planner": {
           "status": "ready",
-          "blockers": []
+          "blockers": [],
+          "taskSaturationCount": 0
         },
         "ontology": {
           "status": "ready",
@@ -106,7 +108,8 @@
         },
         "planner": {
           "status": "ready",
-          "blockers": []
+          "blockers": [],
+          "taskSaturationCount": 0
         },
         "ontology": {
           "status": "ready",

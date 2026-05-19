@@ -236,7 +236,7 @@ async def build_auditor_statuses(
 
     integrity_status: dict[str, Any] = {"status": "ready", "blockers": []}
     closeout_status: dict[str, Any] = {"status": "ready", "blockers": []}
-    if root and root.exists():
+    if root and root.exists() and (root / "rail.yaml").is_file():
         manifest = load_manifest(root)
         artifact_gate = evaluate_integrity_gate(root, manifest, action="artifact_generation")
         if artifact_gate.get("blocked"):

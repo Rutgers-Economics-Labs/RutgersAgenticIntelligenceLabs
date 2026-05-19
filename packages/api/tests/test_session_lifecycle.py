@@ -883,21 +883,25 @@ def test_create_runner_session_repairs_stale_active_sessions_before_nonconcurren
             return {"session_id": "external-default-1", "status": "running"}
 
     finalized: list[dict[str, Any]] = []
+    list_calls = {"n": 0}
 
-    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
-    monkeypatch.setattr(
-        running_agent_service,
-        "list_project_running_agents",
-        lambda *args, **kwargs: asyncio.sleep(
-            0,
-            result=[
+    async def _list_active_sessions(*args, **kwargs):
+        list_calls["n"] += 1
+        if list_calls["n"] == 1:
+            return [
                 {
                     "_id": "sess-planner-1",
                     "role": "planner",
                     "status": "running",
                 }
-            ],
-        ),
+            ]
+        return []
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(
+        running_agent_service,
+        "list_project_running_agents",
+        _list_active_sessions,
     )
     monkeypatch.setattr(
         running_agent_service,

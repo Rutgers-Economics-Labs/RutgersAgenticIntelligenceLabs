@@ -208,3 +208,73 @@ async def test_detect_zombie_sessions_ignores_live_pid(tmp_path):
         result = await detect_zombie_sessions(project)
 
     assert session_id not in result
+
+
+# ---------------------------------------------------------------------------
+# ensure_execution_lane_available
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ensure_execution_lane_available_repairs_then_allows_lane(tmp_path):
+    from rail.bootstrap import bootstrap_future_project
+
+    from app.services import session_files
+    from app.services.reconciliation_service import ensure_execution_lane_available
+
+    tmp_path = bootstrap_future_project(tmp_path, name="Lane Repair", slug="lane-repair")
+    session_id = "sess-stale"
+    session_root = tmp_path / "research_plan" / "sessions" / "planner" / session_id
+    session_root.mkdir(parents=True)
+    session_files.write_state(session_root, {"session_id": session_id, "status": "completed"})
+
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    session = {"_id": session_id, "sessionPath": str(session_root)}
+
+    finalized: list[str] = []
+    list_calls = {"n": 0}
+
+    async def _fake_list(*args, **kwargs):
+        list_calls["n"] += 1
+        if list_calls["n"] == 1:
+            return [session]
+        return []
+
+    async def _fake_finalize(sid: str, *, status: str, ended_at=None):
+        finalized.append(sid)
+
+    with (
+        patch(
+            "app.services.reconciliation_service.running_agent_service.list_project_running_agents",
+            new_callable=AsyncMock,
+            side_effect=_fake_list,
+        ),
+        patch(
+            "app.services.reconciliation_service.running_agent_service.finalize_running_agent",
+            new_callable=AsyncMock,
+            side_effect=_fake_finalize,
+        ),
+    ):
+        result = await ensure_execution_lane_available(project)
+
+    assert result["available"] is True
+    assert session_id in result["repairedSessionIds"]
+    assert finalized == [session_id]
+
+
+@pytest.mark.asyncio
+async def test_ensure_execution_lane_available_blocks_live_session(tmp_path):
+    from app.services.reconciliation_service import ensure_execution_lane_available
+
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    session = {"_id": "sess-live", "role": "data", "status": "running"}
+
+    with patch(
+        "app.services.reconciliation_service.running_agent_service.list_project_running_agents",
+        new_callable=AsyncMock,
+        return_value=[session],
+    ):
+        result = await ensure_execution_lane_available(project)
+
+    assert result["available"] is False
+    assert result["activeSessionCount"] == 1
