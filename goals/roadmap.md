@@ -55,13 +55,9 @@ Even when no operator is needed, the system must always be able to explain:
 
 ## What Is Practically Missing
 
-- ontology auditor as the real authority for readiness and artifact activation
-- planner auditor enforcement to suppress drift, ghost tasks, and low-value churn
-- durable audit artifacts committed to repo
-- single authoritative blocker/phase/next-action projection in API and UI
-- automatic ontology expansion planning and follow-up question generation
-- closeout certification that is truly self-healing
-- repeated success on several different real project types
+The infrastructure for milestones 1–9 is implemented in code. What is practically missing is the **empirical validation**:
+- Repeated success on several different real project types in live, unscripted `autopilot_service` conditions.
+- Ensuring the new conflict-aware UI and audited merge gates hold up gracefully under real-world branch conflict scenarios.
 
 ---
 

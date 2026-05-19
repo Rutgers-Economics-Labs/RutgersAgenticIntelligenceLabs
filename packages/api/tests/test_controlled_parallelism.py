@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pytest
 
 
@@ -121,3 +122,161 @@ def test_list_owned_tasks_reflects_releases(tmp_path):
 
     assert len(claims) == 1
     assert claims[0]["taskId"] == "task-002"
+
+
+# ---------------------------------------------------------------------------
+# Audited Merge (Milestone 9)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_audited_merge_success(tmp_path, monkeypatch):
+    """Test that a completed, verified session automatically merges its workspace branch."""
+    from app.runners import session_lifecycle
+    from app.runners.session_lifecycle import _finalize_workspace_review
+    from app.services import session_files
+
+    # 1. Setup mock session state
+    session_root = tmp_path / ".rail" / "sessions" / "agent" / "sess-123"
+    session_root.mkdir(parents=True)
+    workspace_root = tmp_path / ".rail" / "workspaces" / "sess-123"
+    workspace_root.mkdir(parents=True)
+
+    session_files.write_state(session_root, {
+        "status": "completed",
+        "verification_status": "passed",
+        "publish_status": "published",
+        "workspace_path": str(workspace_root),
+        "workspace_branch": "agent-sess-123",
+    })
+
+    (tmp_path / "rail.yaml").write_text("dummy", encoding="utf-8")
+
+    # 2. Mock dependencies
+    project = {
+        "github": "test/repo",
+        "defaultBranch": "main"
+    }
+
+    class MockRailManifest:
+        pass
+
+    async def mock_write_post_run_audit(*args, **kwargs):
+        pass
+    monkeypatch.setattr("app.runners.session_lifecycle.write_post_run_audit", mock_write_post_run_audit)
+
+    async def mock_publish(*args, **kwargs):
+        pass
+    monkeypatch.setattr(session_lifecycle, "_publish_completed_session_outputs", mock_publish)
+
+    class MockGithubService:
+        def __init__(self):
+            self.merged = False
+            self.base = None
+            self.head = None
+
+        async def merge_branch(self, repo, base, head, commit_message=None):
+            self.merged = True
+            self.base = base
+            self.head = head
+            return {"sha": "merge-123"}
+
+    mock_github = MockGithubService()
+    monkeypatch.setattr("app.services.github_service.github_service", mock_github)
+
+    # Mocking list changed files to not crash
+    async def mock_list_changed_files(*args, **kwargs):
+        return []
+    monkeypatch.setattr(session_lifecycle, "_list_changed_files", mock_list_changed_files)
+
+    # Mocking summary generator
+    async def mock_normalize_summary(*args, **kwargs):
+        return {"blockers": [], "recommended_next_tasks": []}
+    monkeypatch.setattr(session_lifecycle, "_normalize_completion_summary", mock_normalize_summary)
+
+    # 3. Execute
+    await _finalize_workspace_review(
+        convex_session_id="sess-123",
+        session={"role": "agent"},
+        project=project,
+        project_root=tmp_path,
+        session_root=session_root,
+        base_branch="main",
+    )
+
+    # 4. Verify merge was called
+    assert mock_github.merged is True
+    assert mock_github.base == "main"
+    assert mock_github.head == "agent-sess-123"
+
+@pytest.mark.asyncio
+async def test_audited_merge_failure_marks_needs_changes(tmp_path, monkeypatch):
+    """Test that a merge conflict marks the session as needs_changes and logs the error."""
+    from app.runners import session_lifecycle
+    from app.runners.session_lifecycle import _finalize_workspace_review
+    from app.services import session_files
+
+    # 1. Setup mock session state
+    session_root = tmp_path / ".rail" / "sessions" / "agent" / "sess-123"
+    session_root.mkdir(parents=True)
+    workspace_root = tmp_path / ".rail" / "workspaces" / "sess-123"
+    workspace_root.mkdir(parents=True)
+    
+    session_files.write_state(session_root, {
+        "status": "completed",
+        "verification_status": "passed",
+        "publish_status": "published",
+        "workspace_path": str(workspace_root),
+        "workspace_branch": "agent-sess-123",
+    })
+    (session_root / "events.json").write_text("[]", encoding="utf-8")
+
+    (tmp_path / "rail.yaml").write_text("dummy", encoding="utf-8")
+
+    # 2. Mock dependencies
+    project = {
+        "github": "test/repo",
+        "defaultBranch": "main"
+    }
+
+    class MockRailManifest:
+        pass
+        
+    async def mock_write_post_run_audit(*args, **kwargs):
+        pass
+    monkeypatch.setattr("app.runners.session_lifecycle.write_post_run_audit", mock_write_post_run_audit)
+
+    async def mock_publish(*args, **kwargs):
+        pass
+    monkeypatch.setattr("app.runners.session_lifecycle._publish_completed_session_outputs", mock_publish)
+
+    class MockGithubService:
+        async def merge_branch(self, repo, base, head, commit_message=None):
+            raise Exception("Merge conflict detected")
+            
+    mock_github = MockGithubService()
+    monkeypatch.setattr("app.services.github_service.github_service", mock_github)
+    
+    # Mocking list changed files
+    async def mock_list_changed_files(*args, **kwargs):
+        return []
+    monkeypatch.setattr(session_lifecycle, "_list_changed_files", mock_list_changed_files)
+    
+    # Mocking summary generator
+    async def mock_normalize_summary(*args, **kwargs):
+        return {"blockers": [], "recommended_next_tasks": []}
+    monkeypatch.setattr(session_lifecycle, "_normalize_completion_summary", mock_normalize_summary)
+
+    # 3. Execute
+    await _finalize_workspace_review(
+        convex_session_id="sess-123",
+        session={"role": "agent"},
+        project=project,
+        project_root=tmp_path,
+        session_root=session_root,
+        base_branch="main",
+    )
+
+    # 4. Verify state updated to reflect failure
+    state = session_files.read_state(session_root)
+    assert state["publish_status"] == "failed"
+    assert "Merge conflict detected" in state["publish_error"]
