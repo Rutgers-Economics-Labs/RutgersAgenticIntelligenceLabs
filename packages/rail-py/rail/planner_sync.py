@@ -158,7 +158,8 @@ def render_task_board_md(board: dict[str, Any], tasks: list[dict[str, Any]]) -> 
             for t in col_tasks:
                 slug = _slugify(t.get("title", ""))
                 role = t.get("agentRole", "")
-                lines.append(f"- **{t['title']}** (`{role}`) → `research_plan/tasks/{slug}.md`")
+                title = t.get("title") or t.get("_id") or "task"
+                lines.append(f"- **{title}** (`{role}`) → `research_plan/tasks/{slug}.md`")
         else:
             lines.append("_empty_")
         lines.append("")

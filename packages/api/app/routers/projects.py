@@ -4,6 +4,7 @@ import yaml
 import subprocess
 import os
 import platform
+from typing import Any
 
 logger = logging.getLogger(__name__)
 from pathlib import Path
@@ -1589,6 +1590,15 @@ async def get_project_context(slug: str):
 async def get_command_center(slug: str):
     project = await planner_service.get_project_by_slug(slug)
     return await command_center_service.build_command_center(project)
+
+
+@router.get("/{slug}/reality")
+async def get_project_reality(slug: str):
+    """Control-plane snapshot: drift counts, execution lane, and auditor gates."""
+    project = await planner_service.get_project_by_slug(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
+    return await reconciliation_service.build_project_control_plane_status(project)
 
 
 @router.post("/{slug}/command-center/reconcile")

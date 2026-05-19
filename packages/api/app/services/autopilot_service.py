@@ -17,6 +17,7 @@ from app.services.integrity_service import evaluate_integrity_gate, summarize_ag
 from app.services.auditor_service import build_auditor_statuses
 from app.services.reconciliation_service import (
     project_reality_status,
+    ensure_execution_lane_available,
     reconcile_project_reality,
     repair_stale_active_sessions as _repair_stale_active_sessions_impl,
 )
@@ -1122,6 +1123,15 @@ async def _launch_ready_tasks_if_available(
     auditors: dict[str, Any] | None,
     project_slug: str,
 ) -> bool:
+    lane_state = await ensure_execution_lane_available(project)
+    if not lane_state.get("available"):
+        logger.info(
+            "Autopilot: execution lane blocked for %s: %s",
+            project_slug,
+            lane_state.get("reason"),
+        )
+        return False
+
     ready_tasks = [t for t in tasks if t["status"] == "ready" and t.get("approvalState") != "pending"]
     ready_tasks = _filter_ready_tasks_for_auditors(ready_tasks, auditors)
     if not ready_tasks:
@@ -1326,6 +1336,18 @@ async def run_autopilot_loop(project_slug: str):
             
         logger.info(f"Autopilot iteration {i+1}/{max_iterations} for {project_slug}")
         project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+        if project_root and project_root.exists() and (project_root / "rail.yaml").is_file():
+            try:
+                planner_service.load_validated_manifest(project)
+            except Exception as exc:
+                logger.warning("Autopilot: manifest validation failed for %s: %s", project_slug, exc)
+                _update_config(
+                    project_slug,
+                    last_action="Blocked: invalid project manifest",
+                    last_turn_result=str(exc),
+                )
+                await asyncio.sleep(60)
+                continue
         reconciliation = await reconcile_project_reality(project)
         if reconciliation.get("removedTaskFiles"):
             _update_config(

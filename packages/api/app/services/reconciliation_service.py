@@ -690,6 +690,47 @@ async def project_reality_status(
     }
 
 
+async def build_project_control_plane_status(project: dict[str, Any]) -> dict[str, Any]:
+    """Read-only snapshot for API/UI: drift summary, lane policy, and auditor gates."""
+    from app.services.auditor_service import build_auditor_statuses
+
+    active_sessions = []
+    project_id = project.get("_id")
+    if project_id:
+        active_sessions = await running_agent_service.list_project_running_agents(
+            str(project_id),
+            active_only=True,
+            limit=50,
+        )
+    reality = await project_reality_status(project, active_sessions=active_sessions)
+    lane: dict[str, Any] = {
+        "available": len(active_sessions) == 0,
+        "policy": "unknown",
+        "activeSessionCount": len(active_sessions),
+        "reason": None,
+    }
+    root = planner_service.project_root_from_record(project)
+    if root is not None and root.exists() and (root / "rail.yaml").is_file():
+        try:
+            manifest = load_manifest(root)
+            lane = check_lane_availability(manifest, len(active_sessions))
+        except Exception:
+            pass
+    tasks = []
+    if project_id:
+        try:
+            board = await planner_service.ensure_main_board(project)
+            tasks = await planner_service.list_tasks(board["_id"], project=project)
+        except Exception:
+            tasks = []
+    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
+    return {
+        "reality": reality,
+        "lane": lane,
+        "auditors": auditors,
+    }
+
+
 async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     root = planner_service.project_root_from_record(project)
     removed_task_files: list[str] = []

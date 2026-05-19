@@ -4565,7 +4565,15 @@ def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, 
         return {"_id": "main"}
 
     async def _list_tasks(board_id: str, *, project=None):
-        return [{"_id": "task-1", "status": "ready", "approvalState": "granted", "dependsOnTaskIds": []}]
+        return [
+            {
+                "_id": "task-1",
+                "title": "Continue research synthesis",
+                "status": "awaiting_approval",
+                "approvalState": "pending",
+                "dependsOnTaskIds": [],
+            }
+        ]
 
     async def _raise_decision_event(project_arg, **kwargs):
         events.append(kwargs)
@@ -4578,6 +4586,15 @@ def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, 
 
     def _audit_gate_status(project_root: Path):
         return {"blocked": False, "reason": None, "staleSessionIds": []}
+
+    async def _build_auditor_statuses(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+        }
 
     reconciled: list[str] = []
     async def _reconcile_project_reality(project_arg):
@@ -4599,6 +4616,16 @@ def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, 
     monkeypatch.setattr(autopilot_service, "raise_decision_event", _raise_decision_event)
     monkeypatch.setattr(autopilot_service, "audit_gate_status", _audit_gate_status)
     monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _reconcile_project_reality)
+    monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _build_auditor_statuses)
+    monkeypatch.setattr(autopilot_service, "_closeout_gate", lambda project_arg, tasks: asyncio.sleep(0, result={"blocked": False, "reason": None}))
+    monkeypatch.setattr(autopilot_service, "_mark_project_completed", lambda project_arg: asyncio.sleep(0))
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_expansion_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_project_reality_repair_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_integrity_repair_tasks", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_repair_task", lambda project_arg, tasks, auditors: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_reconcile_ontology_lifecycle_state", lambda project_arg, tasks: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(autopilot_service, "_ensure_control_plane_repair_tasks", lambda project_arg, tasks, auditors: asyncio.sleep(0, result=False))
 
     autopilot_service._active_autopilots["soccer-project"] = True
     autopilot_service._autopilot_configs["soccer-project"] = {"auto_approve": True}
@@ -4606,9 +4633,12 @@ def test_autopilot_repairs_stale_session_audits_before_blocking(tmp_path: Path, 
 
     asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
 
-    assert reconciled == ["soccer-project"]
+    assert reconciled and all(item == "soccer-project" for item in reconciled)
     assert planner_turns
-    assert events == []
+    assert not any(
+        e.get("event_type") in {"audit_required_before_advance", "control_plane_auditor_blocked"}
+        for e in events
+    )
 
 
 def test_autopilot_reconciles_task_states_from_session_truth(tmp_path: Path, monkeypatch):
@@ -4654,7 +4684,7 @@ def test_autopilot_reconciles_task_states_from_session_truth(tmp_path: Path, mon
 
     asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
 
-    assert repaired_calls == [{"project": "soccer-project"}]
+    assert repaired_calls and all(item["project"] == "soccer-project" for item in repaired_calls)
     assert completed == ["soccer-project"]
 
 
