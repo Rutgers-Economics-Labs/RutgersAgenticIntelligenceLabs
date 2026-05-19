@@ -2486,6 +2486,35 @@ async def rerun_project_hydration(
     }
 
 
+@router.post("/{slug}/pipeline/run")
+async def run_project_data_pipeline(
+    slug: str,
+    data: HydrationRerunRequest,
+    background_tasks: BackgroundTasks,
+    reconcile: bool = True,
+):
+    """One-shot: reconcile control-plane drift, then queue fetch + hydrate for the project."""
+    project = await planner_service.get_project_by_slug(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
+
+    reconcile_result = None
+    if reconcile:
+        reconcile_result = await reconciliation_service.reconcile_project_reality(project)
+
+    hydration_result = await rerun_project_hydration(slug, data, background_tasks)
+
+    return {
+        "reconciled": reconcile,
+        "reconcile": reconcile_result,
+        "hydration": hydration_result,
+        "message": (
+            f"Queued pipeline {hydration_result.get('pipelineSlug', 'default')}. "
+            "External APIs will run, transforms execute, and the ontology DuckDB will refresh."
+        ),
+    }
+
+
 @router.get("/{slug}/settings/secrets")
 async def list_project_secrets(slug: str):
     project = await planner_service.get_project_by_slug(slug)

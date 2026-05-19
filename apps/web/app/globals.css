@@ -680,6 +680,59 @@ a { color: inherit; text-decoration: none; }
   background: var(--panel-alt);
 }
 
+/* ── Operator overview (mission control strip) ───────────────────── */
+.operator-overview-root {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 18px 16px;
+}
+.operator-strip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.operator-strip-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.operator-panel {
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  min-height: 88px;
+}
+.auditor-chip {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  min-width: 72px;
+}
+.ontology-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+.operator-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.operator-list li {
+  line-height: 1.35;
+}
+@keyframes rail-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ── Misc ─────────────────────────────────────────────────────────── */
 ::selection {
   background: color-mix(in srgb, var(--fg) 16%, transparent);

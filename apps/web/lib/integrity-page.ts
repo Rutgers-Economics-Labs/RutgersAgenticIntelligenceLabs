@@ -1,5 +1,5 @@
-import { getArtifactTrustDisplay, getSourceFreshnessDisplay, getWorkflowDisplaySections } from "./integrity-ui.ts";
-import type { IntegrityDisplay, WorkflowDisplaySection } from "./integrity-ui.ts";
+import { getArtifactTrustDisplay, getSourceFreshnessDisplay, getWorkflowDisplaySections } from "./integrity-ui";
+import type { IntegrityDisplay, WorkflowDisplaySection } from "./integrity-ui";
 import type {
   ArtifactLineageRecord,
   ProjectIntegrityResponse,

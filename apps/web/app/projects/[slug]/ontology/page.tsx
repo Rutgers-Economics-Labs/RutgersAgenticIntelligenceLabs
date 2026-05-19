@@ -1,6 +1,6 @@
 import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
-import { HydrationRerunButton } from "@/components/hydration-actions";
+import { FetchDataHydrateButton } from "@/components/fetch-data-hydrate-button";
 import { fetchHydrationStatus, fetchOntologyClasses, fetchPlannerHome, fetchProjectContext, fetchOntologyGraph } from "@/lib/api";
 import { EntityExplorer } from "@/components/entity-explorer";
 import { GraphVisualizer } from "@/components/graph-visualizer";
@@ -42,7 +42,7 @@ function OntologyRightRail({ slug, context, home, hydration }: { slug: string; c
         </div>
       ))}
       <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
-        <HydrationRerunButton slug={slug} pipelineSlug={hydration?.pipelineSlug} compact />
+        <FetchDataHydrateButton slug={slug} pipelineSlug={hydration?.pipelineSlug} variant="compact" />
       </div>
       {hydration && (
         <>

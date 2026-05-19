@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { fetchCommandCenter, fetchPlannerHome } from "@/lib/api";
+import { fetchCommandCenter, fetchHydrationStatus, fetchOntologyClasses, fetchPlannerHome } from "@/lib/api";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
@@ -7,8 +7,8 @@ import { StatusPill } from "@/components/status-pill";
 import { AgentRunCard, CommandShell, InlineStatus, MetricStrip, TaskBoard } from "@/components/command-center";
 import { ApprovalPanel } from "@/components/approval-panel";
 import { ReconcileProjectButton } from "@/components/reconcile-actions";
-import { CreateOntologyFollowUpTaskButton } from "@/components/ontology-follow-up-actions";
-import { getArtifactTrustDisplay, getWorkflowDisplaySections } from "@/lib/integrity-ui";
+import { OperatorOverviewStrip } from "@/components/operator-overview-strip";
+import { getArtifactTrustDisplay } from "@/lib/integrity-ui";
 
 export default async function ProjectHomePage({
   params
@@ -16,51 +16,30 @@ export default async function ProjectHomePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const [center, home] = await Promise.all([
+  const [center, home, hydration] = await Promise.all([
     fetchCommandCenter(slug),
     fetchPlannerHome(slug),
+    fetchHydrationStatus(slug).catch(() => null),
   ]);
   const tasks = home.planner.tasks ?? [];
-  const latestMessage = home.planner.messages.filter((m: any) => String(m.content ?? "").trim()).at(0);
-  
-  const statusBanner = (
-    <div style={{ 
-      background: "var(--panel)", 
-      borderBottom: "1px solid var(--border)", 
-      padding: "16px 20px",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "space-between",
-      gap: 20
-    }}>
-      <div style={{ display: "flex", gap: 32 }}>
-        <div className="status-item">
-          <div className="rail-label">Project Phase</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--fg)", marginTop: 4 }}>
-            {center.project?.phase?.toUpperCase() || "DISCOVERY"}
-          </div>
-        </div>
-        <div className="status-item">
-          <div className="rail-label">Active Worker</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--fg)", marginTop: 4 }}>
-            {center.activeSessions?.[0]?.role?.toUpperCase() || "IDLE"}
-          </div>
-        </div>
-        <div className="status-item">
-          <div className="rail-label">Current Gate</div>
-          <div style={{ fontSize: 14, fontWeight: 700, color: "var(--fg)", marginTop: 4 }}>
-            {center.currentBlocker?.toUpperCase() || "CLEAR"}
-          </div>
-        </div>
-      </div>
-      <div style={{ textAlign: "right" }}>
-        <div className="rail-label">Next Action</div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-          {center.nextAction || "Waiting for signal..."}
-        </div>
-      </div>
-    </div>
+  const ontologyClasses = home.project?.id
+    ? await fetchOntologyClasses(home.project.id).catch(() => ({ classes: [] as Array<{ name: string; count: number }> }))
+    : { classes: [] as Array<{ name: string; count: number }> };
+  const classPreview = (ontologyClasses.classes ?? [])
+    .filter((row): row is { name: string; count: number } => {
+      const item = row as { name?: unknown; count?: unknown };
+      return typeof item.name === "string" && typeof item.count === "number";
+    });
+
+  const overviewStrip = (
+    <OperatorOverviewStrip
+      slug={slug}
+      center={center}
+      pipelineSlug={hydration?.pipelineSlug}
+      ontologyClassPreview={classPreview}
+    />
   );
+
 
   const rightRail = (
     <div>
@@ -120,7 +99,7 @@ export default async function ProjectHomePage({
 
   return (
     <ProjectShell slug={slug} title="Mission Control" section="overview" rightRail={rightRail}>
-      {statusBanner}
+      {overviewStrip}
       
       <MetricStrip
         metrics={[

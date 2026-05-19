@@ -165,6 +165,38 @@ export async function rerunHydration(slug: string, pipelineSlug?: string | null)
   return postJson<HydrationRerunResponse>(`/projects/${slug}/hydration/rerun`, { pipelineSlug: pipelineSlug || null });
 }
 
+export type PipelineRunResponse = {
+  reconciled: boolean;
+  reconcile?: Record<string, unknown> | null;
+  hydration: HydrationRerunResponse & { pipelineSlug?: string; projectSlug?: string };
+  message: string;
+};
+
+export async function runProjectDataPipeline(
+  slug: string,
+  pipelineSlug?: string | null,
+  reconcile = true,
+): Promise<PipelineRunResponse> {
+  const query = reconcile ? "" : "?reconcile=false";
+  return postJson<PipelineRunResponse>(`/projects/${slug}/pipeline/run${query}`, {
+    pipelineSlug: pipelineSlug || null,
+  });
+}
+
+export type HydrationJob = {
+  _id?: string;
+  jobId?: string;
+  status?: string;
+  pipelineSlug?: string;
+  projectSlug?: string;
+  stepResults?: Array<Record<string, unknown>>;
+  error?: string | null;
+};
+
+export async function fetchHydrationJob(jobId: string): Promise<HydrationJob> {
+  return getJson<HydrationJob>(`/jobs/${encodeURIComponent(jobId)}`);
+}
+
 export async function fetchProjectApprovals(slug: string): Promise<ProjectApprovals> {
   return getJson(`/projects/${slug}/approvals`);
 }

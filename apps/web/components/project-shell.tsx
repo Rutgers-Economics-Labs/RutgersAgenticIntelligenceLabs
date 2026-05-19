@@ -7,22 +7,42 @@ import { CommandPalette } from "@/components/command-palette";
 import { FloatingPlannerChat } from "@/components/floating-planner-chat";
 import { LiveOutputPanel } from "@/components/live-output-panel";
 
-const NAV = [
-  { label: "Overview",     suffix: "",             key: "overview"   },
-  { label: "Zen Mode",     suffix: "/zen",         key: "zen"        },
-  { label: "Dashboard",    suffix: "/dashboard",   key: "dashboard"  },
-  { label: "Planner",      suffix: "/planner",     key: "planner"    },
-  { label: "Agent Chat",   suffix: "/agent",       key: "agent"      },
-  { label: "Launch",       suffix: "/launch",      key: "launch"     },
-  { label: "Runs",         suffix: "/runs",        key: "sessions"   },
-  { label: "Review",       suffix: "/review",      key: "review"     },
-  { label: "Skills",       suffix: "/skills",      key: "skills"     },
-  { label: "Sources",      suffix: "/sources",     key: "sources"    },
-  { label: "Artifacts",    suffix: "/artifacts",   key: "artifacts"  },
-  { label: "Integrity",    suffix: "/integrity",   key: "integrity"  },
-  { label: "Repo",         suffix: "/repo",        key: "repo"       },
-  { label: "Ontology",     suffix: "/ontology",    key: "ontology"   },
-  { label: "Settings",     suffix: "/settings",    key: "settings"   },
+const NAV_GROUPS: Array<{ title: string; items: Array<{ label: string; suffix: string; key: string }> }> = [
+  {
+    title: "Control",
+    items: [
+      { label: "Overview", suffix: "", key: "overview" },
+      { label: "Zen Mode", suffix: "/zen", key: "zen" },
+      { label: "Dashboard", suffix: "/dashboard", key: "dashboard" },
+    ],
+  },
+  {
+    title: "Agents",
+    items: [
+      { label: "Planner", suffix: "/planner", key: "planner" },
+      { label: "Agent Chat", suffix: "/agent", key: "agent" },
+      { label: "Launch", suffix: "/launch", key: "launch" },
+      { label: "Runs", suffix: "/runs", key: "sessions" },
+      { label: "Review", suffix: "/review", key: "review" },
+    ],
+  },
+  {
+    title: "Evidence",
+    items: [
+      { label: "Sources", suffix: "/sources", key: "sources" },
+      { label: "Artifacts", suffix: "/artifacts", key: "artifacts" },
+      { label: "Integrity", suffix: "/integrity", key: "integrity" },
+      { label: "Ontology", suffix: "/ontology", key: "ontology" },
+    ],
+  },
+  {
+    title: "Project",
+    items: [
+      { label: "Skills", suffix: "/skills", key: "skills" },
+      { label: "Repo", suffix: "/repo", key: "repo" },
+      { label: "Settings", suffix: "/settings", key: "settings" },
+    ],
+  },
 ];
 
 const REPO_SHORTCUTS = [
@@ -130,11 +150,13 @@ export function ProjectShell({
         </div>
 
         {/* Nav */}
-        <div style={{ borderBottom: "1px solid var(--border)" }}>
-          <div style={{ padding: "8px 12px 4px" }}>
-            <span className="rail-label">Surfaces</span>
-          </div>
-          {NAV.map((tab) => {
+        <div>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title} style={{ borderBottom: "1px solid var(--border)" }}>
+              <div style={{ padding: "8px 12px 4px" }}>
+                <span className="rail-label">{group.title}</span>
+              </div>
+              {group.items.map((tab) => {
             const active = section === tab.key;
             return (
               <Link
@@ -150,7 +172,9 @@ export function ProjectShell({
                 )}
               </Link>
             );
-          })}
+              })}
+            </div>
+          ))}
         </div>
 
         {/* Repo shortcuts */}
