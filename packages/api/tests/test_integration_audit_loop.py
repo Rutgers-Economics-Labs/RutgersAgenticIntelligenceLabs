@@ -306,8 +306,18 @@ async def test_audit_loop_document_literature_no_ontology_passes(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Literature Review", slug="lit-review")
     state_dir = root / "research_plan" / "state"
 
-    # Remove .ontology to simulate a non-ontology project
+    # Remove .ontology AND flip rail.yaml to research_first so _is_ontology_project
+    # returns False. The bootstrap defaults to ontology_first; that declared intent
+    # would otherwise make the auditor flag missing .ontology as a real blocker.
     shutil.rmtree(root / ".ontology")
+    rail_yaml = root / "rail.yaml"
+    rail_yaml.write_text(
+        rail_yaml.read_text(encoding="utf-8").replace(
+            'mode: "ontology_first"',
+            'mode: "research_first"',
+        ),
+        encoding="utf-8",
+    )
 
     # Seed document sources
     for key in ["nber_wp_12345", "fed_report_2024", "oecd_employment_outlook"]:
