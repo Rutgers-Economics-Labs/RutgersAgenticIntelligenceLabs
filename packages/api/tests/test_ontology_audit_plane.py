@@ -46,6 +46,7 @@ def test_classify_hydration_state_unknown_falls_back_to_unavailable():
 async def test_audit_ontology_health_not_applicable_for_non_ontology_project(tmp_path):
     from app.services.auditor_service import audit_ontology_health
 
+    # No .ontology dir and no ontology-first approach → treated as research-first.
     project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
     result = await audit_ontology_health(project)
 
@@ -63,7 +64,7 @@ async def test_audit_ontology_health_blocked_when_not_hydrated(tmp_path):
     from app.services.auditor_service import audit_ontology_health
 
     (tmp_path / ".ontology").mkdir()
-    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path), "approach": "ontology-first"}
 
     with patch(
         "app.services.auditor_service.get_hydration_status",
@@ -82,7 +83,7 @@ async def test_audit_ontology_health_blocked_when_duckdb_empty(tmp_path):
     from app.services.auditor_service import audit_ontology_health
 
     (tmp_path / ".ontology").mkdir()
-    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path), "approach": "ontology-first"}
     duckdb_path = str(tmp_path / "ontology.duckdb")
 
     with (
@@ -108,7 +109,7 @@ async def test_audit_ontology_health_healthy_when_hydrated_and_rows_present(tmp_
     from app.services.auditor_service import audit_ontology_health
 
     (tmp_path / ".ontology").mkdir()
-    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path), "approach": "ontology-first"}
     duckdb_path = str(tmp_path / "ontology.duckdb")
 
     with (
@@ -136,7 +137,7 @@ async def test_audit_ontology_health_blocked_by_drift(tmp_path):
     from app.services.auditor_service import audit_ontology_health
 
     (tmp_path / ".ontology").mkdir()
-    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path), "approach": "ontology-first"}
     duckdb_path = str(tmp_path / "ontology.duckdb")
     drift = {"hasDrift": True, "reason": "active_ontology_pointer_out_of_date"}
 
@@ -164,7 +165,7 @@ async def test_audit_ontology_health_blocked_when_hydration_raises(tmp_path):
     from app.services.auditor_service import audit_ontology_health
 
     (tmp_path / ".ontology").mkdir()
-    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path), "approach": "ontology-first"}
 
     with patch(
         "app.services.auditor_service.get_hydration_status",
