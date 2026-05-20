@@ -354,16 +354,19 @@ class TestExecutionVerificationHook:
         assert not result.passed
         assert any(c.name == "execution_succeeded" for c in result.failures)
 
-    def test_empty_outputs_with_success_still_passes(self):
-        """If execution succeeded and no output paths are declared, hook passes.
-        The no_outputs_declared guard is a safety net for truly empty check lists."""
+    def test_empty_outputs_with_success_fails_no_outputs_declared(self):
+        """Coding tasks must declare their outputs. A successful execution
+        with no expected_output_paths is treated as a fabrication risk
+        (the agent claimed success but didn't say what it produced) — the
+        hook records a `no_outputs_declared` failure. This matches the
+        rail-py-side test_no_outputs_declared_fails."""
         result = self.hook.run({
             "execution_succeeded": True,
             "expected_output_paths": [],
             "allowed_write_roots": [],
         })
-        # execution_succeeded check passes, no further output checks → hook passes
-        assert result.passed
+        assert not result.passed
+        assert any(c.name == "no_outputs_declared" for c in result.checks)
 
     def test_output_outside_allowed_root_fails(self, tmp_path):
         output = tmp_path / "secret.py"
@@ -425,16 +428,20 @@ class TestArtifactVerificationHook:
         assert not result.passed
         assert any(c.name == "manifest_updated" for c in result.failures)
 
-    def test_no_artifacts_with_manifest_updated_passes(self):
-        """When artifact_paths is empty but manifest_updated=True, hook passes.
-        The no_artifacts_declared guard fires only if the checks list were truly empty."""
+    def test_no_artifacts_with_manifest_updated_fails_no_artifacts_declared(self):
+        """Artifact tasks must declare their artifacts. Updating the manifest
+        without actually listing what was produced is treated as a fabrication
+        risk — the hook records a `no_artifacts_declared` failure. The
+        manifest_updated check still passes individually, but the overall
+        hook fails. This matches the strict anti-fabrication contract."""
         result = self.hook.run({
             "artifact_paths": [],
             "allowed_write_roots": [],
             "manifest_updated": True,
         })
-        # manifest_updated check passes; no artifact checks run → hook passes
-        assert result.passed
+        assert not result.passed
+        assert any(c.name == "no_artifacts_declared" for c in result.checks)
+        assert any(c.name == "manifest_updated" and c.passed for c in result.checks)
 
     def test_no_artifacts_with_manifest_not_updated_fails(self):
         """When artifact_paths is empty and manifest not updated, hook fails."""
