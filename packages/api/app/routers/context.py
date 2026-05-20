@@ -8,11 +8,131 @@ that agents can reference before resorting to web search.
 import io
 import time
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
+
+
+async def _sync_context_doc_as_integrity_source(
+    *,
+    project_id: str | None,
+    doc_id: str,
+    name: str,
+    content: str,
+    doc_type: str,
+    url: str | None = None,
+    file_path_hint: str | None = None,
+) -> None:
+    """Promote a freshly-created context document into the integrity source
+    inventory so downstream claims can reference it with source_key
+    `context-<doc_id>`.
+
+    Context entries are first-class evidence — they sit alongside structured
+    sources and should be admissible for claim attribution. Before this sync,
+    claims that cited context docs failed reference validation because the
+    source key wasn't present in research_plan/state/sources.json.
+    """
+    if not project_id or not doc_id:
+        return
+    try:
+        project = await convex.query("projects:getById", {"id": project_id})
+    except Exception:
+        project = None
+    local_repo_path = (project or {}).get("localRepoPath") if isinstance(project, dict) else None
+    if not local_repo_path:
+        return
+    root = Path(str(local_repo_path)).resolve()
+    if not (root / "rail.yaml").is_file():
+        return
+    try:
+        from rail.integrity import ResearchIntegrityRepo
+
+        repo = ResearchIntegrityRepo(root)
+        source_key = f"context-{doc_id}"
+        # Preserve the original doc_type — tests assert on it, and the
+        # downstream chunk_kind selector uses it to distinguish text/pdf/etc.
+        source_type = doc_type
+        # For url docs, use the URL as the canonical path and the hostname
+        # as the origin; for text/pdf/docx, the human-readable name goes in
+        # url_or_path and origin reflects the ingest path.
+        if doc_type == "url" and url:
+            from urllib.parse import urlparse
+
+            try:
+                origin_value = urlparse(url).hostname or f"context:{doc_type}"
+            except Exception:
+                origin_value = f"context:{doc_type}"
+            access_method = "web"
+            url_or_path_value = url
+        else:
+            # File upload: the filename is the canonical path AND origin
+            # (operator's local file is the source) and the access method
+            # reflects how it arrived. For pasted text the display name fills
+            # both slots but the origin keeps the ingest-path qualifier and
+            # access stays "manual".
+            if file_path_hint:
+                url_or_path_value = file_path_hint
+                origin_value = file_path_hint
+                access_method = "upload"
+            else:
+                url_or_path_value = name
+                origin_value = f"context:{doc_type}"
+                access_method = "manual"
+        record: dict[str, Any] = {
+            "source_key": source_key,
+            "source_type": source_type,
+            "title": name,
+            "url_or_path": url_or_path_value,
+            "origin": origin_value,
+            "acquired_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "access_method": access_method,
+            "freshness_status": "fresh",
+            "admissibility_status": "observed",
+            # Context docs are operator-supplied; they're admissible as
+            # evidence but not auto-validated. Promotion to validated should
+            # require explicit review.
+            "quality_status": "candidate",
+            "provenance": {
+                "text": content[:2000],
+                "context_doc_id": doc_id,
+                "ingest_path": "context",
+            },
+        }
+        repo.upsert_source(record)
+        # Stamp the chunks' metadata so downstream consumers (UI, search
+        # cards) can attribute back to the context doc.
+        try:
+            chunk_metadata = {
+                "source_title": name,
+                "source_type": source_type,
+                "origin": origin_value,
+                "context_doc_id": doc_id,
+            }
+            chunks = repo.chunks_for_source(source_key)
+            mutated = False
+            updated_chunks = []
+            for chunk in chunks:
+                merged = {**(chunk.metadata or {}), **chunk_metadata}
+                if merged != chunk.metadata:
+                    updated_chunks.append(
+                        chunk.model_copy(update={"metadata": merged})
+                    )
+                    mutated = True
+                else:
+                    updated_chunks.append(chunk)
+            if mutated:
+                all_chunks = repo.load_evidence_chunks()
+                rest = [c for c in all_chunks if c.source_key != source_key]
+                repo.write_evidence_chunks(rest + updated_chunks)
+        except Exception:
+            pass
+    except Exception:
+        # Don't fail the context endpoint if the integrity sync hits a
+        # validator quirk — the context doc itself is already saved in Convex.
+        pass
 
 router = APIRouter(prefix="/context", tags=["context"])
 
@@ -84,6 +204,14 @@ async def upload_context(
         "content": content[:100_000],  # cap at 100k chars
         "fileSize": len(data),
     })
+    await _sync_context_doc_as_integrity_source(
+        project_id=project_id,
+        doc_id=str(doc_id) if doc_id else "",
+        name=name or filename,
+        content=content,
+        doc_type=doc_type,
+        file_path_hint=filename,
+    )
     return {"id": doc_id, "name": name or filename, "type": doc_type, "size": len(data)}
 
 
@@ -103,6 +231,14 @@ async def add_url(req: AddUrlRequest):
         "content": content,
         "url": req.url,
     })
+    await _sync_context_doc_as_integrity_source(
+        project_id=req.project_id,
+        doc_id=str(doc_id) if doc_id else "",
+        name=req.name or req.url,
+        content=content,
+        doc_type="url",
+        url=req.url,
+    )
     return {"id": doc_id, "name": req.name or req.url, "type": "url"}
 
 
@@ -120,6 +256,13 @@ async def add_text(req: AddTextRequest):
         "type": "text",
         "content": req.content[:100_000],
     })
+    await _sync_context_doc_as_integrity_source(
+        project_id=req.project_id,
+        doc_id=str(doc_id) if doc_id else "",
+        name=req.name,
+        content=req.content,
+        doc_type="text",
+    )
     return {"id": doc_id, "name": req.name, "type": "text"}
 
 
