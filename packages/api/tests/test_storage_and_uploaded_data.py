@@ -21,8 +21,11 @@ async def test_upload_and_resolve_flow(client, tmp_path):
     # 2. Test Hydration Worker Resolution
     from app.services import hydration_worker
     
+    # The pipeline schema (yaml_service.ALLOWED_TOP_LEVEL_PIPELINE_FIELDS)
+    # does not include a top-level `name` field — the pipeline slug is
+    # derived from the file path, and a stray `name` causes preflight
+    # validation to fail.
     pipeline_content = yaml.dump({
-        "name": "test_pipeline",
         "ontology": "custom_onto",
         "steps": [{"name": "step1", "api": "user_data", "class": "County", "uri": "C_{name}"}]
     })
@@ -83,8 +86,8 @@ async def test_hydration_embedding_index_failure_is_non_fatal(tmp_path):
     from app.services import hydration_worker
     from app.services.hydration_worker import convex, storage
 
+    # No top-level `name` — see test_upload_and_resolve_flow for context.
     pipeline_content = yaml.dump({
-        "name": "test_pipeline",
         "ontology": "core",
         "steps": [{"name": "step1", "api": "source", "class": "County", "uri": "C_{name}"}],
     })
@@ -145,8 +148,8 @@ async def test_hydration_resolves_document_storage_key(client):
     from app.services import hydration_worker
     from app.services.hydration_worker import convex, storage
 
+    # No top-level `name` — see test_upload_and_resolve_flow for context.
     pipeline_content = yaml.dump({
-        "name": "doc_pipeline",
         "ontology": "core",
         "steps": [{"name": "step1", "api": "report_data", "class": "County", "uri": "C_{name}"}],
     })
