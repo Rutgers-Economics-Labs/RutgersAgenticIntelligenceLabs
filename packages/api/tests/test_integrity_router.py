@@ -900,9 +900,12 @@ async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifa
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("# Report\n", encoding="utf-8")
+    # The helper already seeds a populated DuckDB at .ontology/onto.duckdb,
+    # which the ontology auditor reads via the local-disk hydration fallback.
+    # Earlier this test overwrote it with empty bytes, which silently
+    # disabled the fallback and made the auditor 409 the promote request.
     ontology_path = root / ".ontology" / "onto.duckdb"
-    ontology_path.parent.mkdir(parents=True, exist_ok=True)
-    ontology_path.write_bytes(b"")
+    assert ontology_path.exists()
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1546,9 +1549,12 @@ async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(clie
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("stable report\n", encoding="utf-8")
+    # The helper already seeds a populated DuckDB at .ontology/onto.duckdb,
+    # which the ontology auditor reads via the local-disk hydration fallback.
+    # Earlier this test overwrote it with empty bytes, which silently
+    # disabled the fallback and made the auditor 409 the promote request.
     ontology_path = root / ".ontology" / "onto.duckdb"
-    ontology_path.parent.mkdir(parents=True, exist_ok=True)
-    ontology_path.write_bytes(b"")
+    assert ontology_path.exists()
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1613,6 +1619,20 @@ async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(clie
     )
     assert claim_resp.status_code == 200
 
+    # Anti-fabrication validator rejects refs to verification runs that
+    # don't resolve at write time — seed run-001 before posting the
+    # artifact.
+    repo = ResearchIntegrityRepo(root)
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
+
     artifact_resp = await client.post(
         "/api/v1/projects/integrity-router-project/integrity/artifacts",
         json={
@@ -1630,8 +1650,7 @@ async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(clie
     )
     assert artifact_resp.status_code == 200
 
-    repo = ResearchIntegrityRepo(root)
-    report_lineage = repo.load_artifact_lineage()[0].model_dump(mode="json")
+    report_lineage = next(item for item in repo.load_artifact_lineage() if item.artifact_path == "artifacts/report.md").model_dump(mode="json")
     repo.write_artifact_lineage(
         [
             {
@@ -1968,18 +1987,9 @@ async def test_project_integrity_response_includes_normalized_source_and_trust_s
             }
         ]
     )
-    repo.write_artifact_lineage(
-        [
-            {
-                "artifact_path": "artifacts/report.md",
-                "artifact_type": "report",
-                "title": "Report",
-                "promotion_state": "verified",
-                "sources": ["research_plan/state/sources.json#grid-source"],
-                "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
-            }
-        ]
-    )
+    # Write verification runs first so the lineage normalizer keeps the
+    # verification_runs ref; also seed inputs/scripts that exist on disk
+    # so the lineage's promotion_state stays "verified" through normalize.
     repo.write_verification_runs(
         [
             {
@@ -1987,6 +1997,21 @@ async def test_project_integrity_response_includes_normalized_source_and_trust_s
                 "status": "passed",
                 "checks": [],
                 "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "sources": ["research_plan/state/sources.json#grid-source"],
+                "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
             }
         ]
     )
