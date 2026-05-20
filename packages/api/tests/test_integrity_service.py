@@ -1576,7 +1576,12 @@ def test_promote_artifact_blocks_report_when_ontology_hydration_duckdb_is_empty(
     (root / "scripts" / "run-verification.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     (root / "topics" / "labor" / "notes.md").write_text("evidence", encoding="utf-8")
     (root / ".ontology").mkdir(parents=True, exist_ok=True)
-    conn = duckdb.connect(str(root / ".ontology" / "onto.duckdb"))
+    # Overwrite the helper-seeded populated DuckDB so this test really does
+    # exercise the "empty DuckDB" gate.
+    onto_path = root / ".ontology" / "onto.duckdb"
+    if onto_path.exists():
+        onto_path.unlink()
+    conn = duckdb.connect(str(onto_path))
     conn.execute("CREATE TABLE county (name VARCHAR)")
     conn.close()
     (root / ".ontology" / ".rail_hydration.json").write_text("{}", encoding="utf-8")
@@ -1646,6 +1651,12 @@ def test_promote_artifact_blocks_report_when_ontology_hydration_duckdb_is_empty(
 def test_promote_artifact_blocks_report_when_ontology_hydration_is_missing(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
     _seed_workflow_scaffolding(root)
+    # Helper pre-seeds onto.duckdb + .rail_hydration.json; remove both so this
+    # test really exercises the "ontology hydration must exist" gate.
+    for rel in (".ontology/onto.duckdb", ".ontology/.rail_hydration.json"):
+        path = root / rel
+        if path.exists():
+            path.unlink()
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
