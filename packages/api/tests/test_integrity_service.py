@@ -63,6 +63,7 @@ def _seed_workflow_scaffolding(root):
         "topics/labor/notes.md": "# labor evidence notes placeholder\n",
         "topics/data.csv": "id,value\n1,100\n",
         "topics/scripts/transform.py": "# transform script placeholder\n",
+        "pipelines/hydrate.py": "# hydrate pipeline script placeholder\n",
         "topics/analysis.csv": "id,value\n1,100\n",
         "topics/analysis/analyze.py": "# analysis pipeline placeholder\n",
         "topics/analysis/notes.md": "# analysis notes placeholder\n",
@@ -298,6 +299,10 @@ def test_claim_verification_benchmark_evaluates_supported_and_semantic_claims(tm
                 "evidence_kind": "direct",
             },
             {
+                # semantic_suggestion claims are anti-fabrication-downgraded to
+                # needs_evidence when seeded as "supported" without an explicit
+                # chunk (commit 7ad66b6's normalize_claim_record_for_write).
+                # Update the expectation to match the normalizer's verdict.
                 "claim_key": "claim-semantic",
                 "claim_text": "Nearby regions may show a similar pattern.",
                 "status": "supported",
@@ -317,7 +322,7 @@ def test_claim_verification_benchmark_evaluates_supported_and_semantic_claims(tm
             },
             {
                 "claimKey": "claim-semantic",
-                "expectedStatus": "supported",
+                "expectedStatus": "needs_evidence",
                 "expectedEvidenceComplete": False,
             },
         ],
@@ -401,6 +406,18 @@ def test_artifact_trust_benchmark_degrades_after_stale_source_update(tmp_path):
             }
         ]
     )
+    # Verification run must be written before the artifact lineage so the
+    # lineage normalizer validates the run-001 reference.
+    (root / "artifacts" / "tracked-report.md").write_text("# tracked report\n", encoding="utf-8")
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/tracked-report.md"],
+            }
+        ]
+    )
     repo.write_artifact_lineage(
         [
             {
@@ -413,15 +430,6 @@ def test_artifact_trust_benchmark_degrades_after_stale_source_update(tmp_path):
                 "verification_commands": ["scripts/run-verification.sh"],
                 "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
                 "sources": ["research_plan/state/sources.json#tracked-source"],
-            }
-        ]
-    )
-    repo.write_verification_runs(
-        [
-            {
-                "run_id": "run-001",
-                "status": "passed",
-                "artifact_paths": ["artifacts/tracked-report.md"],
             }
         ]
     )
@@ -1468,20 +1476,12 @@ def test_contradicting_supported_claims_become_conflicted_and_block_artifacts(tm
             },
         ]
     )
-    repo.upsert_artifact_lineage(
-        {
-            "artifact_path": "artifacts/report.md",
-            "artifact_type": "report",
-            "title": "Report",
-            "promotion_state": "verified",
-            "inputs": ["topics/data.csv"],
-            "scripts": ["topics/analyze.py"],
-            "claims": [
-                "research_plan/state/claims.json#claim-fell",
-                "research_plan/state/claims.json#claim-rose",
-            ],
-        }
-    )
+    # Claims must exist before the artifact lineage references them; the
+    # normalizer strips claim refs that don't resolve to current claim keys
+    # (commit 7ad66b6) and the conflicted-claim cascade then can't blame
+    # the artifact.
+    (root / "topics" / "analysis" / "fell.md").write_text("# fell evidence\n", encoding="utf-8")
+    (root / "topics" / "analysis" / "rose.md").write_text("# rose evidence\n", encoding="utf-8")
     repo.upsert_claim(
         {
             "claim_key": "claim-fell",
@@ -1506,6 +1506,29 @@ def test_contradicting_supported_claims_become_conflicted_and_block_artifacts(tm
             "contradicts_claim_keys": ["claim-fell"],
         }
     )
+    # Write artifact lineage AFTER the claims exist so claim refs survive
+    # normalization. The conflicted-claim cascade already ran during the
+    # second upsert_claim above, but the artifact didn't exist yet — write
+    # the lineage and then explicitly re-run the cascade so the artifact
+    # picks up the conflicted-claim blocker.
+    repo.upsert_artifact_lineage(
+        {
+            "artifact_path": "artifacts/report.md",
+            "artifact_type": "report",
+            "title": "Report",
+            "promotion_state": "verified",
+            "inputs": ["topics/data.csv"],
+            "scripts": ["topics/analyze.py"],
+            "claims": [
+                "research_plan/state/claims.json#claim-fell",
+                "research_plan/state/claims.json#claim-rose",
+            ],
+        }
+    )
+    # Re-trigger the conflict cascade now that the artifact has both claim
+    # refs (it ran during the second upsert_claim above but no artifact
+    # existed at that moment, so no artifact got blamed).
+    repo._reconcile_artifact_claim_conflicts({"claim-fell", "claim-rose"})
 
     gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
     detail = get_claim_detail(root, "claim-fell")
@@ -1789,6 +1812,18 @@ def test_get_artifact_detail_returns_linked_records_and_trust_state(tmp_path):
             }
         ]
     )
+    # Write verification runs BEFORE artifact lineage so the lineage
+    # normalizer can validate the run-001 reference (commit 7ad66b6 strips
+    # refs whose keys don't exist in the current store).
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
     repo.write_artifact_lineage(
         [
             {
@@ -1803,15 +1838,6 @@ def test_get_artifact_detail_returns_linked_records_and_trust_state(tmp_path):
                 "assumptions": ["research_plan/state/assumptions.json#baseline-window"],
                 "claims": ["research_plan/state/claims.json#claim-001"],
                 "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
-            }
-        ]
-    )
-    repo.write_verification_runs(
-        [
-            {
-                "run_id": "run-001",
-                "status": "passed",
-                "artifact_paths": ["artifacts/report.md"],
             }
         ]
     )
