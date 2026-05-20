@@ -26,10 +26,31 @@ def _bootstrap_hydrated_project(tmp_path: Path):
     (root / "rail.yaml").write_text(manifest_text, encoding="utf-8")
     engine = LocalEngine(str(root))
     engine.artifact_duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-    engine.artifact_duckdb_path.write_bytes(b"")
+    # Seed a populated DuckDB so the promotion gate (commit 10aa3fa) which
+    # requires populated rows for non-dataset artifact promotion is satisfied.
+    import duckdb as _duckdb
+    _conn = _duckdb.connect(str(engine.artifact_duckdb_path))
+    _conn.execute("CREATE TABLE sample (id INTEGER, value INTEGER)")
+    _conn.execute("INSERT INTO sample VALUES (1, 100), (2, 200)")
+    _conn.close()
     engine._write_hydration_meta("acceptance_pipeline", "full")
     sync_sources_from_configs(root, sources_dir=".ontology/sources", source_keys=["sample"])
     engine._record_hydration_lineage("acceptance_pipeline")
+    # The artifact-lineage normalizer (commit 7ad66b6) strips inputs/scripts/
+    # verification_commands that don't resolve on disk. Create the workflow
+    # files the integrity scenarios reference so seeded lineage survives the
+    # normalize pass and reflects what a real research workflow would have.
+    (root / "topics" / "analysis").mkdir(parents=True, exist_ok=True)
+    (root / "topics" / "analysis" / "analyze.py").write_text(
+        "# analysis script placeholder\n", encoding="utf-8"
+    )
+    (root / "topics" / "analysis" / "notes.md").write_text(
+        "# evidence notes placeholder\n", encoding="utf-8"
+    )
+    (root / "scripts").mkdir(parents=True, exist_ok=True)
+    (root / "scripts" / "run-verification.sh").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
     return root, ResearchIntegrityRepo(root)
 
 
@@ -131,10 +152,14 @@ def test_acceptance_scenario_2_source_change_propagates_stale_and_rerun_restores
     assert blocked_gate["blocked"] is True
 
     refreshed, refreshed_claims, refreshed_artifacts = repo.update_source("sample", freshness_status="fresh")
+    # Match the actual bytes on disk so the reproducibility rerun reports
+    # `passed`. The bootstrap now seeds a populated DuckDB; we hand the
+    # rerun its exact contents.
+    actual_duckdb_bytes = (root / ".ontology" / "onto.duckdb").read_bytes()
     rerun = apply_reproducibility_rerun(
         root,
         {
-            ".ontology/onto.duckdb": b"",
+            ".ontology/onto.duckdb": actual_duckdb_bytes,
             "artifacts/report.md": "stable report\n",
         },
         run_id="run-002",
