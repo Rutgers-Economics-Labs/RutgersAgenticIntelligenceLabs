@@ -242,33 +242,19 @@ def _find_existing_task(tasks: list[dict[str, Any]], needles: tuple[str, ...]) -
 
 
 def _parse_ontology_follow_up_questions(project: dict[str, Any]) -> list[dict[str, Any]]:
+    """Delegate to the shared parser so autopilot and auditor agree on classifications.
+
+    Note: the shared parser normalizes legacy classification aliases
+    (e.g. `answerable_after_expansion` → `requires_expansion`). Inlining the
+    parse previously silently dropped those aliases, so autopilot never
+    auto-created the expansion task for them.
+    """
+    from app.services.question_expansion_service import parse_follow_up_questions
+
     root = project.get("localRepoPath")
     if not root:
         return []
-    path = Path(str(root)).resolve() / "research_plan" / "ontology_answerable_follow_up_questions.md"
-    if not path.exists():
-        return []
-
-    questions: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for raw_line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw_line.strip()
-        if line.startswith("### "):
-            if current:
-                questions.append(current)
-            current = {"title": line[4:].strip(), "classification": None}
-            continue
-        if current is None:
-            continue
-        if line.startswith("- Classification:"):
-            marker = line.split("`")
-            if len(marker) >= 2:
-                current["classification"] = marker[1].strip()
-            else:
-                current["classification"] = line.removeprefix("- Classification:").strip()
-    if current:
-        questions.append(current)
-    return questions
+    return parse_follow_up_questions(Path(str(root)).resolve())
 
 
 async def _repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any]:
@@ -376,61 +362,32 @@ async def _ensure_ontology_expansion_tasks(project: dict[str, Any], tasks: list[
     if not questions:
         return False
 
+    from app.services.question_expansion_service import expansion_task_specs_for_question
+
     board = await planner_service.ensure_main_board(project)
     changed = False
-    live_tasks = list(tasks)
+    live_titles = {str(task.get("title") or "") for task in tasks}
+
     for question in questions:
         classification = str(question.get("classification") or "").strip().lower()
         title = str(question.get("title") or "").strip()
         if not title:
             continue
-        if classification == "requires_expansion":
-            task_title = f"Expand ontology coverage for: {title}"
-            if any(str(task.get("title") or "") == task_title for task in live_tasks):
+        for spec in expansion_task_specs_for_question(title, classification):
+            if spec["title"] in live_titles:
                 continue
-            task = await planner_service.create_task(
+            await planner_service.create_task(
                 project=project,
                 board_id=board["_id"],
-                title=task_title,
-                description=(
-                    f"Create the ontology expansion needed to answer: {title}. "
-                    "This should result in concrete source, pipeline, transform, or ontology-verification work."
-                ),
-                status="ready",
-                agent_role="data",
-                repo_paths=[".ontology/sources", ".ontology/pipelines", ".ontology/transforms", "research_plan", "topics"],
-                acceptance_criteria=[
-                    "the missing ontology coverage is translated into concrete source or pipeline work",
-                    "the task records which source, transform, or relationship expansion is required",
-                    "follow-on ontology verification work is identified if hydration changes are needed",
-                ],
-                runner="codex_cli",
+                title=spec["title"],
+                description=spec["description"],
+                status=spec["status"],
+                agent_role=spec["agent_role"],
+                repo_paths=spec["repo_paths"],
+                acceptance_criteria=spec["acceptance_criteria"],
+                runner=spec["runner"],
             )
-            live_tasks.append(task)
-            changed = True
-        elif classification == "blocked_by_data":
-            task_title = f"Resolve data blocker for: {title}"
-            if any(str(task.get("title") or "") == task_title for task in live_tasks):
-                continue
-            task = await planner_service.create_task(
-                project=project,
-                board_id=board["_id"],
-                title=task_title,
-                description=(
-                    f"Investigate and document the missing data access needed to answer: {title}. "
-                    "Record the missing source, access blocker, and what would unblock ontology expansion."
-                ),
-                status="ready",
-                agent_role="research",
-                repo_paths=["research_plan", "topics", ".ontology/sources"],
-                acceptance_criteria=[
-                    "the missing source or access blocker is documented explicitly",
-                    "the task records whether the blocker is licensing, permissions, provenance, or coverage",
-                    "the repo contains the next recommended expansion path if the blocker can be resolved",
-                ],
-                runner="codex_cli",
-            )
-            live_tasks.append(task)
+            live_titles.add(spec["title"])
             changed = True
 
     if changed:
@@ -884,7 +841,11 @@ def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
     return False
 
 
-def _should_skip_planner_for_ready_repair(tasks: list[dict[str, Any]], auditors: dict[str, Any] | None) -> bool:
+def _should_skip_planner_for_ready_repair(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> bool:
     auditors = auditors or {}
     ready_tasks = [task for task in tasks if str(task.get("status") or "") == "ready" and task.get("approvalState") != "pending"]
     filtered_ready = _filter_ready_tasks_for_auditors(project, ready_tasks, auditors)
@@ -1637,7 +1598,7 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
             continue
 
         # 3. Run the planner to see what it wants to do, unless a blocked auditor already has a ready repair task.
-        if _should_skip_planner_for_ready_repair(tasks, auditors):
+        if _should_skip_planner_for_ready_repair(project, tasks, auditors):
             _update_config(
                 project_slug,
                 last_action="Skipping planner turn for ready repair task",

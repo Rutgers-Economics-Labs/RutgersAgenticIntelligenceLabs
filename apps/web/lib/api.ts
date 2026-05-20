@@ -149,6 +149,24 @@ export async function fetchRunnerSession(slug: string, sessionId: string): Promi
   return getJson(`/projects/${slug}/runner/sessions/${sessionId}`);
 }
 
+export async function cancelRunnerSession(
+  runner: string,
+  sessionId: string,
+): Promise<{ ok: boolean }> {
+  return postJson(`/runners/${runner}/sessions/${sessionId}/cancel`, {});
+}
+
+export async function fetchProjectReality(slug: string): Promise<{
+  staleRuntimeSessionIds?: string[];
+  zombieSessionIds?: string[];
+  details?: {
+    staleRuntimeSessionIds?: string[];
+    zombieSessionIds?: string[];
+  };
+} & Record<string, unknown>> {
+  return getJson(`/projects/${slug}/reality`);
+}
+
 export async function fetchRunnerSessionDetail(slug: string, sessionId: string): Promise<RunnerSessionDetail> {
   return getJson(`/projects/${slug}/runner/sessions/${sessionId}/detail`);
 }

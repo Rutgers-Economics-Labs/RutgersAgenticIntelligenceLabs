@@ -300,6 +300,17 @@ export type PlannerHome = {
   };
 };
 
+export type BlockerCategory =
+  | "approval_required"
+  | "stale_session"
+  | "planner_drift"
+  | "hydration_failure"
+  | "ontology_health"
+  | "integrity_gap"
+  | "source_gap"
+  | "closeout_pending"
+  | "clear";
+
 export type CommandCenter = {
   project: {
     id: string;
@@ -419,6 +430,11 @@ export type CommandCenter = {
     headline: string;
     reasons: string[];
     repairs: string[];
+    category?: BlockerCategory;
+    categoryLabel?: string;
+    severity?: "ok" | "info" | "warning" | "critical" | "action";
+    fixSection?: string | null;
+    fixHref?: string | null;
   };
   repairQueue?: {
     count: number;
@@ -528,6 +544,13 @@ export type CommandCenter = {
     hasLocalRepo: boolean;
     hasRailYaml: boolean;
     hasResearchPlan: boolean;
+  };
+  lifecyclePhase?: string;
+  closeoutCertificate?: {
+    status: "issued" | "pending" | "would_issue_if";
+    phase: string;
+    headline: string;
+    blockers: string[];
   };
 };
 

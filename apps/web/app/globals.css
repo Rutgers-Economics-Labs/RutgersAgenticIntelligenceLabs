@@ -706,6 +706,29 @@ a { color: inherit; text-decoration: none; }
   padding: 10px 12px;
   min-height: 88px;
 }
+.truth-comparison {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+.steering-btn {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--fg);
+  cursor: pointer;
+}
+.steering-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.steering-btn:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--panel-alt);
+}
 .auditor-chip {
   background: var(--panel);
   border: 1px solid var(--border);

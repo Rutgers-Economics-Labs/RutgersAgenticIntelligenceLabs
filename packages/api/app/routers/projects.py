@@ -1655,58 +1655,41 @@ async def reconcile_command_center_state(slug: str):
 
 @router.post("/{slug}/command-center/ontology-follow-ups/expand")
 async def create_ontology_follow_up_task(slug: str, request: OntologyFollowUpTaskRequest):
+    from app.services.question_expansion_service import (
+        expansion_task_specs_for_question,
+        normalize_classification,
+    )
+
     project = await planner_service.get_project_by_slug(slug)
     board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
 
     title = str(request.title).strip()
-    classification = str(request.classification).strip().lower()
+    classification = normalize_classification(request.classification)
     if not title:
         raise HTTPException(status_code=400, detail="Follow-up question title is required.")
     if classification not in {"requires_expansion", "blocked_by_data"}:
         raise HTTPException(status_code=400, detail="Classification must be requires_expansion or blocked_by_data.")
 
-    if classification == "requires_expansion":
-        task_title = f"Expand ontology coverage for: {title}"
-        description = (
-            f"Create the ontology expansion needed to answer: {title}. "
-            "This should result in concrete source, pipeline, transform, or ontology-verification work."
-        )
-        agent_role = "data"
-        repo_paths = [".ontology/sources", ".ontology/pipelines", ".ontology/transforms", "research_plan", "topics"]
-        acceptance_criteria = [
-            "the missing ontology coverage is translated into concrete source or pipeline work",
-            "the task records which source, transform, or relationship expansion is required",
-            "follow-on ontology verification work is identified if hydration changes are needed",
-        ]
-    else:
-        task_title = f"Resolve data blocker for: {title}"
-        description = (
-            f"Investigate and document the missing data access needed to answer: {title}. "
-            "Record the missing source, access blocker, and what would unblock ontology expansion."
-        )
-        agent_role = "research"
-        repo_paths = ["research_plan", "topics", ".ontology/sources"]
-        acceptance_criteria = [
-            "the missing source or access blocker is documented explicitly",
-            "the task records whether the blocker is licensing, permissions, provenance, or coverage",
-            "the repo contains the next recommended expansion path if the blocker can be resolved",
-        ]
+    specs = expansion_task_specs_for_question(title, classification)
+    if not specs:
+        raise HTTPException(status_code=400, detail="No expansion tasks defined for this classification.")
+    spec = specs[0]
 
-    existing = next((task for task in tasks if str(task.get("title") or "") == task_title), None)
+    existing = next((task for task in tasks if str(task.get("title") or "") == spec["title"]), None)
     if existing is not None:
         return {"created": False, "task": existing}
 
     task = await planner_service.create_task(
         project=project,
         board_id=board["_id"],
-        title=task_title,
-        description=description,
-        status="ready",
-        agent_role=agent_role,
-        repo_paths=repo_paths,
-        acceptance_criteria=acceptance_criteria,
-        runner="codex_cli",
+        title=spec["title"],
+        description=spec["description"],
+        status=spec["status"],
+        agent_role=spec["agent_role"],
+        repo_paths=spec["repo_paths"],
+        acceptance_criteria=spec["acceptance_criteria"],
+        runner=spec["runner"],
     )
     await planner_service.sync_planner_files(project, board)
     return {"created": True, "task": task}
@@ -3307,48 +3290,13 @@ def _infer_lifecycle_phase(
     tasks: list[dict],
     active_sessions: list[dict],
 ) -> str:
-    if not root or not root.exists():
-        return "brief"
+    """Delegate to the shared command-center helper.
 
-    phases = list(manifest.lifecycle.phases) if manifest else [
-        "brief", "scoped", "source_discovery", "config_ready",
-        "hydration_ready", "hydrated", "ontology_healthy",
-        "research_active", "synthesis_ready", "closed",
-    ]
+    Kept as a thin wrapper so existing callers in this module are unaffected.
+    """
+    from app.services.command_center_service import infer_lifecycle_phase
 
-    closeout = auditors.get("closeout") or {}
-    if str(closeout.get("status") or "") == "ready":
-        return "closed"
-
-    ontology = auditors.get("ontology") or {}
-    ont_state = str(ontology.get("state") or ontology.get("stateClassification") or "")
-    if "hydrated" in ont_state or ont_state == "hydrated_on_this_device":
-        if str(ontology.get("status") or "") == "ready":
-            open_tasks = [t for t in tasks if t.get("status") not in {"done", "cancelled"}]
-            if not open_tasks and not active_sessions:
-                return "synthesis_ready"
-            return "research_active"
-        return "ontology_healthy" if "ontology_healthy" in phases else "hydrated"
-
-    integrity = auditors.get("integrity") or {}
-    if str(integrity.get("status") or "") == "ready":
-        return "hydration_ready"
-
-    sources_exist = root and (root / "research_plan" / "state" / "sources.json").exists()
-    if sources_exist:
-        try:
-            import json
-            raw = json.loads((root / "research_plan" / "state" / "sources.json").read_text(encoding="utf-8"))
-            if isinstance(raw, list) and raw:
-                return "source_discovery"
-        except Exception:
-            pass
-
-    topics = root and (root / "topics").is_dir() and any((root / "topics").iterdir())
-    if topics:
-        return "scoped"
-
-    return "brief"
+    return infer_lifecycle_phase(root, manifest, auditors, tasks, active_sessions)
 
 
 def _recommend_next_action(

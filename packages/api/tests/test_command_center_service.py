@@ -741,6 +741,174 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert "Reconcile running-agent session statuses so live runtime state uses canonical lifecycle values." in center["blockerSummary"]["repairs"]
     assert "Reconcile running-agent session roles so live runtime state uses canonical agent roles." in center["blockerSummary"]["repairs"]
     assert "Reconcile running-agent session runners so live runtime state uses canonical runner values." in center["blockerSummary"]["repairs"]
+    # Stale runtime sessions ranked above all other gates → operator routes to runs.
+    assert center["blockerSummary"]["category"] == "stale_session"
+    assert center["blockerSummary"]["categoryLabel"] == "Stale session"
+    assert center["blockerSummary"]["severity"] == "critical"
+    assert center["blockerSummary"]["fixHref"] == "/projects/grid-study/runs"
+
+
+def test_blocker_category_classification_routes_through_priority_order():
+    from app.services.command_center_service import _classify_blocker_category
+
+    ready_auditors = {
+        "session": {"status": "ready"},
+        "planner": {"status": "ready"},
+        "ontology": {"status": "ready"},
+        "integrity": {"status": "ready"},
+        "closeout": {"status": "ready"},
+    }
+
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={},
+            auditors=ready_auditors,
+            integrity_summary={},
+            source_summary={"count": 3},
+        )
+        == "clear"
+    )
+
+    # Pending approvals beat every downstream gate.
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[{"_id": "a1"}],
+            reality={"staleRuntimeSessionCount": 1},
+            auditors={**ready_auditors, "session": {"status": "blocked"}},
+            integrity_summary={},
+            source_summary={"count": 3},
+        )
+        == "approval_required"
+    )
+
+    # Stale session beats downstream gates even when ontology is blocked.
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={"staleRuntimeSessionCount": 1},
+            auditors={**ready_auditors, "ontology": {"status": "blocked", "stateClassification": "ready"}},
+            integrity_summary={},
+            source_summary={"count": 3},
+        )
+        == "stale_session"
+    )
+
+    # Planner drift via reality counts (no session drift).
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={"duplicateTaskFileCount": 2},
+            auditors=ready_auditors,
+            integrity_summary={},
+            source_summary={"count": 3},
+        )
+        == "planner_drift"
+    )
+
+    # Hydration failure vs ontology health based on stateClassification.
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={},
+            auditors={**ready_auditors, "ontology": {"status": "blocked", "stateClassification": "stale"}},
+            integrity_summary={},
+            source_summary={"count": 3},
+        )
+        == "hydration_failure"
+    )
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={},
+            auditors={**ready_auditors, "ontology": {"status": "blocked", "stateClassification": "ready"}},
+            integrity_summary={},
+            source_summary={"count": 3},
+        )
+        == "ontology_health"
+    )
+
+    # Integrity gap stays integrity_gap when at least one admitted source exists.
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={},
+            auditors={**ready_auditors, "integrity": {"status": "blocked"}},
+            integrity_summary={"sourceAdmissibilityCounts": {"admitted": 2, "candidate": 1}},
+            source_summary={"count": 3},
+        )
+        == "integrity_gap"
+    )
+    # Routes to source_gap when no source has been admitted.
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={},
+            auditors={**ready_auditors, "integrity": {"status": "blocked"}},
+            integrity_summary={"sourceAdmissibilityCounts": {"admitted": 0, "candidate": 2, "rejected": 1}},
+            source_summary={"count": 3},
+        )
+        == "source_gap"
+    )
+
+    # Empty source inventory on an otherwise-clean project still flags source_gap.
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={},
+            auditors=ready_auditors,
+            integrity_summary={},
+            source_summary={"count": 0},
+        )
+        == "source_gap"
+    )
+
+    # Only closeout blocked → closeout_pending (info severity).
+    assert (
+        _classify_blocker_category(
+            pending_approvals=[],
+            reality={},
+            auditors={**ready_auditors, "closeout": {"status": "blocked"}},
+            integrity_summary={},
+            source_summary={"count": 3},
+        )
+        == "closeout_pending"
+    )
+
+
+def test_closeout_certificate_issued_when_closeout_ready_and_phase_closed():
+    from app.services.command_center_service import build_closeout_certificate
+
+    ready = {"session": {"status": "ready"}, "planner": {"status": "ready"},
+             "ontology": {"status": "ready"}, "integrity": {"status": "ready"},
+             "closeout": {"status": "ready"}}
+    cert = build_closeout_certificate(auditors=ready, phase="closed")
+    assert cert["status"] == "issued"
+    assert cert["blockers"] == []
+
+
+def test_closeout_certificate_pending_when_closeout_blocked():
+    from app.services.command_center_service import build_closeout_certificate
+
+    auditors = {"session": {"status": "ready"}, "planner": {"status": "ready"},
+                "ontology": {"status": "ready"}, "integrity": {"status": "ready"},
+                "closeout": {"status": "blocked", "blockers": ["3 non-terminal task(s) remain."]}}
+    cert = build_closeout_certificate(auditors=auditors, phase="synthesis_ready")
+    assert cert["status"] == "pending"
+    assert cert["blockers"] == ["3 non-terminal task(s) remain."]
+    assert "3 non-terminal" in cert["headline"]
+
+
+def test_closeout_certificate_would_issue_when_upstream_blocks():
+    from app.services.command_center_service import build_closeout_certificate
+
+    auditors = {"session": {"status": "ready"}, "planner": {"status": "ready"},
+                "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `stale_on_this_device`."]},
+                "integrity": {"status": "ready"},
+                "closeout": {"status": "ready", "blockers": []}}
+    cert = build_closeout_certificate(auditors=auditors, phase="research_active")
+    assert cert["status"] == "would_issue_if"
+    assert "ontology" in cert["headline"]
 
 
 def test_build_command_center_surfaces_ontology_follow_up_classifications(tmp_path: Path, monkeypatch):

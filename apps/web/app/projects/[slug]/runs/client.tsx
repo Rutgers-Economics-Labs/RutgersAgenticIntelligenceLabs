@@ -5,8 +5,9 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
-import { fetchRunnerSessions, fetchPlannerBoard } from "@/lib/api";
+import { fetchRunnerSessions, fetchPlannerBoard, fetchProjectReality } from "@/lib/api";
 import type { RunnerSession } from "@/lib/types";
+import { SessionSteering } from "@/components/session-steering";
 
 function elapsed(ts: number | undefined): string {
   if (!ts) return "—";
@@ -30,15 +31,18 @@ export function RunsClient() {
 
   const [sessions, setSessions] = useState<RunnerSession[]>([]);
   const [taskMap, setTaskMap] = useState<Record<string, string>>({});
+  const [staleIds, setStaleIds] = useState<Set<string>>(new Set());
+  const [zombieIds, setZombieIds] = useState<Set<string>>(new Set());
   const [, setTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      const [sessData, boardData] = await Promise.allSettled([
+      const [sessData, boardData, realityData] = await Promise.allSettled([
         fetchRunnerSessions(slug),
         fetchPlannerBoard(slug),
+        fetchProjectReality(slug),
       ]);
       if (cancelled) return;
       if (sessData.status === "fulfilled") setSessions(sessData.value.sessions);
@@ -46,6 +50,18 @@ export function RunsClient() {
         const m: Record<string, string> = {};
         for (const t of boardData.value.tasks ?? []) m[t._id] = t.title;
         setTaskMap(m);
+      }
+      if (realityData.status === "fulfilled") {
+        const r: any = realityData.value;
+        const details = r.details ?? {};
+        setStaleIds(new Set([
+          ...(r.staleRuntimeSessionIds ?? []),
+          ...(details.staleRuntimeSessionIds ?? []),
+        ]));
+        setZombieIds(new Set([
+          ...(r.zombieSessionIds ?? []),
+          ...(details.zombieSessionIds ?? []),
+        ]));
       }
     }
 
@@ -88,7 +104,7 @@ export function RunsClient() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "JetBrains Mono, monospace" }}>
           <thead>
             <tr style={{ background: "var(--panel-alt)" }}>
-              {["Role", "Runner", "Status", "Review", "Branch", "Task", "Elapsed", ""].map((h) => (
+              {["Role", "Runner", "Status", "Health", "Review", "Branch", "Task", "Elapsed", "Steering", ""].map((h) => (
                 <th
                   key={h}
                   style={{
@@ -112,7 +128,7 @@ export function RunsClient() {
             {ordered.length === 0 ? (
               <tr>
                 <td
-                  colSpan={8}
+                  colSpan={10}
                   style={{ padding: "40px 12px", textAlign: "center", color: "var(--muted)", borderBottom: "1px solid var(--border)" }}
                 >
                   No agent sessions recorded yet.
@@ -122,6 +138,16 @@ export function RunsClient() {
               ordered.map((session, index) => {
                 const active = ACTIVE.has(session.status);
                 const sid = session._id ?? session.id;
+                const sidStr = sid ? String(sid) : null;
+                const isZombie = sidStr ? zombieIds.has(sidStr) : false;
+                const isStale = !isZombie && sidStr ? staleIds.has(sidStr) : false;
+                const healthState: "stale" | "zombie" | "active" | null = isZombie
+                  ? "zombie"
+                  : isStale
+                    ? "stale"
+                    : active
+                      ? "active"
+                      : null;
                 return (
                   <tr key={sid ?? index} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 500, color: "var(--fg)" }}>
@@ -138,6 +164,9 @@ export function RunsClient() {
                     </td>
                     <td style={{ padding: "10px 12px" }}>
                       <StatusPill value={session.status} />
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      {healthState ? <StatusPill value={healthState} /> : <span style={{ color: "var(--muted)" }}>—</span>}
                     </td>
                     <td style={{ padding: "10px 12px" }}>
                       <StatusPill value={session.review?.reviewStatus} />
@@ -164,6 +193,15 @@ export function RunsClient() {
                       }}
                     >
                       {elapsed(session.startedAt)}
+                    </td>
+                    <td style={{ padding: "10px 12px" }}>
+                      <SessionSteering
+                        slug={slug}
+                        sessionId={sidStr ?? undefined}
+                        runner={session.runner ?? undefined}
+                        status={session.status}
+                        staleness={healthState}
+                      />
                     </td>
                     <td style={{ padding: "10px 12px" }}>
                       {sid && (

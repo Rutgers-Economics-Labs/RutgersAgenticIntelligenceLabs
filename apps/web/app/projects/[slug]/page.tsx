@@ -8,6 +8,8 @@ import { AgentRunCard, CommandShell, InlineStatus, MetricStrip, TaskBoard } from
 import { ApprovalPanel } from "@/components/approval-panel";
 import { ReconcileProjectButton } from "@/components/reconcile-actions";
 import { OperatorOverviewStrip } from "@/components/operator-overview-strip";
+import { TruthComparison } from "@/components/truth-comparison";
+import { CloseoutCertificate } from "@/components/closeout-certificate";
 import { getArtifactTrustDisplay } from "@/lib/integrity-ui";
 
 export default async function ProjectHomePage({
@@ -100,7 +102,13 @@ export default async function ProjectHomePage({
   return (
     <ProjectShell slug={slug} title="Mission Control" section="overview" rightRail={rightRail}>
       {overviewStrip}
-      
+
+      <div style={{ padding: "12px 0" }}>
+        <CloseoutCertificate center={center} />
+      </div>
+
+      <TruthComparison center={center} />
+
       <MetricStrip
         metrics={[
           { label: "Tasks", value: center.taskCounts.total, sub: `${center.taskCounts.byStatus.running ?? 0} running` },

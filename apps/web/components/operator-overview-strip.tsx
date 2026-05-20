@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import type { ReactNode } from "react";
-import type { CommandCenter } from "@/lib/types";
+import type { BlockerCategory, CommandCenter } from "@/lib/types";
 import { StatusPill } from "@/components/status-pill";
 import { FetchDataHydrateButton } from "@/components/fetch-data-hydrate-button";
 
@@ -13,6 +14,56 @@ const AUDITOR_LABELS: Record<string, string> = {
   critic: "Critic",
   closeout: "Closeout",
 };
+
+const CATEGORY_COLORS: Record<BlockerCategory, { fg: string; bg: string; border: string }> = {
+  approval_required: { fg: "#92400e", bg: "rgba(251, 191, 36, 0.18)", border: "rgba(251, 191, 36, 0.55)" },
+  stale_session:     { fg: "#991b1b", bg: "rgba(239, 68, 68, 0.14)",  border: "rgba(239, 68, 68, 0.55)"  },
+  planner_drift:     { fg: "#991b1b", bg: "rgba(239, 68, 68, 0.14)",  border: "rgba(239, 68, 68, 0.55)"  },
+  hydration_failure: { fg: "#9a3412", bg: "rgba(249, 115, 22, 0.16)", border: "rgba(249, 115, 22, 0.55)" },
+  ontology_health:   { fg: "#9a3412", bg: "rgba(249, 115, 22, 0.12)", border: "rgba(249, 115, 22, 0.45)" },
+  integrity_gap:     { fg: "#7c2d12", bg: "rgba(217, 119, 6, 0.15)",  border: "rgba(217, 119, 6, 0.5)"   },
+  source_gap:        { fg: "#7c2d12", bg: "rgba(217, 119, 6, 0.15)",  border: "rgba(217, 119, 6, 0.5)"   },
+  closeout_pending:  { fg: "#1e3a8a", bg: "rgba(59, 130, 246, 0.14)", border: "rgba(59, 130, 246, 0.45)" },
+  clear:             { fg: "#065f46", bg: "rgba(16, 185, 129, 0.14)", border: "rgba(16, 185, 129, 0.45)" },
+};
+
+function BlockerCategoryChip({
+  category,
+  label,
+  fixHref,
+}: {
+  category: BlockerCategory;
+  label: string;
+  fixHref?: string | null;
+}) {
+  const colors = CATEGORY_COLORS[category] ?? CATEGORY_COLORS.clear;
+  const chip = (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        fontFamily: "JetBrains Mono, monospace",
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        textTransform: "uppercase",
+        color: colors.fg,
+        background: colors.bg,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 999,
+      }}
+    >
+      {label}
+    </span>
+  );
+  if (!fixHref || category === "clear") return chip;
+  return (
+    <Link href={fixHref as any} style={{ textDecoration: "none" }}>
+      {chip}
+    </Link>
+  );
+}
 
 export function OperatorOverviewStrip({
   slug,
@@ -44,10 +95,39 @@ export function OperatorOverviewStrip({
                 : "none"
             }
           />
-          <OverviewCell
-            label="Blocking gate"
-            value={center.currentBlocker || center.blockerSummary?.headline || "Clear"}
-          />
+          <div>
+            <div className="rail-label">Blocking gate</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4, maxWidth: 320 }}>
+              <BlockerCategoryChip
+                category={center.blockerSummary?.category ?? "clear"}
+                label={center.blockerSummary?.categoryLabel ?? "Clear"}
+                fixHref={center.blockerSummary?.fixHref}
+              />
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: "var(--fg)",
+                  lineHeight: 1.3,
+                }}
+              >
+                {center.currentBlocker || center.blockerSummary?.headline || "No active blocker."}
+              </div>
+              {center.blockerSummary?.fixHref && center.blockerSummary.category !== "clear" ? (
+                <Link
+                  href={center.blockerSummary.fixHref as any}
+                  style={{
+                    fontFamily: "JetBrains Mono, monospace",
+                    fontSize: 10,
+                    letterSpacing: "0.06em",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Resolve in {center.blockerSummary.fixSection} →
+                </Link>
+              ) : null}
+            </div>
+          </div>
           <OverviewCell label="Ontology" value={hydrationState} />
           <OverviewCell label="Next action" value={center.nextAction} muted />
         </div>
@@ -122,6 +202,10 @@ export function OperatorOverviewStrip({
 }
 
 function derivePhase(center: CommandCenter): string {
+  // Prefer the canonical lifecycle phase from build_command_center, which uses
+  // the shared infer_lifecycle_phase helper. Fall back to a UI-derived
+  // approximation only when the server didn't send one (older API build).
+  if (center.lifecyclePhase) return center.lifecyclePhase;
   if (center.activeSessions.length) return "executing";
   if (center.auditors?.closeout?.status === "ready") return "closeout-ready";
   if (center.auditors?.ontology?.status === "ready") return "ontology-ready";

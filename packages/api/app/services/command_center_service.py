@@ -178,22 +178,6 @@ def list_project_skills(project: dict) -> dict[str, Any]:
             }
         )
 
-    task_hypothesis_overview = []
-    if tasks:
-        boosted_tasks = _boost_ready_tasks_with_hypotheses(project, tasks)
-        for task in boosted_tasks:
-            if not task.get("hypothesisLinks"):
-                continue
-            task_hypothesis_overview.append(
-                {
-                    "taskId": str(task.get("_id") or ""),
-                    "title": str(task.get("title") or ""),
-                    "hypothesisLinks": list(task.get("hypothesisLinks") or []),
-                    "hypothesisScore": float(task.get("hypothesisScore") or 0),
-                    "priorityBoost": int(task.get("_hypothesisPriorityBoost") or 0),
-                }
-            )
-
     return {
         "skills": skill_rows,
         "summary": {
@@ -910,11 +894,248 @@ def _ontology_follow_up_summary(project: dict, tasks: list[dict[str, Any]] | Non
     }
 
 
+LIFECYCLE_PHASES_DEFAULT: tuple[str, ...] = (
+    "brief",
+    "scoped",
+    "source_discovery",
+    "config_ready",
+    "hydration_ready",
+    "hydrated",
+    "ontology_healthy",
+    "research_active",
+    "synthesis_ready",
+    "closed",
+)
+
+
+def infer_lifecycle_phase(
+    root: Path | None,
+    manifest: Any,
+    auditors: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    active_sessions: list[dict[str, Any]],
+) -> str:
+    """Single authoritative lifecycle phase derivation.
+
+    Encodes docs/future-spec-autonomous-platform-roadmap.md#2-lifecycle-contract
+    so the closeout certificate UI, the /phase endpoint, and the command-center
+    payload all read from the same source.
+    """
+    if not root or not root.exists():
+        return "brief"
+
+    phases = list(getattr(getattr(manifest, "lifecycle", None), "phases", None) or LIFECYCLE_PHASES_DEFAULT)
+
+    closeout = auditors.get("closeout") or {}
+    if str(closeout.get("status") or "") == "ready":
+        return "closed"
+
+    ontology = auditors.get("ontology") or {}
+    ont_state = str(ontology.get("state") or ontology.get("stateClassification") or "")
+    if "hydrated" in ont_state or ont_state == "hydrated_on_this_device":
+        if str(ontology.get("status") or "") == "ready":
+            open_tasks = [task for task in (tasks or []) if task.get("status") not in {"done", "cancelled"}]
+            if not open_tasks and not active_sessions:
+                return "synthesis_ready"
+            return "research_active"
+        return "ontology_healthy" if "ontology_healthy" in phases else "hydrated"
+
+    integrity = auditors.get("integrity") or {}
+    if str(integrity.get("status") or "") == "ready":
+        return "hydration_ready"
+
+    sources_path = root / "research_plan" / "state" / "sources.json"
+    if sources_path.exists():
+        try:
+            raw = json.loads(sources_path.read_text(encoding="utf-8"))
+            if isinstance(raw, list) and raw:
+                return "source_discovery"
+        except Exception:
+            pass
+
+    topics_dir = root / "topics"
+    if topics_dir.is_dir() and any(topics_dir.iterdir()):
+        return "scoped"
+
+    return "brief"
+
+
+def build_closeout_certificate(
+    *,
+    auditors: dict[str, Any],
+    phase: str,
+) -> dict[str, Any]:
+    """Surface a top-level certificate state for the UI.
+
+    `status` is one of: `issued`, `pending`, `would_issue_if`.
+    `issued` only fires when phase==closed AND closeout auditor is ready.
+    `pending` is the live blocked state with first blocker as headline.
+    `would_issue_if` is the partial-ready state shown while upstream gates
+    (ontology/integrity) still gate closeout — useful for the operator's
+    end-of-project confidence check.
+    """
+    closeout = auditors.get("closeout") or {}
+    closeout_status = str(closeout.get("status") or "unknown")
+    blockers = [str(item) for item in (closeout.get("blockers") or []) if item]
+
+    if closeout_status == "ready" and phase == "closed":
+        return {
+            "status": "issued",
+            "phase": phase,
+            "headline": "Closeout certificate issued.",
+            "blockers": [],
+        }
+
+    if closeout_status == "blocked" and blockers:
+        return {
+            "status": "pending",
+            "phase": phase,
+            "headline": f"Closeout pending — {blockers[0]}",
+            "blockers": blockers[:6],
+        }
+
+    upstream_blocked = any(
+        str((auditors.get(key) or {}).get("status") or "") == "blocked"
+        for key in ("session", "planner", "ontology", "integrity")
+    )
+    if upstream_blocked:
+        unmet = [
+            key
+            for key in ("session", "planner", "ontology", "integrity")
+            if str((auditors.get(key) or {}).get("status") or "") == "blocked"
+        ]
+        return {
+            "status": "would_issue_if",
+            "phase": phase,
+            "headline": f"Would issue once {', '.join(unmet)} auditor(s) clear.",
+            "blockers": [],
+        }
+
+    return {
+        "status": "pending",
+        "phase": phase,
+        "headline": "Closeout pending — research not yet complete.",
+        "blockers": [],
+    }
+
+
+BLOCKER_CATEGORY_FIX_SECTIONS: dict[str, str] = {
+    "approval_required": "review",
+    "stale_session": "runs",
+    "planner_drift": "planner",
+    "hydration_failure": "ontology",
+    "ontology_health": "ontology",
+    "integrity_gap": "integrity",
+    "source_gap": "sources",
+    "closeout_pending": "review",
+    "clear": "",
+}
+
+BLOCKER_CATEGORY_LABELS: dict[str, str] = {
+    "approval_required": "Approval required",
+    "stale_session": "Stale session",
+    "planner_drift": "Planner drift",
+    "hydration_failure": "Hydration failure",
+    "ontology_health": "Ontology health",
+    "integrity_gap": "Integrity gap",
+    "source_gap": "Source gap",
+    "closeout_pending": "Closeout pending",
+    "clear": "Clear",
+}
+
+BLOCKER_CATEGORY_SEVERITY: dict[str, str] = {
+    "approval_required": "action",
+    "stale_session": "critical",
+    "planner_drift": "critical",
+    "hydration_failure": "critical",
+    "ontology_health": "warning",
+    "integrity_gap": "warning",
+    "source_gap": "warning",
+    "closeout_pending": "info",
+    "clear": "ok",
+}
+
+
+def _classify_blocker_category(
+    *,
+    pending_approvals: list[dict[str, Any]],
+    reality: dict[str, Any],
+    auditors: dict[str, Any],
+    integrity_summary: dict[str, Any] | None,
+    source_summary: dict[str, Any] | None,
+) -> str:
+    """Derive a canonical blocker category from auditor + reality state.
+
+    Categories follow docs/future-spec-ui-and-control-plane.md:86. Order matters:
+    operator-actionable items (approvals, stale sessions, planner drift) win over
+    derived/downstream gates (ontology, integrity, closeout) so the UI never
+    surfaces a downstream failure as the headline when an upstream repair is the
+    real fix.
+    """
+    session = auditors.get("session") or {}
+    planner = auditors.get("planner") or {}
+    ontology = auditors.get("ontology") or {}
+    integrity = auditors.get("integrity") or {}
+    closeout = auditors.get("closeout") or {}
+
+    if pending_approvals:
+        return "approval_required"
+
+    has_stale_session = bool(
+        reality.get("staleRuntimeSessionCount")
+        or reality.get("zombieSessionCount")
+        or reality.get("runningAgentStatusDriftCount")
+        or reality.get("runningAgentRoleDriftCount")
+        or reality.get("runningAgentRunnerDriftCount")
+    )
+    if session.get("status") == "blocked" or has_stale_session:
+        return "stale_session"
+
+    has_planner_drift = bool(
+        reality.get("duplicateTaskFileCount")
+        or reality.get("taskSessionMismatchCount")
+        or reality.get("staleAuditSessionCount")
+        or reality.get("secretPolicyRoleDriftCount")
+        or reality.get("roleConfigAliasDriftCount")
+    )
+    if planner.get("status") == "blocked" or has_planner_drift:
+        return "planner_drift"
+
+    if ontology.get("status") == "blocked":
+        state_class = str(ontology.get("stateClassification") or "")
+        if state_class in {"stale", "not_started", "in_progress", "unavailable"}:
+            return "hydration_failure"
+        return "ontology_health"
+
+    if integrity.get("status") == "blocked":
+        # Source admissibility failures route to source_gap so the UI sends
+        # the operator to the sources plane where the real fix lives.
+        admissibility = (integrity_summary or {}).get("sourceAdmissibilityCounts") or {}
+        rejected = int(admissibility.get("rejected") or 0)
+        candidate = int(admissibility.get("candidate") or 0)
+        if (rejected + candidate) > 0 and int(admissibility.get("admitted") or 0) == 0:
+            return "source_gap"
+        return "integrity_gap"
+
+    source_count = int((source_summary or {}).get("count") or 0)
+    if source_count == 0:
+        return "source_gap"
+
+    if closeout.get("status") == "blocked":
+        return "closeout_pending"
+
+    return "clear"
+
+
 def _build_blocker_summary(
     *,
     latest_audit: dict[str, Any] | None,
     reality: dict[str, Any],
     auditors: dict[str, Any],
+    pending_approvals: list[dict[str, Any]] | None = None,
+    integrity_summary: dict[str, Any] | None = None,
+    source_summary: dict[str, Any] | None = None,
+    project_slug: str | None = None,
 ) -> dict[str, Any]:
     reasons: list[str] = []
     repairs: list[str] = []
@@ -976,9 +1197,37 @@ def _build_blocker_summary(
     if blocked:
         headline = deduped_reasons[0]
 
+    category = _classify_blocker_category(
+        pending_approvals=pending_approvals or [],
+        reality=reality,
+        auditors=auditors,
+        integrity_summary=integrity_summary,
+        source_summary=source_summary,
+    )
+    # If nothing is reported but the classifier still picked something other
+    # than `clear` (e.g. no sources yet on a fresh repo), surface it so the UI
+    # never shows "Clear" while a real upstream gate is open.
+    if not blocked and category != "clear":
+        blocked = True
+        if category == "source_gap":
+            headline = "No sources have been admitted yet."
+            deduped_repairs.insert(0, "Run source discovery to admit at least one source.")
+        else:
+            headline = BLOCKER_CATEGORY_LABELS.get(category, "Pending")
+
+    fix_section = BLOCKER_CATEGORY_FIX_SECTIONS.get(category, "")
+    fix_href = (
+        f"/projects/{project_slug}/{fix_section}" if project_slug and fix_section else None
+    )
+
     return {
         "blocked": blocked,
         "headline": headline,
+        "category": category,
+        "categoryLabel": BLOCKER_CATEGORY_LABELS.get(category, category),
+        "severity": BLOCKER_CATEGORY_SEVERITY.get(category, "info"),
+        "fixSection": fix_section or None,
+        "fixHref": fix_href,
         "reasons": deduped_reasons[:6],
         "repairs": deduped_repairs[:6],
     }
@@ -1105,9 +1354,41 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     recent_audits = list_recent_audits(root)
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
-    blocker_summary = _build_blocker_summary(latest_audit=latest_audit, reality=reality, auditors=auditors)
+    try:
+        from rail.manifest import load_manifest as _load_manifest
+
+        manifest = _load_manifest(root) if (root / "rail.yaml").is_file() else None
+    except Exception:
+        manifest = None
+    lifecycle_phase = infer_lifecycle_phase(root, manifest, auditors, tasks, active_sessions)
+    closeout_certificate = build_closeout_certificate(auditors=auditors, phase=lifecycle_phase)
+    blocker_summary = _build_blocker_summary(
+        latest_audit=latest_audit,
+        reality=reality,
+        auditors=auditors,
+        pending_approvals=pending_approvals,
+        integrity_summary=integrity.get("summary"),
+        source_summary=sources.get("summary"),
+        project_slug=project.get("slug"),
+    )
     repair_queue = _build_repair_queue(tasks)
     recommended_repair_task = _select_recommended_repair_task(repair_queue=repair_queue, auditors=auditors)
+
+    task_hypothesis_overview: list[dict[str, Any]] = []
+    if tasks:
+        boosted_tasks = _boost_ready_tasks_with_hypotheses(project, tasks)
+        for task in boosted_tasks:
+            if not task.get("hypothesisLinks"):
+                continue
+            task_hypothesis_overview.append(
+                {
+                    "taskId": str(task.get("_id") or ""),
+                    "title": str(task.get("title") or ""),
+                    "hypothesisLinks": list(task.get("hypothesisLinks") or []),
+                    "hypothesisScore": float(task.get("hypothesisScore") or 0),
+                    "priorityBoost": int(task.get("_hypothesisPriorityBoost") or 0),
+                }
+            )
 
     status_counts: dict[str, int] = {}
     for task in tasks:
@@ -1151,6 +1432,8 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         "ontologyFollowUps": ontology_follow_ups,
         "auditedTruth": latest_audit,
         "recentAudits": recent_audits,
+        "lifecyclePhase": lifecycle_phase,
+        "closeoutCertificate": closeout_certificate,
         "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
         "blockerSummary": blocker_summary,
         "repairQueue": repair_queue,

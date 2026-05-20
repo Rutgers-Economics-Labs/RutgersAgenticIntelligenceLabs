@@ -1,10 +1,37 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { launchTask } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { fetchRunnerSessions, launchTask } from "@/lib/api";
+import type { RunnerSession } from "@/lib/types";
 import { StatusPill } from "@/components/status-pill";
 import { ApprovalPanel } from "@/components/approval-panel";
+
+/**
+ * Maps the canonical task blockerCategory values used by the planner service
+ * (publish_failure, workflow_contract, verification_failure) and the broader
+ * spec categories into a human-readable "why this status" rationale.
+ *
+ * Falls back through the most informative signal available: the explicit
+ * blocker category, then the latest run summary, then "no recorded reason".
+ */
+function whyThisStatus(task: any): string {
+  if (task.status === "done") return "Acceptance criteria satisfied; task closed.";
+  if (task.status === "cancelled") return "Task was cancelled before completion.";
+  if (task.status === "superseded") return task.supersededBy ? `Superseded by ${task.supersededBy}.` : "Superseded.";
+  const reason = task.blockerCategory;
+  if (reason) {
+    const summary = task.latestRunSummary && task.latestRunSummary !== "Not started" ? ` Last run: ${task.latestRunSummary}.` : "";
+    return `Blocked by ${String(reason).replaceAll("_", " ")}.${summary}`;
+  }
+  if (task.status === "blocked") return task.latestRunSummary || "Blocked — no recorded reason.";
+  if (task.status === "ready") return "Task is queued and ready for an agent to pick up.";
+  if (task.status === "running") return "Agent run in progress.";
+  if (task.status === "awaiting_approval") return "Waiting on operator approval before launch.";
+  if (task.status === "review") return "Worker finished; awaiting reviewer sign-off.";
+  return task.latestRunSummary || "—";
+}
 
 // ── Runner options ─────────────────────────────────────────────────────
 
@@ -106,6 +133,30 @@ function TaskModal({
     typeof c === "string" ? c : JSON.stringify(c)
   );
 
+  const repoPaths: string[] = Array.isArray(task.repoPaths) ? task.repoPaths : [];
+  const rationale = whyThisStatus(task);
+
+  const [linkedSessions, setLinkedSessions] = useState<RunnerSession[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const taskId = task?._id;
+    if (!taskId) return;
+    fetchRunnerSessions(slug)
+      .then((r) => {
+        if (cancelled) return;
+        const matches = (r.sessions ?? []).filter((s) => s.taskId === taskId);
+        // Newest first
+        matches.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+        setLinkedSessions(matches.slice(0, 6));
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedSessions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [slug, task?._id]);
+
   return (
     /* Backdrop */
     <div
@@ -171,6 +222,81 @@ function TaskModal({
               <ul style={{ margin: 0, paddingLeft: 16, fontSize: 12, color: "var(--fg)", lineHeight: 1.7 }}>
                 {criteria.map((c, i) => <li key={i}>{c}</li>)}
               </ul>
+            </div>
+          )}
+
+          {/* Why this status */}
+          <div
+            style={{
+              marginBottom: 16,
+              padding: "8px 10px",
+              background: "var(--panel-alt)",
+              border: "1px solid var(--border)",
+              borderLeft: task.blockerCategory ? "3px solid var(--error, #ef4444)" : "3px solid var(--border-strong)",
+            }}
+          >
+            <div className="rail-label" style={{ marginBottom: 4 }}>Why this status</div>
+            <div style={{ fontSize: 12, color: "var(--fg)", lineHeight: 1.5 }}>{rationale}</div>
+          </div>
+
+          {/* Linked evidence paths */}
+          {repoPaths.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="rail-label" style={{ marginBottom: 6 }}>Linked evidence</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {repoPaths.map((p) => (
+                  <Link
+                    key={p}
+                    href={`/projects/${slug}/repo?path=${encodeURIComponent(p)}`}
+                    style={{
+                      fontFamily: "JetBrains Mono, monospace",
+                      fontSize: 11,
+                      color: "var(--fg)",
+                      padding: "4px 8px",
+                      border: "1px solid var(--border)",
+                      background: "var(--bg)",
+                      textDecoration: "none",
+                      wordBreak: "break-all",
+                    }}
+                  >
+                    {p}
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Linked sessions */}
+          {linkedSessions.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="rail-label" style={{ marginBottom: 6 }}>Linked sessions</div>
+              <div style={{ display: "grid", gap: 4 }}>
+                {linkedSessions.map((s) => {
+                  const sid = s._id ?? s.id;
+                  return (
+                    <Link
+                      key={String(sid)}
+                      href={`/projects/${slug}/runs/${sid}`}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        padding: "4px 8px",
+                        border: "1px solid var(--border)",
+                        background: "var(--bg)",
+                        textDecoration: "none",
+                        fontSize: 11,
+                        color: "var(--fg)",
+                      }}
+                    >
+                      <span style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                        {(s.role ?? "agent").toUpperCase()} · {s.runner ?? "—"}
+                      </span>
+                      <StatusPill value={s.status} />
+                    </Link>
+                  );
+                })}
+              </div>
             </div>
           )}
 
