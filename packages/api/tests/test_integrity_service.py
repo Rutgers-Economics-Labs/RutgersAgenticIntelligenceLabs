@@ -33,8 +33,49 @@ from rail.bootstrap import bootstrap_future_project
 from rail.integrity import ResearchIntegrityRepo
 
 
+def _seed_workflow_scaffolding(root):
+    """Create the workflow files most integrity tests reference in lineage.
+
+    The artifact-lineage normalizer (commit 7ad66b6) strips inputs, scripts,
+    and verification_commands that don't exist on disk, then downgrades the
+    artifact's promotion_state to `draft` because no workflow support
+    remains. Tests written before that hardening land on stale `draft`
+    state and fail in confusing ways (e.g. "verified" transition checks
+    don't fire because the artifact was silently downgraded).
+
+    Centralizing the workflow-file creation here means tests that seed
+    realistic lineage references against `topics/analyze.py`,
+    `topics/labor/notes.md`, `topics/data.csv`, and
+    `scripts/run-verification.sh` see those references survive the
+    normalizer pass.
+    """
+    from pathlib import Path
+
+    root = Path(root)
+    files = {
+        "topics/analyze.py": "# analysis script placeholder\n",
+        "topics/labor/notes.md": "# labor evidence notes placeholder\n",
+        "topics/data.csv": "id,value\n1,100\n",
+        "topics/scripts/transform.py": "# transform script placeholder\n",
+        "topics/analysis.csv": "id,value\n1,100\n",
+        "topics/analysis/analyze.py": "# analysis pipeline placeholder\n",
+        "topics/analysis/notes.md": "# analysis notes placeholder\n",
+        "topics/briefing.md": "# briefing note placeholder\n",
+        "topics/notes.md": "# evidence notes placeholder\n",
+        "topics/lit/synthesis.md": "# literature synthesis placeholder\n",
+        "scripts/run-verification.sh": "#!/usr/bin/env bash\nexit 0\n",
+        "scripts/run-rerun.sh": "#!/usr/bin/env bash\nexit 0\n",
+    }
+    for rel, content in files.items():
+        path = root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(content, encoding="utf-8")
+
+
 def test_load_integrity_indexes_reads_repo_backed_state(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_assumption(
         {
@@ -52,6 +93,7 @@ def test_load_integrity_indexes_reads_repo_backed_state(tmp_path):
 
 def test_summarize_agent_workflow_health_ignores_internal_hydration_metadata_dataset(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Hydration Metadata Workflow Project", slug="hydration-meta-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
@@ -82,6 +124,7 @@ def test_summarize_agent_workflow_health_ignores_internal_hydration_metadata_dat
 
 def test_update_assumption_and_mark_stale_updates_lineage(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -114,6 +157,7 @@ def test_update_assumption_and_mark_stale_updates_lineage(tmp_path):
 
 def test_evaluate_integrity_gate_blocks_promotion_when_claims_need_evidence(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_claims(
         [
@@ -133,6 +177,7 @@ def test_evaluate_integrity_gate_blocks_promotion_when_claims_need_evidence(tmp_
 
 def test_evaluate_integrity_gate_blocks_semantic_suggestion_claims(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_claims(
         [
@@ -166,6 +211,7 @@ def test_evaluate_integrity_gate_blocks_semantic_suggestion_claims(tmp_path):
 
 def test_evaluate_integrity_gate_allows_supported_claim_with_attached_chunk_evidence(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -202,6 +248,7 @@ def test_evaluate_integrity_gate_allows_supported_claim_with_attached_chunk_evid
 
 def test_claim_verification_benchmark_evaluates_supported_and_semantic_claims(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -259,6 +306,7 @@ def test_claim_verification_benchmark_evaluates_supported_and_semantic_claims(tm
 
 def test_artifact_trust_benchmark_flags_missing_lineage_and_stale_source_cases(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -313,6 +361,7 @@ def test_artifact_trust_benchmark_flags_missing_lineage_and_stale_source_cases(t
 
 def test_artifact_trust_benchmark_degrades_after_stale_source_update(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -385,6 +434,7 @@ def test_artifact_trust_benchmark_degrades_after_stale_source_update(tmp_path):
 
 def test_promote_artifact_blocks_when_only_source_is_stale(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -451,6 +501,7 @@ def test_promote_artifact_blocks_when_only_source_is_stale(tmp_path):
 
 def test_reproducibility_benchmark_verifies_rerun_restores_trust_state(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("stable report\n", encoding="utf-8")
@@ -487,6 +538,7 @@ def test_reproducibility_benchmark_verifies_rerun_restores_trust_state(tmp_path)
 
 def test_apply_reproducibility_rerun_clears_stale_when_outputs_match(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("final report\n", encoding="utf-8")
@@ -521,6 +573,7 @@ def test_apply_reproducibility_rerun_clears_stale_when_outputs_match(tmp_path):
 
 def test_apply_reproducibility_rerun_records_diff_and_keeps_artifact_blocked_or_stale(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("final report\n", encoding="utf-8")
@@ -556,6 +609,7 @@ def test_apply_reproducibility_rerun_records_diff_and_keeps_artifact_blocked_or_
 
 def test_apply_reproducibility_rerun_rejects_manual_artifacts(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("manual report\n", encoding="utf-8")
@@ -585,6 +639,7 @@ def test_apply_reproducibility_rerun_rejects_manual_artifacts(tmp_path):
 
 def test_apply_source_freshness_policy_marks_sources_needs_refresh_or_stale(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -620,6 +675,7 @@ def test_apply_source_freshness_policy_marks_sources_needs_refresh_or_stale(tmp_
 
 def test_apply_source_freshness_policy_propagates_stale_dependencies(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -666,6 +722,7 @@ def test_apply_source_freshness_policy_propagates_stale_dependencies(tmp_path):
 
 def test_build_rerun_plan_summarizes_affected_artifacts(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -700,6 +757,7 @@ def test_build_rerun_plan_summarizes_affected_artifacts(tmp_path):
 
 def test_build_rerun_plan_orders_affected_paths_by_dependency(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -740,6 +798,7 @@ def test_build_rerun_plan_orders_affected_paths_by_dependency(tmp_path):
 
 def test_evaluate_integrity_gate_blocks_stale_or_unprovenanced_dataset_sources(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -773,6 +832,7 @@ def test_evaluate_integrity_gate_blocks_stale_or_unprovenanced_dataset_sources(t
 
 def test_evaluate_integrity_gate_blocks_inadmissible_dataset_sources(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -807,6 +867,7 @@ def test_evaluate_integrity_gate_blocks_inadmissible_dataset_sources(tmp_path):
 
 def test_promote_artifact_blocks_dataset_without_provenance(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -842,6 +903,7 @@ def test_promote_artifact_blocks_dataset_without_provenance(tmp_path):
 
 def test_get_claim_detail_returns_sources_artifacts_and_verification_runs(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -904,6 +966,7 @@ def test_get_claim_detail_returns_sources_artifacts_and_verification_runs(tmp_pa
 
 def test_get_stale_dependency_graph_returns_source_claim_artifact_edges(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -952,6 +1015,7 @@ def test_get_stale_dependency_graph_returns_source_claim_artifact_edges(tmp_path
 
 def test_evaluate_integrity_gate_blocks_artifacts_missing_reproducibility_metadata(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
@@ -976,6 +1040,7 @@ def test_evaluate_integrity_gate_blocks_artifacts_missing_reproducibility_metada
 
 def test_summarize_agent_workflow_health_flags_missing_verification_commands(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
@@ -999,6 +1064,7 @@ def test_summarize_agent_workflow_health_flags_missing_verification_commands(tmp
 
 def test_summarize_agent_workflow_health_flags_inadmissible_sources(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1021,6 +1087,7 @@ def test_summarize_agent_workflow_health_flags_inadmissible_sources(tmp_path):
 
 def test_summarize_agent_workflow_health_ignores_manual_artifacts_for_coding_lineage(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1058,6 +1125,7 @@ def test_summarize_agent_workflow_health_ignores_manual_artifacts_for_coding_lin
 
 def test_summarize_agent_workflow_health_flags_dataset_sources_missing_freshness(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1093,6 +1161,7 @@ def test_summarize_agent_workflow_health_flags_dataset_sources_missing_freshness
 
 def test_evaluate_integrity_gate_blocks_unlabeled_manual_artifacts(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1129,6 +1198,7 @@ def test_evaluate_integrity_gate_blocks_unlabeled_manual_artifacts(tmp_path):
 
 def test_evaluate_integrity_gate_allows_explicit_manual_artifact_label(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1165,6 +1235,7 @@ def test_evaluate_integrity_gate_allows_explicit_manual_artifact_label(tmp_path)
 
 def test_evaluate_integrity_gate_blocks_final_artifacts_with_unprovenanced_sources(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1200,6 +1271,7 @@ def test_evaluate_integrity_gate_blocks_final_artifacts_with_unprovenanced_sourc
 
 def test_mark_script_change_and_list_stale_marks_linked_outputs(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
@@ -1228,6 +1300,7 @@ def test_mark_script_change_and_list_stale_marks_linked_outputs(tmp_path):
 
 def test_evaluate_integrity_gate_blocks_artifacts_backed_by_blocked_sources(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1278,6 +1351,7 @@ def test_evaluate_integrity_gate_blocks_artifacts_backed_by_blocked_sources(tmp_
 
 def test_evaluate_integrity_gate_applies_closeout_requirements(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1342,6 +1416,7 @@ def test_evaluate_integrity_gate_applies_closeout_requirements(tmp_path):
 
 def test_contradicting_supported_claims_become_conflicted_and_block_artifacts(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1426,6 +1501,7 @@ def test_contradicting_supported_claims_become_conflicted_and_block_artifacts(tm
 
 def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     (root / "artifacts").mkdir(parents=True, exist_ok=True)
     (root / "topics" / "labor").mkdir(parents=True, exist_ok=True)
@@ -1505,6 +1581,7 @@ def test_promote_artifact_transitions_to_verified_when_gate_passes(tmp_path):
 
 def test_promote_artifact_blocks_report_when_ontology_hydration_duckdb_is_empty(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     (root / "artifacts").mkdir(parents=True, exist_ok=True)
     (root / "topics" / "labor").mkdir(parents=True, exist_ok=True)
@@ -1584,6 +1661,7 @@ def test_promote_artifact_blocks_report_when_ontology_hydration_duckdb_is_empty(
 
 def test_promote_artifact_blocks_report_when_ontology_hydration_is_missing(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1649,6 +1727,7 @@ def test_promote_artifact_blocks_report_when_ontology_hydration_is_missing(tmp_p
 
 def test_get_artifact_detail_returns_linked_records_and_trust_state(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -1731,6 +1810,7 @@ def test_get_artifact_detail_returns_linked_records_and_trust_state(tmp_path):
 
 def test_get_claim_detail_returns_claim_state_summary(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -1799,6 +1879,7 @@ def test_get_claim_detail_returns_claim_state_summary(tmp_path):
 
 def test_get_source_detail_returns_source_state_summary(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -1853,6 +1934,7 @@ def test_get_source_detail_returns_source_state_summary(tmp_path):
 
 def test_list_source_summaries_include_source_state(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -1874,6 +1956,7 @@ def test_list_source_summaries_include_source_state(tmp_path):
 
 def test_list_claim_summaries_include_claim_state(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_claims(
         [
@@ -1895,6 +1978,7 @@ def test_list_claim_summaries_include_claim_state(tmp_path):
 
 def test_get_integrity_dependency_graph_returns_explicit_relationships(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -1973,6 +2057,7 @@ def test_get_integrity_dependency_graph_returns_explicit_relationships(tmp_path)
 
 def test_get_integrity_dependency_graph_exposes_dataset_nodes_and_dependencies(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2024,6 +2109,7 @@ def test_get_integrity_dependency_graph_exposes_dataset_nodes_and_dependencies(t
 
 def test_promote_artifact_returns_blocked_when_gate_fails(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
@@ -2056,7 +2142,11 @@ def test_promote_artifact_returns_blocked_when_gate_fails(tmp_path):
 
 def test_promote_artifact_rejects_invalid_transition(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
+    # Seed inputs/scripts so the artifact-lineage normalizer preserves the
+    # "verified" promotion_state; without them it gets silently downgraded
+    # to "draft" because there's no workflow support evidence.
     repo.write_artifact_lineage(
         [
             {
@@ -2064,6 +2154,9 @@ def test_promote_artifact_rejects_invalid_transition(tmp_path):
                 "artifact_type": "report",
                 "title": "Report",
                 "promotion_state": "verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
             }
         ]
     )
@@ -2074,6 +2167,7 @@ def test_promote_artifact_rejects_invalid_transition(tmp_path):
 
 def test_hybrid_retrieve_returns_explicit_evidence_and_semantic_suggestions(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2152,6 +2246,7 @@ def test_hybrid_retrieve_returns_explicit_evidence_and_semantic_suggestions(tmp_
 
 def test_hybrid_retrieve_excludes_stale_sources_unless_requested(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2188,6 +2283,7 @@ def test_hybrid_retrieve_excludes_stale_sources_unless_requested(tmp_path):
 
 def test_hybrid_retrieve_excludes_blocked_sources_unless_requested(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2224,6 +2320,7 @@ def test_hybrid_retrieve_excludes_blocked_sources_unless_requested(tmp_path):
 
 def test_hybrid_retrieve_supports_date_window_filters(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2269,6 +2366,7 @@ def test_hybrid_retrieve_supports_date_window_filters(tmp_path):
 
 def test_hybrid_retrieve_returns_chunk_results_with_source_metadata(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2300,6 +2398,7 @@ def test_hybrid_retrieve_returns_chunk_results_with_source_metadata(tmp_path):
 
 def test_hybrid_retrieve_marks_attached_chunk_as_explicit_evidence(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2342,6 +2441,7 @@ def test_hybrid_retrieve_marks_attached_chunk_as_explicit_evidence(tmp_path):
 
 def test_hybrid_retrieve_uses_persisted_edges_for_explicit_expansion(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2383,6 +2483,7 @@ def test_hybrid_retrieve_uses_persisted_edges_for_explicit_expansion(tmp_path):
 
 def test_stale_dependency_graph_includes_invalidated_chunks(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2410,6 +2511,7 @@ def test_stale_dependency_graph_includes_invalidated_chunks(tmp_path):
 
 def test_retrieval_benchmark_shows_hybrid_beats_vector_only_on_multi_hop_query(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2473,6 +2575,7 @@ def test_retrieval_benchmark_shows_hybrid_beats_vector_only_on_multi_hop_query(t
 
 def test_default_integrity_benchmark_corpus_exercises_all_evaluation_layers(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
     corpus = seed_default_integrity_benchmark_corpus(root)
 
     retrieval = evaluate_retrieval_benchmark(root, corpus["retrievalCases"], limit=5)
@@ -2497,6 +2600,7 @@ def test_default_integrity_benchmark_corpus_exercises_all_evaluation_layers(tmp_
 
 def test_evaluate_default_integrity_benchmark_corpus_returns_combined_report(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
 
     report = evaluate_default_integrity_benchmark_corpus(root, retrieval_limit=5)
 
