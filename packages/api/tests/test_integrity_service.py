@@ -53,6 +53,12 @@ def _seed_workflow_scaffolding(root):
 
     root = Path(root)
     files = {
+        # Many tests reference artifacts/report.md as a verification target.
+        # The verification-run normalizer strips artifact_paths that don't
+        # exist AND downgrades status from "passed" to "pending" when all
+        # paths are stripped — the file must exist on disk for seeded runs
+        # to survive.
+        "artifacts/report.md": "# stable report placeholder\n",
         "topics/analyze.py": "# analysis script placeholder\n",
         "topics/labor/notes.md": "# labor evidence notes placeholder\n",
         "topics/data.csv": "id,value\n1,100\n",
@@ -65,12 +71,28 @@ def _seed_workflow_scaffolding(root):
         "topics/lit/synthesis.md": "# literature synthesis placeholder\n",
         "scripts/run-verification.sh": "#!/usr/bin/env bash\nexit 0\n",
         "scripts/run-rerun.sh": "#!/usr/bin/env bash\nexit 0\n",
+        # bootstrap creates .ontology/pipelines/ but no default.yaml; many
+        # tests reference it as a script in lineage. Skip onto.duckdb — some
+        # tests open it as a real DuckDB and pre-creating it as an empty
+        # file would corrupt the open call.
+        ".ontology/pipelines/default.yaml": "ontology: .ontology/ontology.yaml\nsteps: []\n",
     }
     for rel, content in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
             path.write_text(content, encoding="utf-8")
+    # Many reproducibility-rerun tests reference `.ontology/onto.duckdb` as an
+    # input. The lineage normalizer strips inputs that don't exist, and the
+    # rerun then reports "missing reproducibility metadata" → failed → the
+    # artifact cascades to `blocked`, breaking subsequent assertions. Create a
+    # valid (empty) DuckDB file so the reference survives. Skip if the test
+    # has already written one.
+    duckdb_path = root / ".ontology" / "onto.duckdb"
+    if not duckdb_path.exists():
+        duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = duckdb.connect(str(duckdb_path))
+        conn.close()
 
 
 def test_load_integrity_indexes_reads_repo_backed_state(tmp_path):
