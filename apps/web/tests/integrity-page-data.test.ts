@@ -8,6 +8,7 @@ test("integrity page view model uses normalized source and artifact state from r
   const response: ProjectIntegrityResponse = {
     indexes: {
       assumptions: [],
+      hypotheses: [],
       sources: [
         {
           source_key: "source-1",
