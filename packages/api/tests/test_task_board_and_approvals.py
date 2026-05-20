@@ -83,6 +83,7 @@ def test_update_task_updates_repo_file(tmp_path: Path):
 
 def test_update_task_can_clear_repo_backed_optional_fields(tmp_path: Path):
     from app.services import planner_service
+    import json as _json
 
     project = _project(tmp_path)
     board = asyncio.run(planner_service.ensure_main_board(project))
@@ -103,6 +104,27 @@ def test_update_task_can_clear_repo_backed_optional_fields(tmp_path: Path):
             project=project,
             blockerCategory="verification_failure",
         )
+    )
+
+    # Non-planner workers can only be marked done once a reviewed post-run
+    # audit clears their blockers (planner_service._enforce_worker_completion_gate).
+    # Seed that audit so the test exercises the field-clearing logic, not
+    # the completion-gate refusal.
+    audit_dir = tmp_path / "research_plan" / "audits"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / f"{task['_id']}.json").write_text(
+        _json.dumps(
+            {
+                "session": {
+                    "taskId": task["_id"],
+                    "reviewStatus": "review",
+                    "status": "completed",
+                },
+                "integrity": {"blocked": False},
+                "currentBlocker": None,
+            }
+        ),
+        encoding="utf-8",
     )
 
     updated = asyncio.run(
@@ -758,6 +780,28 @@ Hydrate the ontology.
             "blockers": [],
             "recommended_next_tasks": [],
         },
+    )
+
+    # Worker tasks can only be reconciled to done once a reviewed post-run
+    # audit clears blockers (planner_service._enforce_worker_completion_gate).
+    # Seed that audit alongside the session state.
+    import json as _json
+
+    audit_dir = tmp_path / "research_plan" / "audits"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "hydrate-task.json").write_text(
+        _json.dumps(
+            {
+                "session": {
+                    "taskId": "hydrate-task",
+                    "reviewStatus": "review",
+                    "status": "completed",
+                },
+                "integrity": {"blocked": False},
+                "currentBlocker": None,
+            }
+        ),
+        encoding="utf-8",
     )
 
     result = asyncio.run(planner_service.reconcile_task_session_states(project))
