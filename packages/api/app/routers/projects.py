@@ -59,6 +59,7 @@ from app.services.safe_publish_service import (
 )
 from app.services.secret_service import decrypt_secret_value, encrypt_secret_value, mask_secret_value
 from app.services.integrity_service import (
+    ALLOWED_PROMOTION_TRANSITIONS,
     apply_source_freshness_policy,
     apply_reproducibility_rerun,
     build_batch_rerun_plan,
@@ -2123,6 +2124,25 @@ async def apply_project_integrity_artifact_promotion(slug: str, data: IntegrityA
         raise HTTPException(
             status_code=422,
             detail="Artifact promotion target state must be one of: exploratory, draft, needs_evidence, partially_verified, verified, stale, blocked.",
+        )
+    # Check artifact existence and transition validity BEFORE auditor state.
+    # If the operator asked to promote something that doesn't exist or
+    # requested an invalid transition, surfacing the auditor's blocker
+    # first is misleading — the real fix is the input, not the auditor.
+    from rail.integrity import ResearchIntegrityRepo
+
+    repo = ResearchIntegrityRepo(root)
+    artifact = next(
+        (item for item in repo.load_artifact_lineage() if item.artifact_path == data.artifactPath),
+        None,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Unknown artifact_path: {data.artifactPath}")
+    allowed_targets = ALLOWED_PROMOTION_TRANSITIONS.get(artifact.promotion_state, set())
+    if data.targetState != artifact.promotion_state and data.targetState not in allowed_targets:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid promotion transition: {artifact.promotion_state} -> {data.targetState}",
         )
     if data.targetState in {"partially_verified", "verified"}:
         auditors = await build_auditor_statuses(project)

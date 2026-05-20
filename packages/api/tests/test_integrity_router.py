@@ -3402,6 +3402,9 @@ async def test_artifact_promotion_endpoint_rejects_invalid_transition(client, co
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
+    # Seed inputs/scripts so the artifact-lineage normalizer preserves
+    # "verified" (without them the artifact silently becomes "draft" and
+    # the verified→draft transition no longer fires).
     repo.write_artifact_lineage(
         [
             {
@@ -3409,6 +3412,9 @@ async def test_artifact_promotion_endpoint_rejects_invalid_transition(client, co
                 "artifact_type": "report",
                 "title": "Report",
                 "promotion_state": "verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
             }
         ]
     )

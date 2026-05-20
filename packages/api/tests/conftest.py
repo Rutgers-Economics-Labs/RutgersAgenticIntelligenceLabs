@@ -53,6 +53,11 @@ def seed_workflow_scaffolding(root):
     stale `draft` artifacts and empty verification-run lookups.
     """
     files = {
+        # Many tests reference artifacts/report.md as a verification target.
+        # The verification-run normalizer strips artifact_paths that don't
+        # exist AND downgrades status from "passed" to "pending" when all
+        # paths are stripped — the file must exist on disk for seeded runs
+        # to survive.
         "artifacts/report.md": "# stable report placeholder\n",
         "topics/analyze.py": "# analysis script placeholder\n",
         "topics/labor/notes.md": "# labor evidence notes placeholder\n",
