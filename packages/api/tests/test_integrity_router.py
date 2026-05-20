@@ -974,6 +974,20 @@ async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifa
     )
     assert claim_resp.status_code == 200
 
+    # Anti-fabrication validator: artifact lineage refs to verification
+    # runs must resolve at write time. Seed run-001 before posting the
+    # artifact.
+    repo = ResearchIntegrityRepo(root)
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
+
     artifact_resp = await client.post(
         "/api/v1/projects/integrity-router-project/integrity/artifacts",
         json={
@@ -991,7 +1005,6 @@ async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifa
     )
     assert artifact_resp.status_code == 200
 
-    repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
             {
@@ -1763,6 +1776,19 @@ async def test_api_acceptance_conflicting_source_blocks_promotion(client, convex
     )
     assert claim_resp.status_code == 200
 
+    # Anti-fabrication validator rejects artifact lineage referencing
+    # unknown verification runs — seed run-001 before posting the artifact.
+    repo = ResearchIntegrityRepo(root)
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
+
     artifact_resp = await client.post(
         "/api/v1/projects/integrity-router-project/integrity/artifacts",
         json={
@@ -1780,7 +1806,6 @@ async def test_api_acceptance_conflicting_source_blocks_promotion(client, convex
     )
     assert artifact_resp.status_code == 200
 
-    repo = ResearchIntegrityRepo(root)
     repo.write_verification_runs(
         [
             {
@@ -2073,6 +2098,19 @@ async def test_record_integrity_source_and_claim_accept_api_payload_shape(client
     assert claim_resp.json()["open_questions"] == ["Does the same pattern hold for neighboring counties?"]
     assert claim_resp.json()["claimState"]["openQuestionCount"] == 1
 
+    # The artifact-lineage validator (anti-fabrication) rejects references
+    # to verification runs that don't exist yet. Seed run-001 directly via
+    # the repo before posting the artifact so the reference resolves.
+    repo = ResearchIntegrityRepo(root)
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
     artifact_resp = await client.post(
         "/api/v1/projects/integrity-router-project/integrity/artifacts",
         json={
@@ -2883,6 +2921,17 @@ async def test_artifact_detail_endpoint_returns_trust_state(client, convex_mock,
             }
         ]
     )
+    # Verification run must be written before the artifact lineage so the
+    # lineage normalizer keeps the verification_runs reference.
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
     repo.write_artifact_lineage(
         [
             {
@@ -2896,15 +2945,6 @@ async def test_artifact_detail_endpoint_returns_trust_state(client, convex_mock,
                 "sources": ["research_plan/state/sources.json#bls-laus"],
                 "claims": ["research_plan/state/claims.json#claim-001"],
                 "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
-            }
-        ]
-    )
-    repo.write_verification_runs(
-        [
-            {
-                "run_id": "run-001",
-                "status": "passed",
-                "artifact_paths": ["artifacts/report.md"],
             }
         ]
     )
@@ -3285,6 +3325,18 @@ async def test_artifact_promotion_endpoint_updates_promotion_state(client, conve
             }
         ]
     )
+    # Write verification run first so the lineage's verification_runs ref
+    # survives the normalizer (commit 7ad66b6 strips refs to keys that
+    # don't exist at write time).
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-001",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            }
+        ]
+    )
     repo.write_artifact_lineage(
         [
             {
@@ -3298,15 +3350,6 @@ async def test_artifact_promotion_endpoint_updates_promotion_state(client, conve
                 "sources": ["research_plan/state/sources.json#bls-laus"],
                 "claims": ["research_plan/state/claims.json#claim-001"],
                 "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
-            }
-        ]
-    )
-    repo.write_verification_runs(
-        [
-            {
-                "run_id": "run-001",
-                "status": "passed",
-                "artifact_paths": ["artifacts/report.md"],
             }
         ]
     )
