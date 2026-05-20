@@ -521,8 +521,16 @@ async def project_reality_snapshot(
         expected_duckdb_path = _preferred_hydration_artifact_path(hydration)
         active_duckdb_path = ontology_artifact_drift["activeDuckdbPath"]
         active_exists = bool(active_duckdb_path and Path(active_duckdb_path).exists())
+        # Synthesized-from-local-disk artifacts come from
+        # hydration_registry_service's local-disk fallback: a project that's
+        # hydrated on disk but doesn't yet have a Convex record. Don't flag
+        # this as drift — the project record is just operational metadata
+        # that hasn't been backfilled, and the spec says Git is the durable
+        # truth (docs/future-spec-autonomous-platform-roadmap.md#1).
+        reusable = hydration.get("reusableArtifact") or {}
+        synthesized_from_local = bool(reusable.get("synthesizedFromLocalDisk"))
         ontology_artifact_drift["expectedDuckdbPath"] = expected_duckdb_path
-        if expected_duckdb_path:
+        if expected_duckdb_path and not synthesized_from_local:
             if not active_duckdb_path:
                 ontology_artifact_drift = {
                     **ontology_artifact_drift,

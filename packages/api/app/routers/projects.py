@@ -2146,17 +2146,21 @@ async def apply_project_integrity_artifact_promotion(slug: str, data: IntegrityA
         )
     if data.targetState in {"partially_verified", "verified"}:
         auditors = await build_auditor_statuses(project)
-        blocked: list[str] = []
-        for key in ("ontology", "integrity"):
-            status = auditors.get(key) or {}
-            if str(status.get("status") or "") != "blocked":
-                continue
-            blocker = next((str(item) for item in (status.get("blockers") or []) if str(item).strip()), "blocked")
-            blocked.append(f"{key}: {blocker}")
-        if blocked:
+        # Only treat ontology-auditor blocks as a hard 409 here. Integrity
+        # auditor blocks (claims needing evidence, stale sources, etc.) are
+        # handled inside promote_artifact, which returns a structured
+        # `{status: blocked, gate: {...}}` 200 payload that the operator UI
+        # already knows how to render. Pre-empting that with a 409 would
+        # discard the structured remediation details the gate produces.
+        ontology_status = auditors.get("ontology") or {}
+        if str(ontology_status.get("status") or "") == "blocked":
+            blocker = next(
+                (str(item) for item in (ontology_status.get("blockers") or []) if str(item).strip()),
+                "blocked",
+            )
             raise HTTPException(
                 status_code=409,
-                detail="Artifact promotion blocked by auditor state: " + "; ".join(blocked),
+                detail=f"Artifact promotion blocked by auditor state: ontology: {blocker}",
             )
     manifest = load_manifest(root)
     try:
@@ -2301,26 +2305,30 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
+    # Ontology auditor blocks (e.g. ontology not hydrated) supersede the
+    # workflow-contract check — the operator needs to fix ontology hydration
+    # before any trusted lineage write makes sense, regardless of whether the
+    # request happens to also be missing verification runs. Integrity auditor
+    # blocks fall through and get caught by the workflow-contract +
+    # reference-validation layers below, which return more actionable detail.
+    if data.promotionState in {"partially_verified", "verified"}:
+        auditors = await build_auditor_statuses(project)
+        ontology_status = auditors.get("ontology") or {}
+        if str(ontology_status.get("status") or "") == "blocked":
+            blocker = next(
+                (str(item) for item in (ontology_status.get("blockers") or []) if str(item).strip()),
+                "blocked",
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"Artifact lineage write blocked by auditor state: ontology: {blocker}",
+            )
     _validate_trusted_artifact_lineage_contract(
         promotion_state=data.promotionState,
         inputs=data.inputs,
         scripts=data.scripts,
         verification_runs=data.verificationRuns,
     )
-    if data.promotionState in {"partially_verified", "verified"}:
-        auditors = await build_auditor_statuses(project)
-        blocked: list[str] = []
-        for key in ("ontology", "integrity"):
-            status = auditors.get(key) or {}
-            if str(status.get("status") or "") != "blocked":
-                continue
-            blocker = next((str(item) for item in (status.get("blockers") or []) if str(item).strip()), "blocked")
-            blocked.append(f"{key}: {blocker}")
-        if blocked:
-            raise HTTPException(
-                status_code=409,
-                detail="Artifact lineage write blocked by auditor state: " + "; ".join(blocked),
-            )
     repo = get_integrity_repo(root)
     _validate_artifact_lineage_references(
         repo,

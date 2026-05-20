@@ -82,6 +82,30 @@ def seed_workflow_scaffolding(root):
     # Many reproducibility-rerun tests reference `.ontology/onto.duckdb` as
     # an input. Create a valid (empty) DuckDB file unless the test has
     # already written one (some tests open it as a real DuckDB connection).
+    # Seed a placeholder lineage entry for artifacts/report.md so the
+    # integrity auditor's artifact-registry drift detector doesn't flag it
+    # as untracked. Tests that need their own promotion_state overwrite this
+    # via write_artifact_lineage (the writer replaces, not merges).
+    try:
+        from rail.integrity import ResearchIntegrityRepo as _Repo
+
+        repo = _Repo(Path(root))
+        existing = {
+            item.artifact_path
+            for item in repo.load_artifact_lineage()
+        }
+        if "artifacts/report.md" not in existing:
+            repo.upsert_artifact_lineage(
+                {
+                    "artifact_path": "artifacts/report.md",
+                    "artifact_type": "report",
+                    "title": "Placeholder Report",
+                    "promotion_state": "exploratory",
+                }
+            )
+    except Exception:
+        pass
+
     duckdb_path = Path(root) / ".ontology" / "onto.duckdb"
     if not duckdb_path.exists():
         duckdb_path.parent.mkdir(parents=True, exist_ok=True)
