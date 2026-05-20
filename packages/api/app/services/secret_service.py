@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from cryptography.fernet import Fernet
 
 from app.core.config import settings
@@ -7,7 +9,11 @@ from app.services.role_runtime_service import ROLE_ALIASES
 
 
 def _fernet() -> Fernet:
-    key = (settings.secret_encryption_key or "").strip()
+    # Read the env var at call time so tests that set RAIL_SECRET_FERNET_KEY
+    # after the app's Settings singleton has already loaded still pick up
+    # the correct value. The Settings field is consulted as a fallback so
+    # production callers — which do load settings first — keep working.
+    key = (os.environ.get("RAIL_SECRET_FERNET_KEY") or settings.secret_encryption_key or "").strip()
     if not key:
         raise ValueError("RAIL_SECRET_FERNET_KEY is not configured")
     return Fernet(key.encode("utf-8"))
