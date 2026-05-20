@@ -178,7 +178,12 @@ def test_launch_preview_and_approval_create_repo_tasks(tmp_path: Path):
     result = asyncio.run(command_center_service.approve_launch_preview(project, payload))
 
     assert preview["skillsToUse"]
-    assert len(result["tasks"]) == 2
+    # build_launch_preview auto-appends a Meta-synthesis closeout task
+    # whenever no preset already produces one, so the two requested presets
+    # become three planner rows (feasibility_memo + econometric_model + meta-synthesis).
+    assert len(result["tasks"]) == 3
+    titles = {task["title"] for task in result["tasks"]}
+    assert any("Meta-synthesis closeout" in title for title in titles)
     assert (tmp_path / "research_plan" / "tasks").is_dir()
     assert (tmp_path / "research_plan" / "approvals").is_dir()
 
@@ -1082,9 +1087,18 @@ def test_build_launch_preview_adds_role_specific_acceptance_contracts(tmp_path: 
         },
     )
 
+    # build_launch_preview appends a Meta-synthesis closeout task with
+    # agentRole=artifact, so the dict-by-role would collapse the
+    # technical_report (also artifact) onto the meta-synthesis row. Look up
+    # the artifact-role row that matches the requested technical_report
+    # preset by title instead.
     tasks = {item["agentRole"]: item for item in preview["agentWorkBreakdown"]}
+    technical_report_task = next(
+        item for item in preview["agentWorkBreakdown"]
+        if item["agentRole"] == "artifact" and "Meta-synthesis" not in item["title"]
+    )
     assert "Facts, interpretations, and open questions are separated explicitly." in tasks["research"]["acceptanceCriteria"]
     assert "Datasets preserve provenance and freshness metadata before handoff." in tasks["data"]["acceptanceCriteria"]
     assert "Analysis outputs declare inputs, scripts, and verification commands." in tasks["coding"]["acceptanceCriteria"]
-    assert "Artifacts preserve evidence links and avoid unsupported trusted narratives." in tasks["artifact"]["acceptanceCriteria"]
+    assert "Artifacts preserve evidence links and avoid unsupported trusted narratives." in technical_report_task["acceptanceCriteria"]
     assert "Missing evidence, stale sources, and reproducibility gaps are reported explicitly." in tasks["health"]["acceptanceCriteria"]
