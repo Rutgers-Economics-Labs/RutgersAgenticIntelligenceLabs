@@ -42,6 +42,76 @@ os.environ.setdefault("RAIL_TRANSFORM_DIR", str(ENGINE_ROOT / "transforms"))
 CONVEX_URL = os.environ["CONVEX_URL"]
 
 
+def seed_workflow_scaffolding(root):
+    """Materialize the workflow files most integrity tests reference in lineage.
+
+    Shared between test_integrity_service.py and test_integrity_router.py.
+    The artifact-lineage normalizer (commit 7ad66b6) strips inputs, scripts,
+    and verification_commands that don't exist on disk; the verification-run
+    normalizer additionally downgrades passed → pending when no artifact
+    paths resolve. Tests written before those hardening commits land on
+    stale `draft` artifacts and empty verification-run lookups.
+    """
+    files = {
+        "artifacts/report.md": "# stable report placeholder\n",
+        "topics/analyze.py": "# analysis script placeholder\n",
+        "topics/labor/notes.md": "# labor evidence notes placeholder\n",
+        "topics/data.csv": "id,value\n1,100\n",
+        "topics/scripts/transform.py": "# transform script placeholder\n",
+        "topics/analysis.csv": "id,value\n1,100\n",
+        "topics/analysis/analyze.py": "# analysis pipeline placeholder\n",
+        "topics/analysis/notes.md": "# analysis notes placeholder\n",
+        "topics/briefing.md": "# briefing note placeholder\n",
+        "topics/notes.md": "# evidence notes placeholder\n",
+        "topics/lit/synthesis.md": "# literature synthesis placeholder\n",
+        "scripts/run-verification.sh": "#!/usr/bin/env bash\nexit 0\n",
+        "scripts/run-rerun.sh": "#!/usr/bin/env bash\nexit 0\n",
+        "pipelines/hydrate.py": "# hydrate pipeline script placeholder\n",
+        ".ontology/pipelines/default.yaml": "ontology: .ontology/ontology.yaml\nsteps: []\n",
+    }
+    for rel, content in files.items():
+        path = Path(root) / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.write_text(content, encoding="utf-8")
+    # Many reproducibility-rerun tests reference `.ontology/onto.duckdb` as
+    # an input. Create a valid (empty) DuckDB file unless the test has
+    # already written one (some tests open it as a real DuckDB connection).
+    duckdb_path = Path(root) / ".ontology" / "onto.duckdb"
+    if not duckdb_path.exists():
+        duckdb_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import duckdb as _duckdb
+
+            conn = _duckdb.connect(str(duckdb_path))
+            # The promotion gate (commit 10aa3fa) requires populated rows.
+            # Seed a tiny table so the gate doesn't block promotion in
+            # router-level integration tests.
+            conn.execute("CREATE TABLE sample (id INTEGER, value INTEGER)")
+            conn.execute("INSERT INTO sample VALUES (1, 100)")
+            conn.close()
+        except Exception:
+            duckdb_path.write_bytes(b"")
+    # Bootstrap sets project.mode=ontology_first by default but doesn't
+    # create the hydration meta file. Write one so the ontology auditor
+    # reports state=hydrated_on_this_device for integration tests.
+    hydration_meta = Path(root) / ".ontology" / ".rail_hydration.json"
+    if not hydration_meta.exists():
+        import json as _json
+
+        hydration_meta.write_text(
+            _json.dumps(
+                {
+                    "pipelineSlug": "default",
+                    "hydrationMode": "full",
+                    "hydratedAt": "2026-05-14T00:00:00Z",
+                    "deviceId": "test-device",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+
 @pytest.fixture
 def convex_mock():
     """

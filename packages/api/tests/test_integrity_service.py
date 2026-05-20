@@ -32,68 +32,7 @@ from rail.manifest import load_manifest
 from rail.bootstrap import bootstrap_future_project
 from rail.integrity import ResearchIntegrityRepo
 
-
-def _seed_workflow_scaffolding(root):
-    """Create the workflow files most integrity tests reference in lineage.
-
-    The artifact-lineage normalizer (commit 7ad66b6) strips inputs, scripts,
-    and verification_commands that don't exist on disk, then downgrades the
-    artifact's promotion_state to `draft` because no workflow support
-    remains. Tests written before that hardening land on stale `draft`
-    state and fail in confusing ways (e.g. "verified" transition checks
-    don't fire because the artifact was silently downgraded).
-
-    Centralizing the workflow-file creation here means tests that seed
-    realistic lineage references against `topics/analyze.py`,
-    `topics/labor/notes.md`, `topics/data.csv`, and
-    `scripts/run-verification.sh` see those references survive the
-    normalizer pass.
-    """
-    from pathlib import Path
-
-    root = Path(root)
-    files = {
-        # Many tests reference artifacts/report.md as a verification target.
-        # The verification-run normalizer strips artifact_paths that don't
-        # exist AND downgrades status from "passed" to "pending" when all
-        # paths are stripped — the file must exist on disk for seeded runs
-        # to survive.
-        "artifacts/report.md": "# stable report placeholder\n",
-        "topics/analyze.py": "# analysis script placeholder\n",
-        "topics/labor/notes.md": "# labor evidence notes placeholder\n",
-        "topics/data.csv": "id,value\n1,100\n",
-        "topics/scripts/transform.py": "# transform script placeholder\n",
-        "pipelines/hydrate.py": "# hydrate pipeline script placeholder\n",
-        "topics/analysis.csv": "id,value\n1,100\n",
-        "topics/analysis/analyze.py": "# analysis pipeline placeholder\n",
-        "topics/analysis/notes.md": "# analysis notes placeholder\n",
-        "topics/briefing.md": "# briefing note placeholder\n",
-        "topics/notes.md": "# evidence notes placeholder\n",
-        "topics/lit/synthesis.md": "# literature synthesis placeholder\n",
-        "scripts/run-verification.sh": "#!/usr/bin/env bash\nexit 0\n",
-        "scripts/run-rerun.sh": "#!/usr/bin/env bash\nexit 0\n",
-        # bootstrap creates .ontology/pipelines/ but no default.yaml; many
-        # tests reference it as a script in lineage. Skip onto.duckdb — some
-        # tests open it as a real DuckDB and pre-creating it as an empty
-        # file would corrupt the open call.
-        ".ontology/pipelines/default.yaml": "ontology: .ontology/ontology.yaml\nsteps: []\n",
-    }
-    for rel, content in files.items():
-        path = root / rel
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            path.write_text(content, encoding="utf-8")
-    # Many reproducibility-rerun tests reference `.ontology/onto.duckdb` as an
-    # input. The lineage normalizer strips inputs that don't exist, and the
-    # rerun then reports "missing reproducibility metadata" → failed → the
-    # artifact cascades to `blocked`, breaking subsequent assertions. Create a
-    # valid (empty) DuckDB file so the reference survives. Skip if the test
-    # has already written one.
-    duckdb_path = root / ".ontology" / "onto.duckdb"
-    if not duckdb_path.exists():
-        duckdb_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = duckdb.connect(str(duckdb_path))
-        conn.close()
+from tests.conftest import seed_workflow_scaffolding as _seed_workflow_scaffolding
 
 
 def test_load_integrity_indexes_reads_repo_backed_state(tmp_path):

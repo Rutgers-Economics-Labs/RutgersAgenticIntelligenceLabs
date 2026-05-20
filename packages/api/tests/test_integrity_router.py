@@ -8,11 +8,14 @@ import pytest
 from rail.bootstrap import bootstrap_future_project
 from rail.integrity import ResearchIntegrityRepo
 
+from tests.conftest import seed_workflow_scaffolding as _seed_workflow_scaffolding
+
 pytestmark = pytest.mark.asyncio
 
 
 async def test_patch_assumption_returns_rerun_plan(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -75,6 +78,7 @@ async def test_patch_assumption_returns_rerun_plan(client, convex_mock, tmp_path
 
 async def test_critic_review_marks_hypothesis_and_writes_conflict(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_claims(
         [
@@ -127,6 +131,7 @@ async def test_critic_review_marks_hypothesis_and_writes_conflict(client, convex
 
 async def test_research_burst_requires_enabled_manifest(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -158,6 +163,7 @@ async def test_research_burst_requires_enabled_manifest(client, convex_mock, tmp
 
 async def test_record_assumption_rejects_unknown_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -195,6 +201,7 @@ async def test_record_assumption_rejects_unknown_status(client, convex_mock, tmp
 
 async def test_patch_assumption_rejects_unknown_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -237,6 +244,7 @@ async def test_patch_assumption_rejects_unknown_status(client, convex_mock, tmp_
 
 async def test_apply_rerun_plan_creates_tasks(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_assumptions(
         [
@@ -291,6 +299,7 @@ async def test_apply_rerun_plan_creates_tasks(client, convex_mock, tmp_path):
 
 async def test_record_claim_rejects_supported_status_without_explicit_evidence(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -329,6 +338,7 @@ async def test_record_claim_rejects_supported_status_without_explicit_evidence(c
 
 async def test_record_claim_rejects_unknown_source_keys(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -368,6 +378,7 @@ async def test_record_claim_rejects_unknown_source_keys(client, convex_mock, tmp
 
 async def test_record_claim_rejects_unknown_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -405,6 +416,7 @@ async def test_record_claim_rejects_unknown_status(client, convex_mock, tmp_path
 
 async def test_record_claim_rejects_unknown_evidence_kind(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -443,6 +455,7 @@ async def test_record_claim_rejects_unknown_evidence_kind(client, convex_mock, t
 
 async def test_record_claim_rejects_unknown_evidence_chunk_keys(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -498,6 +511,7 @@ async def test_record_claim_rejects_unknown_evidence_chunk_keys(client, convex_m
 
 async def test_record_claim_rejects_missing_evidence_paths(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -553,6 +567,7 @@ async def test_record_claim_rejects_missing_evidence_paths(client, convex_mock, 
 
 async def test_record_source_rejects_validated_status_without_admissibility(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -595,6 +610,7 @@ async def test_record_source_rejects_validated_status_without_admissibility(clie
 
 async def test_record_source_rejects_unknown_admissibility_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -633,6 +649,7 @@ async def test_record_source_rejects_unknown_admissibility_status(client, convex
 
 async def test_record_source_rejects_unknown_freshness_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -670,6 +687,7 @@ async def test_record_source_rejects_unknown_freshness_status(client, convex_moc
 
 async def test_record_source_rejects_unknown_quality_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -707,6 +725,7 @@ async def test_record_source_rejects_unknown_quality_status(client, convex_mock,
 
 async def test_record_source_rejects_unknown_impact_level(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -744,6 +763,7 @@ async def test_record_source_rejects_unknown_impact_level(client, convex_mock, t
 
 async def test_record_source_rejects_validated_status_without_provenance(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -787,6 +807,7 @@ async def test_record_source_rejects_validated_status_without_provenance(client,
 
 async def test_record_source_rejects_validated_status_without_freshness(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -830,6 +851,7 @@ async def test_record_source_rejects_validated_status_without_freshness(client, 
 
 async def test_record_source_rejects_validated_derived_status_without_derivation_lineage(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -874,6 +896,7 @@ async def test_record_source_rejects_validated_derived_status_without_derivation
 
 async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifact(client, convex_mock, tmp_path, monkeypatch):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("# Report\n", encoding="utf-8")
@@ -1014,6 +1037,7 @@ async def test_api_acceptance_can_ingest_context_record_claim_and_promote_artifa
 
 async def test_artifact_promotion_rejects_when_ontology_auditor_is_blocked(client, convex_mock, tmp_path, monkeypatch):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("# Report\n", encoding="utf-8")
@@ -1067,6 +1091,7 @@ async def test_artifact_promotion_rejects_when_ontology_auditor_is_blocked(clien
 
 async def test_artifact_lineage_write_rejects_trusted_state_when_ontology_auditor_is_blocked(client, convex_mock, tmp_path, monkeypatch):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1113,6 +1138,7 @@ async def test_artifact_lineage_write_rejects_trusted_state_when_ontology_audito
 
 async def test_artifact_promotion_rejects_unknown_target_state(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1145,6 +1171,7 @@ async def test_artifact_promotion_rejects_unknown_target_state(client, convex_mo
 
 async def test_artifact_lineage_write_rejects_unknown_claim_references(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1183,6 +1210,7 @@ async def test_artifact_lineage_write_rejects_unknown_claim_references(client, c
 
 async def test_artifact_lineage_write_rejects_unknown_assumption_references(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1221,6 +1249,7 @@ async def test_artifact_lineage_write_rejects_unknown_assumption_references(clie
 
 async def test_artifact_lineage_write_rejects_missing_input_paths(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1259,6 +1288,7 @@ async def test_artifact_lineage_write_rejects_missing_input_paths(client, convex
 
 async def test_artifact_lineage_write_rejects_unknown_promotion_state(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1296,6 +1326,7 @@ async def test_artifact_lineage_write_rejects_unknown_promotion_state(client, co
 
 async def test_artifact_lineage_write_rejects_unknown_reproducibility_mode(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1334,6 +1365,7 @@ async def test_artifact_lineage_write_rejects_unknown_reproducibility_mode(clien
 
 async def test_artifact_lineage_write_rejects_missing_script_paths(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     (root / "topics").mkdir(parents=True, exist_ok=True)
     (root / "topics" / "data.csv").write_text("value\n1\n", encoding="utf-8")
 
@@ -1375,6 +1407,7 @@ async def test_artifact_lineage_write_rejects_missing_script_paths(client, conve
 
 async def test_artifact_lineage_write_rejects_unknown_verification_runs(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1413,6 +1446,7 @@ async def test_artifact_lineage_write_rejects_unknown_verification_runs(client, 
 
 async def test_artifact_lineage_write_rejects_verified_state_without_verification_runs(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     (root / "topics").mkdir(parents=True, exist_ok=True)
     (root / "topics" / "data.csv").write_text("value\n1\n", encoding="utf-8")
     (root / "topics" / "analyze.py").write_text("print('ok')\n", encoding="utf-8")
@@ -1457,6 +1491,7 @@ async def test_artifact_lineage_write_rejects_partially_verified_state_without_w
     client, convex_mock, tmp_path
 ):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
@@ -1494,6 +1529,7 @@ async def test_artifact_lineage_write_rejects_partially_verified_state_without_w
 
 async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("stable report\n", encoding="utf-8")
@@ -1659,6 +1695,7 @@ async def test_api_acceptance_source_stale_blocks_then_rerun_restores_trust(clie
 
 async def test_api_acceptance_conflicting_source_blocks_promotion(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("# Report\n", encoding="utf-8")
@@ -1789,6 +1826,7 @@ async def test_api_acceptance_conflicting_source_blocks_promotion(client, convex
 
 async def test_api_acceptance_missing_lineage_prevents_verification(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("# Report\n", encoding="utf-8")
@@ -1888,6 +1926,7 @@ async def test_api_acceptance_missing_lineage_prevents_verification(client, conv
 
 async def test_project_integrity_response_includes_normalized_source_and_trust_state(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -1957,6 +1996,7 @@ async def test_project_integrity_response_includes_normalized_source_and_trust_s
 
 async def test_record_integrity_source_and_claim_accept_api_payload_shape(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2054,6 +2094,7 @@ async def test_record_integrity_source_and_claim_accept_api_payload_shape(client
 
 async def test_patch_source_returns_dependents_and_marks_them_stale(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2131,6 +2172,7 @@ async def test_patch_source_returns_dependents_and_marks_them_stale(client, conv
 
 async def test_patch_source_rejects_validated_status_without_admissibility(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2178,6 +2220,7 @@ async def test_patch_source_rejects_validated_status_without_admissibility(clien
 
 async def test_patch_source_rejects_unknown_admissibility_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2225,6 +2268,7 @@ async def test_patch_source_rejects_unknown_admissibility_status(client, convex_
 
 async def test_patch_source_rejects_unknown_freshness_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2272,6 +2316,7 @@ async def test_patch_source_rejects_unknown_freshness_status(client, convex_mock
 
 async def test_patch_source_rejects_unknown_quality_status(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2319,6 +2364,7 @@ async def test_patch_source_rejects_unknown_quality_status(client, convex_mock, 
 
 async def test_patch_source_rejects_unknown_impact_level(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2366,6 +2412,7 @@ async def test_patch_source_rejects_unknown_impact_level(client, convex_mock, tm
 
 async def test_patch_source_rejects_validated_status_without_provenance(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2413,6 +2460,7 @@ async def test_patch_source_rejects_validated_status_without_provenance(client, 
 
 async def test_patch_source_rejects_validated_status_without_freshness(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2464,6 +2512,7 @@ async def test_patch_source_rejects_validated_status_without_freshness(client, c
 
 async def test_patch_source_rejects_validated_derived_status_without_derivation_lineage(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2516,6 +2565,7 @@ async def test_patch_source_rejects_validated_derived_status_without_derivation_
 
 async def test_claim_detail_and_stale_graph_endpoints_return_dependency_views(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2626,6 +2676,7 @@ async def test_claim_detail_and_stale_graph_endpoints_return_dependency_views(cl
 
 async def test_integrity_retrieval_endpoint_returns_explicit_and_semantic_results(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2752,6 +2803,7 @@ async def test_integrity_retrieval_endpoint_returns_explicit_and_semantic_result
 
 async def test_source_detail_endpoint_returns_chunks(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2800,6 +2852,7 @@ async def test_source_detail_endpoint_returns_chunks(client, convex_mock, tmp_pa
 
 async def test_artifact_detail_endpoint_returns_trust_state(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -2887,6 +2940,7 @@ async def test_artifact_detail_endpoint_returns_trust_state(client, convex_mock,
 
 async def test_integrity_graph_endpoint_returns_explicit_edges(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.upsert_source(
         {
@@ -2961,6 +3015,7 @@ async def test_integrity_graph_endpoint_returns_explicit_edges(client, convex_mo
 
 async def test_integrity_graph_endpoint_exposes_dataset_nodes(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -3029,6 +3084,7 @@ async def test_integrity_graph_endpoint_exposes_dataset_nodes(client, convex_moc
 
 async def test_reproducibility_rerun_endpoint_updates_verification_and_artifact_state(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     artifact_path = root / "artifacts" / "report.md"
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     artifact_path.write_text("stable report\n", encoding="utf-8")
@@ -3082,6 +3138,7 @@ async def test_reproducibility_rerun_endpoint_updates_verification_and_artifact_
 
 async def test_freshness_evaluate_endpoint_applies_policy_and_returns_changes(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -3130,6 +3187,7 @@ async def test_freshness_evaluate_endpoint_applies_policy_and_returns_changes(cl
 
 async def test_integrity_retrieval_endpoint_accepts_date_filters(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -3196,6 +3254,7 @@ async def test_integrity_retrieval_endpoint_accepts_date_filters(client, convex_
 
 async def test_artifact_promotion_endpoint_updates_promotion_state(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_sources(
         [
@@ -3284,6 +3343,7 @@ async def test_artifact_promotion_endpoint_updates_promotion_state(client, conve
 
 async def test_artifact_promotion_endpoint_returns_blocked_when_gate_fails(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
@@ -3340,6 +3400,7 @@ async def test_artifact_promotion_endpoint_returns_blocked_when_gate_fails(clien
 
 async def test_artifact_promotion_endpoint_rejects_invalid_transition(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
     repo.write_artifact_lineage(
         [
@@ -3382,6 +3443,7 @@ async def test_artifact_promotion_endpoint_rejects_invalid_transition(client, co
 
 async def test_artifact_promotion_endpoint_returns_404_for_missing_artifact(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
