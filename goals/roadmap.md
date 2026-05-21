@@ -109,4 +109,5 @@ Do not call the platform autonomous until at least several projects of varying t
 - `docs/future-spec-agent-architecture.md` — agent roles and contracts
 - `docs/future-spec-rail-yaml-schema.md` — manifest schema
 - `docs/future-spec-auditor-agents.md` — auditor agent contracts
+- `docs/future-spec-background-health-governance.md` — background auditing, maintenance lanes, and promotion-only blocking
 - `docs/future-spec-gap-from-original-design.md` — what diverged from the original design
