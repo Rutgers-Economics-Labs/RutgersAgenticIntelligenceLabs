@@ -75,22 +75,29 @@ In other words: the *contract spine* works in the wild. The *control plane* arou
 
 ## Real bugs uncovered during this run
 
-### 1. `rail-mcp` server binary is not installed
+### 1. `rail-mcp` server binary is not installed — **FIXED 2026-05-22**
 
-The auto-written `.mcp.json` references a `rail-mcp` command, but reading the live claude_code debug log:
+Earlier the auto-written `.mcp.json` referenced a `rail-mcp` command that wasn't installed:
 
 ```
 MCP server "rail": Connection failed after 16ms: Executable not found in $PATH: "rail-mcp"
 ```
 
-So Phase 3's MCP injection writes the right config file, claude_code attempts to load it, and the load fails silently because the binary doesn't exist. **The `rail.ask`, `rail.list_project_state`, `rail.get_work_order`, and `rail.submit_session_result` tools are therefore unavailable to runners right now.**
+Two fixes shipped on `feat/kill-switch-and-followups`:
 
-To fix:
-- Either ship `rail-mcp` as part of the `rail-py` package's installed entry points
-- Or point `.mcp.json` at `python -m rail.mcp` instead of a standalone binary
-- Or generate a per-session venv shim
+1. `make install-mcp` now pip-installs `packages/mcp-server` editable, so the `rail-mcp` entry point lands on PATH.  `make install` includes it.
+2. `app/runners/mcp_injector.py` now falls back to `python -m rail_mcp.server` using `sys.executable` when `rail-mcp` isn't on PATH — so the platform works even if the operator skips the install step.
 
-Until this lands, every Phase 4 Q&A protocol test against a real CLI will silently degrade to "the runner has no way to ask questions."
+Re-running the smoke test confirms:
+
+```
+MCP server "rail": Successfully connected (transport: stdio) in 417ms
+MCP server "rail": Connection established with capabilities:
+  {"hasTools":true,"hasPrompts":true,"hasResources":true,
+   "serverVersion":{"name":"RAIL Platform","version":"1.9.4"}}
+```
+
+Phase 4 Q&A is now genuinely live against real CLIs — `rail.ask`, `rail.list_project_state`, `rail.get_work_order`, `rail.submit_session_result` are all exposed to runners during a session.
 
 ### 2. `ClaudeCodeRunner.get_session()` returns `status="queued"` indefinitely
 

@@ -1,15 +1,37 @@
 """
 MCP Injector — handles per-session MCP configuration generation.
 
-Provides a mechanism to inject local rail-mcp server tool access into 
-launched runner processes (like Claude Code, Cursor, etc.) without 
+Provides a mechanism to inject local rail-mcp server tool access into
+launched runner processes (like Claude Code, Cursor, etc.) without
 mutating the user's global MCP config.
 """
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 from pathlib import Path
 from typing import Any
+
+
+def _resolve_mcp_command() -> tuple[str, list[str]]:
+    """Resolve how to spawn the rail-mcp server.
+
+    Prefer the installed ``rail-mcp`` entry point (shipped by
+    packages/mcp-server). If that's not on PATH — common when the operator
+    forgot ``make install-mcp`` — fall back to ``python -m rail_mcp.server``
+    using the *current* interpreter so the spawned process inherits the venv
+    that the API is running in.
+
+    Returns ``(command, args_prefix)``. The injector still appends its own
+    transport args after the prefix.
+    """
+    if shutil.which("rail-mcp"):
+        return "rail-mcp", []
+    # Fall back to module form. sys.executable is the venv's python; this
+    # works in dev (editable install of rail-mcp) and in any deployment
+    # where the package is importable.
+    return sys.executable, ["-m", "rail_mcp.server"]
 
 
 def inject_mcp_config(
@@ -27,7 +49,7 @@ def inject_mcp_config(
     Returns the path to the generated config.
     """
     mcp_config_path = workspace_root / ".mcp.json"
-    
+
     # Environment variables for the mcp-server process
     env = {
         "RAIL_PROJECT": project_slug,
@@ -43,14 +65,13 @@ def inject_mcp_config(
         env["RAIL_LOCAL"] = "1"
         env["RAIL_PATH"] = str(workspace_root)
 
-    # Note: This assumes 'rail-mcp' is on the PATH and points to 
-    # the entrypoint in packages/mcp-server/rail_mcp/server.py
+    command, prefix_args = _resolve_mcp_command()
     config = {
         "mcpServers": {
             "rail": {
-                "command": "rail-mcp",
-                "args": ["--transport", "stdio"],
-                "env": env
+                "command": command,
+                "args": [*prefix_args, "--transport", "stdio"],
+                "env": env,
             }
         }
     }
