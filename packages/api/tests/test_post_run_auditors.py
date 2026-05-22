@@ -115,8 +115,19 @@ async def test_write_post_run_audit_includes_auditors_key(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_write_post_run_audit_auditors_key_empty_dict_on_failure(tmp_path):
-    """Auditor failure must not crash the audit write — auditors key is empty dict."""
+async def test_write_post_run_audit_skips_when_auditors_snapshot_fails(tmp_path):
+    """Transient build_auditor_statuses failures must NOT produce a half-baked
+    audit on disk.
+
+    Original autopilot bug: build_auditor_statuses would fail transiently,
+    audit_service would silently catch and write an audit with auditors={};
+    the next iteration would succeed with auditors={...full...}; both audits
+    committed because their payload hashes differed, producing N audit
+    commits for the same session.
+
+    Fix: when the auditors snapshot is empty, skip the write entirely.
+    The next autopilot tick retries.
+    """
     from app.services.audit_service import write_post_run_audit
 
     project, project_root, session_root = _setup_project(tmp_path)
@@ -135,7 +146,11 @@ async def test_write_post_run_audit_auditors_key_empty_dict_on_failure(tmp_path)
             changed_files=[],
         )
 
-    assert result["payload"]["auditors"] == {}
+    assert result["skipped"] is True
+    assert result["reason"] == "empty_auditors"
+    assert result["payload"] is None
+    # No audit JSON should exist on disk.
+    assert not Path(result["jsonPath"]).exists()
 
 
 @pytest.mark.asyncio
@@ -194,7 +209,7 @@ async def test_write_post_run_audit_skips_identical_payload(tmp_path):
     with (
         patch("app.services.audit_service.planner_service.ensure_main_board", new_callable=AsyncMock, return_value={"_id": "main"}),
         patch("app.services.audit_service.planner_service.list_tasks", new_callable=AsyncMock, return_value=[]),
-        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value={}),
+        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value={"session": {"status": "ready", "blockers": []}, "planner": {"status": "ready", "blockers": []}, "ontology": {"status": "ready", "blockers": []}, "integrity": {"status": "ready", "blockers": []}, "closeout": {"status": "ready", "blockers": []}}),
     ):
         first = await write_post_run_audit(
             project=project,
@@ -254,7 +269,7 @@ async def test_write_post_run_audit_does_not_recommit_existing_session_audit(tmp
     with (
         patch("app.services.audit_service.planner_service.ensure_main_board", new_callable=AsyncMock, return_value={"_id": "main"}),
         patch("app.services.audit_service.planner_service.list_tasks", new_callable=AsyncMock, return_value=[]),
-        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value={}),
+        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value={"session": {"status": "ready", "blockers": []}, "planner": {"status": "ready", "blockers": []}, "ontology": {"status": "ready", "blockers": []}, "integrity": {"status": "ready", "blockers": []}, "closeout": {"status": "ready", "blockers": []}}),
     ):
         await write_post_run_audit(
             project=project,

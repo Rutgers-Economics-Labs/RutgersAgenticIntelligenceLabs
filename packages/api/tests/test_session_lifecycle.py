@@ -99,11 +99,21 @@ def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path, monke
         workspace_branch=workspace_branch,
         review_status="pending",
     )
+    async def _passing_auditors(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _passing_auditors)
+
     asyncio.run(
         session_lifecycle._finalize_workspace_review(
             convex_session_id="sess-1",
             session={"role": "coding"},
-            project={"slug": "workspace-project", "defaultBranch": "main"},
+            project={"_id": "proj-workspace", "slug": "workspace-project", "defaultBranch": "main"},
             project_root=tmp_path,
             session_root=session_root,
             base_branch="main",

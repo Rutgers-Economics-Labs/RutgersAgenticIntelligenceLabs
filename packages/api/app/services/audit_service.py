@@ -415,11 +415,38 @@ async def write_post_run_audit(
     planner = _planner_snapshot(tasks)
 
     auditors: dict[str, Any] = {}
+    auditors_failed_reason: str | None = None
     try:
         from app.services.auditor_service import build_auditor_statuses
         auditors = await build_auditor_statuses(project, tasks=tasks)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Log the actual cause — silently swallowing it produced the audit-churn
+        # bug where consecutive audit writes alternated between auditors={}
+        # (transient failure) and auditors={...full...} (next iteration), each
+        # committing because the payload hashes differed.
+        auditors_failed_reason = f"{type(exc).__name__}: {exc}"
+        _log.warning(
+            "write_post_run_audit: build_auditor_statuses failed for session=%s — %s",
+            session_id, auditors_failed_reason,
+        )
+
+    if not auditors:
+        # Don't persist a half-baked audit when the auditors snapshot is empty.
+        # The autopilot's next tick will retry; writing a partial here just
+        # produces audit-commit churn when it later succeeds. The session
+        # state on disk is unchanged; only the .json/.md sidecar is skipped.
+        _log.info(
+            "write_post_run_audit skipped (empty auditors snapshot) session=%s%s",
+            session_id,
+            f" — last_error={auditors_failed_reason}" if auditors_failed_reason else "",
+        )
+        return {
+            "jsonPath": str(_audit_root(project_root) / f"{session_id}.json"),
+            "markdownPath": str(_audit_root(project_root) / f"{session_id}.md"),
+            "payload": None,
+            "skipped": True,
+            "reason": "empty_auditors",
+        }
 
     payload = {
         "generatedAt": session_files.utc_now_iso(),
