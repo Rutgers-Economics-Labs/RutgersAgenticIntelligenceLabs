@@ -31,15 +31,23 @@ def apply_session_results(project_root: Path, result: SessionResult) -> dict[str
     if result.claims:
         repo = integrity_service.get_integrity_repo(project_root)
         for claim in result.claims:
-            # Convert ClaimCandidate to ClaimRecord-like dict for integrity_service
-            # Note: integrity_service.upsert_claim expects a dict
+            # Map granular TrustState to legacy ClaimStatus literals
+            status_map = {
+                TrustState.CANDIDATE: "draft",
+                TrustState.VERIFIED: "supported",
+                TrustState.REJECTED: "unsupported",
+                TrustState.SUPERSEDED: "superseded",
+                TrustState.PARTIALLY_VERIFIED: "supported" # Fallback
+            }
+            legacy_status = status_map.get(claim.status, "draft")
+
             repo.upsert_claim({
                 "claim_key": claim.claim_id,
                 "claim_text": claim.text,
-                "status": claim.status.value,
+                "status": legacy_status,
                 "evidence_paths": claim.evidence_refs,
                 "confidence": claim.confidence,
-                "notes": claim.notes
+                # 'notes' and 'candidate' status are not supported by rail-py yet
             })
             updates["claims_added"] += 1
 
