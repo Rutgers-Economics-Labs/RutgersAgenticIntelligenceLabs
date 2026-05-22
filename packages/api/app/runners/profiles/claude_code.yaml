@@ -1,0 +1,51 @@
+# Runner Profile: Claude Code (Anthropic CLI)
+#
+# Reference runner for the protocol. First-class MCP support, long context,
+# strong at synthesis and long artifacts. Mid-run steering is relaunch-only
+# in headless -p mode but native in interactive mode; RAIL uses -p so we
+# declare native_or_relaunch and document that native steering requires
+# wrapping a different invocation path.
+name: claude_code
+adapter: local_cli
+default_command: claude
+status: certified
+
+execution:
+  mode: local_cli
+  supports_streaming: "yes"
+  supports_resume: configurable    # --resume / --continue flags available
+  supports_midrun_messages: false  # not in -p one-shot mode
+  supports_native_approval: false
+  supports_cancel: true
+  supports_mcp: "yes"
+  supports_native_questions: "yes"  # via rail.ask MCP tool (Phase 4)
+  steering_mode: native_or_relaunch
+
+capabilities:
+  edit_files: "yes"
+  run_shell: "yes"
+  fetch_remote_data: "yes"
+  query_duckdb: "yes"            # via Bash + duckdb CLI or MCP
+  execute_python: "yes"
+  use_mcp_tools: "yes"
+  browse_web: "configurable"     # WebSearch/WebFetch tools, may be disabled
+  extract_pdf_tables: "yes"      # Read tool handles PDFs natively
+  write_long_artifacts: "yes"
+  handle_large_context: "yes"    # 200K context window
+  write_structured_output: "yes"
+
+task_affinity:
+  data_ingestion: 0.8
+  analysis: 0.85
+  source_discovery: 0.75
+  artifact_writing: 0.95
+  health_repair: 0.8
+  claim_extraction: 0.85
+  verification: 0.8
+
+notes: |
+  Reference runner. Strong default for any task that benefits from long
+  context, structured synthesis, or first-class MCP tool use. Mid-run
+  steering through -p mode requires session relaunch with prior
+  session_result.json as context; native steering needs a different
+  invocation shape (out of scope for Phase 1).

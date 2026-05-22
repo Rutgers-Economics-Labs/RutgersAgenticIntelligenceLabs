@@ -81,12 +81,19 @@ export function OperatorOverviewStrip({
     auditors.ontology?.state === "not_applicable"
       ? "research-first"
       : auditors.ontology?.state ?? "unknown";
+  const goalPhase = center.goal?.phase;
+  const goalConfidence = center.goal?.dashboard?.autonomyConfidence;
+  const goalBlocker = center.goal?.currentBlocker;
 
   return (
     <div className="operator-overview-root">
       <div className="operator-strip-row">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 24, flex: 1 }}>
-          <OverviewCell label="Phase" value={derivePhase(center)} />
+          <OverviewCell label="Phase" value={goalPhase ?? derivePhase(center)} />
+          <OverviewCell
+            label="Confidence"
+            value={typeof goalConfidence === "number" ? `${Math.round(goalConfidence * 100)}%` : "unknown"}
+          />
           <OverviewCell
             label="Active worker"
             value={
@@ -111,7 +118,7 @@ export function OperatorOverviewStrip({
                   lineHeight: 1.3,
                 }}
               >
-                {center.currentBlocker || center.blockerSummary?.headline || "No active blocker."}
+                {goalBlocker || center.currentBlocker || center.blockerSummary?.headline || "No active blocker."}
               </div>
               {center.blockerSummary?.fixHref && center.blockerSummary.category !== "clear" ? (
                 <Link
@@ -202,6 +209,7 @@ export function OperatorOverviewStrip({
 }
 
 function derivePhase(center: CommandCenter): string {
+  if (center.goal?.phase) return center.goal.phase;
   // Prefer the canonical lifecycle phase from build_command_center, which uses
   // the shared infer_lifecycle_phase helper. Fall back to a UI-derived
   // approximation only when the server didn't send one (older API build).

@@ -9,7 +9,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 from pathlib import Path
 
-from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks, Path as FPath
 from pydantic import BaseModel
 from rail.bootstrap import bootstrap_future_project
 from rail.manifest import ManifestValidationError, load_manifest
@@ -22,6 +22,7 @@ from app.services import planner_runtime, planner_service
 from app.services import running_agent_service
 from app.services import session_files
 from app.services import command_center_service
+from app.services import goal_service
 from app.services import reconciliation_service
 from app.services.auditor_service import build_auditor_statuses
 from app.services.device_service import get_device_metadata
@@ -164,6 +165,23 @@ class PlannerTaskRequest(BaseModel):
 class AutopilotRequest(BaseModel):
     enabled: bool
     autoApprove: bool = False
+
+
+class GoalSpendRequest(BaseModel):
+    timeMinutes: int | None = None
+    tokens: int | None = None
+    apiCostUsd: float | None = None
+    retries: int | None = None
+
+
+class GoalContractRequest(BaseModel):
+    objective: str
+    successCriteria: list[str]
+    requiredEvidence: list[str] = []
+    forbiddenShortcuts: list[str] = []
+    escalationPolicy: list[str] = []
+    allowedSpend: GoalSpendRequest = GoalSpendRequest()
+    launchAutopilot: bool = False
 
 class WorkerUpdateRequest(BaseModel):
     message: str
@@ -1053,6 +1071,86 @@ def _git_create_initial_commit(
     return head.stdout.strip()
 
 
+def _git_set_remote(path: Path, remote_name: str, remote_url: str) -> None:
+    current = subprocess.run(
+        ["git", "-C", str(path), "remote", "get-url", remote_name],
+        capture_output=True,
+        text=True,
+    )
+    if current.returncode == 0:
+        if current.stdout.strip() == remote_url:
+            return
+        result = subprocess.run(
+            ["git", "-C", str(path), "remote", "set-url", remote_name, remote_url],
+            capture_output=True,
+            text=True,
+        )
+    else:
+        result = subprocess.run(
+            ["git", "-C", str(path), "remote", "add", remote_name, remote_url],
+            capture_output=True,
+            text=True,
+        )
+    if result.returncode != 0:
+        raise RuntimeError(f"git remote configuration failed: {result.stderr or result.stdout}")
+
+
+def _collect_repo_text_files(repo_root: Path) -> list[dict[str, str]]:
+    repo_files: list[dict[str, str]] = []
+    for file_path in repo_root.rglob("*"):
+        if not file_path.is_file() or ".git" in file_path.parts:
+            continue
+        rel = file_path.relative_to(repo_root).as_posix()
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        repo_files.append({"path": rel, "content": content})
+    return repo_files
+
+
+async def _ensure_project_github_repo(
+    *,
+    slug: str,
+    description: str,
+    git_repo_url: str | None,
+) -> tuple[str, str | None]:
+    resolved_url = (git_repo_url or "").strip()
+    if resolved_url:
+        return resolved_url, infer_github_repo(resolved_url)
+
+    short_slug = slug[:40].rstrip("-")
+    repo_name = f"RAIL-{short_slug}"
+    created = await GitHubService().create_repo(
+        name=repo_name,
+        description=description,
+        private=True,
+    )
+    resolved_url = str(created.get("html_url") or created.get("clone_url") or "")
+    if not resolved_url and created.get("full_name"):
+        resolved_url = f"https://github.com/{created['full_name']}"
+    return resolved_url, infer_github_repo(resolved_url)
+
+
+async def _push_initial_repo_snapshot_via_github_app(
+    *,
+    repo_root: Path,
+    git_repo: str | None,
+    git_repo_url: str | None,
+    default_branch: str,
+    message: str,
+) -> list[dict[str, Any]]:
+    if not git_repo:
+        return []
+    if git_repo_url and (repo_root / ".git").exists():
+        _git_set_remote(repo_root, "origin", git_repo_url)
+    repo_files = _collect_repo_text_files(repo_root)
+    if not repo_files:
+        return []
+    result = await GitHubService().commit_files(git_repo, default_branch, repo_files, message)
+    return [result]
+
+
 def _relative_to_project(project_root: Path | None, path: Path | None) -> str | None:
     if project_root is None or path is None or not path.exists():
         return None
@@ -1079,6 +1177,8 @@ def _session_review_model(project: dict, session: dict) -> dict:
 @router.post("/")
 async def create_project(data: CreateProjectRequest):
     project_data = data.model_dump()
+    project_root = Path(data.localRepoPath).expanduser().resolve() if data.localRepoPath else None
+    git_repo_url = data.gitRepoUrl
 
     # Process ontologyTemplates if provided
     ontology_templates = project_data.pop("ontologyTemplates", None)
@@ -1109,6 +1209,34 @@ async def create_project(data: CreateProjectRequest):
         })
         project_data["ontologyConfigSlug"] = config_slug
         project_data["ontologyTemplates"] = ontology_templates
+
+    if project_root is not None and project_root.exists():
+        try:
+            git_repo_url, git_repo = await _ensure_project_github_repo(
+                slug=data.slug,
+                description=data.description or f"RAIL project: {data.name}",
+                git_repo_url=git_repo_url,
+            )
+            project_data["gitRepoUrl"] = git_repo_url
+            project_data["github"] = git_repo or ""
+            _git_init(project_root)
+            _git_create_initial_commit(
+                project_root,
+                message="chore: initial project scaffold from RAIL project create",
+            )
+            await _push_initial_repo_snapshot_via_github_app(
+                repo_root=project_root,
+                git_repo=git_repo,
+                git_repo_url=git_repo_url,
+                default_branch="main",
+                message="chore: initial project scaffold from RAIL project create",
+            )
+        except Exception as exc:
+            logger.error("Automatic GitHub bootstrap failed for project '%s': %s", data.slug, exc)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Automatic GitHub bootstrap failed: {exc}",
+            )
 
     project_id = await convex.mutation("projects:create", project_data)
     return await convex.query("projects:getBySlug", {"slug": data.slug})
@@ -1194,6 +1322,24 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
     except ManifestValidationError as exc:
         raise HTTPException(status_code=422, detail=manifest_validation_http_detail(exc)) from exc
     manifest_slug = manifest.project.slug
+    git_repo_url, git_repo = await _ensure_project_github_repo(
+        slug=manifest_slug,
+        description=data.description or "Future RAIL project",
+        git_repo_url=data.gitRepoUrl,
+    )
+    _git_init(root, default_branch=data.defaultBranch)
+    _git_create_initial_commit(
+        root,
+        default_branch=data.defaultBranch,
+        message="chore: initial future RAIL project scaffold",
+    )
+    await _push_initial_repo_snapshot_via_github_app(
+        repo_root=root,
+        git_repo=git_repo,
+        git_repo_url=git_repo_url,
+        default_branch=data.defaultBranch,
+        message="chore: initial future RAIL project scaffold",
+    )
     project_id = await convex.mutation(
         "projects:create",
         {
@@ -1201,9 +1347,11 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
             "slug": manifest_slug,
             "description": data.description or "Future RAIL project",
             "approach": "ontology-first",
-            "gitRepoUrl": data.gitRepoUrl,
+            "gitRepoUrl": git_repo_url,
+            "github": git_repo or "",
             "localRepoPath": str(root),
             "manifestPath": "rail.yaml",
+            "defaultBranch": data.defaultBranch,
         },
     )
     project = await convex.query("projects:getById", {"projectId": project_id})
@@ -1246,27 +1394,18 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     write_repo_files(repo_root, preview["repoFiles"])
     _git_init(repo_root, default_branch=data.defaultBranch)
 
-    # Auto-create GitHub repo if no URL provided
-    git_repo_url = data.gitRepoUrl
-    if not git_repo_url:
-        try:
-            # Use a short repo name: RAIL- + first 40 chars of slug (trimmed at word boundary)
-            short_slug = slug[:40].rstrip("-")
-            repo_name = f"RAIL-{short_slug}"
-            created = await GitHubService().create_repo(
-                name=repo_name,
-                description=project_meta.get("description", ""),
-                private=True,
-            )
-            git_repo_url = f"https://github.com/{created['full_name']}"
-        except Exception as exc:
-            logger.error("GitHub repo creation failed for project '%s': %s", slug, exc)
-            raise HTTPException(
-                status_code=502,
-                detail=f"GitHub repo creation failed: {exc}. Check that the GitHub App has 'administration: write' permission on the org.",
-            )
-
-    git_repo = infer_github_repo(git_repo_url) if git_repo_url else None
+    try:
+        git_repo_url, git_repo = await _ensure_project_github_repo(
+            slug=slug,
+            description=project_meta.get("description", ""),
+            git_repo_url=data.gitRepoUrl,
+        )
+    except Exception as exc:
+        logger.error("GitHub repo creation failed for project '%s': %s", slug, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=f"GitHub repo creation failed: {exc}. Check that the GitHub App has 'administration: write' permission on the org.",
+        )
     project_id = await convex.mutation(
         "projects:create",
         {
@@ -1356,22 +1495,16 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
             detail=f"Initial local scaffold commit failed: {exc}",
         )
 
-    # Push all local repo files to GitHub as the initial commit
-    if git_repo:
-        try:
-            repo_files: list[dict] = []
-            for file_path in repo_root.rglob("*"):
-                if file_path.is_file() and ".git" not in file_path.parts:
-                    rel = file_path.relative_to(repo_root).as_posix()
-                    try:
-                        content = file_path.read_text(encoding="utf-8")
-                        repo_files.append({"path": rel, "content": content})
-                    except Exception:
-                        pass
-            if repo_files:
-                await GitHubService().commit_files(git_repo, data.defaultBranch, repo_files, "chore: initial project scaffold from RAIL brief")
-        except Exception as exc:
-            logger.error("Initial scaffold push to GitHub failed for '%s': %s", git_repo, exc)
+    try:
+        await _push_initial_repo_snapshot_via_github_app(
+            repo_root=repo_root,
+            git_repo=git_repo,
+            git_repo_url=git_repo_url,
+            default_branch=data.defaultBranch,
+            message="chore: initial project scaffold from RAIL brief",
+        )
+    except Exception as exc:
+        logger.error("Initial scaffold push to GitHub failed for '%s': %s", git_repo, exc)
 
     await planner_service.ensure_planner_thread(project_id)
     board = await planner_service.ensure_main_board(project)
@@ -3228,6 +3361,46 @@ async def run_research_agents_direct(slug: str, data: RunResearchAgentsRequest, 
         "message": f"Launched {len(data.agents)} research agent(s) in background",
         "agents": [a.focus for a in data.agents],
     }
+
+
+@router.get("/{slug}/goal")
+async def get_project_goal(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    bundle = goal_service.load_goal_bundle(project)
+    if not bundle:
+        raise HTTPException(status_code=404, detail="Goal mode has not been configured for this project.")
+    return bundle
+
+
+@router.post("/{slug}/goal")
+async def configure_project_goal(
+    slug: str,
+    data: GoalContractRequest,
+    background_tasks: BackgroundTasks,
+):
+    project = await planner_service.get_project_by_slug(slug)
+    bundle = goal_service.create_goal_contract(
+        project,
+        {
+            "objective": data.objective,
+            "successCriteria": data.successCriteria,
+            "requiredEvidence": data.requiredEvidence,
+            "forbiddenShortcuts": data.forbiddenShortcuts,
+            "escalationPolicy": data.escalationPolicy,
+            "allowedSpend": data.allowedSpend.model_dump(),
+        },
+    )
+    preflight = goal_service.evaluate_preflight(project)
+    if data.launchAutopilot and preflight.get("passed"):
+        from app.services import autopilot_service
+
+        background_tasks.add_task(autopilot_service.start_autopilot, slug, False)
+    return {
+        **bundle,
+        "preflight": preflight,
+        "autopilotLaunchQueued": bool(data.launchAutopilot and preflight.get("passed")),
+    }
+
 # --- Autopilot (God Mode) ---
 
 @router.post("/{slug}/autopilot")
@@ -3247,9 +3420,11 @@ async def toggle_autopilot(
 @router.get("/{slug}/autopilot/status")
 async def get_autopilot_status(slug: str):
     from app.services import autopilot_service
+    snapshot = await autopilot_service.ensure_autopilot_running(slug)
     return {
-        "enabled": autopilot_service.is_autopilot_active(slug),
-        "autoApprove": autopilot_service.get_autopilot_config(slug).get("auto_approve", False)
+        "enabled": snapshot["desired_enabled"],
+        "active": snapshot["active"],
+        "autoApprove": snapshot["auto_approve"],
     }
 
 
@@ -3277,8 +3452,12 @@ async def get_project_phase(slug: str):
     except Exception:
         pass
     try:
-        from app.services.running_agent_service import list_running_agents
-        active_sessions = await list_running_agents(project_id=project.get("_id"))
+        from app.services.running_agent_service import list_project_running_agents
+        active_sessions = await list_project_running_agents(
+            str(project.get("_id")),
+            active_only=True,
+            limit=50,
+        )
     except Exception:
         pass
 
@@ -3364,3 +3543,20 @@ def _recommend_next_action(
     if phase == "closed":
         return "Project is closed. Review artifacts and consider follow-up questions."
     return "Review auditor statuses to determine next step."
+
+
+@router.get("/{slug}/next-best-action")
+async def get_next_best_action(
+    slug: str = FPath(...),
+) -> dict[str, Any]:
+    """Fetch the next best research action for a project (Track B)."""
+    from app.services import lifecycle_service, planner_service
+    
+    project = await planner_service.get_project_by_slug(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    board = await planner_service.ensure_main_board(project)
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
+    
+    return await lifecycle_service.evaluate_lifecycle(project, tasks)

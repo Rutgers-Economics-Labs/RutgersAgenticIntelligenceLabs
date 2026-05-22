@@ -1,0 +1,105 @@
+{
+  "auditors": {
+    "closeout": {
+      "blockers": [
+        "Missing ontology expansion task for follow-up question: 1. How did NJ housing price growth compare to neighboring states (NY, PA, CT)?",
+        "Missing ontology expansion task for follow-up question: 2. What was the real mortgage affordability index for NJ during peak rate periods (2022-2023)?",
+        "Missing data-blocker task for follow-up question: 3. Which NJ county-level markets showed the highest price volatility?"
+      ],
+      "status": "blocked"
+    },
+    "integrity": {
+      "blockers": [],
+      "status": "ready"
+    },
+    "ontology": {
+      "blockers": [],
+      "duckdbPath": "/Users/akashdubey/Documents/CodingProjects/RAIL/RutgersAgenticIntelligenceLabs/docs/validation/nj-housing-affordability/.ontology/onto.duckdb",
+      "state": "hydrated_on_this_device",
+      "stateClassification": "ready",
+      "status": "ready"
+    },
+    "planner": {
+      "blockers": [],
+      "status": "ready",
+      "taskSaturationCount": 0
+    },
+    "session": {
+      "blockers": [],
+      "status": "ready"
+    }
+  },
+  "completionSummary": {
+    "artifacts_created": [
+      "artifacts/nj_housing_affordability_analysis.md"
+    ],
+    "assumptions_added": [],
+    "assumptions_changed": [],
+    "blockers": [],
+    "claims_created": [
+      "NJ housing prices rose 99% nominally from 2015-01-01 to 2025-10-01",
+      "Real (inflation-adjusted) housing price change: +57%",
+      "NJ unemployment fell from 6.9% to 4.7% over the period"
+    ],
+    "datasets_created": [],
+    "open_questions": [],
+    "recommended_next_tasks": [
+      "synthesize-final-report"
+    ],
+    "sources_used": [
+      "research_plan/state/sources.json#fred-njsthpi",
+      "research_plan/state/sources.json#fred-njurn",
+      "research_plan/state/sources.json#fred-cpiaucsl"
+    ],
+    "status": "completed",
+    "verification_results": [
+      {
+        "artifacts_checked": [
+          "artifacts/nj_housing_affordability_analysis.md"
+        ],
+        "blockers": [],
+        "checks": [
+          {
+            "name": "claim_grounded_in_fred_data",
+            "status": "passed"
+          }
+        ],
+        "claims_checked": [
+          "housing price trend claim",
+          "real affordability calculation",
+          "unemployment relationship"
+        ],
+        "loop_type": "claim_evidence",
+        "run_id": "live-res-18830c0dd4cc4ba2962d1c89-verification",
+        "scope": "research",
+        "status": "passed",
+        "task_id": "analyze-nj-housing-affordability-from-duckdb"
+      }
+    ]
+  },
+  "currentBlocker": null,
+  "generatedAt": "2026-05-19T05:25:55Z",
+  "integrity": {
+    "action": "artifact_generation",
+    "blocked": false,
+    "reasons": []
+  },
+  "planner": {
+    "activeTasks": [],
+    "blockedTasks": [],
+    "readyTasks": [],
+    "taskCounts": {}
+  },
+  "session": {
+    "changedFiles": [
+      "artifacts/nj_housing_affordability_analysis.md"
+    ],
+    "id": "live-res-18830c0dd4cc4ba2962d1c89",
+    "publishStatus": "not_started",
+    "reviewStatus": "review",
+    "role": "research",
+    "status": "completed",
+    "taskId": "analyze-nj-housing-affordability-from-duckdb",
+    "verificationStatus": "pending"
+  }
+}

@@ -180,3 +180,13 @@ else:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
             yield c
+
+
+@pytest.fixture(autouse=True)
+def mock_ensure_workspace_rail_cli(monkeypatch):
+    """Avoid pip installs during test execution."""
+    from app.runners import session_lifecycle
+    async def _mock_ensure(project_root, workspace_root):
+        return {"status": "passed", "returncode": 0, "stdout": "rail ok", "stderr": ""}
+    monkeypatch.setattr(session_lifecycle, "_ensure_workspace_rail_cli", _mock_ensure)
+

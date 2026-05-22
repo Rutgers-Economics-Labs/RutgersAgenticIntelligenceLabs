@@ -49,6 +49,117 @@ export type PlannerApproval = {
 export type AutopilotStatus = {
   enabled: boolean;
   autoApprove: boolean;
+  active?: boolean;
+};
+
+export type GoalSpend = {
+  timeMinutes?: number | null;
+  tokens?: number | null;
+  apiCostUsd?: number | null;
+  retries?: number | null;
+};
+
+export type GoalContract = {
+  goalId: string;
+  objective: string;
+  successCriteria: string[];
+  requiredEvidence: string[];
+  forbiddenShortcuts: string[];
+  escalationPolicy: string[];
+  allowedSpend: GoalSpend;
+  createdAt?: number;
+  updatedAt?: number;
+  mode?: string;
+  markdownPath?: string;
+};
+
+export type GoalCriterionStatus = {
+  criterion: string;
+  satisfied: boolean;
+  reason: string;
+};
+
+export type GoalState = {
+  goalId: string;
+  contract?: GoalContract;
+  phase: string;
+  phaseHistory?: Array<{
+    phase: string;
+    at: number;
+    reason: string;
+  }>;
+  status: string;
+  currentBlocker?: string | null;
+  activeFailure?: {
+    failureClass: string;
+    summary: string;
+    at: number;
+    retryEligible: boolean;
+    retryBudgetRemaining: number;
+  } | null;
+  lastMeaningfulProgressAt?: number | null;
+  autonomyConfidence?: number;
+  preflight?: {
+    passed: boolean;
+    checks: Array<{
+      name: string;
+      passed: boolean;
+      detail: string;
+    }>;
+    currentBlocker?: string | null;
+    lastRunAt?: number | null;
+    manifestLoaded?: boolean;
+  };
+  tracks?: {
+    research: { status: string; blocker?: string | null };
+    platformRepair: { status: string; blocker?: string | null };
+  };
+  runCounts?: {
+    successful: number;
+    failed: number;
+  };
+  retryBudget?: {
+    max: number;
+    used: number;
+    remaining: number;
+  };
+  success?: {
+    criteriaSatisfied: number;
+    criteriaTotal: number;
+    percent: number;
+    criteria: GoalCriterionStatus[];
+  };
+  dashboard?: {
+    currentPhase?: string;
+    currentBlocker?: string | null;
+    retryBudgetUsed?: number;
+    successfulRuns?: number;
+    failedRuns?: number;
+    criteriaSatisfiedPercent?: number;
+    lastMeaningfulProgressAt?: number | null;
+    autonomyConfidence?: number;
+    autopilotEnabled?: boolean;
+  };
+};
+
+export type GoalBundle = {
+  contract: GoalContract;
+  state: GoalState;
+  lessons: Array<Record<string, unknown>>;
+  blockers: Array<Record<string, unknown>>;
+  decisions: Array<Record<string, unknown>>;
+  goalMarkdown?: string;
+  files?: {
+    goalMd?: string;
+    goalState?: string;
+    goalLessons?: string;
+    goalBlockers?: string;
+    goalDecisions?: string;
+  };
+  stateMachine?: {
+    version: number;
+    phases: Array<Record<string, unknown>>;
+  };
 };
 
 export type PlannerTaskDraft = {
@@ -326,6 +437,15 @@ export type CommandCenter = {
     content?: string;
   };
   nextAction: string;
+  goal?: {
+    objective?: string | null;
+    phase?: string | null;
+    currentBlocker?: string | null;
+    retryBudget?: GoalState["retryBudget"];
+    success?: GoalState["success"];
+    dashboard?: GoalState["dashboard"];
+    tracks?: GoalState["tracks"];
+  } | null;
   taskCounts: {
     total: number;
     byStatus: Record<string, number>;

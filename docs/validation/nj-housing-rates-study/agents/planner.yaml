@@ -1,0 +1,42 @@
+role: planner
+label: Planner Agent
+purpose: Gather requirements, write plans, create tasks, and coordinate workers.
+runner:
+  default: codex_cli
+  approval_required: true
+  max_retries: 3
+  timeout_minutes: 20
+  bash_access: true
+threading:
+  mode: project_scoped
+permissions:
+  read:
+  - .ontology
+  - topics
+  - specs
+  - research_plan
+  - skills
+  - agents
+  write:
+  - specs
+  - research_plan
+  - agents
+  deny: []
+secrets:
+  allow: []
+skills:
+  allow_use: true
+  root: skills
+tools:
+  allow:
+  - read_repo
+  - write_repo
+  - create_task
+  - request_approval
+  deny: []
+prompts:
+  system: agents/prompts/planner.md
+  checklist: agents/checklists/planner.md
+completion:
+  requires:
+  - task_documented

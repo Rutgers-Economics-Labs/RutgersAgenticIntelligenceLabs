@@ -214,6 +214,41 @@ def test_promote_project_hydration_artifact_updates_active_paths(project_root, m
     assert isinstance(payload["lastHydratedAt"], int)
 
 
+def test_promote_project_hydration_artifact_uses_onto_db_when_yaml_hint(project_root, monkeypatch):
+    """ontology_artifact_path may be ontology.yaml for Convex registry; active path must be onto.db."""
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    ontology_yaml = ontology_root / "ontology.yaml"
+    onto_db = ontology_root / "onto.db"
+    onto_duckdb = ontology_root / "onto.duckdb"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    ontology_yaml.write_text("classes: []\n", encoding="utf-8")
+    onto_db.write_bytes(b"SQLite format 3\x00")
+    onto_duckdb.write_bytes(b"duck")
+    hydration_meta.write_text('{"pipeline_slug":"my_pipeline","hydration_mode":"full"}', encoding="utf-8")
+
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_mutation(path: str, payload: dict):
+        calls.append((path, payload))
+        return "ok"
+
+    monkeypatch.setattr("app.services.hydration_registry_service.convex.mutation", _fake_mutation)
+
+    asyncio.run(
+        promote_project_hydration_artifact(
+            project={"_id": "project-soccer"},
+            ontology_artifact_path=str(ontology_yaml),
+            duckdb_artifact_path=str(onto_duckdb),
+        )
+    )
+
+    assert len(calls) == 1
+    payload = calls[0][1]
+    assert payload["activeOntologyDbPath"] == str(onto_db)
+    assert payload["activeOntologyDbPath"] != str(ontology_yaml)
+
+
 def test_promote_project_hydration_artifact_rejects_missing_hydration_metadata(project_root):
     ontology_root = project_root / ".ontology"
     ontology_root.mkdir(parents=True, exist_ok=True)

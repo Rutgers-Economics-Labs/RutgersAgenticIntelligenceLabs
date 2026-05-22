@@ -337,11 +337,37 @@ async def build_auditor_statuses(
         if closeout_blockers:
             closeout_status = {"status": "blocked", "blockers": closeout_blockers}
 
-    return {
+    # research_allowed vs promotion_allowed split (background-health-governance spec).
+    #
+    # research_allowed: agents may continue producing candidate work even when
+    #   ontology/integrity/closeout auditors are flagging issues. Only hard
+    #   control-plane safety problems (session/planner) suspend research.
+    # promotion_allowed: artifact promotion, claim verification, closeout, and
+    #   any other "trust this output" transition. Strict and fail-closed across
+    #   every auditor.
+    #
+    # Critic findings (weakened/rejected hypotheses) are advisory for research
+    # but blocking for promotion.
+    research_blocking = {"session", "planner"}
+    promotion_blocking = {"session", "planner", "ontology", "integrity", "critic", "closeout"}
+
+    auditors = {
         "session": session_status,
         "planner": planner_status,
         "ontology": ontology_status,
         "integrity": integrity_status,
         "critic": critic_status,
         "closeout": closeout_status,
+    }
+
+    def _blocked(name: str) -> bool:
+        return (auditors.get(name) or {}).get("status") == "blocked"
+
+    research_allowed = not any(_blocked(name) for name in research_blocking)
+    promotion_allowed = not any(_blocked(name) for name in promotion_blocking)
+
+    return {
+        **auditors,
+        "researchAllowed": research_allowed,
+        "promotionAllowed": promotion_allowed,
     }

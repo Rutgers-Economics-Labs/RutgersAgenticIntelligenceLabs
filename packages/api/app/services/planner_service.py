@@ -198,6 +198,23 @@ def _enforce_worker_completion_gate(*, root: Path, task: dict[str, Any], patch: 
         )
 
 
+def _audit_allows_worker_done(root: Path, task_id: str) -> bool:
+    audit = _latest_task_audit(root, task_id)
+    if audit is None:
+        return False
+    session = audit.get("session") or {}
+    integrity = audit.get("integrity") or {}
+    current_blocker = str(audit.get("currentBlocker") or "").strip()
+    review_status = str(session.get("reviewStatus") or "").strip().lower()
+    session_status = str(session.get("status") or "").strip().lower()
+    return (
+        review_status == "review"
+        and session_status in {"completed", "failed", "cancelled"}
+        and not bool(integrity.get("blocked"))
+        and not bool(current_blocker)
+    )
+
+
 def _write_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
@@ -324,7 +341,7 @@ async def list_planner_messages(project: dict, thread_id: str = PLANNER_THREAD_I
 
 
 async def ensure_main_board(project: dict, session_id: str | None = None) -> dict:
-    project_id = project.get("_id") or project.get("projectId")
+    project_id = project.get("_id") or project.get("projectId") or project.get("slug")
     if not project_id:
         raise ValueError("Project record is missing a durable id")
     return {
@@ -354,13 +371,42 @@ def _session_task_roots(project_root: Path) -> list[Path]:
     return sorted(path for path in sessions_root.glob("*/*") if path.is_dir())
 
 
+def _session_state_recency_key(session_root: Path, state: dict[str, Any]) -> tuple[str, float]:
+    updated_at = str(state.get("updated_at") or "").strip()
+    try:
+        mtime = session_root.stat().st_mtime
+    except FileNotFoundError:
+        mtime = 0.0
+    return (updated_at, mtime)
+
+
+def _latest_terminal_session_roots_by_task(project_root: Path) -> dict[str, Path]:
+    latest: dict[str, tuple[tuple[str, float], Path]] = {}
+    for session_root in _session_task_roots(project_root):
+        state = session_files.read_state(session_root)
+        if str(state.get("status") or "") not in {"completed", "failed", "cancelled"}:
+            continue
+        task_id = str(state.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        candidate = (_session_state_recency_key(session_root, state), session_root)
+        existing = latest.get(task_id)
+        if existing is None or candidate[0] > existing[0]:
+            latest[task_id] = candidate
+    return {task_id: item[1] for task_id, item in latest.items()}
+
+
 def _task_preference_key(task: dict[str, Any], path: Path) -> tuple[int, int, float]:
     meta, _ = _split_frontmatter(_read_text(path))
     has_explicit_task_id = 1 if meta.get("task_id") else 0
+    try:
+        mtime = path.stat().st_mtime
+    except FileNotFoundError:
+        mtime = 0.0
     return (
         has_explicit_task_id,
         len(str(task.get("_id") or "")),
-        path.stat().st_mtime,
+        mtime,
     )
 
 
@@ -411,12 +457,17 @@ async def list_tasks(board_id: str, *, project: dict | None = None) -> list[dict
     chosen: dict[tuple[str, str], tuple[dict[str, Any], Path]] = {}
     fallback: list[tuple[dict[str, Any], Path]] = []
     for path in sorted(task_dir.glob("*.md")):
+        if not path.exists():
+            continue
         task = _task_to_runtime(path)
         key = _task_dedupe_key(task)
         if key == ("", ""):
             fallback.append((task, path))
             continue
         existing = chosen.get(key)
+        if existing is not None and not existing[1].exists():
+            existing = None
+            chosen.pop(key, None)
         if existing is None or _task_preference_key(task, path) > _task_preference_key(existing[0], existing[1]):
             chosen[key] = (task, path)
     tasks = [item[0] for item in chosen.values()] + [item[0] for item in fallback]
@@ -434,11 +485,16 @@ async def reconcile_task_files(project: dict) -> dict[str, Any]:
     chosen: dict[tuple[str, str], tuple[dict[str, Any], Path]] = {}
     duplicates: list[Path] = []
     for path in sorted(task_dir.glob("*.md")):
+        if not path.exists():
+            continue
         task = _task_to_runtime(path)
         key = _task_dedupe_key(task)
         if key == ("", ""):
             continue
         existing = chosen.get(key)
+        if existing is not None and not existing[1].exists():
+            existing = None
+            chosen.pop(key, None)
         if existing is None:
             chosen[key] = (task, path)
             continue
@@ -501,6 +557,20 @@ def _terminal_task_patch_from_session_state(state: dict[str, Any], session_id: s
     }
 
 
+def _task_explicitly_reopened(task: dict[str, Any]) -> bool:
+    status = str(task.get("status") or "").strip().lower()
+    summary = str(task.get("latestRunSummary") or "").strip()
+    return status in {"backlog", "ready", "awaiting_approval", "running"} and summary.startswith("Reopened by Autopilot")
+
+
+def _session_requires_worker_audit_hold(task: dict[str, Any], state: dict[str, Any]) -> bool:
+    session_role = str(state.get("role") or "").strip().lower()
+    if session_role and session_role != "planner":
+        return True
+    task_role = str(task.get("agentRole") or "").strip().lower()
+    return task_role not in {"", "planner"}
+
+
 async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
     root = project_root_from_record(project)
     if root is None:
@@ -510,7 +580,7 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
     task_by_id = {str(task.get("_id") or ""): task for task in tasks}
     updated: list[str] = []
 
-    for session_root in _session_task_roots(root):
+    for session_root in _latest_terminal_session_roots_by_task(root).values():
         state = session_files.read_state(session_root)
         task_id = str(state.get("task_id") or "").strip()
         if not task_id:
@@ -521,6 +591,20 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
         patch = _terminal_task_patch_from_session_state(state, str(state.get("session_id") or session_root.name))
         if patch is None:
             continue
+        if _task_explicitly_reopened(task):
+            continue
+        if (
+            patch.get("status") == "done"
+            and _session_requires_worker_audit_hold(task, state)
+            and not _audit_allows_worker_done(root, task_id)
+        ):
+            patch = {
+                **patch,
+                "status": "review",
+                "latestRunSummary": (
+                    "Session completed and is awaiting a reviewed post-run audit before task closeout."
+                ),
+            }
         current_status = str(task.get("status") or "")
         current_blocker = task.get("blockerCategory")
         current_summary = str(task.get("latestRunSummary") or "")
@@ -908,6 +992,7 @@ async def sync_planner_files(project: dict, board: dict | None = None) -> None:
     from rail.planner_sync import PlannerSync
     syncer = PlannerSync(root)
 
+    await reconcile_task_files(project)
     board = board or await ensure_main_board(project)
     tasks = await list_tasks(board["_id"], project=project)
     approvals = await list_approvals(project)
@@ -917,6 +1002,17 @@ async def sync_planner_files(project: dict, board: dict | None = None) -> None:
     syncer.mirror_board(board, tasks)
     for task in tasks:
         syncer.mirror_task(task)
+    canonical_paths = {str(task.get("gitSnapshotPath") or "") for task in tasks}
+    task_root = _task_root(root)
+    if task_root.is_dir():
+        canonical_by_key = {_task_dedupe_key(task): str(task.get("gitSnapshotPath") or "") for task in tasks}
+        for path in sorted(task_root.glob("*.md")):
+            rel_path = str(path.relative_to(root))
+            task = _task_to_runtime(path)
+            key = _task_dedupe_key(task)
+            canonical_rel_path = canonical_by_key.get(key)
+            if canonical_rel_path and canonical_rel_path != rel_path:
+                path.unlink(missing_ok=True)
     _write_file(plan_root / "approvals.md", _render_approvals_index(approvals))
     _write_file(plan_root / "blockers.md", _render_blockers(root))
     

@@ -1,0 +1,28 @@
+{
+  "archive_status": null,
+  "completion_summary": {
+    "artifacts_created": [],
+    "assumptions_added": [],
+    "assumptions_changed": [],
+    "blockers": [],
+    "claims_created": [],
+    "datasets_created": [],
+    "open_questions": [],
+    "recommended_next_tasks": [],
+    "sources_used": [],
+    "status": "initialized",
+    "verification_results": []
+  },
+  "last_command_id": 0,
+  "last_event_id": 2,
+  "review_status": "pending",
+  "role": "planner",
+  "runner_event_cursor": 0,
+  "session_id": "planner",
+  "setup_status": null,
+  "status": "initialized",
+  "updated_at": "2026-05-19T16:37:04Z",
+  "verification_status": null,
+  "workspace_branch": null,
+  "workspace_path": null
+}

@@ -90,6 +90,17 @@ class TaskPayload:
     bash_access: bool = True
     project_context: str = ""  # Rich context block: ontology, data sources, repo structure
     session_root: str | None = None
+    # Phase 2 — Structured I/O
+    work_order_id: str | None = None
+    """Stable work order ID (e.g. wo_abc123).  Included in the prompt so the
+    agent knows where to find the full WorkOrder JSON."""
+    work_order_path: str | None = None
+    """Absolute path to the work order JSON inside the workspace.  Passed to
+    adapters that can surface it as an env var or --input-file flag."""
+    session_result_path: str | None = None
+    """Canonical path where the agent MUST write session_result.json.
+    Embedded in the prompt as a hard instruction so all runners know the
+    expected write location."""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +115,9 @@ class TaskPayload:
             "task_description": self.task_description,
             "acceptance_criteria": self.acceptance_criteria,
             "bash_access": self.bash_access,
+            "work_order_id": self.work_order_id,
+            "work_order_path": self.work_order_path,
+            "session_result_path": self.session_result_path,
         }
 
 

@@ -1,0 +1,51 @@
+# Runner Profile: Cursor CLI (cursor-agent)
+#
+# Best used in attached mode — an operator opens the project in Cursor
+# and the agent pulls work orders. The headless CLI runs but the IDE
+# integration is where Cursor's strengths show. Steering mode is
+# "attached" because mid-run redirection happens through the IDE, not
+# through CLI flags.
+name: cursor_cli
+adapter: local_cli       # spawned as subprocess; attached mode is operator-driven
+default_command: agent   # matches factory.py:124 (settings.cursor_cli_command default)
+status: experimental
+
+execution:
+  mode: local_cli
+  supports_streaming: "configurable"
+  supports_resume: "unknown"
+  supports_midrun_messages: false   # CLI mode; attached mode through IDE
+  supports_native_approval: false
+  supports_cancel: true
+  supports_mcp: "configurable"
+  supports_native_questions: "configurable"
+  steering_mode: attached
+
+capabilities:
+  edit_files: "yes"
+  run_shell: "yes"
+  fetch_remote_data: "configurable"
+  query_duckdb: "configurable"
+  execute_python: "yes"
+  use_mcp_tools: "configurable"
+  browse_web: "unknown"
+  extract_pdf_tables: "unknown"
+  write_long_artifacts: "configurable"
+  handle_large_context: "yes"
+  write_structured_output: "configurable"
+
+task_affinity:
+  data_ingestion: 0.6
+  analysis: 0.6
+  source_discovery: 0.5
+  artifact_writing: 0.6
+  health_repair: 0.6
+  claim_extraction: 0.5
+  verification: 0.6
+
+notes: |
+  Certified for attached-mode use only. Operator opens the project in
+  Cursor; RAIL emits work orders that Cursor's agent consumes through
+  the attached session. Headless CLI launches work for trivial tasks
+  but the routing weight should reflect that this isn't its primary
+  mode.

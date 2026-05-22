@@ -3,6 +3,7 @@ import {
   CommandCenter,
   CatalogActivationResponse,
   DashboardResponse,
+  GoalBundle,
   HydrationStatus,
   HydrationRerunResponse,
   OntologyClassesResponse,
@@ -104,6 +105,30 @@ export async function fetchPlannerBoard(slug: string): Promise<PlannerBoard> {
 
 export async function fetchAutopilotStatus(slug: string): Promise<AutopilotStatus> {
   return getJson<AutopilotStatus>(`/projects/${slug}/autopilot/status`);
+}
+
+export async function fetchProjectGoal(slug: string): Promise<GoalBundle> {
+  return getJson<GoalBundle>(`/projects/${slug}/goal`);
+}
+
+export async function configureProjectGoal(
+  slug: string,
+  payload: {
+    objective: string;
+    successCriteria: string[];
+    requiredEvidence?: string[];
+    forbiddenShortcuts?: string[];
+    escalationPolicy?: string[];
+    allowedSpend?: {
+      timeMinutes?: number | null;
+      tokens?: number | null;
+      apiCostUsd?: number | null;
+      retries?: number | null;
+    };
+    launchAutopilot?: boolean;
+  },
+): Promise<GoalBundle & { preflight?: Record<string, unknown>; autopilotLaunchQueued?: boolean }> {
+  return postJson(`/projects/${slug}/goal`, payload);
 }
 
 export async function toggleProjectAutopilot(
@@ -439,32 +464,65 @@ export async function fetchDashboard(slug: string): Promise<DashboardResponse | 
   return response.json() as Promise<DashboardResponse>;
 }
 
-export async function fetchOntologyGraph(
+export type OntologyGraphPayload = {
+  nodes: Array<{ id: string; label: string; group?: string; count?: number; properties?: Record<string, unknown> }>;
+  links: Array<{ source: string; target: string; label?: string }>;
+  error?: string;
+};
+
+async function fetchOntologyGraphEndpoint(
+  path: string,
   projectId: string,
-  options: { limit?: number } = {}
-): Promise<any> {
+): Promise<OntologyGraphPayload> {
   try {
-    const query = new URLSearchParams({
-      projectId,
-      limit: String(options.limit ?? 50),
-    });
-    const response = await fetch(`${API_ROOT}/ontology/graph?${query.toString()}`, {
-      cache: "no-store"
+    const query = new URLSearchParams({ projectId });
+    const response = await fetch(`${API_ROOT}/ontology/${path}?${query.toString()}`, {
+      cache: "no-store",
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
       return {
         nodes: [],
         links: [],
-        error: String(payload?.message ?? payload?.detail ?? `Ontology graph failed: ${response.status}`)
+        error: String(payload?.message ?? payload?.detail ?? `Ontology ${path} failed: ${response.status}`),
       };
     }
-    return response.json() as Promise<any>;
+    return response.json() as Promise<OntologyGraphPayload>;
   } catch (err) {
-    return {
-      nodes: [],
-      links: [],
-      error: String(err)
-    };
+    return { nodes: [], links: [], error: String(err) };
   }
+}
+
+export async function fetchOntologyGraph(
+  projectId: string,
+  options: { limit?: number } = {},
+): Promise<OntologyGraphPayload> {
+  try {
+    const query = new URLSearchParams({
+      projectId,
+      limit: String(options.limit ?? 200),
+    });
+    const response = await fetch(`${API_ROOT}/ontology/graph?${query.toString()}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      return {
+        nodes: [],
+        links: [],
+        error: String(payload?.message ?? payload?.detail ?? `Ontology graph failed: ${response.status}`),
+      };
+    }
+    return response.json() as Promise<OntologyGraphPayload>;
+  } catch (err) {
+    return { nodes: [], links: [], error: String(err) };
+  }
+}
+
+export async function fetchOntologyClassGraph(projectId: string): Promise<OntologyGraphPayload> {
+  return fetchOntologyGraphEndpoint("class-graph", projectId);
+}
+
+export async function fetchOntologyDatabaseGraph(projectId: string): Promise<OntologyGraphPayload> {
+  return fetchOntologyGraphEndpoint("database-graph", projectId);
 }

@@ -29,6 +29,11 @@ from typing import Any
 from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.cli_base import LocalCLIRunner, runner_runtime_paths
 from app.runners.factory import RunnerFactory
+from app.runners.contracts import (
+    Capability,
+    TaskType,
+    WorkOrder,
+)
 from app.services.audit_service import write_post_run_audit
 from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
@@ -73,6 +78,126 @@ EVENT_TYPE_MAP = {
     RunnerEventType.FAILED.value: "failed",
     RunnerEventType.CANCELLED.value: "cancelled",
 }
+
+
+# ---------------------------------------------------------------------------
+# WorkOrder generation shim (Phase 2 of runner-protocol spec)
+# ---------------------------------------------------------------------------
+
+# Role → TaskType mapping.  Conservative defaults — runners that don't map
+# to a canonical task type get ANALYSIS so they're still routable.
+_ROLE_TO_TASK_TYPE: dict[str, TaskType] = {
+    "data": TaskType.DATA_INGESTION,
+    "research": TaskType.ANALYSIS,
+    "analysis": TaskType.ANALYSIS,
+    "artifact": TaskType.ARTIFACT_WRITING,
+    "health": TaskType.HEALTH_REPAIR,
+    "coding": TaskType.ANALYSIS,
+    "planner": TaskType.ANALYSIS,
+    "verification": TaskType.VERIFICATION,
+    "source_discovery": TaskType.SOURCE_DISCOVERY,
+    "claim": TaskType.CLAIM_EXTRACTION,
+}
+
+# Role → minimum Capability set used when no explicit allowed_paths guidance
+# is available.  Capability router (Phase 5) may refine this further.
+_ROLE_TO_CAPABILITIES: dict[str, list[Capability]] = {
+    "data": [Capability.EDIT_FILES, Capability.FETCH_REMOTE_DATA],
+    "research": [Capability.EDIT_FILES, Capability.EXECUTE_PYTHON],
+    "analysis": [Capability.EDIT_FILES, Capability.EXECUTE_PYTHON],
+    "artifact": [Capability.EDIT_FILES, Capability.WRITE_LONG_ARTIFACTS],
+    "health": [Capability.EDIT_FILES, Capability.RUN_SHELL],
+    "coding": [Capability.EDIT_FILES, Capability.RUN_SHELL],
+    "planner": [Capability.EDIT_FILES, Capability.WRITE_STRUCTURED_OUTPUT],
+    "verification": [Capability.RUN_SHELL, Capability.WRITE_STRUCTURED_OUTPUT],
+    "source_discovery": [Capability.BROWSE_WEB, Capability.EDIT_FILES],
+    "claim": [Capability.EDIT_FILES, Capability.WRITE_STRUCTURED_OUTPUT],
+}
+
+
+def _derive_work_order_from_task_payload(
+    payload: "TaskPayload",
+    *,
+    session_id: str,
+    runner_name: str,
+) -> WorkOrder:
+    """Translate a legacy TaskPayload into a typed WorkOrder contract.
+
+    This is the Phase 2 migration shim.  New planner-emitted dispatches
+    will produce WorkOrders directly; legacy TaskPayload-based callers go
+    through here so every session has a WorkOrder on disk for audit.
+
+    The shim is intentionally conservative:
+    - unknown roles fall back to TaskType.ANALYSIS
+    - unknown capabilities fall back to [Capability.EDIT_FILES]
+    - all paths from allowed_paths are forwarded verbatim (WorkOrder
+      validator rejects absolute paths / .. escapes)
+    - outputs_required is set to ["session_result_json"] unconditionally
+      so the finalization gate can enforce the artifact
+    """
+    role = str(payload.role or "").strip().lower()
+    task_type = _ROLE_TO_TASK_TYPE.get(role, TaskType.ANALYSIS)
+    capabilities = _ROLE_TO_CAPABILITIES.get(role, [Capability.EDIT_FILES])
+
+    # Sanitise allowed_paths: strip absolute paths / .. segments so WorkOrder
+    # validator won't reject the generated work order on malformed legacy data.
+    safe_paths: list[str] = []
+    for p in (payload.allowed_paths or []):
+        p = p.strip().lstrip("/")
+        if p and ".." not in p.split("/"):
+            safe_paths.append(p)
+    if not safe_paths:
+        # Minimum viable path scope based on role
+        safe_paths = {"artifact": ["artifacts", "research_plan"]}.get(
+            role, ["research_plan", "topics", "artifacts"]
+        )
+
+    wo = WorkOrder.model_validate({
+        "work_order_id": f"wo_{session_id}",
+        "project_slug": payload.project_slug or "unknown",
+        "task_type": task_type.value,
+        "capabilities_required": [c.value for c in capabilities],
+        "runner_preferred": runner_name,
+        "allowed_paths": safe_paths,
+        "inputs": {},
+        "outputs_required": ["session_result_json"],
+        "created_by": "planner",
+    })
+    return wo
+
+
+def _write_work_order(project_root: Path, work_order: WorkOrder) -> None:
+    """Persist a WorkOrder to research_plan/work_orders/<wo_id>.json.
+
+    Creates intermediate directories if they don't exist.  Errors are
+    swallowed so a write failure never breaks session launch — the session
+    simply won't have a machine-readable work order for this run.
+    """
+    try:
+        wo_dir = project_root / "research_plan" / "work_orders"
+        wo_dir.mkdir(parents=True, exist_ok=True)
+        wo_path = wo_dir / f"{work_order.work_order_id}.json"
+        wo_path.write_text(work_order.model_dump_json(indent=2), encoding="utf-8")
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "WorkOrder write failed for %s: %s", work_order.work_order_id, exc
+        )
+
+
+def _load_work_order_for_session(project_root: Path, session_id: str) -> "WorkOrder | None":
+    """Re-load a previously persisted WorkOrder from disk.
+
+    Returns None if the file is absent or invalid (backward compat).
+    """
+    try:
+        wo_path = project_root / "research_plan" / "work_orders" / f"wo_{session_id}.json"
+        if not wo_path.is_file():
+            return None
+        from app.runners.contracts import WorkOrder as _WO
+        return _WO.model_validate_json(wo_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _should_retry_post_publish_verification(state: dict[str, Any]) -> bool:
@@ -125,15 +250,20 @@ def _runner_launch_blocked_by_auditors(
     planner_auditor = auditors.get("planner") or {}
     ontology_auditor = auditors.get("ontology") or {}
     integrity_auditor = auditors.get("integrity") or {}
+    role_name = str(role or "").strip().lower()
+    description = str(task_description or "").strip().lower()
+    is_control_plane_repair = (
+        role_name == "health"
+        and "reconcile control-plane drift and stale sessions" in description
+    )
 
     for auditor in (session_auditor, planner_auditor):
+        if is_control_plane_repair:
+            continue
         if auditor.get("status") == "blocked":
             blockers = [str(item) for item in (auditor.get("blockers") or []) if item]
             if blockers:
                 return blockers[0]
-
-    role_name = str(role or "").strip().lower()
-    description = str(task_description or "").strip().lower()
 
     if ontology_auditor.get("status") == "blocked":
         if role_name not in {"planner", "data", "health"}:
@@ -657,29 +787,6 @@ async def _publish_completed_session_outputs(
     session_root: Path,
     changed_files: list[str],
 ) -> dict[str, Any]:
-    if not infer_github_repo(project.get("github") or project.get("gitRepoUrl")):
-        session_files.update_state(
-            session_root,
-            publish_status="skipped",
-            publish_strategy="github_app_commit",
-            publish_branch=project.get("defaultBranch") or "main",
-            publish_error="",
-        )
-        session_files.append_event(
-            session_root,
-            "publish_completed",
-            content="Connector publish skipped because the project is not linked to a GitHub repository.",
-            status=session_files.read_state(session_root).get("status"),
-        )
-        return {
-            "published": False,
-            "strategy": "github_app_commit",
-            "commit_sha": None,
-            "branch": project.get("defaultBranch") or "main",
-            "changed": False,
-            "files": [],
-            "skipped_files": changed_files,
-        }
     task = await _task_record(project, _session_task_id(session, session_root))
     allowed_paths = (task or {}).get("repoPaths") or None
     mirrored = _copy_workspace_files_to_project(
@@ -695,6 +802,34 @@ async def _publish_completed_session_outputs(
         changed_files=mirrored,
         role=session.get("role") or "agent",
     )
+    if not infer_github_repo(project.get("github") or project.get("gitRepoUrl")):
+        session_files.update_state(
+            session_root,
+            publish_status="published" if mirrored else "skipped",
+            publish_strategy="local_workspace_mirror",
+            publish_branch=project.get("defaultBranch") or "main",
+            publish_changed_files=mirrored,
+            publish_skipped_files=[path for path in changed_files if path not in mirrored],
+            publish_error="",
+        )
+        session_files.append_event(
+            session_root,
+            "publish_completed",
+            content=(
+                f"Local workspace mirror {'copied' if mirrored else 'skipped'} "
+                f"{len(mirrored)} file(s); project is not linked to a GitHub repository."
+            ),
+            status=session_files.read_state(session_root).get("status"),
+        )
+        return {
+            "published": bool(mirrored),
+            "strategy": "local_workspace_mirror",
+            "commit_sha": None,
+            "branch": project.get("defaultBranch") or "main",
+            "changed": bool(mirrored),
+            "files": [{"path": path, "changed": True} for path in mirrored],
+            "skipped_files": [path for path in changed_files if path not in mirrored],
+        }
     commit_message = (
         f"chore({session.get('role') or 'agent'}): publish task {session.get('taskId') or session.get('title') or 'session outputs'}"
     )
@@ -760,26 +895,36 @@ async def _normalize_completion_summary(
     task_id: str | None,
     status: str,
     role: str,
+    pre_calculated_diffs: dict[str, tuple[list[str], list[str]]] | None = None,
 ) -> dict[str, Any]:
     summary = _collect_runner_summary_from_events(session_root, status)
-    assumptions_added, assumptions_changed = _diff_index_keys(
-        project_root=project_root,
-        workspace_root=workspace_root,
-        file_name="assumptions.json",
-        key_field="assumption_key",
-    )
-    source_added, source_changed = _diff_index_keys(
-        project_root=project_root,
-        workspace_root=workspace_root,
-        file_name="sources.json",
-        key_field="source_key",
-    )
-    claim_added, _claim_changed = _diff_index_keys(
-        project_root=project_root,
-        workspace_root=workspace_root,
-        file_name="claims.json",
-        key_field="claim_key",
-    )
+    if pre_calculated_diffs and "assumptions.json" in pre_calculated_diffs:
+        assumptions_added, assumptions_changed = pre_calculated_diffs["assumptions.json"]
+    else:
+        assumptions_added, assumptions_changed = _diff_index_keys(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            file_name="assumptions.json",
+            key_field="assumption_key",
+        )
+    if pre_calculated_diffs and "sources.json" in pre_calculated_diffs:
+        source_added, source_changed = pre_calculated_diffs["sources.json"]
+    else:
+        source_added, source_changed = _diff_index_keys(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            file_name="sources.json",
+            key_field="source_key",
+        )
+    if pre_calculated_diffs and "claims.json" in pre_calculated_diffs:
+        claim_added, _claim_changed = pre_calculated_diffs["claims.json"]
+    else:
+        claim_added, _claim_changed = _diff_index_keys(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            file_name="claims.json",
+            key_field="claim_key",
+        )
     changed_files = await _list_changed_files(workspace_root)
     datasets_created = [
         path
@@ -1430,7 +1575,71 @@ async def _materialize_workspace(
     base_branch: str,
     workspace_branch: str,
 ) -> dict[str, Any]:
+    def _is_ignored_materialization_path(relative_path: str) -> bool:
+        normalized = relative_path.strip()
+        return (
+            not normalized
+            or normalized.startswith(".git")
+            or normalized.startswith(".rail/workspaces/")
+            or normalized.startswith("research_plan/sessions/")
+            or normalized.startswith("research_plan/audits/")
+        )
+
+    def _iter_status_paths(status_output: str) -> list[str]:
+        paths: list[str] = []
+        for raw_line in status_output.splitlines():
+            if len(raw_line) < 4:
+                continue
+            payload = raw_line[3:]
+            if "->" in payload:
+                old_path, new_path = [part.strip() for part in payload.split("->", 1)]
+                paths.extend([old_path, new_path])
+                continue
+            paths.append(payload)
+        return paths
+
+    async def _overlay_project_working_tree() -> None:
+        if not (project_root / ".git").exists():
+            return
+
+        status_result = await _run_process(
+            ["git", "-C", str(project_root), "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=project_root,
+        )
+        if status_result["returncode"] != 0:
+            return
+
+        def _apply_path(relative_path: str) -> None:
+            normalized = relative_path.strip()
+            if _is_ignored_materialization_path(normalized):
+                return
+            source = project_root / normalized
+            destination = workspace_root / normalized
+            if source.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+                return
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            elif destination.exists():
+                destination.unlink()
+
+        for status_path in _iter_status_paths(status_result["stdout"] or ""):
+            _apply_path(status_path)
+
+    async def _reconcile_workspace_planner_files() -> None:
+        workspace_project = {"slug": workspace_root.name, "localRepoPath": str(workspace_root)}
+        try:
+            await planner_service.reconcile_task_files(workspace_project)
+            await planner_service.reconcile_planner_metadata(workspace_project)
+        except Exception:
+            # Workspace cleanup is defensive: never fail materialization just
+            # because planner-file canonicalization could not run.
+            return
+
     if (workspace_root / ".git").exists():
+        await _overlay_project_working_tree()
+        await _reconcile_workspace_planner_files()
         return {"status": "ready", "mode": "existing"}
 
     git_dir = project_root / ".git"
@@ -1438,18 +1647,72 @@ async def _materialize_workspace(
         return {"status": "ready", "mode": "directory"}
 
     resolved_base_ref = base_branch
-    fetch_result = await _run_process(
-        ["git", "-C", str(project_root), "fetch", "origin", base_branch],
+    local_ref = f"refs/heads/{base_branch}"
+    remote_ref = f"refs/remotes/origin/{base_branch}"
+    show_local_ref = await _run_process(
+        ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", local_ref],
         cwd=project_root,
     )
+    fetch_result = await _run_process(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "fetch",
+            "origin",
+            f"{base_branch}:refs/remotes/origin/{base_branch}",
+        ],
+        cwd=project_root,
+    )
+    show_remote_ref = None
     if fetch_result["returncode"] == 0:
-        remote_ref = f"refs/remotes/origin/{base_branch}"
+        show_remote_ref = await _run_process(
+            ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", remote_ref],
+            cwd=project_root,
+        )
+    if show_local_ref["returncode"] == 0:
+        status_result = await _run_process(
+            ["git", "-C", str(project_root), "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=project_root,
+        )
+        relevant_status_paths = [
+            path
+            for path in _iter_status_paths(status_result["stdout"] or "")
+            if not _is_ignored_materialization_path(path)
+        ]
+        has_local_worktree_changes = bool(relevant_status_paths)
+        if not has_local_worktree_changes and show_remote_ref and show_remote_ref["returncode"] == 0:
+            local_head = await _run_process(
+                ["git", "-C", str(project_root), "rev-parse", base_branch],
+                cwd=project_root,
+            )
+            remote_head = await _run_process(
+                ["git", "-C", str(project_root), "rev-parse", f"origin/{base_branch}"],
+                cwd=project_root,
+            )
+            if (
+                local_head["returncode"] == 0
+                and remote_head["returncode"] == 0
+                and local_head["stdout"].strip() != remote_head["stdout"].strip()
+            ):
+                local_is_ancestor = await _run_process(
+                    ["git", "-C", str(project_root), "merge-base", "--is-ancestor", base_branch, f"origin/{base_branch}"],
+                    cwd=project_root,
+                )
+                if local_is_ancestor["returncode"] == 0:
+                    resolved_base_ref = f"origin/{base_branch}"
+    elif show_remote_ref and show_remote_ref["returncode"] == 0:
+        resolved_base_ref = f"origin/{base_branch}"
+    elif fetch_result["returncode"] == 0:
         show_ref = await _run_process(
             ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", remote_ref],
             cwd=project_root,
         )
         if show_ref["returncode"] == 0:
             resolved_base_ref = f"origin/{base_branch}"
+
+    if show_local_ref["returncode"] != 0 and show_remote_ref and show_remote_ref["returncode"] == 0:
+        resolved_base_ref = f"origin/{base_branch}"
 
     result = await _run_process(
         [
@@ -1482,6 +1745,8 @@ async def _materialize_workspace(
         )
     if result["returncode"] != 0:
         raise RuntimeError(result["stderr"].strip() or result["stdout"].strip() or "git worktree add failed")
+    await _overlay_project_working_tree()
+    await _reconcile_workspace_planner_files()
     return {
         "status": "ready",
         "mode": "git-worktree",
@@ -1762,6 +2027,160 @@ async def archive_session_workspace(convex_session_id: str) -> dict[str, Any]:
     return result
 
 
+def _certify_session_result_if_present(
+    *,
+    project_root: Path,
+    workspace_root: Path | None,
+    session_root: Path,
+    convex_session_id: str,
+    session: dict[str, Any],
+    terminal_status: str | None,
+    review_status: str,
+    summary: dict[str, Any],
+    resolved_task_id: str | None,
+) -> None:
+    """Certify session_result.json if the runner emitted one.
+
+    Phase 2 of the runner protocol: every runner is expected to write a
+    structured ``session_result.json`` exit artifact.  This function:
+
+    1. Looks for the file under the workspace (runner's write root) and the
+       project-side session directory.
+    2. If found, runs ``certify_session_result`` against the WorkOrder
+       contract (loaded from disk if available).
+    3. Records the outcome in session state (``session_result_certified``,
+       ``session_result_issues``).
+    4. If certification fails AND the session role is promotion-class
+       (``artifact``), downgrades ``review_status`` to ``needs_changes``
+       and appends a blocker so the task finalization gate can surface it.
+    5. If the file is absent AND the role is promotion-class, treats this
+       as a soft ``complete_unverified`` blocker (records it but does NOT
+       block candidate research roles).
+
+    All errors inside this function are caught and logged — it must never
+    crash the finalization path.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    role = str(session.get("role") or "").strip().lower()
+    is_promotion_role = role == "artifact"
+
+    if terminal_status not in TERMINAL_STATUSES:
+        return  # only certify when the session has reached a terminal state
+
+    # Locate the session_result.json.  Runners write it relative to the
+    # workspace root; we also check the canonical session directory path.
+    candidates: list[Path] = []
+    if workspace_root is not None:
+        candidates.append(
+            workspace_root / "research_plan" / "sessions" / convex_session_id / "session_result.json"
+        )
+        candidates.append(workspace_root / "session_result.json")
+    candidates.append(session_root / "session_result.json")
+
+    result_path: Path | None = next((p for p in candidates if p.is_file()), None)
+
+    if result_path is None:
+        if is_promotion_role and terminal_status == "completed":
+            # Promotion-class session completed but didn't emit session_result.json.
+            # Mark as complete_unverified so audit reflects the gap.
+            _log.warning(
+                "Promotion-class session %s completed without session_result.json; "
+                "marking complete_unverified.",
+                convex_session_id,
+            )
+            session_files.update_state(session_root, session_result_certified=False)
+            summary.setdefault("blockers", [])
+            blocker_msg = (
+                "session_result.json not emitted; promotion-class sessions must "
+                "write a structured exit artifact."
+            )
+            if blocker_msg not in summary["blockers"]:
+                summary["blockers"].append(blocker_msg)
+            session_files.update_state(session_root, completion_summary=summary, review_status="needs_changes")
+        return  # non-promotion roles: absence of session_result.json is allowed
+
+    # Re-load the WorkOrder if one was written at session launch.
+    work_order = None
+    try:
+        work_order = _load_work_order_for_session(project_root, convex_session_id)
+    except Exception:
+        pass
+
+    # Run the certification harness.
+    try:
+        from tests.runner_certification.harness import certify_session_result
+        cert = certify_session_result(result_path, work_order=work_order)
+    except ImportError:
+        # Harness not importable in this environment (e.g., production deploy
+        # without test deps).  Fall back to a schema-only check via contracts.
+        try:
+            import json
+            from app.runners.contracts import SessionResult
+            raw = json.loads(result_path.read_text(encoding="utf-8"))
+            SessionResult.model_validate(raw)
+
+            class _Cert:
+                passed = True
+                issues: list[str] = []
+        except Exception as _exc:
+            class _Cert:  # type: ignore[no-redef]
+                passed = False
+                issues = [str(_exc)]
+        cert = _Cert()
+    except Exception as _exc:
+        _log.warning("certify_session_result raised unexpectedly for %s: %s", convex_session_id, _exc)
+        return
+
+    # Track B: Record domain progress in the progress ledger
+    try:
+        from app.services import liveness_service
+        from app.research import loop_closure
+        from app.runners.contracts import SessionResult
+        import json
+        raw = json.loads(result_path.read_text(encoding="utf-8"))
+        
+        # 1. Update Ledger
+        liveness_service.record_session_result(project_root, convex_session_id, raw)
+        
+        # 2. Update Research State (Claims, Sources, Memo)
+        parsed = SessionResult.model_validate(raw)
+        closure_updates = loop_closure.apply_session_results(project_root, parsed)
+        _log.info(f"Session {convex_session_id} loop closure updates: {closure_updates}")
+        
+    except Exception as _exc:
+        _log.warning("Liveness tracking / Loop closure failed for %s: %s", convex_session_id, _exc)
+
+    session_files.update_state(
+        session_root,
+        session_result_certified=cert.passed,
+        session_result_issues=cert.issues or [],
+    )
+    if cert.passed:
+        _log.info("Session %s: session_result.json certified OK.", convex_session_id)
+        return
+
+    issues_str = "; ".join(cert.issues[:5])
+    _log.warning(
+        "Session %s: session_result.json certification FAILED: %s",
+        convex_session_id,
+        issues_str,
+    )
+    if is_promotion_role:
+        # Only promotion-class sessions are blocked by certification failure.
+        # Candidate research sessions just get the issue recorded.
+        blocker_msg = f"session_result.json failed protocol certification: {issues_str}"
+        summary.setdefault("blockers", [])
+        if blocker_msg not in summary["blockers"]:
+            summary["blockers"].append(blocker_msg)
+        session_files.update_state(
+            session_root,
+            completion_summary=summary,
+            review_status="needs_changes",
+        )
+
+
 async def _finalize_workspace_review(
     *,
     convex_session_id: str,
@@ -1804,6 +2223,19 @@ async def _finalize_workspace_review(
     review_status = state.get("review_status") or "pending"
     config = _workspace_config(project_root)
     changed_files = await _list_changed_files(workspace_root)
+    pre_calculated_diffs = {}
+    for name, key in [("assumptions.json", "assumption_key"), ("sources.json", "source_key"), ("claims.json", "claim_key")]:
+        try:
+            added, changed = _diff_index_keys(
+                project_root=project_root,
+                workspace_root=workspace_root,
+                file_name=name,
+                key_field=key,
+            )
+            pre_calculated_diffs[name] = (added, changed)
+        except Exception:
+            pre_calculated_diffs[name] = ([], [])
+
     if terminal_status in {"failed", "cancelled"}:
         review_status = "needs_changes"
 
@@ -1844,6 +2276,17 @@ async def _finalize_workspace_review(
                 await record_publish_failure(project["_id"], publish_error)
 
     state = session_files.read_state(session_root)
+    # Verification never runs when the session terminated failed/cancelled or
+    # the publish step errored out. Without an explicit transition the bootstrap
+    # value (None) persists, _normalize_completion_summary downgrades it to
+    # "pending", and the integrity/closeout auditors block project promotion
+    # forever waiting on a verification run that will never come. Anchor it to
+    # "failed" here so the audit certificate carries a terminal status.
+    if (
+        terminal_status in {"failed", "cancelled"} or publish_error
+    ) and state.get("verification_status") not in {"passed", "failed", "skipped"}:
+        session_files.update_state(session_root, verification_status="failed")
+        state = session_files.read_state(session_root)
     should_rerun_verification = terminal_status == "completed" and not publish_error and (
         state.get("verification_status") not in {"passed", "failed", "skipped"}
         or (
@@ -1874,6 +2317,7 @@ async def _finalize_workspace_review(
         task_id=_session_task_id(session, session_root),
         status=terminal_status or "unknown",
         role=session.get("role") or "agent",
+        pre_calculated_diffs=pre_calculated_diffs,
     )
     if publish_error:
         summary["blockers"] = _dedupe((summary.get("blockers") or []) + [f"Connector publish failed: {publish_error}"])
@@ -1955,14 +2399,52 @@ async def _finalize_workspace_review(
             session=session,
             changed_files=changed_files,
         )
+
+    # Phase 2 — certify session_result.json against the runner protocol contract.
+    # Runners that emit a valid session_result.json get a richer audit trail;
+    # those that don't are gated only at promotion (artifact role), not at
+    # candidate research (research/data/coding roles).
+    _certify_session_result_if_present(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        convex_session_id=convex_session_id,
+        session=session,
+        terminal_status=terminal_status,
+        review_status=review_status,
+        summary=summary,
+        resolved_task_id=resolved_task_id,
+    )
+    # Re-read review_status in case certification downgraded it
+    review_status = session_files.read_state(session_root).get("review_status") or review_status
+    summary = session_files.read_state(session_root).get("completion_summary") or summary
+
+    if (
+        terminal_status == "completed"
+        and review_status == "review"
+        and resolved_task_id
+        and str(session.get("role") or "").strip().lower() not in {"", "planner"}
+        and not planner_service._audit_allows_worker_done(project_root, resolved_task_id)
+    ):
+        review_status = "review"
+        summary["recommended_next_tasks"] = _dedupe(
+            (summary.get("recommended_next_tasks") or [])
+            + ["Wait for a reviewed post-run audit to clear remaining blockers before task closeout."]
+        )
+        session_files.update_state(session_root, review_status=review_status)
+        session_files.update_state(session_root, completion_summary=summary)
+        session_files.refresh_summary(session_root)
     # Audited merge: once a session is published and passes review, merge the
     # workspace branch back into the base branch via the GitHub API.
     github_repo = infer_github_repo(project.get("github") or project.get("gitRepoUrl"))
+    published_branch = str(state.get("publish_branch") or "").strip()
     if (
         terminal_status == "completed"
         and review_status == "review"
         and not publish_error
         and github_repo
+        and published_branch
+        and published_branch != base_branch
     ):
         try:
             from app.services.github_service import github_service
@@ -1974,17 +2456,35 @@ async def _finalize_workspace_review(
             )
         except Exception as merge_exc:
             merge_error = str(merge_exc)
-            session_files.update_state(
-                session_root,
-                publish_status="failed",
-                publish_error=merge_error,
-            )
-            session_files.append_event(
-                session_root,
-                "publish_failed",
-                content=f"Audited branch merge failed: {merge_error}",
-                status=session_files.read_state(session_root).get("status"),
-            )
+            current_publish_state = session_files.read_state(session_root)
+            current_publish_branch = str(current_publish_state.get("publish_branch") or "").strip()
+            if current_publish_branch == base_branch:
+                # A concurrent finalize path can attempt the audited merge after a
+                # direct-to-base publish already succeeded. Preserve the successful
+                # publish and record the merge error as informational only.
+                session_files.append_event(
+                    session_root,
+                    "publish_completed",
+                    content=(
+                        "Skipped redundant audited merge after direct publish to "
+                        f"`{base_branch}`: {merge_error}"
+                    ),
+                    status=session_files.read_state(session_root).get("status"),
+                )
+                session_files.refresh_summary(session_root)
+                merge_error = ""
+            if merge_error:
+                session_files.update_state(
+                    session_root,
+                    publish_status="failed",
+                    publish_error=merge_error,
+                )
+                session_files.append_event(
+                    session_root,
+                    "publish_failed",
+                    content=f"Audited branch merge failed: {merge_error}",
+                    status=session_files.read_state(session_root).get("status"),
+                )
     if publish_error and resolved_task_id:
         await planner_service.update_task(
             resolved_task_id,
@@ -2019,7 +2519,15 @@ async def _finalize_workspace_review(
             latestRunSummary="; ".join(role_contract_blockers),
         )
     elif resolved_task_id:
-        task_status = "done" if review_status == "review" else "blocked"
+        role_name = str(session.get("role") or "").strip().lower()
+        audit_allows_done = planner_service._audit_allows_worker_done(project_root, resolved_task_id)
+        if review_status == "review":
+            if role_name in {"", "planner"} or audit_allows_done:
+                task_status = "done"
+            else:
+                task_status = "review"
+        else:
+            task_status = "blocked"
         current_state = session_files.read_state(session_root)
         verification_paths = _verification_failure_paths(current_state)
         summary_bits: list[str] = []
@@ -2028,6 +2536,8 @@ async def _finalize_workspace_review(
             summary_bits.append(f"Published commit {publish_commit}")
         if summary.get("blockers") and review_status != "review":
             summary_bits.append("; ".join(str(item) for item in (summary.get("blockers") or [])[:3]))
+        elif task_status == "review":
+            summary_bits.append("Session completed and is awaiting a reviewed post-run audit before task closeout.")
         elif verification_paths and review_status == "review":
             summary_bits.append(
                 "Remaining verification failures are outside this task scope: " + ", ".join(verification_paths[:4])
@@ -2225,10 +2735,16 @@ async def create_runner_session(
 
     if project_id and project:
         from app.services.auditor_service import build_auditor_statuses
+        from app.services import planner_service
+
+        board = await planner_service.ensure_main_board(project)
+        await planner_service.reconcile_task_files(project)
+        await planner_service.reconcile_task_session_states(project)
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
 
         auditors = await build_auditor_statuses(
             project,
-            tasks=None,
+            tasks=tasks,
             active_sessions=active_sessions,
         )
         auditor_blocker = _runner_launch_blocked_by_auditors(role, task_description, auditors)
@@ -2367,6 +2883,32 @@ async def create_runner_session(
         project_context=project_context,
         session_root=str(session_root),
     )
+
+    # Phase 2 — derive a typed WorkOrder from the legacy TaskPayload and
+    # persist it to research_plan/work_orders/<wo_id>.json so every session
+    # has an auditable dispatch envelope.  The work_order_id is stored in
+    # session state so _finalize_workspace_review can reload it for
+    # certification.
+    try:
+        work_order = _derive_work_order_from_task_payload(
+            task_payload,
+            session_id=running_session_id,
+            runner_name=runner_name,
+        )
+        _write_work_order(project_root, work_order)
+        _write_work_order(workspace_root, work_order)  # also available inside workspace
+        session_files.update_state(session_root, work_order_id=work_order.work_order_id)
+
+        # Update payload so the runner's prompt builder includes work order instructions
+        task_payload.work_order_id = work_order.work_order_id
+        task_payload.work_order_path = f"research_plan/work_orders/{work_order.work_order_id}.json"
+        task_payload.session_result_path = f"research_plan/sessions/{running_session_id}/session_result.json"
+    except Exception as _wo_exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "WorkOrder derivation failed for session %s: %s", running_session_id, _wo_exc
+        )
+
     try:
         result = await runner.create_session(task_payload)
     except Exception as exc:

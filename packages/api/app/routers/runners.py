@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Path as FPath
+from fastapi import APIRouter, Body, HTTPException, Path as FPath, Query
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/runners", tags=["runners"])
@@ -106,9 +106,60 @@ async def _launch_blocker_for_project_session(
 
 @router.get("")
 async def list_runners():
-    """Return metadata for all registered runner adapters."""
+    """Return metadata for all registered runner adapters.
+
+    Combines three layers:
+      - factory registration (which adapter classes exist)
+      - static profile (capability declarations from YAML)
+      - dynamic probe (installed? authenticated? versioned?)
+
+    Profile and probe are optional in the response — a runner registered in
+    the factory but missing a profile YAML still shows up, just without
+    capability/readiness info. That way operators can see a registered-but-
+    unprofiled state explicitly instead of silently dropping it.
+    """
     from app.runners.factory import RunnerFactory
-    return {"runners": RunnerFactory.list_runners()}
+    from app.runners.profile_loader import load_all_profiles
+    from app.runners.probe import probe_all
+
+    registered = {item["name"]: item for item in RunnerFactory.list_runners()}
+    profiles = load_all_profiles()
+    probes = await probe_all()
+
+    rows: list[dict[str, Any]] = []
+    names = sorted(set(registered.keys()) | set(profiles.keys()))
+    for name in names:
+        row: dict[str, Any] = {
+            "name": name,
+            "registered": name in registered,
+            "description": (registered.get(name) or {}).get("description", ""),
+        }
+        profile = profiles.get(name)
+        if profile is not None:
+            row["profile"] = profile.model_dump(mode="json")
+        probe = probes.get(name)
+        if probe is not None:
+            row["probe"] = probe.model_dump(mode="json")
+        rows.append(row)
+    return {"runners": rows}
+
+
+@router.get("/{runner}/probe")
+async def probe_runner_endpoint(
+    runner: str = FPath(..., description="Runner name, e.g. 'claude_code'"),
+) -> dict[str, Any]:
+    """Run a fresh probe for one runner. Cheap; safe to call from UI on demand.
+
+    Probes do not make outbound API calls — they check command presence,
+    version, and credential env vars. Authentication is not verified to
+    avoid burning API budget on every UI tick.
+    """
+    from app.runners.probe import probe_runner as _probe
+
+    result = await _probe(runner)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"no profile for runner {runner!r}")
+    return result.model_dump(mode="json")
 
 
 @router.post("/{runner}/sessions")
@@ -358,3 +409,123 @@ async def ingest_events(
         "ingested": len(persisted),
         "events": persisted,
     }
+
+
+@router.get("/sessions/{session_id}/work-order")
+async def get_work_order(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+) -> dict[str, Any]:
+    """Fetch the typed WorkOrder for a session."""
+    from app.services import running_agent_service, planner_service
+    from pathlib import Path
+    import json
+
+    agent_session = await running_agent_service.get_running_agent(session_id)
+    
+    # In Phase 2, we wrote work orders to research_plan/work_orders/<wo_id>.json
+    # and recorded work_order_id in the session state on disk.
+    
+    project = await planner_service.get_project_by_slug(project_slug)
+    if not project or not project.get("localRepoPath"):
+        raise HTTPException(status_code=404, detail="Project or local path not found")
+    
+    project_root = Path(project["localRepoPath"])
+    
+    # Try to find the session directory to get the work order ID
+    role = (agent_session or {}).get("role", "research")
+    from app.services import session_files
+    session_root = session_files.session_root(project_root, role, session_id)
+    
+    work_order_id = None
+    if session_root.exists():
+        state = session_files.read_state(session_root)
+        work_order_id = state.get("work_order_id")
+        
+    if not work_order_id:
+        # Fallback: check if we can derive it from the agent_session title or metadata
+        # if it was recorded there. For now, if we can't find it, we fail.
+        raise HTTPException(status_code=404, detail="Session has no work order ID associated")
+
+    wo_path = project_root / "research_plan" / "work_orders" / f"{work_order_id}.json"
+    
+    if not wo_path.exists():
+        raise HTTPException(status_code=404, detail=f"Work order file not found: {work_order_id}")
+    
+    return json.loads(wo_path.read_text(encoding="utf-8"))
+
+
+@router.post("/sessions/{session_id}/result")
+async def submit_session_result(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+    result: dict = Body(...),
+) -> dict[str, Any]:
+    """Submit the final session result."""
+    from app.services import running_agent_service, session_files, planner_service
+    from pathlib import Path
+    import json
+
+    agent_session = await running_agent_service.get_running_agent(session_id)
+    project = await planner_service.get_project_by_slug(project_slug)
+    if not project or not project.get("localRepoPath"):
+        raise HTTPException(status_code=404, detail="Project or local path not found")
+    
+    project_root = Path(project["localRepoPath"])
+    role = (agent_session or {}).get("role", "research")
+    
+    session_root = session_files.session_root(project_root, role, session_id)
+    session_root.mkdir(parents=True, exist_ok=True)
+    
+    (session_root / "session_result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    
+    return {"ok": True, "path": str(session_root / "session_result.json")}
+
+
+@router.post("/sessions/{session_id}/ask")
+async def ask_question(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+    data: dict = Body(...),
+) -> dict[str, Any]:
+    """Ask a question to the planner mid-session."""
+    question = data.get("question")
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required")
+
+    from app.services import running_agent_service, planner_answer_service
+    from app.runners.base import RunnerEvent, RunnerEventType
+    import time
+
+    agent_session = await running_agent_service.get_running_agent(session_id)
+    
+    # Tiered resolution
+    resolution = await planner_answer_service.resolve_question(
+        project_slug=project_slug,
+        session_id=session_id,
+        question=question,
+    )
+
+    if agent_session:
+        from app.services.convex_client import convex
+        event = RunnerEvent(
+            event_type=RunnerEventType.QUESTION_ASKED,
+            session_id=session_id,
+            normalized_payload={
+                "question": question,
+                "answer": resolution.get("answer"),
+                "tier": resolution.get("tier"),
+                "status": resolution.get("status"),
+            },
+            raw_payload=resolution,
+        )
+        await convex.mutation(
+            "runnerEvents:append",
+            {
+                "agentSessionId": agent_session["_id"],
+                **event.to_convex_dict(),
+                "createdAt": int(time.time() * 1000),
+            },
+        )
+
+    return resolution

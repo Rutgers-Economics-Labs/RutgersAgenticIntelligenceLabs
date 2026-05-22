@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { fetchCommandCenter, fetchHydrationStatus, fetchOntologyClasses, fetchPlannerHome } from "@/lib/api";
+import { fetchAutopilotStatus, fetchCommandCenter, fetchHydrationStatus, fetchOntologyClasses, fetchPlannerHome, fetchProjectGoal } from "@/lib/api";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
@@ -10,6 +10,8 @@ import { ReconcileProjectButton } from "@/components/reconcile-actions";
 import { OperatorOverviewStrip } from "@/components/operator-overview-strip";
 import { TruthComparison } from "@/components/truth-comparison";
 import { CloseoutCertificate } from "@/components/closeout-certificate";
+import { GoalModePanel } from "@/components/goal-mode-panel";
+import { GoalModeComposer } from "@/components/goal-mode-composer";
 import { getArtifactTrustDisplay } from "@/lib/integrity-ui";
 
 export default async function ProjectHomePage({
@@ -18,10 +20,12 @@ export default async function ProjectHomePage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const [center, home, hydration] = await Promise.all([
+  const [center, home, hydration, autopilot, goal] = await Promise.all([
     fetchCommandCenter(slug),
     fetchPlannerHome(slug),
     fetchHydrationStatus(slug).catch(() => null),
+    fetchAutopilotStatus(slug).catch(() => ({ enabled: false, autoApprove: false })),
+    fetchProjectGoal(slug).catch(() => null),
   ]);
   const tasks = home.planner.tasks ?? [];
   const ontologyClasses = home.project?.id
@@ -53,6 +57,10 @@ export default async function ProjectHomePage({
           <InlineStatus label="integrity" value={center.auditedTruth?.integrity?.blocked ? "blocked" : "clear"} />
           <InlineStatus label="ready tasks" value={center.auditedTruth?.planner?.taskCounts?.ready ?? 0} />
         </div>
+      </SectionCard>
+
+      <SectionCard eyebrow="Autonomy Readiness" noPad>
+        <GoalModePanel slug={slug} center={center} goal={goal} />
       </SectionCard>
 
       <SectionCard eyebrow="Repair Center" noPad>
@@ -114,11 +122,20 @@ export default async function ProjectHomePage({
           { label: "Tasks", value: center.taskCounts.total, sub: `${center.taskCounts.byStatus.running ?? 0} running` },
           { label: "Approvals", value: center.pendingApprovals.length, sub: center.pendingApprovals.length ? "action required" : "clear" },
           { label: "Evidence", value: center.sourceSummary.count + (center.recentArtifacts?.length ?? 0), sub: "artifacts + sources" },
+          { label: "Goal", value: center.goal?.phase ?? "unset", sub: typeof center.goal?.dashboard?.criteriaSatisfiedPercent === "number" ? `${Math.round(center.goal.dashboard.criteriaSatisfiedPercent)}% satisfied` : "configure contract" },
         ]}
       />
       
       <CommandShell>
         <div style={{ borderRight: "1px solid var(--border)" }}>
+          <SectionCard eyebrow="Goal Contract" title={goal?.contract?.objective ? "Durable autonomy contract" : "Configure goal mode"}>
+            <GoalModeComposer
+              slug={slug}
+              existingGoal={goal}
+              suggestedObjective={center.currentPlan.summary || center.project.name}
+            />
+          </SectionCard>
+
           <SectionCard eyebrow="Current Objective" title={center.project.name}>
             <div className="mono-muted" style={{ marginBottom: 8, fontSize: 10 }}>[REPO MIRROR: research_plan/current_plan.md]</div>
             {center.currentPlan.content ? (

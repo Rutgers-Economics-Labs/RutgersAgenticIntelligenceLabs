@@ -99,6 +99,37 @@ class Project:
         """Create rerun tasks based on the current rerun plan for an assumption change."""
         return self._backend.apply_integrity_rerun_plan(self.slug, assumption_key)
 
+    def get_state(self) -> dict:
+        """Fetch a structured context snapshot (classes, schema, sources, pipelines)."""
+        return self._backend.get_project_state(self.slug)
+
+    def get_work_order(self, work_order_id: str | None = None) -> dict:
+        """Fetch a typed WorkOrder. If work_order_id is None, tries to resolve from environment."""
+        if work_order_id is None:
+            import os
+            work_order_id = os.environ.get("RAIL_WORK_ORDER_ID")
+        if not work_order_id:
+            raise ValueError("work_order_id is required or must be set in RAIL_WORK_ORDER_ID env var")
+        return self._backend.get_work_order(self.slug, work_order_id)
+
+    def submit_session_result(self, result: dict, session_id: str | None = None) -> dict:
+        """Submit the final session result."""
+        if session_id is None:
+            import os
+            session_id = os.environ.get("RAIL_SESSION_ID")
+        if not session_id:
+            raise ValueError("session_id is required or must be set in RAIL_SESSION_ID env var")
+        return self._backend.submit_session_result(self.slug, session_id, result)
+
+    def ask(self, question: str, session_id: str | None = None) -> dict:
+        """Ask a question to the planner/human mid-session."""
+        if session_id is None:
+            import os
+            session_id = os.environ.get("RAIL_SESSION_ID")
+        if not session_id:
+            raise ValueError("session_id is required or must be set in RAIL_SESSION_ID env var")
+        return self._backend.ask_question(self.slug, session_id, question)
+
     def __repr__(self):
         mode = "cloud" if hasattr(self._backend, "base_url") else "local"
         return f"Project(slug={self.slug!r}, mode={mode!r})"

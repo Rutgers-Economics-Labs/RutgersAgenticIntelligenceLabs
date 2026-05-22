@@ -416,7 +416,7 @@ async def project_reality_snapshot(
 
     task_by_id = {str(task.get("_id") or ""): task for task in runtime_tasks}
     mismatch_task_ids: list[str] = []
-    for session_root in planner_service._session_task_roots(root):
+    for session_root in planner_service._latest_terminal_session_roots_by_task(root).values():
         state = session_lifecycle.session_files.read_state(session_root)
         task_id = str(state.get("task_id") or "").strip()
         if not task_id or task_id not in task_by_id:
@@ -427,7 +427,21 @@ async def project_reality_snapshot(
         )
         if patch is None:
             continue
+        if (
+            patch["status"] == "done"
+            and planner_service._session_requires_worker_audit_hold(task_by_id[task_id], state)
+            and not planner_service._audit_allows_worker_done(root, task_id)
+        ):
+            patch = {
+                "status": "review",
+                "blockerCategory": None,
+                "latestRunSummary": (
+                    "Session completed and is awaiting a reviewed post-run audit before task closeout."
+                ),
+            }
         task = task_by_id[task_id]
+        if planner_service._task_explicitly_reopened(task):
+            continue
         if (
             str(task.get("status") or "") != patch["status"]
             or task.get("blockerCategory") != patch["blockerCategory"]

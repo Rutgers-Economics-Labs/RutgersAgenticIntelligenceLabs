@@ -1,11 +1,15 @@
 ---
-id: task-001
+task_id: task-001
 title: Ingest FRED NJ housing and unemployment data
 status: done
-agent_role: data
-created_at: 2026-05-01T00:00:00Z
-updated_at: 2026-05-18T22:18:53Z
+assigned_role: data
+dependencies: []
+acceptance_criteria: []
+related_files: []
+latest_run_summary: Recovered from session sess-data-001.
 ---
+
+## Description
 
 ## Summary
 

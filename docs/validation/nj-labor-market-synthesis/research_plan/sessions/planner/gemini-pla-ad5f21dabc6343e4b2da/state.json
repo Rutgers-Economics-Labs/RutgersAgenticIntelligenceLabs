@@ -1,0 +1,26 @@
+{
+  "session_id": "gemini-pla-ad5f21dabc6343e4b2da",
+  "role": "planner",
+  "status": "completed",
+  "review_status": "review",
+  "task_id": "clarify-brief-and-create-research-plan",
+  "created_at": "2026-05-19T00:38:03Z",
+  "completed_at": "2026-05-19T00:38:03Z",
+  "runner": "gemini_cli",
+  "llm_model": "gemini-2.5-flash",
+  "llm_generated": true,
+  "gemini_cli_exit_code": 0,
+  "completion_summary": {
+    "status": "completed",
+    "assumptions_added": [],
+    "assumptions_changed": [],
+    "sources_used": [],
+    "datasets_created": [],
+    "artifacts_created": [],
+    "claims_created": [],
+    "verification_results": [],
+    "open_questions": [],
+    "blockers": [],
+    "recommended_next_tasks": []
+  }
+}

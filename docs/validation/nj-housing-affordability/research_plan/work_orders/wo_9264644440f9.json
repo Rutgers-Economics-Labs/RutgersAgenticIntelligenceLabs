@@ -1,0 +1,42 @@
+{
+  "work_order_id": "wo_9264644440f9",
+  "project_slug": "nj-housing-affordability",
+  "task_type": "data_ingestion",
+  "phase": null,
+  "expected_progress": {
+    "one_of": [
+      "new_remote_source_fetched",
+      "source_marked_inadmissible",
+      "source_marked_unavailable_with_reason",
+      "replacement_source_registered"
+    ]
+  },
+  "failure_policy": {
+    "max_attempts": 2,
+    "if_no_progress": "downgrade_or_escalate"
+  },
+  "idempotency_key": "nj-housing-affordability:data_ingestion:task-smoke-001",
+  "input_hash": "c618ff492b07c3ce",
+  "capabilities_required": [
+    "edit_files",
+    "fetch_remote_data"
+  ],
+  "runner_preferred": "claude_code",
+  "runner_allowed": null,
+  "allowed_paths": [
+    "topics/",
+    "research_plan/"
+  ],
+  "inputs": {},
+  "outputs_required": [],
+  "trust_policy": {
+    "output_trust_state": "candidate",
+    "promotion_requires": []
+  },
+  "cost_budget_usd": null,
+  "wall_time_budget_minutes": null,
+  "questions_allowed": true,
+  "depends_on": [],
+  "created_at": "2026-05-22T18:20:10.426397Z",
+  "created_by": "smoke-nj-001"
+}

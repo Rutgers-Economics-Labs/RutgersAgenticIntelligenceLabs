@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -171,3 +172,159 @@ async def test_write_post_run_audit_persists_auditors_to_json(tmp_path):
     on_disk = json.loads(json_path.read_text(encoding="utf-8"))
     assert on_disk["auditors"]["planner"]["status"] == "blocked"
     assert "2 duplicate" in on_disk["auditors"]["planner"]["blockers"][0]
+
+
+@pytest.mark.asyncio
+async def test_write_post_run_audit_skips_identical_payload(tmp_path):
+    """Identical audit payloads must short-circuit before touching disk or git.
+
+    This is the regression guard for the autopilot/reconciliation loop that
+    produced 8+ "audit: durable post-run certificates" commits for the same
+    unchanged session payload.
+    """
+    from app.services.audit_service import write_post_run_audit
+
+    project, project_root, session_root = _setup_project(tmp_path)
+    subprocess.run(["git", "-C", str(project_root), "init", "-b", "main"], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "config", "user.name", "RAIL Test"], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "config", "user.email", "rail-test@example.com"], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "add", "."], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "commit", "-m", "bootstrap"], check=True, capture_output=True, text=True)
+
+    with (
+        patch("app.services.audit_service.planner_service.ensure_main_board", new_callable=AsyncMock, return_value={"_id": "main"}),
+        patch("app.services.audit_service.planner_service.list_tasks", new_callable=AsyncMock, return_value=[]),
+        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value={}),
+    ):
+        first = await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id="sess-idem",
+            session={"role": "research"},
+            changed_files=["topics/source_notes.md"],
+        )
+        head_after_first = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        first_mtime = Path(first["jsonPath"]).stat().st_mtime_ns
+
+        # Rewrite with no state change. The payload is identical (modulo
+        # generatedAt, which is excluded from the hash) so nothing should
+        # touch disk or git.
+        second = await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id="sess-idem",
+            session={"role": "research"},
+            changed_files=["topics/source_notes.md"],
+        )
+
+    head_after_second = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    second_mtime = Path(second["jsonPath"]).stat().st_mtime_ns
+    status = subprocess.run(
+        ["git", "-C", str(project_root), "status", "--short", "--", "research_plan/audits/sess-idem.json"],
+        check=True, capture_output=True, text=True,
+    ).stdout
+
+    assert second.get("skipped") is True
+    assert head_after_first == head_after_second
+    assert first_mtime == second_mtime, "audit JSON was rewritten despite identical payload"
+    assert status == "", "working tree should be clean — no audit churn on identical payload"
+    assert first["payload"]["payloadHash"] == second["payload"]["payloadHash"]
+
+
+@pytest.mark.asyncio
+async def test_write_post_run_audit_does_not_recommit_existing_session_audit(tmp_path):
+    from app.services.audit_service import write_post_run_audit
+
+    project, project_root, session_root = _setup_project(tmp_path)
+
+    subprocess.run(["git", "-C", str(project_root), "init", "-b", "main"], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "config", "user.name", "RAIL Test"], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "config", "user.email", "rail-test@example.com"], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "add", "."], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(project_root), "commit", "-m", "bootstrap"], check=True, capture_output=True, text=True)
+
+    with (
+        patch("app.services.audit_service.planner_service.ensure_main_board", new_callable=AsyncMock, return_value={"_id": "main"}),
+        patch("app.services.audit_service.planner_service.list_tasks", new_callable=AsyncMock, return_value=[]),
+        patch("app.services.auditor_service.build_auditor_statuses", new_callable=AsyncMock, return_value={}),
+    ):
+        await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id="sess-001",
+            session={"role": "research"},
+            changed_files=["topics/source_notes.md"],
+        )
+        first_head = subprocess.run(
+            ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        # Force a content refresh on the same audit file; it should update the
+        # worktree copy but not mint another dedicated audit-history commit.
+        state = {"session_id": "sess-001", "status": "completed", "review_status": "review", "publish_status": "failed"}
+        (session_root / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        await write_post_run_audit(
+            project=project,
+            project_root=project_root,
+            session_root=session_root,
+            session_id="sess-001",
+            session={"role": "research"},
+            changed_files=["topics/source_notes.md"],
+        )
+
+    second_head = subprocess.run(
+        ["git", "-C", str(project_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    audit_commit_count = subprocess.run(
+        ["git", "-C", str(project_root), "rev-list", "--count", "--grep=^audit: durable post-run certificates", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "-C", str(project_root), "status", "--short", "--", "research_plan/audits/sess-001.json", "research_plan/audits/sess-001.md"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    assert first_head == second_head
+    assert audit_commit_count == "1"
+    assert "research_plan/audits/sess-001.json" in status
+
+
+def test_audit_gate_status_reports_stale_session_details(tmp_path):
+    from app.services.audit_service import audit_gate_status
+    from app.services import session_files
+
+    project, project_root, session_root = _setup_project(tmp_path)
+    session_files.write_state(
+        session_root,
+        {
+            "session_id": "sess-001",
+            "status": "completed",
+            "review_status": "review",
+            "updated_at": "2026-05-21T00:10:00Z",
+        },
+    )
+
+    gate = audit_gate_status(project_root)
+
+    assert gate["blocked"] is True
+    assert gate["staleSessionIds"] == ["sess-001"]
+    assert gate["staleSessionDetails"][0]["sessionId"] == "sess-001"
+    assert gate["staleSessionDetails"][0]["reason"] == "no_latest_audit"

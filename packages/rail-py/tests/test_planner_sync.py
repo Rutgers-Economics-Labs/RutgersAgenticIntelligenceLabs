@@ -101,7 +101,11 @@ class TestSnapshotPath:
 
     def test_title_used_for_slug(self):
         path = _snapshot_path(SAMPLE_TASK)
-        assert "write-test-suite" in path
+        assert "task-abc123" in path
+
+    def test_git_snapshot_path_wins_when_present(self):
+        task = {**SAMPLE_TASK, "gitSnapshotPath": "research_plan/tasks/custom-task.md"}
+        assert _snapshot_path(task) == "research_plan/tasks/custom-task.md"
 
     def test_fallback_to_id_when_no_title(self):
         task = {"_id": "task_xyz"}
@@ -123,6 +127,10 @@ class TestRenderTaskMd:
     def test_title_in_frontmatter(self):
         md = render_task_md(SAMPLE_TASK)
         assert "title: Write Test Suite" in md
+
+    def test_task_id_in_frontmatter(self):
+        md = render_task_md(SAMPLE_TASK)
+        assert "task_id: task_abc123" in md
 
     def test_status_in_frontmatter(self):
         md = render_task_md(SAMPLE_TASK)
@@ -216,6 +224,7 @@ class TestRenderTaskBoardMd:
         tasks = self._make_tasks(["ready"])
         md = render_task_board_md(SAMPLE_BOARD, tasks)
         assert "research_plan/tasks/" in md
+        assert "task-0.md" in md
 
     def test_mirror_note_present(self):
         md = render_task_board_md(SAMPLE_BOARD, [])

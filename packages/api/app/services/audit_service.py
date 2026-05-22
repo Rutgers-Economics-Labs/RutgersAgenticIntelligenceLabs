@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -12,9 +14,45 @@ from rail.manifest import load_manifest
 
 _log = logging.getLogger(__name__)
 
+# Fields that change on every audit write but do not reflect a real state change.
+# Excluded from the payload hash so identical audits don't churn the repo.
+_AUDIT_HASH_EXCLUDED_FIELDS = ("generatedAt", "payloadHash")
+
 
 def _audit_root(project_root: Path) -> Path:
     return project_root / "research_plan" / "audits"
+
+
+def _compute_payload_hash(payload: dict[str, Any]) -> str:
+    """Stable identity for an audit payload, ignoring timestamp churn.
+
+    Two audits with identical session/planner/integrity/auditor state but
+    different generatedAt values produce the same hash, so reconciliation
+    rewrites of an unchanged audit short-circuit before touching disk or git.
+    """
+    canonical = {k: v for k, v in payload.items() if k not in _AUDIT_HASH_EXCLUDED_FIELDS}
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _existing_payload_hash(json_path: Path) -> str | None:
+    if not json_path.is_file():
+        return None
+    try:
+        existing = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(existing, dict):
+        return None
+    stored = existing.get("payloadHash")
+    if isinstance(stored, str) and stored:
+        return stored
+    # Older audit files predate payloadHash. Recompute on the fly so we can
+    # still detect "nothing changed" against them.
+    try:
+        return _compute_payload_hash(existing)
+    except Exception:
+        return None
 
 
 async def _commit_audit_to_git(project_root: Path, paths: list[Path]) -> None:
@@ -23,6 +61,22 @@ async def _commit_audit_to_git(project_root: Path, paths: list[Path]) -> None:
         return
     rel_paths = [str(p.relative_to(project_root)) for p in paths if p.exists()]
     if not rel_paths:
+        return
+    # Only create a dedicated audit-history commit the first time a session's
+    # audit files appear in the repo. Rewrites of the same audit happen during
+    # reconciliation and autopilot retries; committing every refresh floods the
+    # project history with near-duplicate audit snapshots.
+    new_rel_paths: list[str] = []
+    for rel_path in rel_paths:
+        probe = subprocess.run(
+            ["git", "-C", str(project_root), "cat-file", "-e", f"HEAD:{rel_path}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if probe.returncode != 0:
+            new_rel_paths.append(rel_path)
+    if not new_rel_paths:
         return
     try:
         add = await asyncio.create_subprocess_exec(
@@ -204,6 +258,7 @@ def audit_gate_status(project_root: Path) -> dict[str, Any]:
     latest = read_latest_audit(project_root)
     latest_generated_at = str((latest or {}).get("generatedAt") or "")
     stale_sessions: list[str] = []
+    stale_details: list[dict[str, Any]] = []
     terminal_sessions: list[str] = []
 
     for session_root in _session_roots(project_root):
@@ -216,13 +271,50 @@ def audit_gate_status(project_root: Path) -> dict[str, Any]:
         updated_at = str(state.get("updated_at") or "")
         if not latest:
             stale_sessions.append(session_id)
+            stale_details.append(
+                {
+                    "sessionId": session_id,
+                    "sessionStatus": status,
+                    "updatedAt": updated_at,
+                    "reason": "no_latest_audit",
+                    "latestAuditSessionId": None,
+                    "latestAuditGeneratedAt": latest_generated_at or None,
+                }
+            )
             continue
         audited_session_id = str((latest.get("session") or {}).get("id") or "")
         if session_id != audited_session_id and updated_at >= latest_generated_at:
             stale_sessions.append(session_id)
+            stale_details.append(
+                {
+                    "sessionId": session_id,
+                    "sessionStatus": status,
+                    "updatedAt": updated_at,
+                    "reason": "newer_than_latest_audit_for_different_session",
+                    "latestAuditSessionId": audited_session_id or None,
+                    "latestAuditGeneratedAt": latest_generated_at or None,
+                }
+            )
             continue
         if session_id == audited_session_id and updated_at > latest_generated_at:
             stale_sessions.append(session_id)
+            stale_details.append(
+                {
+                    "sessionId": session_id,
+                    "sessionStatus": status,
+                    "updatedAt": updated_at,
+                    "reason": "session_updated_after_its_latest_audit",
+                    "latestAuditSessionId": audited_session_id or None,
+                    "latestAuditGeneratedAt": latest_generated_at or None,
+                }
+            )
+
+    if stale_details:
+        _log.warning(
+            "audit_gate_status detected stale terminal session audits for %s: %s",
+            project_root,
+            json.dumps(stale_details, sort_keys=True),
+        )
 
     return {
         "blocked": bool(stale_sessions),
@@ -232,6 +324,7 @@ def audit_gate_status(project_root: Path) -> dict[str, Any]:
             else None
         ),
         "staleSessionIds": stale_sessions,
+        "staleSessionDetails": stale_details,
         "latestAudit": latest,
         "latestAuditPath": (latest or {}).get("path") if latest else None,
         "terminalSessionIds": terminal_sessions,
@@ -243,6 +336,13 @@ async def repair_stale_session_audits(project: dict[str, Any], project_root: Pat
     stale_session_ids = [str(item) for item in (gate.get("staleSessionIds") or []) if item]
     if not stale_session_ids:
         return {"repairedSessionIds": []}
+
+    _log.info(
+        "repair_stale_session_audits starting for %s: stale_session_ids=%s details=%s",
+        project.get("slug") or project_root,
+        stale_session_ids,
+        json.dumps(gate.get("staleSessionDetails") or [], sort_keys=True),
+    )
 
     repaired: list[str] = []
     for session_root in _session_roots(project_root):
@@ -259,6 +359,14 @@ async def repair_stale_session_audits(project: dict[str, Any], project_root: Pat
             for item in events
             if item.get("type") == "file_change_detected" and item.get("path")
         ]
+        _log.info(
+            "repair_stale_session_audits rewriting audit for session=%s role=%s status=%s updated_at=%s changed_files=%s",
+            session_id,
+            state.get("role") or session_root.parent.name,
+            status,
+            state.get("updated_at"),
+            len(changed_files),
+        )
         await write_post_run_audit(
             project=project,
             project_root=project_root,
@@ -339,10 +447,39 @@ async def write_post_run_audit(
         integrity_gate=payload["integrity"],
         planner_snapshot=planner,
     )
+    payload["payloadHash"] = _compute_payload_hash(payload)
     audit_root = _audit_root(project_root)
-    audit_root.mkdir(parents=True, exist_ok=True)
     json_path = audit_root / f"{session_id}.json"
     md_path = audit_root / f"{session_id}.md"
+    # Skip the rewrite + git commit when the audit payload is byte-identical
+    # to the one already on disk (ignoring timestamp churn). This is what
+    # stops the autopilot/reconciliation loop from producing a fresh
+    # "audit: durable post-run certificates" commit on every tick when
+    # nothing about the session, planner, or integrity state has changed.
+    if _existing_payload_hash(json_path) == payload["payloadHash"]:
+        _log.debug(
+            "write_post_run_audit skipped (payload unchanged) session=%s hash=%s",
+            session_id,
+            payload["payloadHash"],
+        )
+        return {
+            "jsonPath": str(json_path),
+            "markdownPath": str(md_path),
+            "payload": payload,
+            "skipped": True,
+        }
+    _log.info(
+        "write_post_run_audit session=%s role=%s status=%s review=%s verification=%s publish=%s current_blocker=%s changed_files=%s",
+        session_id,
+        payload["session"]["role"],
+        payload["session"]["status"],
+        payload["session"]["reviewStatus"],
+        payload["session"]["verificationStatus"],
+        payload["session"]["publishStatus"],
+        payload.get("currentBlocker"),
+        len(changed_files),
+    )
+    audit_root.mkdir(parents=True, exist_ok=True)
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     md_path.write_text(_render_audit_markdown(payload), encoding="utf-8")
     await _commit_audit_to_git(project_root, [json_path, md_path])

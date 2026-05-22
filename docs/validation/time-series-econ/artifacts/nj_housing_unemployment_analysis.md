@@ -1,6 +1,6 @@
 # NJ Housing Prices and Unemployment Analysis
 
-**Generated:** 2026-05-18T22:18:53Z
+**Generated:** 2026-05-19T05:19:02Z
 **Data Sources:** FRED NJSTHPI, NJURN, CPIAUCSL
 
 ## Key Findings
@@ -28,6 +28,6 @@ No synthetic, estimated, or fabricated data used at any stage.
 
 | Series | Source | Observations | Retrieval Date |
 |--------|--------|-------------|----------------|
-| NJSTHPI | FRED/FHFA | 44 | 2026-05-18 |
-| NJURN | FRED/BLS | 134 | 2026-05-18 |
-| CPIAUCSL | FRED/BLS | 135 | 2026-05-18 |
+| NJSTHPI | FRED/FHFA | 44 | 2026-05-19 |
+| NJURN | FRED/BLS | 134 | 2026-05-19 |
+| CPIAUCSL | FRED/BLS | 135 | 2026-05-19 |

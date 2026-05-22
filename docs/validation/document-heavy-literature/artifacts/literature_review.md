@@ -1,6 +1,6 @@
 # NJ Labor Market Literature Review
 
-**Generated:** 2026-05-18T22:18:53Z
+**Generated:** 2026-05-19T05:19:02Z
 **Source type:** Academic papers and policy reports (document sources, no API data)
 
 ## Key Papers Reviewed

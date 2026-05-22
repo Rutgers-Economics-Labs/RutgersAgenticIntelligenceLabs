@@ -106,8 +106,12 @@ class GitHubService:
                 return None
             resp.raise_for_status()
             data = resp.json()
-            raw = base64.b64decode(data["content"]).decode("utf-8")
-            return {"sha": data.get("sha"), "content": raw, "path": path}
+            raw_bytes = base64.b64decode(data["content"])
+            try:
+                raw = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                raw = None
+            return {"sha": data.get("sha"), "content": raw, "content_bytes": raw_bytes, "path": path}
 
     async def put_file(self, repo: str, path: str, content: str,
                        message: str, sha: str | None = None) -> dict:
@@ -132,8 +136,9 @@ class GitHubService:
         resp = await self._request("GET", repo, f"/git/commits/{commit_sha}")
         return resp.json()
 
-    async def create_blob(self, repo: str, content: str, *, token: str | None = None) -> str:
-        encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+    async def create_blob(self, repo: str, content: str | bytes, *, token: str | None = None) -> str:
+        content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+        encoded = base64.b64encode(content_bytes).decode("utf-8")
         resp = await self._request(
             "POST",
             repo,
@@ -177,8 +182,22 @@ class GitHubService:
         filtered: list[dict] = []
         for file in files:
             existing = await self.get_file_metadata(repo, file["path"], ref=branch)
-            if existing and existing["content"] == file["content"]:
-                continue
+            incoming_bytes = (
+                file["content"].encode("utf-8")
+                if isinstance(file["content"], str)
+                else file["content"]
+            )
+            if existing:
+                remote_bytes = existing.get("content_bytes")
+                if remote_bytes is None and existing.get("content") is not None:
+                    remote_value = existing["content"]
+                    remote_bytes = (
+                        remote_value.encode("utf-8")
+                        if isinstance(remote_value, str)
+                        else remote_value
+                    )
+                if remote_bytes == incoming_bytes:
+                    continue
             filtered.append(file)
 
         head_sha = await self.get_branch_head(repo, branch)
@@ -190,21 +209,80 @@ class GitHubService:
                 "files": [{"path": f["path"], "changed": False} for f in files],
             }
 
-        commit = await self.get_commit(repo, head_sha)
-        base_tree_sha = commit["tree"]["sha"]
-        tree_entries = []
-        for file in filtered:
-            blob_sha = await self.create_blob(repo, file["content"], token=token)
-            tree_entries.append({
-                "path": file["path"],
-                "mode": "100644",
-                "type": "blob",
-                "sha": blob_sha,
-            })
+        # Hoisted so the helper below can build new blobs against fresh paths
+        # during a ref-race retry.
+        async def _build_commit(parent_sha: str) -> str:
+            parent_commit = await self.get_commit(repo, parent_sha)
+            base_tree_sha = parent_commit["tree"]["sha"]
+            tree_entries: list[dict] = []
+            for file in filtered:
+                blob_sha = await self.create_blob(repo, file["content"], token=token)
+                tree_entries.append(
+                    {
+                        "path": file["path"],
+                        "mode": "100644",
+                        "type": "blob",
+                        "sha": blob_sha,
+                    }
+                )
+            tree_sha = await self.create_tree(repo, base_tree_sha, tree_entries, token=token)
+            return await self.create_commit(repo, message, tree_sha, parent_sha, token=token)
 
-        tree_sha = await self.create_tree(repo, base_tree_sha, tree_entries, token=token)
-        commit_sha = await self.create_commit(repo, message, tree_sha, head_sha, token=token)
-        await self.update_ref(repo, branch, commit_sha, token=token)
+        commit_sha = await _build_commit(head_sha)
+        try:
+            await self.update_ref(repo, branch, commit_sha, token=token)
+        except httpx.HTTPStatusError as exc:
+            # GitHub ref-race: another process advanced the branch between
+            # our get_branch_head and our update_ref. GitHub returns 422 in
+            # this case. Retry once against the new head, then re-check
+            # whether the remote already matches our intended content
+            # (someone else may have written the same payload concurrently).
+            if exc.response.status_code != 422:
+                raise
+            new_head_sha = await self.get_branch_head(repo, branch)
+            commit_sha = await _build_commit(new_head_sha)
+            try:
+                await self.update_ref(repo, branch, commit_sha, token=token)
+            except httpx.HTTPStatusError as retry_exc:
+                if retry_exc.response.status_code != 422:
+                    raise
+                # If the remote content already matches what we wanted at
+                # the (now-newer) head, treat the race as a no-op rather
+                # than failing — another process beat us with the same
+                # payload. We re-read get_branch_head so the metadata
+                # check is against the freshest commit.
+                head_after = await self.get_branch_head(repo, branch)
+                all_match = True
+                for file in filtered:
+                    remote = await self.get_file_metadata(repo, file["path"], ref=head_after)
+                    if not remote:
+                        all_match = False
+                        break
+                    incoming_bytes = (
+                        file["content"].encode("utf-8")
+                        if isinstance(file["content"], str)
+                        else file["content"]
+                    )
+                    remote_bytes = remote.get("content_bytes")
+                    if remote_bytes is None and "content" in remote:
+                        remote_value = remote["content"]
+                        remote_bytes = (
+                            remote_value.encode("utf-8")
+                            if isinstance(remote_value, str)
+                            else remote_value
+                        )
+                    if remote_bytes != incoming_bytes:
+                        all_match = False
+                        break
+                if not all_match:
+                    raise
+                return {
+                    "commit_sha": head_after,
+                    "branch": branch,
+                    "changed": False,
+                    "files": [{"path": f["path"], "changed": False} for f in filtered],
+                }
+
         return {
             "commit_sha": commit_sha,
             "branch": branch,

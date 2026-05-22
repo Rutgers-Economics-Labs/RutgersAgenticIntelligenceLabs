@@ -171,3 +171,39 @@ async def test_create_from_brief_writes_extended_manifest_contract(client, tmp_p
     assert manifest["planner"]["task_root"] == "research_plan/tasks"
     assert manifest["verification"]["deterministic_command"] == "scripts/run-verification.sh"
     assert "hydrated" in manifest["lifecycle"]["phases"]
+
+
+async def test_future_bootstrap_auto_creates_and_links_github_repo(client, tmp_path):
+    project_record = {
+        "_id": "project-9",
+        "name": "Bootstrap Grid Costs",
+        "slug": "bootstrap-grid-costs",
+        "description": "Future RAIL project",
+        "localRepoPath": str(tmp_path / "bootstrap-grid-costs"),
+        "gitRepoUrl": "https://github.com/Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs",
+        "github": "Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs",
+    }
+    mutation = AsyncMock(return_value="project-9")
+    query = AsyncMock(return_value=project_record)
+
+    with patch("app.routers.projects.convex.mutation", new=mutation), \
+         patch("app.routers.projects.convex.query", new=query), \
+         patch("app.routers.projects.GitHubService.create_repo", new=AsyncMock(return_value={"full_name": "Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs"})), \
+         patch("app.routers.projects.GitHubService.commit_files", new=AsyncMock(return_value={"commit_sha": "abc123", "branch": "main", "changed": True, "files": []})), \
+         patch("app.routers.projects.planner_service.ensure_planner_thread", new=AsyncMock(return_value="planner")), \
+         patch("app.routers.projects.planner_service.ensure_main_board", new=AsyncMock(return_value={"_id": "board-1"})), \
+         patch("app.routers.projects.planner_service.append_planner_message", new=AsyncMock()), \
+         patch("app.routers.projects.planner_service.sync_planner_files", new=AsyncMock()):
+        response = await client.post(
+            "/api/v1/projects/future/bootstrap",
+            json={
+                "name": "Bootstrap Grid Costs",
+                "slug": "bootstrap-grid-costs",
+                "targetDir": str(tmp_path / "bootstrap-grid-costs"),
+            },
+        )
+
+    assert response.status_code == 200
+    payload = mutation.await_args_list[0].args[1]
+    assert payload["gitRepoUrl"] == "https://github.com/Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs"
+    assert payload["github"] == "Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs"

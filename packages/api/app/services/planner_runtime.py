@@ -299,6 +299,21 @@ def _planner_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_mvr_task",
+                "description": "Create a Minimum Viable Research (MVR) task to break a project deadlock. Focuses on a single source, single dataset, and single claim candidate.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "focus_source": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["focus_source"],
+                },
+            },
+        },
     ]
 
 
@@ -623,10 +638,36 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             return {"error": "A worker session is already active", "activeSession": active_worker}
 
         role_config = load_role_runtime_config(project, task["agentRole"])
-        selected_runner = args.get("runner") or task.get("runner") or role_config.policy.runner.default
-        selected_runner = selected_runner if selected_runner else role_config.policy.runner.default
+        
+        # Phase 5: Capability-based routing
+        from app.services.capability_router import route_task
+        from app.runners.work_order_generator import generate_work_order
+
+        # Probe WO used only to derive capabilities + task_type for routing.
+        # The authoritative WO is built later from the TaskPayload in
+        # session_lifecycle, with the routed runner_name and final allowed_paths.
+        tmp_wo = generate_work_order(
+            session_id="tmp",
+            project_slug=project["slug"],
+            role=task["agentRole"],
+            task_id=str(task["_id"]),
+            task=task,
+            allowed_paths=task.get("repoPaths") or role_config.policy.paths.write or [],
+            runner_name=None,
+        )
+
+        selected_runner = await route_task(
+            project_slug=project["slug"],
+            work_order_id=f"wo-{task['_id']}",
+            required_capabilities=tmp_wo.capabilities_required,
+            task_type=tmp_wo.task_type,
+            explicit_runner=args.get("runner") or task.get("runner"),
+            project=project,
+        )
+        
         if selected_runner == "default":
             selected_runner = role_config.policy.runner.default
+            
         # Prefer task-scoped outputs when they are declared so a task can narrow
         # or extend the writable surface intentionally for the current run.
         # Fall back to the role's default write policy when the task does not
@@ -678,6 +719,27 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             await planner_service.sync_planner_files(project, board)
             return {"status": "awaiting_approval", "approvalId": approval_id, "taskId": task_id}
 
+        # Track B: Liveness Guard
+        from app.services.liveness_service import check_liveness
+        if project.get("localRepoPath"):
+            from pathlib import Path
+            liveness_check = check_liveness(
+                Path(project["localRepoPath"]), 
+                task_type=tmp_wo.task_type.value,
+                idempotency_key=tmp_wo.idempotency_key,
+                input_hash=tmp_wo.input_hash
+            )
+            if not liveness_check["allowed"]:
+                await planner_service.update_task(
+                    str(task["_id"]),
+                    project=project,
+                    status="blocked",
+                    runner=selected_runner,
+                    latestRunSummary=liveness_check["reason"],
+                )
+                await planner_service.sync_planner_files(project, board)
+                return {"status": "blocked", "taskId": task_id, "reason": liveness_check["reason"]}
+
         result = await session_lifecycle.create_runner_session(
             project_id=project["_id"],
             project_slug=project["slug"],
@@ -711,6 +773,34 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             limit=50,
         )
         return {"sessions": sessions}
+
+    if name == "create_mvr_task":
+        focus_source = args["focus_source"]
+        reason = args.get("reason") or "Breaking project deadlock via Minimum Viable Research (MVR)."
+        
+        task_title = f"MVR: Analyze {focus_source} and produce first claim"
+        await planner_service.create_task(
+            project=project,
+            board_id=board["_id"],
+            title=task_title,
+            description=(
+                f"GOAL: Produce the first research finding for this project using a narrow vertical slice.\n\n"
+                f"1. Fetch/Query {focus_source}.\n"
+                f"2. Create a single descriptive analysis result.\n"
+                f"3. Emit at least one claim candidate.\n"
+                f"4. Write a draft memo section.\n\n"
+                f"REASON: {reason}"
+            ),
+            agent_role="research",
+            status="ready",
+            acceptance_criteria=[
+                f"at least one claim candidate is created based on {focus_source}",
+                "a draft memo section is written to research_plan/state/draft_memo.md",
+                "session_result.json records domain progress"
+            ]
+        )
+        await planner_service.sync_planner_files(project, board)
+        return {"status": "created", "title": task_title}
 
     if name == "grant_approval":
         approval_id = args.get("approval_id", "").strip()

@@ -10,6 +10,7 @@ import yaml
 
 from app.services.audit_service import list_recent_audits, read_latest_audit
 from app.services.auditor_service import build_auditor_statuses
+from app.services import goal_service
 from app.services.integrity_service import load_integrity_indexes, summarize_agent_workflow_health
 from app.services.reconciliation_service import project_reality_status
 from rail.integrity import build_artifact_trust_summary, build_source_state
@@ -1404,6 +1405,20 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     else:
         next_action = "Start a research workflow"
 
+    goal_bundle = goal_service.load_goal_bundle(project)
+    goal_summary = None
+    if goal_bundle:
+        goal_state = goal_bundle.get("state") or {}
+        goal_summary = {
+            "objective": (goal_bundle.get("contract") or {}).get("objective"),
+            "phase": goal_state.get("phase"),
+            "currentBlocker": goal_state.get("currentBlocker"),
+            "retryBudget": goal_state.get("retryBudget"),
+            "success": goal_state.get("success"),
+            "dashboard": goal_state.get("dashboard"),
+            "tracks": goal_state.get("tracks"),
+        }
+
     return {
         "project": {
             "id": project["_id"],
@@ -1415,6 +1430,7 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         },
         "currentPlan": _summarize_current_plan(project),
         "nextAction": next_action,
+        "goal": goal_summary,
         "taskCounts": {"total": len(tasks), "byStatus": status_counts},
         "activeSessions": active_sessions,
         "pendingApprovals": pending_approvals,

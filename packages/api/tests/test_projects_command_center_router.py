@@ -828,3 +828,62 @@ def test_worker_update_planner_normalizes_role_alias(monkeypatch):
     assert response.status_code == 200
     assert appended[0]["role"] == "health"
     assert wakes == ["demo-project"]
+
+
+def test_autopilot_status_revives_desired_loop(monkeypatch):
+    called: list[str] = []
+
+    async def _ensure_autopilot_running(slug: str):
+        called.append(slug)
+        return {"desired_enabled": True, "active": False, "auto_approve": True}
+
+    monkeypatch.setattr("app.services.autopilot_service.ensure_autopilot_running", _ensure_autopilot_running)
+
+    response = client.get("/api/v1/projects/demo-project/autopilot/status")
+
+    assert response.status_code == 200
+    assert response.json() == {"enabled": True, "active": False, "autoApprove": True}
+    assert called == ["demo-project"]
+
+
+def test_project_phase_uses_active_only_running_sessions(monkeypatch):
+    import app.routers.projects as projects_router
+
+    called: list[dict] = []
+    root_path = "/tmp/demo-project"
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": root_path}
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return []
+
+    async def _list_project_running_agents(project_id: str, *, active_only: bool = False, limit: int = 50):
+        called.append({"project_id": project_id, "active_only": active_only, "limit": limit})
+        return []
+
+    async def _build_auditor_statuses(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr("app.services.running_agent_service.list_project_running_agents", _list_project_running_agents)
+    monkeypatch.setattr(projects_router, "build_auditor_statuses", _build_auditor_statuses)
+    monkeypatch.setattr(projects_router, "load_manifest", lambda root: None)
+    monkeypatch.setattr(projects_router, "_infer_lifecycle_phase", lambda *args, **kwargs: "brief")
+    monkeypatch.setattr(projects_router, "_recommend_next_action", lambda *args, **kwargs: "Proceed")
+
+    response = client.get("/api/v1/projects/demo-project/phase")
+
+    assert response.status_code == 200
+    assert called == [{"project_id": "project-1", "active_only": True, "limit": 50}]

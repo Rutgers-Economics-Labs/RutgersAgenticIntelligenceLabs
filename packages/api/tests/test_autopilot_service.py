@@ -6,6 +6,7 @@ from pathlib import Path
 from app.services import autopilot_service
 from app.services import reconciliation_service
 from rail.bootstrap import bootstrap_future_project
+from app.services.github_service import GitHubService
 
 
 def test_autopilot_auto_approves_ready_pending_task(monkeypatch):
@@ -1022,6 +1023,45 @@ def test_start_autopilot_marks_project_completed_when_all_tasks_terminal(monkeyp
     assert autopilot_service._active_autopilots.get("soccer-project") is False
 
 
+def test_start_autopilot_restarts_loop_while_desired_enabled(monkeypatch, tmp_path):
+    import json
+
+    project = {"_id": "project-1", "slug": "soccer-project", "status": "draft", "localRepoPath": str(tmp_path)}
+    runs: list[dict] = []
+    sleeps: list[float] = []
+
+    async def _get_project_by_slug(slug: str):
+        return project
+
+    async def _run_autopilot_loop(slug: str, *, max_iterations=None):
+        runs.append({"slug": slug, "max_iterations": max_iterations})
+        if len(runs) == 1:
+            return None
+        await autopilot_service._disable_autopilot_desired_state(slug, auto_approve=True)
+        return None
+
+    async def _sleep(seconds: float):
+        sleeps.append(seconds)
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(autopilot_service, "run_autopilot_loop", _run_autopilot_loop)
+    monkeypatch.setattr(autopilot_service.asyncio, "sleep", _sleep)
+
+    asyncio.run(autopilot_service.start_autopilot("soccer-project", auto_approve=True))
+
+    state_path = tmp_path / ".rail" / "autopilot_state.json"
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert runs == [
+        {"slug": "soccer-project", "max_iterations": None},
+        {"slug": "soccer-project", "max_iterations": None},
+    ]
+    assert persisted["enabled"] is False
+    assert persisted["autoApprove"] is True
+    assert sleeps == [1]
+
+
 def test_autopilot_does_not_complete_when_closeout_gate_is_blocked(monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "status": "draft", "pipelineConfigSlug": "soccer-pipeline"}
     completions: list[dict] = []
@@ -1525,10 +1565,15 @@ def test_autopilot_creates_ontology_lifecycle_tasks_for_not_hydrated_project(mon
     asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
 
     created_titles = [item["title"] for item in created]
+    # During bootstrap (state=not_hydrated) only the populate + hydrate tasks
+    # are created. Verify / research / follow-up come once hydration is live —
+    # this is by design (see _is_ontology_data_bootstrap_phase) to keep health
+    # agents from running before the ontology has real rows to validate.
+    assert "Populate ontology pipeline steps for project sources" in created_titles
     assert "Hydrate project ontology and register active artifacts" in created_titles
-    assert "Verify hydrated ontology health before research" in created_titles
-    assert "Launch ontology-backed research after hydration" in created_titles
-    assert "Propose ontology-answerable follow-up questions" in created_titles
+    assert "Verify hydrated ontology health before research" not in created_titles
+    assert "Launch ontology-backed research after hydration" not in created_titles
+    assert "Propose ontology-answerable follow-up questions" not in created_titles
     assert sync_calls
 
 
@@ -2299,7 +2344,13 @@ def test_autopilot_filters_ready_tasks_when_ontology_auditor_is_blocked(monkeypa
     asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
 
     assert planner_turns == []
-    assert launched == [{"task_ids": ["hydrate-task"]}]
+    # Background-health-governance: ontology blocked no longer excludes the
+    # research task from dispatch. Both tasks reach the launcher together;
+    # ordering between them is determined by priority + repair-boost and is
+    # not asserted here.
+    assert len(launched) == 1
+    launched_ids = set(launched[0]["task_ids"])
+    assert launched_ids == {"hydrate-task", "research-task"}
 
 
 def test_autopilot_filters_ready_tasks_when_integrity_auditor_is_blocked(monkeypatch):
@@ -2442,62 +2493,182 @@ def test_filter_ready_tasks_prioritizes_matching_repair_tasks_for_blocked_audito
     assert ranked_ids[0] == "task-2"
 
 
-def test_task_allowed_for_auditors_blocks_unrelated_ontology_promotion():
-    allowed = autopilot_service._task_allowed_for_auditors(
-        {"localRepoPath": "/tmp/soccer-project"},
+def test_filter_ready_tasks_keeps_research_alongside_repair_when_both_blocked():
+    """Background-health-governance: ontology+integrity blocked must not starve research.
+
+    Under the previous restrictive behavior the filter dropped the research
+    task and surfaced only the two repair tasks. That trapped projects in
+    repair loops while the actual research backlog grew. Now the filter
+    preserves research/data/coding tasks; the priority boost still sorts
+    repair tasks ahead of them.
+    """
+    ready_tasks = [
         {
-            "_id": "hydrate-task",
-            "title": "Hydrate ontology and refresh source registry",
+            "_id": "ontology-repair",
+            "title": "Repair ontology readiness blockers",
+            "status": "ready",
             "agentRole": "data",
-            "priority": "medium",
+            "priority": "high",
         },
         {
-            "session": {"status": "ready", "blockers": []},
-            "planner": {"status": "ready", "blockers": []},
-            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
-            "integrity": {"status": "ready", "blockers": []},
-            "closeout": {"status": "ready", "blockers": []},
+            "_id": "integrity-repair",
+            "title": "Resolve failed verification runs before trusted promotion",
+            "status": "ready",
+            "agentRole": "health",
+            "priority": "high",
         },
-    )
-    blocked = autopilot_service._task_allowed_for_auditors(
-        {"localRepoPath": "/tmp/soccer-project"},
         {
             "_id": "research-task",
             "title": "Continue downstream research synthesis",
+            "status": "ready",
+            "agentRole": "research",
+            "priority": "high",
+        },
+    ]
+
+    filtered = autopilot_service._filter_ready_tasks_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
+        ready_tasks,
+        {
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+            "integrity": {"status": "blocked", "blockers": ["Failed verification runs must be resolved."]},
+            "closeout": {"status": "blocked", "blockers": ["2 non-terminal task(s) remain."]},
+        },
+    )
+
+    filtered_ids = {task["_id"] for task in filtered}
+    assert filtered_ids == {"ontology-repair", "integrity-repair", "research-task"}
+
+
+def test_filter_ready_tasks_keeps_coding_repair_when_ontology_blocked():
+    """Coding-role repair work is no longer excluded just because the ontology
+    auditor is flagging. The repair still runs (priority-boosted) and the
+    coding task is no longer arbitrarily dropped."""
+    ready_tasks = [
+        {
+            "_id": "coding-repair",
+            "title": "Repair analysis lineage and verification metadata",
+            "status": "ready",
+            "agentRole": "coding",
+            "priority": "high",
+        },
+        {
+            "_id": "health-repair",
+            "title": "Resolve failed verification runs before trusted promotion",
+            "status": "ready",
+            "agentRole": "health",
+            "priority": "high",
+        },
+    ]
+
+    filtered = autopilot_service._filter_ready_tasks_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
+        ready_tasks,
+        {
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+            "integrity": {"status": "blocked", "blockers": ["Failed verification runs must be resolved."]},
+            "closeout": {"status": "blocked", "blockers": ["2 non-terminal task(s) remain."]},
+        },
+    )
+
+    filtered_ids = {task["_id"] for task in filtered}
+    assert filtered_ids == {"coding-repair", "health-repair"}
+
+
+def test_filter_ready_tasks_excludes_artifact_role_when_promotion_blocked():
+    """The one role that *is* still gated by ontology/integrity is `artifact` —
+    the promotion-class meta-synthesis/closeout work. Everything else flows."""
+    ready_tasks = [
+        {
+            "_id": "final-memo",
+            "title": "Synthesize final report",
+            "status": "ready",
+            "agentRole": "artifact",
+            "priority": "high",
+        },
+        {
+            "_id": "research-task",
+            "title": "Continue downstream research synthesis",
+            "status": "ready",
             "agentRole": "research",
             "priority": "high",
         },
         {
-            "session": {"status": "ready", "blockers": []},
-            "planner": {"status": "ready", "blockers": []},
+            "_id": "data-repair",
+            "title": "Repair ontology readiness blockers",
+            "status": "ready",
+            "agentRole": "data",
+            "priority": "high",
+        },
+    ]
+
+    filtered = autopilot_service._filter_ready_tasks_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
+        ready_tasks,
+        {
             "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
             "integrity": {"status": "ready", "blockers": []},
-            "closeout": {"status": "ready", "blockers": []},
         },
     )
 
-    assert allowed is True
-    assert blocked is False
+    filtered_ids = {task["_id"] for task in filtered}
+    assert filtered_ids == {"research-task", "data-repair"}
+    assert "final-memo" not in filtered_ids
 
 
-def test_task_allowed_for_auditors_blocks_unrelated_integrity_promotion():
-    allowed = autopilot_service._task_allowed_for_auditors(
+def test_task_allowed_for_auditors_keeps_research_when_ontology_blocked():
+    """Background-health-governance: ontology blocked must NOT block research.
+
+    Only promotion-class (`artifact`-role) tasks are gated on ontology/integrity.
+    Research/data/coding tasks continue to produce candidate work that the
+    promotion gates will later evaluate.
+    """
+    auditors_ontology_blocked = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+        "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+        "integrity": {"status": "ready", "blockers": []},
+        "closeout": {"status": "ready", "blockers": []},
+    }
+
+    hydrate_allowed = autopilot_service._task_allowed_for_auditors(
         {"localRepoPath": "/tmp/soccer-project"},
-        {
-            "_id": "integrity-repair",
-            "title": "Repair analysis lineage and verification metadata",
-            "agentRole": "coding",
-            "priority": "medium",
-        },
-        {
-            "session": {"status": "ready", "blockers": []},
-            "planner": {"status": "ready", "blockers": []},
-            "ontology": {"status": "ready", "blockers": []},
-            "integrity": {"status": "blocked", "blockers": ["Unsupported claims prevent trusted promotion."]},
-            "closeout": {"status": "ready", "blockers": []},
-        },
+        {"_id": "hydrate-task", "title": "Hydrate ontology and refresh source registry", "agentRole": "data", "priority": "medium"},
+        auditors_ontology_blocked,
     )
-    blocked = autopilot_service._task_allowed_for_auditors(
+    research_allowed = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
+        {"_id": "research-task", "title": "Continue downstream research synthesis", "agentRole": "research", "priority": "high"},
+        auditors_ontology_blocked,
+    )
+    final_memo_allowed = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
+        {"_id": "final-memo", "title": "Synthesize final report", "agentRole": "artifact", "priority": "high"},
+        auditors_ontology_blocked,
+    )
+
+    assert hydrate_allowed is True
+    assert research_allowed is True, "research must be allowed even when ontology auditor is blocked"
+    assert final_memo_allowed is False, "promotion-class artifact tasks must wait for ontology to clear"
+
+
+def test_task_allowed_for_auditors_keeps_coding_when_integrity_blocked():
+    """Coding tasks (refactors, helpers, repairs) keep running while integrity
+    blocks. The integrity gate only stops promotion of trusted outputs."""
+    auditors_integrity_blocked = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+        "ontology": {"status": "ready", "blockers": []},
+        "integrity": {"status": "blocked", "blockers": ["Unsupported claims prevent trusted promotion."]},
+        "closeout": {"status": "ready", "blockers": []},
+    }
+
+    repair_allowed = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
+        {"_id": "integrity-repair", "title": "Repair analysis lineage and verification metadata", "agentRole": "coding", "priority": "medium"},
+        auditors_integrity_blocked,
+    )
+    coding_allowed = autopilot_service._task_allowed_for_auditors(
         {"localRepoPath": "/tmp/soccer-project"},
         {
             "_id": "coding-task",
@@ -2514,8 +2685,8 @@ def test_task_allowed_for_auditors_blocks_unrelated_integrity_promotion():
         },
     )
 
-    assert allowed is True
-    assert blocked is False
+    assert repair_allowed is True
+    assert coding_allowed is True, "coding tasks must continue while integrity blocks promotion"
 
 
 def test_autopilot_does_not_auto_promote_unrelated_pending_task_when_ontology_blocked(monkeypatch):
@@ -3490,6 +3661,334 @@ Duplicate task file.
     assert status["details"]["staleRuntimeSessionIds"] == ["sess-1"]
 
 
+def test_project_reality_status_does_not_report_mismatch_for_review_held_worker_task(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-a.md").write_text(
+        """---
+task_id: task-a
+title: Review Held Task
+status: review
+assigned_role: data
+latest_run_summary: Session completed and is awaiting a reviewed post-run audit before task closeout.
+---
+
+## Description
+
+Task A.
+""",
+        encoding="utf-8",
+    )
+
+    session_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="task-a",
+        status="completed",
+        review_status="review",
+        completion_summary={
+            "status": "completed",
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "sources_used": [],
+            "datasets_created": [],
+            "artifacts_created": [],
+            "claims_created": [],
+            "verification_results": [],
+            "open_questions": [],
+            "blockers": [],
+            "recommended_next_tasks": [],
+        },
+    )
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_role_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+
+    status = asyncio.run(reconciliation_service.project_reality_status(project))
+
+    assert status["taskSessionMismatchCount"] == 0
+    assert status["details"]["taskSessionMismatchTaskIds"] == []
+
+
+def test_project_reality_status_does_not_report_mismatch_for_planner_task_completed_by_worker_session(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-a.md").write_text(
+        """---
+task_id: task-a
+title: Review Held Task
+status: review
+assigned_role: planner
+latest_run_summary: Session completed and is awaiting a reviewed post-run audit before task closeout.
+---
+
+## Description
+
+Task A.
+""",
+        encoding="utf-8",
+    )
+
+    session_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="task-a",
+        role="data",
+        status="completed",
+        review_status="review",
+        completion_summary={
+            "status": "completed",
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "sources_used": [],
+            "datasets_created": [],
+            "artifacts_created": [],
+            "claims_created": [],
+            "verification_results": [],
+            "open_questions": [],
+            "blockers": [],
+            "recommended_next_tasks": [],
+        },
+    )
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_role_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+
+    status = asyncio.run(reconciliation_service.project_reality_status(project))
+
+    assert status["taskSessionMismatchCount"] == 0
+    assert status["details"]["taskSessionMismatchTaskIds"] == []
+
+
+def test_launch_ready_task_falls_through_after_blocked_candidate(monkeypatch):
+    project = {"slug": "demo-project"}
+    ready_tasks = [
+        {"_id": "task-blocked", "priority": "high"},
+        {"_id": "task-launchable", "priority": "medium"},
+    ]
+
+    calls: list[str] = []
+
+    async def _fake_execute(project_arg, tool_name, payload):
+        assert project_arg is project
+        assert tool_name == "launch_task_runner"
+        calls.append(str(payload["task_id"]))
+        if payload["task_id"] == "task-blocked":
+            return {"error": "Ontology hydration state is `not_hydrated`."}
+        return {"ok": True, "session_id": "sess-123"}
+
+    monkeypatch.setattr(
+        autopilot_service.planner_runtime,
+        "_execute_planner_tool",
+        _fake_execute,
+    )
+
+    result = asyncio.run(autopilot_service._launch_ready_task(project, ready_tasks))
+
+    assert calls == ["task-blocked", "task-launchable"]
+    assert result == {"ok": True, "session_id": "sess-123"}
+
+
+def test_launch_ready_task_falls_through_after_blocked_candidate_exception(monkeypatch):
+    project = {"slug": "demo-project"}
+    ready_tasks = [
+        {"_id": "task-blocked", "priority": "high"},
+        {"_id": "task-launchable", "priority": "medium"},
+    ]
+
+    calls: list[str] = []
+
+    async def _fake_execute(project_arg, tool_name, payload):
+        assert project_arg is project
+        assert tool_name == "launch_task_runner"
+        calls.append(str(payload["task_id"]))
+        if payload["task_id"] == "task-blocked":
+            raise RuntimeError("Ontology hydration state is `not_hydrated`.")
+        return {"ok": True, "session_id": "sess-456"}
+
+    monkeypatch.setattr(
+        autopilot_service.planner_runtime,
+        "_execute_planner_tool",
+        _fake_execute,
+    )
+
+    result = asyncio.run(autopilot_service._launch_ready_task(project, ready_tasks))
+
+    assert calls == ["task-blocked", "task-launchable"]
+    assert result == {"ok": True, "session_id": "sess-456"}
+
+
+def test_ensure_control_plane_repair_task_reopens_existing_blocked_task(tmp_path: Path, monkeypatch):
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "localRepoPath": str(tmp_path),
+    }
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_path = task_dir / "reconcile-control-plane-drift-and-stale-sessions.md"
+    task_path.write_text(
+        """---
+task_id: reconcile-control-plane-drift-and-stale-sessions
+title: Reconcile control-plane drift and stale sessions
+status: blocked
+assigned_role: health
+latest_run_summary: Recovered from session sess-1.
+blocker_category: verification_failure
+---
+
+## Description
+
+Repair control-plane drift.
+""",
+        encoding="utf-8",
+    )
+
+    async def _fake_ensure_main_board(project_arg):
+        assert project_arg is project
+        return {"_id": "main"}
+
+    synced: list[str] = []
+
+    async def _fake_sync_planner_files(project_arg, board_arg):
+        assert project_arg is project
+        assert board_arg == {"_id": "main"}
+        synced.append("synced")
+
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _fake_ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _fake_sync_planner_files)
+
+    tasks = [autopilot_service.planner_service._task_to_runtime(task_path)]
+    auditors = {
+        "planner": {"status": "blocked", "blockers": ["task/session mismatch"]},
+        "session": {"status": "ready", "blockers": []},
+    }
+
+    changed = asyncio.run(
+        autopilot_service._ensure_control_plane_repair_tasks(project, tasks, auditors)
+    )
+
+    updated = autopilot_service.planner_service._task_to_runtime(task_path)
+    assert changed is True
+    assert updated["status"] == "ready"
+    assert updated["approvalState"] == "granted"
+    assert updated["blockerCategory"] is None
+    assert updated["latestRunSummary"] == "Reopened by Autopilot because control-plane auditors remain blocked."
+    assert synced == ["synced"]
+
+
+def test_ensure_ontology_repair_task_reopens_existing_review_task(tmp_path: Path, monkeypatch):
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "localRepoPath": str(tmp_path),
+    }
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    task_path = task_dir / "repair-ontology-readiness-blockers.md"
+    task_path.write_text(
+        """---
+task_id: repair-ontology-readiness-blockers
+title: Repair ontology readiness blockers
+status: review
+assigned_role: data
+latest_run_summary: Recovered from session sess-2.
+---
+
+## Description
+
+Repair ontology blockers.
+""",
+        encoding="utf-8",
+    )
+
+    async def _fake_ensure_main_board(project_arg):
+        assert project_arg is project
+        return {"_id": "main"}
+
+    synced: list[str] = []
+
+    async def _fake_sync_planner_files(project_arg, board_arg):
+        assert project_arg is project
+        assert board_arg == {"_id": "main"}
+        synced.append("synced")
+
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _fake_ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _fake_sync_planner_files)
+
+    tasks = [autopilot_service.planner_service._task_to_runtime(task_path)]
+    auditors = {
+        "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+    }
+
+    changed = asyncio.run(
+        autopilot_service._ensure_ontology_repair_task(project, tasks, auditors)
+    )
+
+    updated = autopilot_service.planner_service._task_to_runtime(task_path)
+    assert changed is True
+    assert updated["status"] == "ready"
+    assert updated["approvalState"] == "granted"
+    assert updated["blockerCategory"] is None
+    assert updated["latestRunSummary"] == "Reopened by Autopilot because ontology readiness is still blocked."
+    assert synced == ["synced"]
+
+
+def test_ontology_task_specs_do_not_encourage_cross_project_harnesses():
+    populate_spec = next(
+        spec
+        for spec in autopilot_service.ONTOLOGY_TASK_SPECS
+        if spec["title"] == "Populate ontology pipeline steps for project sources"
+    )
+    joined = " ".join(str(item) for item in populate_spec["acceptance_criteria"]).lower()
+    assert "soccer source" not in joined
+    assert "smoke-test fixtures" in joined  # explicit guard against smoke-test pollution
+    assert "cross-project harnesses" in joined
+    assert "project-relevant source" in joined
+    # Real-data gate: at least one source must fetch data, not register a stub.
+    assert "actually fetches data" in joined
+
+
 def test_project_reality_snapshot_returns_drift_details(tmp_path: Path, monkeypatch):
     project = {
         "_id": "project-1",
@@ -3677,6 +4176,184 @@ frontend:
     assert snapshot["roleConfigAliasDrift"]["hasDrift"] is True
     assert snapshot["roleConfigAliasDrift"]["configs"][0]["configPath"] == "agents/coding.yaml"
     assert snapshot["roleConfigAliasDrift"]["configs"][0]["canonicalRole"] == "coding"
+
+
+def test_project_reality_snapshot_ignores_explicitly_reopened_task(tmp_path: Path, monkeypatch):
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "localRepoPath": str(tmp_path),
+    }
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-a.md").write_text(
+        """---
+task_id: task-a
+title: Populate ontology pipeline steps for attachable sources
+status: ready
+assigned_role: data
+approval_state: granted
+latest_run_summary: Reopened by Autopilot because the default ontology pipeline still has no executable steps.
+---
+
+## Description
+
+Task A.
+""",
+        encoding="utf-8",
+    )
+    session_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="task-a",
+        status="completed",
+        review_status="needs_changes",
+        completion_summary={
+            "status": "completed",
+            "blockers": ["Deterministic verification failed."],
+            "recommended_next_tasks": ["Fix verification failures and rerun the worker task."],
+        },
+    )
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_role_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.hydration_registry_service,
+        "get_hydration_status",
+        lambda **kwargs: asyncio.sleep(0, result={"reusableArtifact": {}, "currentDeviceArtifacts": [], "state": "not_hydrated"}),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.convex,
+        "query",
+        lambda path, args: asyncio.sleep(0, result=[] if path == "agentSecretPolicies:listByProject" else None),
+    )
+
+    snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
+
+    assert snapshot["duplicateTaskFiles"] == []
+    assert snapshot["taskSessionMismatchTaskIds"] == []
+
+
+def test_project_reality_snapshot_uses_latest_terminal_session_per_task(tmp_path: Path, monkeypatch):
+    import json
+
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "localRepoPath": str(tmp_path),
+    }
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-a.md").write_text(
+        """---
+task_id: task-a
+title: Same Task
+status: done
+assigned_role: data
+latest_run_summary: Published commit abc123
+---
+
+## Description
+
+Task A.
+""",
+        encoding="utf-8",
+    )
+
+    old_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "data", "sess-old")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        old_root,
+        session_id="sess-old",
+        task_id="task-a",
+        status="completed",
+        review_status="needs_changes",
+        updated_at="2026-01-01T00:00:00Z",
+        completion_summary={
+            "status": "completed",
+            "blockers": ["Deterministic verification failed."],
+            "recommended_next_tasks": ["Fix verification failures and rerun the worker task."],
+        },
+    )
+    new_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "data", "sess-new")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        new_root,
+        session_id="sess-new",
+        task_id="task-a",
+        status="completed",
+        review_status="review",
+        updated_at="2026-01-02T00:00:00Z",
+        publish_commit_sha="abc123",
+    )
+    audit_dir = tmp_path / "research_plan" / "audits"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "task-a.json").write_text(
+        json.dumps(
+            {
+                "session": {
+                    "taskId": "task-a",
+                    "reviewStatus": "review",
+                    "status": "completed",
+                },
+                "integrity": {"blocked": False},
+                "currentBlocker": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_role_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.hydration_registry_service,
+        "get_hydration_status",
+        lambda **kwargs: asyncio.sleep(0, result={"reusableArtifact": {}, "currentDeviceArtifacts": [], "state": "not_hydrated"}),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.convex,
+        "query",
+        lambda path, args: asyncio.sleep(0, result=[] if path == "agentSecretPolicies:listByProject" else None),
+    )
+
+    snapshot = asyncio.run(reconciliation_service.project_reality_snapshot(project))
+
+    assert snapshot["taskSessionMismatchTaskIds"] == []
 
 
 def test_project_reality_snapshot_reports_artifact_registry_drift(tmp_path: Path, monkeypatch):
@@ -4396,6 +5073,62 @@ def test_ensure_integrity_repair_tasks_creates_analysis_metadata_task(tmp_path: 
     assert synced == [True]
 
 
+def test_ensure_integrity_repair_tasks_defers_health_repairs_during_ontology_bootstrap(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    created: list[dict[str, object]] = []
+    synced: list[bool] = []
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": kwargs["title"], "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "project_root_from_record", lambda project_arg: tmp_path)
+    monkeypatch.setattr(autopilot_service, "_is_ontology_project", lambda project_arg: True)
+    monkeypatch.setattr(autopilot_service, "get_hydration_status", lambda project=None: asyncio.sleep(0, result={"state": "not_hydrated"}))
+    monkeypatch.setattr(autopilot_service, "_is_ontology_data_bootstrap_phase", lambda project_arg, hydration=None: True)
+    monkeypatch.setattr(
+        autopilot_service,
+        "summarize_agent_workflow_health",
+        lambda root: {
+            "data": {
+                "status": "ready",
+                "datasetsMissingProvenance": [],
+                "datasetsMissingFreshness": [],
+            },
+            "coding": {
+                "status": "ready",
+                "artifactsMissingLineage": [],
+                "artifactsMissingVerificationCommands": [],
+                "artifactsMissingVerification": [],
+            },
+            "health": {
+                "status": "blocked",
+                "missingEvidenceClaims": ["claim-001"],
+                "staleSources": ["stale-source-a"],
+                "failedVerificationRuns": ["run-001"],
+                "reproducibilityGaps": ["artifacts/report.md"],
+                "inadmissibleSources": ["estimated-series"],
+            },
+        },
+    )
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    changed = asyncio.run(autopilot_service._ensure_integrity_repair_tasks(project, []))
+
+    assert changed is False
+    assert created == []
+    assert synced == []
+
+
 def test_ensure_integrity_repair_tasks_is_noop_without_inadmissible_sources(tmp_path: Path, monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
     created: list[dict[str, object]] = []
@@ -4447,6 +5180,31 @@ def test_ensure_integrity_repair_tasks_is_noop_without_inadmissible_sources(tmp_
     assert changed is False
     assert created == []
     assert synced == []
+
+
+def test_github_create_blob_accepts_bytes(monkeypatch):
+    service = GitHubService()
+    captured: dict[str, object] = {}
+
+    async def _request(method: str, repo: str, path: str, *, token=None, **kwargs):
+        captured["method"] = method
+        captured["repo"] = repo
+        captured["path"] = path
+        captured["json"] = kwargs.get("json")
+
+        class _Resp:
+            def json(self):
+                return {"sha": "blob-sha"}
+
+        return _Resp()
+
+    monkeypatch.setattr(service, "_request", _request)
+
+    sha = asyncio.run(service.create_blob("owner/repo", b"\x00\x01binary"))
+
+    assert sha == "blob-sha"
+    assert captured["path"] == "/git/blobs"
+    assert captured["json"]["encoding"] == "base64"
 
 
 def test_ensure_control_plane_repair_tasks_creates_reconcile_task(tmp_path: Path, monkeypatch):
@@ -4524,7 +5282,92 @@ def test_ensure_control_plane_repair_tasks_is_noop_without_blockers(tmp_path: Pa
     )
 
     assert changed is False
-    assert created == []
+
+
+def test_ensure_control_plane_repair_tasks_recreates_cancelled_repair_task(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    created: list[dict[str, object]] = []
+    synced: list[bool] = []
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _create_task(**kwargs):
+        created.append(kwargs)
+        return {"_id": kwargs["title"], "title": kwargs["title"], "status": kwargs["status"]}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "create_task", _create_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    changed = asyncio.run(
+        autopilot_service._ensure_control_plane_repair_tasks(
+            project,
+            [
+                {
+                    "_id": "repair-task",
+                    "title": "Reconcile control-plane drift and stale sessions",
+                    "status": "cancelled",
+                }
+            ],
+            {
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "blocked", "blockers": ["1 task/session state mismatch(es) detected."]},
+            },
+        )
+    )
+
+    assert changed is True
+    assert created and created[0]["title"] == "Reconcile control-plane drift and stale sessions"
+    assert synced == [True]
+
+
+def test_cancel_stale_repair_tasks_keeps_control_plane_task_until_session_and_planner_are_both_ready(tmp_path: Path, monkeypatch):
+    project_root = tmp_path
+    (project_root / "artifacts").mkdir(parents=True, exist_ok=True)
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(project_root)}
+    updates: list[dict[str, object]] = []
+    synced: list[bool] = []
+    task = {
+        "_id": "repair-task",
+        "title": "Reconcile control-plane drift and stale sessions",
+        "status": "ready",
+    }
+
+    async def _update_task(task_id: str, *, project=None, **fields):
+        updates.append({"task_id": task_id, **fields})
+        return {"_id": task_id, **fields}
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _sync_planner_files(project_arg, board):
+        synced.append(True)
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(autopilot_service.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(autopilot_service.planner_service, "sync_planner_files", _sync_planner_files)
+
+    cancelled = asyncio.run(
+        autopilot_service.cancel_stale_repair_tasks(
+            project,
+            [task],
+            {
+                "session": {"status": "ready", "blockers": []},
+                "planner": {"status": "blocked", "blockers": ["1 task/session state mismatch(es) detected."]},
+                "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+            },
+        )
+    )
+
+    assert cancelled == 0
+    assert updates == []
+    assert synced == []
     assert synced == []
 
 
@@ -4889,7 +5732,7 @@ frontend:
     changed = asyncio.run(autopilot_service._ensure_ontology_lifecycle_tasks(project, tasks_state))
 
     assert changed is True
-    assert any(item["title"] == "Populate ontology pipeline steps for attachable sources" for item in created)
+    assert any(item["title"] == "Populate ontology pipeline steps for project sources" for item in created)
 
 
 def test_reconcile_ontology_lifecycle_state_advances_tasks_after_successful_hydration(monkeypatch):

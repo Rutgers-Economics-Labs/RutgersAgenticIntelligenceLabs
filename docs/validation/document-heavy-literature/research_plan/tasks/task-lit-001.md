@@ -1,11 +1,15 @@
 ---
-id: task-lit-001
+task_id: task-lit-001
 title: Literature search and extraction
 status: done
-agent_role: research
-created_at: 2026-05-01T00:00:00Z
-updated_at: 2026-05-18T22:18:53Z
+assigned_role: research
+dependencies: []
+acceptance_criteria: []
+related_files: []
+latest_run_summary: Recovered from session sess-research-001.
 ---
+
+## Description
 
 ## Summary
 

@@ -8,8 +8,8 @@
     "source_record_key": "artifacts/nj_housing_unemployment_analysis.md",
     "target_record_key": "scripts/analyze_nj_housing.py",
     "metadata": {},
-    "created_at": "2026-05-18T22:18:53Z",
-    "updated_at": "2026-05-18T22:18:53Z"
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
   },
   {
     "edge_key": "artifact:artifacts/nj_housing_unemployment_analysis.md|verified_by|verification_run:run-nj-housing-001",
@@ -20,7 +20,115 @@
     "source_record_key": "artifacts/nj_housing_unemployment_analysis.md",
     "target_record_key": "run-nj-housing-001",
     "metadata": {},
-    "created_at": "2026-05-18T22:18:53Z",
-    "updated_at": "2026-05-18T22:18:53Z"
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/nj_housing_unemployment_analysis.md|depends_on|dataset:.ontology/onto.duckdb",
+    "from_id": "artifact:artifacts/nj_housing_unemployment_analysis.md",
+    "to_id": "dataset:.ontology/onto.duckdb",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/nj_housing_unemployment_analysis.md",
+    "target_record_key": ".ontology/onto.duckdb",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/onto.duckdb|derived_from|source:fred_cpi",
+    "from_id": "dataset:.ontology/onto.duckdb",
+    "to_id": "source:fred_cpi",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/onto.duckdb",
+    "target_record_key": "fred_cpi",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/onto.duckdb|derived_from|source:fred_njsthpi",
+    "from_id": "dataset:.ontology/onto.duckdb",
+    "to_id": "source:fred_njsthpi",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/onto.duckdb",
+    "target_record_key": "fred_njsthpi",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/onto.duckdb|derived_from|source:fred_njurn",
+    "from_id": "dataset:.ontology/onto.duckdb",
+    "to_id": "source:fred_njurn",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/onto.duckdb",
+    "target_record_key": "fred_njurn",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/onto.duckdb|generated_by|method:.ontology/pipelines/project-default.yaml",
+    "from_id": "dataset:.ontology/onto.duckdb",
+    "to_id": "method:.ontology/pipelines/project-default.yaml",
+    "relationship": "generated_by",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/onto.duckdb",
+    "target_record_key": ".ontology/pipelines/project-default.yaml",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/.rail_hydration.json|derived_from|source:fred_cpi",
+    "from_id": "dataset:.ontology/.rail_hydration.json",
+    "to_id": "source:fred_cpi",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/.rail_hydration.json",
+    "target_record_key": "fred_cpi",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/.rail_hydration.json|derived_from|source:fred_njsthpi",
+    "from_id": "dataset:.ontology/.rail_hydration.json",
+    "to_id": "source:fred_njsthpi",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/.rail_hydration.json",
+    "target_record_key": "fred_njsthpi",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/.rail_hydration.json|derived_from|source:fred_njurn",
+    "from_id": "dataset:.ontology/.rail_hydration.json",
+    "to_id": "source:fred_njurn",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/.rail_hydration.json",
+    "target_record_key": "fred_njurn",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
+  },
+  {
+    "edge_key": "dataset:.ontology/.rail_hydration.json|generated_by|method:.ontology/pipelines/project-default.yaml",
+    "from_id": "dataset:.ontology/.rail_hydration.json",
+    "to_id": "method:.ontology/pipelines/project-default.yaml",
+    "relationship": "generated_by",
+    "edge_class": "explicit",
+    "source_record_key": ".ontology/.rail_hydration.json",
+    "target_record_key": ".ontology/pipelines/project-default.yaml",
+    "metadata": {},
+    "created_at": "2026-05-20T13:47:45Z",
+    "updated_at": "2026-05-20T13:47:45Z"
   }
 ]

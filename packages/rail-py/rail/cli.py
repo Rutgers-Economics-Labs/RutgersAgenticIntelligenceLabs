@@ -10,146 +10,146 @@ def _print_json(data: Any):
     print(json.dumps(data, indent=2))
 
 def _get_project(args: argparse.Namespace) -> rail.Project:
-    if args.local or os.path.exists("rail.yaml"):
+    if args.local:
         return rail.local(path=args.path)
     
-    if not args.project:
-        print("Error: --project <slug> is required for cloud mode (or run in a local project directory).")
+    slug = args.project or os.environ.get("RAIL_PROJECT")
+    if not slug:
+        print("Error: --project or RAIL_PROJECT env var is required", file=sys.stderr)
         sys.exit(1)
-    
+        
     return rail.connect(
-        slug=args.project,
+        slug=slug,
         api_url=args.api_url,
-        api_key=args.api_key
+        api_key=args.api_key,
     )
 
 def cmd_search(project: rail.Project, args: argparse.Namespace):
-    if args.type == "registry":
-        results = project.search_registry(args.query, provider=args.provider, geography=args.geography)
-    else:
-        results = project.discover(args.query, tags=args.tags.split(",") if args.tags else None)
-    _print_json(results)
+    _print_json(project.search(args.query))
 
 def cmd_query(project: rail.Project, args: argparse.Namespace):
     if args.command == "sql":
-        df = project.query(args.query_text)
-        print(df.to_string())
-    elif args.command == "entities":
-        df = project.entities(args.class_name, limit=args.limit)
-        print(df.to_string())
-    elif args.command == "search":
-        results = project.search(args.query_text)
-        _print_json(results)
+        _print_json(project.query(args.sql).to_dict(orient="records"))
     elif args.command == "classes":
-        results = project.classes()
-        _print_json(results)
+        _print_json(project.classes())
+    elif args.command == "entities":
+        _print_json(project.entities(args.class_name, limit=args.limit).to_dict(orient="records"))
 
 def cmd_hydrate(project: rail.Project, args: argparse.Namespace):
-    result = project.hydrate(pipeline_slug=args.pipeline)
-    _print_json(result)
+    _print_json(project.hydrate(pipeline_slug=args.pipeline))
 
 def cmd_series(project: rail.Project, args: argparse.Namespace):
-    df = project.series(args.series_id)
-    print(df.to_string())
+    _print_json(project.series(args.series_id).to_dict(orient="records"))
 
 def cmd_secrets(project: rail.Project, args: argparse.Namespace):
-    if args.secrets_command == "list":
-        results = project.list_secrets()
-        _print_json(results)
-    elif args.secrets_command == "set":
-        result = project.set_secret(args.key, args.value)
-        _print_json(result)
-    elif args.secrets_command == "delete":
-        result = project.delete_secret(args.key)
-        _print_json(result)
+    if args.command == "list":
+        _print_json(project.list_secrets())
+    elif args.command == "set":
+        _print_json(project.set_secret(args.key, args.value))
 
 def cmd_integrity(project: rail.Project, args: argparse.Namespace):
-    if args.integrity_command == "status":
-        results = project.integrity_status()
-        _print_json(results)
-    elif args.integrity_command == "assumptions":
-        results = project.integrity_assumptions()
-        _print_json(results)
-    elif args.integrity_command == "sources":
-        results = project.integrity_sources()
-        _print_json(results)
-    elif args.integrity_command == "claims":
-        results = project.integrity_claims()
-        _print_json(results)
-    elif args.integrity_command == "rerun":
+    if args.command == "status":
+        _print_json(project.integrity_status())
+    elif args.command == "assumptions":
+        _print_json(project.integrity_assumptions())
+    elif args.command == "sources":
+        _print_json(project.integrity_sources())
+    elif args.command == "claims":
+        _print_json(project.integrity_claims())
+    elif args.command == "rerun":
         if args.apply:
-            results = project.apply_integrity_rerun_plan(args.assumption_key)
+            _print_json(project.apply_integrity_rerun_plan(args.assumption_key))
         else:
-            results = project.integrity_rerun_plan(args.assumption_key)
-        _print_json(results)
+            _print_json(project.integrity_rerun_plan(args.assumption_key))
+
+def cmd_work_order(project: rail.Project, args: argparse.Namespace):
+    """Fetch and print the current work order."""
+    wo_id = getattr(args, "id", None)
+    _print_json(project.get_work_order(work_order_id=wo_id))
+
+def cmd_result(project: rail.Project, args: argparse.Namespace):
+    """Submit a session result."""
+    if not args.file:
+        print("Error: --file is required", file=sys.stderr)
+        sys.exit(1)
+    with open(args.file) as f:
+        result = json.load(f)
+    _print_json(project.submit_session_result(result, session_id=getattr(args, "session", None)))
+
+def cmd_ask(project: rail.Project, args: argparse.Namespace):
+    """Ask a question."""
+    if not args.question:
+        print("Error: --question is required", file=sys.stderr)
+        sys.exit(1)
+    _print_json(project.ask(args.question, session_id=getattr(args, "session", None)))
 
 def main():
-    parser = argparse.ArgumentParser(prog="rail", description="RAIL platform CLI")
-    parser.add_argument("--project", help="Project slug (cloud mode)")
-    parser.add_argument("--api-url", help="RAIL API URL")
-    parser.add_argument("--api-key", help="RAIL API Key")
-    parser.add_argument("--local", action="store_true", help="Force local mode")
+    parser = argparse.ArgumentParser(prog="rail", description="RAIL CLI")
+    parser.add_argument("--project", help="Project slug (overrides RAIL_PROJECT)")
+    parser.add_argument("--api-url", help="API URL (overrides RAIL_API_URL)")
+    parser.add_argument("--api-key", help="API Key (overrides RAIL_API_KEY)")
+    parser.add_argument("--local", action="store_true", help="Load from local path")
     parser.add_argument("--path", default=".", help="Local project path")
 
-    subparsers = parser.add_subparsers(dest="command", help="Subcommands")
+    subparsers = parser.add_subparsers(dest="command")
 
     # Search
-    p_search = subparsers.add_parser("search", help="Search registry or templates")
-    p_search.add_argument("query", help="Search query")
-    p_search.add_argument("--type", choices=["registry", "templates"], default="registry")
-    p_search.add_argument("--provider", help="Filter by provider (registry only)")
-    p_search.add_argument("--geography", help="Filter by geography (registry only)")
-    p_search.add_argument("--tags", help="Comma-separated tags (templates only)")
+    s_parser = subparsers.add_parser("search", help="Search ontology entities")
+    s_parser.add_argument("query", help="Search query")
 
     # Query
-    p_query = subparsers.add_parser("query", help="Query the knowledge graph")
-    q_subs = p_query.add_subparsers(dest="query_command")
+    q_parser = subparsers.add_parser("query", help="Query the project knowledge graph")
+    q_subs = q_parser.add_subparsers(dest="query_command")
     
-    psql = q_subs.add_parser("sql", help="Run SQL")
-    psql.add_argument("query_text", help="DuckDB SQL query")
+    sql_p = q_subs.add_parser("sql", help="Run SQL query")
+    sql_p.add_argument("sql", help="SQL statement")
     
-    pent = q_subs.add_parser("entities", help="List entities of a class")
-    pent.add_argument("class_name", help="Ontology class name")
-    pent.add_argument("--limit", type=int, default=20)
+    cls_p = q_subs.add_parser("classes", help="List classes")
     
-    psearch = q_subs.add_parser("search", help="Search entities")
-    psearch.add_argument("query_text", help="Search term")
-    
-    pclasses = q_subs.add_parser("classes", help="List ontology classes")
+    ent_p = q_subs.add_parser("entities", help="List entities of a class")
+    ent_p.add_argument("class_name", help="Class name")
+    ent_p.add_argument("--limit", type=int, default=20)
 
     # Hydrate
-    p_hydrate = subparsers.add_parser("hydrate", help="Run hydration pipeline")
-    p_hydrate.add_argument("--pipeline", help="Pipeline slug")
+    h_parser = subparsers.add_parser("hydrate", help="Trigger hydration")
+    h_parser.add_argument("--pipeline", help="Pipeline slug")
 
     # Series
-    p_series = subparsers.add_parser("series", help="Fetch time-series data")
-    p_series.add_argument("series_id", help="Series identifier")
+    ts_parser = subparsers.add_parser("series", help="Fetch time-series data")
+    ts_parser.add_argument("series_id", help="Series identifier")
 
     # Secrets
-    p_secrets = subparsers.add_parser("secrets", help="Manage project secrets")
-    s_subs = p_secrets.add_subparsers(dest="secrets_command")
-    
-    sl = s_subs.add_parser("list", help="List project secrets")
-    
-    ss = s_subs.add_parser("set", help="Set a project secret")
-    ss.add_argument("key", help="Secret key name")
-    ss.add_argument("value", help="Secret plaintext value")
-    
-    sd = s_subs.add_parser("delete", help="Delete a project secret")
-    sd.add_argument("key", help="Secret key name")
+    sec_parser = subparsers.add_parser("secrets", help="Manage project secrets")
+    sec_subs = sec_parser.add_subparsers(dest="command")
+    sec_subs.add_parser("list", help="List secret keys")
+    set_sec = sec_subs.add_parser("set", help="Set a secret")
+    set_sec.add_argument("key", help="Secret name")
+    set_sec.add_argument("value", help="Secret value")
 
     # Integrity
-    p_integrity = subparsers.add_parser("integrity", help="Manage research integrity ledger")
-    i_subs = p_integrity.add_subparsers(dest="integrity_command")
-    
-    i_subs.add_parser("status", help="Show full integrity status")
+    i_parser = subparsers.add_parser("integrity", help="Research integrity tools")
+    i_subs = i_parser.add_subparsers(dest="command")
+    i_subs.add_parser("status", help="Show integrity status")
     i_subs.add_parser("assumptions", help="List assumptions")
     i_subs.add_parser("sources", help="List sources")
     i_subs.add_parser("claims", help="List claims")
-    
     ir = i_subs.add_parser("rerun", help="Preview or apply rerun plan for an assumption")
     ir.add_argument("assumption_key", help="The assumption that changed")
     ir.add_argument("--apply", action="store_true", help="Actually create the rerun tasks")
+
+    # Work Order
+    wo_parser = subparsers.add_parser("work-order", help="Fetch the current work order")
+    wo_parser.add_argument("--id", help="Work order ID (optional if RAIL_WORK_ORDER_ID set)")
+
+    # Result
+    res_parser = subparsers.add_parser("result", help="Submit a session result")
+    res_parser.add_argument("--file", help="Path to session_result.json")
+    res_parser.add_argument("--session", help="Session ID (optional if RAIL_SESSION_ID set)")
+
+    # Ask
+    ask_parser = subparsers.add_parser("ask", help="Ask a question")
+    ask_parser.add_argument("question", help="The question to ask")
+    ask_parser.add_argument("--session", help="Session ID (optional if RAIL_SESSION_ID set)")
 
     args = parser.parse_args()
     if not args.command:
@@ -161,7 +161,6 @@ def main():
     if args.command == "search":
         cmd_search(project, args)
     elif args.command == "query":
-        args.command = args.query_command # nested
         cmd_query(project, args)
     elif args.command == "hydrate":
         cmd_hydrate(project, args)
@@ -171,6 +170,12 @@ def main():
         cmd_secrets(project, args)
     elif args.command == "integrity":
         cmd_integrity(project, args)
+    elif args.command == "work-order":
+        cmd_work_order(project, args)
+    elif args.command == "result":
+        cmd_result(project, args)
+    elif args.command == "ask":
+        cmd_ask(project, args)
 
 if __name__ == "__main__":
     main()

@@ -1,11 +1,14 @@
 ---
+task_id: analyze-nj-housing-affordability-from-duckdb
 title: analyze-nj-housing-affordability-from-duckdb
 status: done
 assigned_role: research
-runner: codex_cli
 dependencies: []
 acceptance_criteria:
-  - task completed
+- task completed
+related_files: []
+latest_run_summary: synthesize-final-report
+runner: codex_cli
 ---
 
 ## Description

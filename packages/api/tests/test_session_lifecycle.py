@@ -127,6 +127,134 @@ def test_workspace_review_flow_runs_setup_and_verification(tmp_path: Path, monke
     assert "# Post-Run Audit" in audit_text
 
 
+def test_materialize_workspace_prefers_local_branch_over_origin_when_local_exists(tmp_path: Path):
+    bootstrap_future_project(tmp_path, name="Workspace Local Branch Project")
+    tracked = tmp_path / "topics" / "data" / "processed" / "longitudinal_panel.csv"
+    tracked.parent.mkdir(parents=True, exist_ok=True)
+    tracked.write_text("a,b\n1,2\n", encoding="utf-8")
+    _init_repo(tmp_path)
+
+    _git(tmp_path, "branch", "-M", "main")
+    _git(tmp_path, "clone", "--bare", str(tmp_path), str(tmp_path.parent / "remote.git"))
+    _git(tmp_path, "remote", "add", "origin", str(tmp_path.parent / "remote.git"))
+    _git(tmp_path, "push", "-u", "origin", "main")
+
+    # Add a local-only file after the remote is already initialized.
+    tracked.write_text("a,b\n1,2\n3,4\n", encoding="utf-8")
+    _git(tmp_path, "add", "topics/data/processed/longitudinal_panel.csv")
+    _git(tmp_path, "commit", "-m", "local only panel update")
+
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "health",
+        "sess-local-pref",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+
+    assert (workspace_root / "topics" / "data" / "processed" / "longitudinal_panel.csv").exists()
+    assert "3,4" in (workspace_root / "topics" / "data" / "processed" / "longitudinal_panel.csv").read_text(encoding="utf-8")
+
+
+def test_materialize_workspace_overlays_untracked_local_files_into_workspace(tmp_path: Path):
+    bootstrap_future_project(tmp_path, name="Workspace Overlay Project")
+    _init_repo(tmp_path)
+
+    panel = tmp_path / "topics" / "data" / "processed" / "longitudinal_panel.csv"
+    panel.parent.mkdir(parents=True, exist_ok=True)
+    panel.write_text("a,b\n1,2\n", encoding="utf-8")
+
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "health",
+        "sess-untracked-overlay",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+
+    workspace_panel = workspace_root / "topics" / "data" / "processed" / "longitudinal_panel.csv"
+    assert workspace_panel.exists()
+    assert workspace_panel.read_text(encoding="utf-8") == "a,b\n1,2\n"
+
+
+def test_finalize_workspace_review_anchors_verification_status_when_session_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression guard for the workspace_verification "pending forever" bug.
+
+    When a session terminates `failed` or `cancelled`, _run_workspace_verification
+    is skipped (correctly — there's nothing to verify). But before this fix,
+    `verification_status` was never transitioned from its bootstrap value of
+    None, so _normalize_completion_summary downgraded it to "pending" and the
+    integrity/closeout auditors blocked promotion forever on a verification
+    run that would never happen.
+
+    With the fix, _finalize_workspace_review explicitly anchors
+    `verification_status` to "failed" in that path so the audit certificate
+    carries a terminal status the auditors can act on.
+    """
+    bootstrap_future_project(tmp_path, name="Failed Session Verification Anchor")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-fail")
+    workspace_root, workspace_branch, _ = session_lifecycle._prepare_workspace(
+        tmp_path, "data", "sess-fail",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    session_files.update_state(
+        session_root,
+        status="failed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    # Before the fix, verification_status starts as None and stays None.
+    pre = session_files.read_state(session_root)
+    assert pre.get("verification_status") is None
+
+    async def _mock_write_post_run_audit(**kwargs):
+        return {"auditors": {}}
+
+    monkeypatch.setattr(session_lifecycle, "write_post_run_audit", _mock_write_post_run_audit)
+
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-fail",
+            session={"role": "data"},
+            project={"slug": "failed-session-verification-anchor", "defaultBranch": "main"},
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    assert state["verification_status"] == "failed", (
+        "failed sessions must anchor verification_status to a terminal value, "
+        "not leave it None for _normalize_completion_summary to downgrade to 'pending'"
+    )
+
+
 def test_finalize_workspace_review_writes_post_run_audit_without_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bootstrap_future_project(tmp_path, name="No Workspace Audit Project")
     _init_repo(tmp_path)
@@ -492,6 +620,65 @@ def test_materialize_workspace_prefers_remote_default_branch_when_available(tmp_
     assert result["status"] == "ready"
     assert result["base_ref"] == "origin/main"
     assert (workspace_root / "artifacts" / "ontology_backed_baseline_findings.md").exists()
+
+
+def test_materialize_workspace_reconciles_duplicate_planner_task_files(tmp_path: Path):
+    bootstrap_future_project(tmp_path, name="Workspace Planner Cleanup")
+    _init_repo(tmp_path)
+
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    legacy = task_dir / "source-inventory-short.md"
+    canonical = task_dir / "source-inventory-canonical.md"
+    legacy.write_text(
+        """---
+title: Source inventory
+status: awaiting_approval
+assigned_role: research
+---
+
+## Description
+
+Legacy file.
+""",
+        encoding="utf-8",
+    )
+    canonical.write_text(
+        """---
+task_id: source-inventory-canonical
+title: Source inventory
+status: awaiting_approval
+assigned_role: research
+---
+
+## Description
+
+Canonical file.
+""",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", "research_plan/tasks/source-inventory-short.md", "research_plan/tasks/source-inventory-canonical.md")
+    _git(tmp_path, "commit", "-m", "seed duplicate planner task files")
+
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "research",
+        "sess-cleanup",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+
+    workspace_tasks = sorted((workspace_root / "research_plan" / "tasks").glob("*.md"))
+    source_inventory_files = [path.name for path in workspace_tasks if "source-inventory" in path.name]
+
+    assert "source-inventory-short.md" not in source_inventory_files
+    assert len(source_inventory_files) == 1
 
 
 def test_role_aliases_resolve_repo_configs(tmp_path: Path):
@@ -1113,6 +1300,179 @@ def test_create_runner_session_allows_repair_launch_when_ontology_auditor_is_blo
     assert result["status"] == "running"
 
 
+def test_create_runner_session_allows_control_plane_repair_launch_when_planner_auditor_is_blocked(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Control Plane Gate Project")
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "control-plane-gate-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    class _FakeRunner:
+        async def create_session(self, task_payload):
+            return {"session_id": "external-default-1", "status": "running"}
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(
+        running_agent_service,
+        "list_project_running_agents",
+        lambda *args, **kwargs: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        running_agent_service,
+        "create_running_agent",
+        lambda **kwargs: asyncio.sleep(0, result="sess-new-1"),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_materialize_workspace",
+        lambda **kwargs: asyncio.sleep(0, result={"mode": "linked-worktree"}),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_run_workspace_setup",
+        lambda **kwargs: asyncio.sleep(0, result={"status": "passed", "stdout": "", "stderr": ""}),
+    )
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+
+    async def _build_auditor_statuses(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "blocked", "blockers": ["1 task/session state mismatch(es) detected."]},
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+            "integrity": {"status": "blocked", "blockers": ["Failed verification runs must be resolved before promotion."]},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _build_auditor_statuses)
+
+    result = asyncio.run(
+        session_lifecycle.create_runner_session(
+            project_id="project-1",
+            project_slug="control-plane-gate-project",
+            task_id="task-2",
+            runner_name="codex_cli",
+            role="health",
+            task_description="Reconcile control-plane drift and stale sessions",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            local_repo_path=str(tmp_path),
+            allowed_paths=["research_plan", ".ontology"],
+            acceptance_criteria=[],
+            policy_approval_granted=True,
+        )
+    )
+
+    assert result["status"] == "running"
+
+
+def test_create_runner_session_reconciles_planner_state_before_auditor_gate(tmp_path: Path, monkeypatch):
+    bootstrap_future_project(tmp_path, name="Launch Reconcile Project")
+    task_root = tmp_path / "research_plan" / "tasks"
+    task_root.mkdir(parents=True, exist_ok=True)
+    (task_root / "task-2.md").write_text(
+        """---
+task_id: task-2
+title: Repair pipeline and hydrate ontology
+status: ready
+assigned_role: data
+runner: codex_cli
+approval_state: granted
+related_files:
+  - .ontology
+latest_run_summary: Reopened by Autopilot because hydration state is `not_hydrated`.
+---
+
+## Description
+
+Repair pipeline and hydrate ontology.
+""",
+        encoding="utf-8",
+    )
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "launch-reconcile-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    class _FakeRunner:
+        async def create_session(self, task_payload):
+            return {"session_id": "external-default-1", "status": "running"}
+
+    reconcile_calls: list[str] = []
+    captured_tasks: list[dict] = []
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(
+        running_agent_service,
+        "list_project_running_agents",
+        lambda *args, **kwargs: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        running_agent_service,
+        "create_running_agent",
+        lambda **kwargs: asyncio.sleep(0, result="sess-new-1"),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_materialize_workspace",
+        lambda **kwargs: asyncio.sleep(0, result={"mode": "linked-worktree"}),
+    )
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_run_workspace_setup",
+        lambda **kwargs: asyncio.sleep(0, result={"status": "passed", "stdout": "", "stderr": ""}),
+    )
+    monkeypatch.setattr(session_lifecycle, "resolve_runner_for_project", lambda *args, **kwargs: _FakeRunner())
+    monkeypatch.setattr(
+        session_lifecycle.planner_service,
+        "reconcile_task_files",
+        lambda project: reconcile_calls.append("files") or asyncio.sleep(0, result={"removed": []}),
+    )
+    monkeypatch.setattr(
+        session_lifecycle.planner_service,
+        "reconcile_task_session_states",
+        lambda project: reconcile_calls.append("sessions") or asyncio.sleep(0, result={"updated": []}),
+    )
+
+    async def _build_auditor_statuses(project, *, tasks=None, active_sessions=None):
+        captured_tasks.extend(tasks or [])
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."], "state": "not_hydrated"},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _build_auditor_statuses)
+
+    result = asyncio.run(
+        session_lifecycle.create_runner_session(
+            project_id="project-1",
+            project_slug="launch-reconcile-project",
+            task_id="task-2",
+            runner_name="codex_cli",
+            role="data",
+            task_description="Repair pipeline and hydrate ontology",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            local_repo_path=str(tmp_path),
+            allowed_paths=[".ontology", "research_plan"],
+            acceptance_criteria=[],
+            policy_approval_granted=True,
+        )
+    )
+
+    assert result["status"] == "running"
+    assert reconcile_calls == ["files", "sessions"]
+    assert captured_tasks and captured_tasks[0]["_id"] == "task-2"
+
+
 def test_cancel_runner_session_uses_file_backed_state_when_runtime_row_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1439,6 +1799,71 @@ def test_publish_completed_session_outputs_uses_file_backed_slug_task_id_for_all
     assert publish_calls[0]["allowed_paths"] == [".ontology/sources"]
     assert publish_calls[0]["changed_paths"] == [source_rel]
     assert (tmp_path / source_rel).read_text(encoding="utf-8") == "name: example\n"
+
+
+def test_publish_completed_session_outputs_locally_mirrors_files_without_github_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bootstrap_future_project(tmp_path, name="Local Mirror Project")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "health", "sess-local-mirror")
+    workspace_root, workspace_branch, _workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "health",
+        "sess-local-mirror",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    artifact_rel = "artifacts/reproducibility/trusted_artifacts_manifest.md"
+    artifact_path = workspace_root / artifact_rel
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text("# Trusted Artifacts\n", encoding="utf-8")
+    session_files.update_state(
+        session_root,
+        task_id="repair-reproducibility-metadata-for-trusted-artifacts",
+    )
+
+    async def _task_record(project: dict, task_id: str | None):
+        return {"_id": task_id, "repoPaths": ["artifacts", "topics", "research_plan/state"]}
+
+    record_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    async def _record_success(*args, **kwargs):
+        record_calls.append((args, kwargs))
+
+    monkeypatch.setattr(session_lifecycle, "_task_record", _task_record)
+    monkeypatch.setattr(session_lifecycle, "record_publish_success", _record_success)
+
+    result = asyncio.run(
+        session_lifecycle._publish_completed_session_outputs(
+            project={"_id": "project-11", "slug": "local-mirror-project", "defaultBranch": "main"},
+            session={"role": "health"},
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            changed_files=[artifact_rel],
+        )
+    )
+
+    state = session_files.read_state(session_root)
+
+    assert result["published"] is True
+    assert result["strategy"] == "local_workspace_mirror"
+    assert result["changed"] is True
+    assert result["files"] == [{"path": artifact_rel, "changed": True}]
+    assert (tmp_path / artifact_rel).read_text(encoding="utf-8") == "# Trusted Artifacts\n"
+    assert state["publish_status"] == "published"
+    assert state["publish_strategy"] == "local_workspace_mirror"
+    assert state["publish_changed_files"] == [artifact_rel]
+    assert record_calls == []
 
 
 def test_publish_completed_session_outputs_copies_binary_files_and_registers_hydration(
@@ -1815,6 +2240,113 @@ def test_finalize_workspace_review_marks_task_done_when_verification_failures_ar
     assert state["review_status"] == "review"
     assert task_updates[-1]["status"] == "done"
     assert "outside this task scope" in str(task_updates[-1]["latestRunSummary"])
+
+
+def test_finalize_workspace_review_keeps_worker_task_in_review_when_audit_still_blocked(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bootstrap_future_project(tmp_path, name="Blocked Audit Worker Project")
+    verify_script = tmp_path / "scripts" / "run-verification.sh"
+    verify_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "echo 'VERIFICATION FAILED'\n"
+        "echo '- Missing processed longitudinal panel dataset: topics/data/processed/longitudinal_panel.csv'\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-blocked-audit")
+    workspace_root, workspace_branch, workspace_config = session_lifecycle._prepare_workspace(
+        tmp_path,
+        "data",
+        "sess-blocked-audit",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    asyncio.run(
+        session_lifecycle._run_workspace_setup(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            session_root=session_root,
+            session_id="sess-blocked-audit",
+            role="data",
+            base_branch="main",
+            workspace_branch=workspace_branch,
+            workspace_config=workspace_config,
+        )
+    )
+    data_note = workspace_root / "topics" / "data_provenance.md"
+    data_note.parent.mkdir(parents=True, exist_ok=True)
+    data_note.write_text("# Data provenance\n\nSeeded inputs.\n", encoding="utf-8")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    async def _publish(*args, **kwargs):
+        return {
+            "published": True,
+            "strategy": "github_app_commit",
+            "commit_sha": "deadbeef",
+            "branch": "main",
+            "changed": False,
+            "files": [],
+            "skipped_files": [],
+        }
+
+    async def _record_success(*args, **kwargs):
+        return None
+
+    async def _update_task(task_id: str, *, project: dict, **fields):
+        task_updates.append({"task_id": task_id, **fields})
+        return {"_id": task_id, **fields}
+
+    async def _task_record(project: dict, task_id: str | None):
+        return {"_id": task_id, "repoPaths": [".ontology"]}
+
+    task_updates: list[dict[str, object]] = []
+    monkeypatch.setattr(session_lifecycle, "publish_repo_files", _publish)
+    monkeypatch.setattr(session_lifecycle, "record_publish_success", _record_success)
+    monkeypatch.setattr(session_lifecycle, "record_publish_failure", lambda *args, **kwargs: asyncio.sleep(0))
+    monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
+    monkeypatch.setattr(session_lifecycle, "_task_record", _task_record)
+    monkeypatch.setattr(session_lifecycle, "summarize_agent_workflow_health", lambda *_args, **_kwargs: {})
+
+    project = {
+        "_id": "project-4",
+        "slug": "blocked-audit-worker-project",
+        "defaultBranch": "main",
+        "github": "Rutgers-Economics-Labs/RAIL-blocked-audit-worker-project",
+        "localRepoPath": str(tmp_path),
+    }
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-blocked-audit",
+            session={"role": "data", "taskId": "repair-task"},
+            project=project,
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    assert state["verification_status"] == "failed"
+    assert state["review_status"] == "review"
+    assert task_updates[-1]["status"] == "review"
+    assert "awaiting a reviewed post-run audit" in str(task_updates[-1]["latestRunSummary"])
 
 
 def test_relay_terminal_status_uses_session_file_task_id_for_slug_tasks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -2205,7 +2737,7 @@ def test_finalize_workspace_review_infers_coding_lineage_from_companion_files(
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
     assert "artifacts/analysis_targets/run_analysis_target.sh" in readme_entry["scripts"]
     assert "research_plan/methodology.md" in readme_entry["inputs"]
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_enriches_existing_placeholder_lineage(
@@ -2316,7 +2848,7 @@ def test_finalize_workspace_review_enriches_existing_placeholder_lineage(
     assert readme_entry["scripts"] == ["artifacts/analysis_targets/run_analysis_target.sh"]
     assert "research_plan/methodology.md" in readme_entry["inputs"]
     assert "research_plan/state/verification_runs.json#seed-run" in readme_entry["verification_runs"]
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_preserves_unrelated_project_lineage(
@@ -2414,7 +2946,7 @@ def test_finalize_workspace_review_preserves_unrelated_project_lineage(
         "artifacts/existing.md",
         "artifacts/analysis_targets/README.md",
     }
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_blocks_research_task_without_structured_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -2897,7 +3429,7 @@ def test_finalize_workspace_review_allows_research_task_with_structured_sections
 
     assert state["review_status"] == "review"
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_blocks_research_task_without_claim_candidates(
@@ -3064,7 +3596,7 @@ def test_finalize_workspace_review_accepts_research_findings_output(
 
     assert state["review_status"] == "review"
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_process_is_running_treats_zombies_as_not_running(monkeypatch: pytest.MonkeyPatch):
@@ -3238,6 +3770,22 @@ def test_finalize_workspace_review_allows_artifact_task_with_evidence_links(tmp_
         "# Memo\n\n## Evidence Links\n- research_plan/state/claims.json#claim-001\n- research_plan/state/sources.json#source-001\n",
         encoding="utf-8",
     )
+    # Phase 2 protocol: promotion-class sessions must emit session_result.json.
+    session_result_dir = workspace_root / "research_plan" / "sessions" / "sess-artifact-structured"
+    session_result_dir.mkdir(parents=True, exist_ok=True)
+    (session_result_dir / "session_result.json").write_text(
+        json.dumps(
+            {
+                "session_id": "sess-artifact-structured",
+                "status": "completed",
+                "summary": "Wrote memo with evidence links.",
+                "task_type": "artifact_writing",
+                "runner_name": "test_runner",
+                "files_changed": ["artifacts/memo.md"],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     task_updates: list[dict[str, object]] = []
 
@@ -3270,7 +3818,7 @@ def test_finalize_workspace_review_allows_artifact_task_with_evidence_links(tmp_
 
     assert state["review_status"] == "review"
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_blocks_artifact_task_with_unsupported_claims(

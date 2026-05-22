@@ -1,0 +1,47 @@
+# Runner Profile: OpenAI Codex CLI
+#
+# Strong at code, debugging, tests, verification. MCP support exists but
+# requires configuration; without MCP, fall back to rail CLI commands.
+# Best slot in the routing pool is verification + data pipeline work.
+name: codex_cli
+adapter: local_cli
+default_command: codex
+status: certified
+
+execution:
+  mode: local_cli
+  supports_streaming: "yes"
+  supports_resume: configurable
+  supports_midrun_messages: false
+  supports_native_approval: false
+  supports_cancel: true
+  supports_mcp: "configurable"
+  supports_native_questions: "configurable"  # only if MCP is wired
+  steering_mode: native_or_relaunch
+
+capabilities:
+  edit_files: "yes"
+  run_shell: "yes"
+  fetch_remote_data: "yes"
+  query_duckdb: "yes"
+  execute_python: "yes"
+  use_mcp_tools: "configurable"
+  browse_web: "unknown"
+  extract_pdf_tables: "unknown"
+  write_long_artifacts: "yes"
+  handle_large_context: "yes"
+  write_structured_output: "yes"
+
+task_affinity:
+  data_ingestion: 0.85
+  analysis: 0.75
+  source_discovery: 0.6
+  artifact_writing: 0.7
+  health_repair: 0.85
+  claim_extraction: 0.7
+  verification: 0.9     # verification + tests is its sweet spot
+
+notes: |
+  Sweet spot is verification + code + data pipeline work. For tasks
+  requiring rail.ask (Q&A), MCP must be configured; without it, agent
+  must poll rail CLI which the prompt should make explicit.

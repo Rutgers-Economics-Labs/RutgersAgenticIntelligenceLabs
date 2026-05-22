@@ -1,0 +1,26 @@
+{
+  "session_id": "gemini-pla-4f78adf9c2ef408b956b",
+  "role": "planner",
+  "status": "completed",
+  "review_status": "review",
+  "task_id": "propose-grounded-follow-up-questions",
+  "created_at": "2026-05-19T00:43:10Z",
+  "completed_at": "2026-05-19T00:43:10Z",
+  "runner": "gemini_cli",
+  "llm_model": "gemini-2.5-flash",
+  "llm_generated": true,
+  "gemini_cli_exit_code": 0,
+  "completion_summary": {
+    "status": "completed",
+    "assumptions_added": [],
+    "assumptions_changed": [],
+    "sources_used": [],
+    "datasets_created": [],
+    "artifacts_created": [],
+    "claims_created": [],
+    "verification_results": [],
+    "open_questions": [],
+    "blockers": [],
+    "recommended_next_tasks": []
+  }
+}

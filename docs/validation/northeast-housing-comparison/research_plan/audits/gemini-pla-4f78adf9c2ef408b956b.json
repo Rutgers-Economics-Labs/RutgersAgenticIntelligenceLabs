@@ -1,0 +1,66 @@
+{
+  "auditors": {
+    "closeout": {
+      "blockers": [
+        "Missing ontology expansion task for follow-up question: 4. What are the key macroeconomic indicators (e.g., unemployment rates, mortgage interest rates, personal income growth) that correlate with the observed housing price trajectories in each state?",
+        "Missing ontology expansion task for follow-up question: 5. How do housing price trends differ between urban and rural areas within New Jersey, New York, and Connecticut?"
+      ],
+      "status": "blocked"
+    },
+    "integrity": {
+      "blockers": [],
+      "status": "ready"
+    },
+    "ontology": {
+      "blockers": [],
+      "duckdbPath": "/Users/akashdubey/Documents/CodingProjects/RAIL/RutgersAgenticIntelligenceLabs/docs/validation/northeast-housing-comparison/.ontology/onto.duckdb",
+      "state": "hydrated_on_this_device",
+      "stateClassification": "ready",
+      "status": "ready"
+    },
+    "planner": {
+      "blockers": [],
+      "status": "ready"
+    },
+    "session": {
+      "blockers": [],
+      "status": "ready"
+    }
+  },
+  "completionSummary": {
+    "artifacts_created": [],
+    "assumptions_added": [],
+    "assumptions_changed": [],
+    "blockers": [],
+    "claims_created": [],
+    "datasets_created": [],
+    "open_questions": [],
+    "recommended_next_tasks": [],
+    "sources_used": [],
+    "status": "completed",
+    "verification_results": []
+  },
+  "currentBlocker": null,
+  "generatedAt": "2026-05-19T00:43:11Z",
+  "integrity": {
+    "action": "artifact_generation",
+    "blocked": false,
+    "reasons": []
+  },
+  "planner": {
+    "activeTasks": [],
+    "blockedTasks": [],
+    "readyTasks": [],
+    "taskCounts": {}
+  },
+  "session": {
+    "changedFiles": [],
+    "id": "gemini-pla-4f78adf9c2ef408b956b",
+    "publishStatus": "not_started",
+    "reviewStatus": "review",
+    "role": "planner",
+    "status": "completed",
+    "taskId": "propose-grounded-follow-up-questions",
+    "verificationStatus": "pending"
+  }
+}

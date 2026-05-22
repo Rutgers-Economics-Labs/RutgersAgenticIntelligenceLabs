@@ -28,6 +28,8 @@ class _ProjectOntology:
     onto: Any | None = None
     db_path: str | None = None
     executor: Any | None = None
+    db_mtime_ns: int | None = None
+    db_size: int | None = None
 
 
 _states_by_id: dict[str, _ProjectOntology] = {}
@@ -132,7 +134,19 @@ def ensure_loaded(db_path: Union[str, Path], *, project_id: str | None = None) -
     # Guard the check + load together to prevent concurrent requests from both
     # trying to open/analyze the same SQLite quadstore at once.
     with st.lock:
-        if st.db_path != db_path or st.onto is None or st.world is None:
+        needs_reload = (
+            st.db_path != db_path
+            or st.onto is None
+            or st.world is None
+        )
+        if not needs_reload and st.db_mtime_ns is not None:
+            try:
+                stat = Path(db_path).stat()
+                if stat.st_mtime_ns != st.db_mtime_ns or stat.st_size != st.db_size:
+                    needs_reload = True
+            except OSError:
+                needs_reload = True
+        if needs_reload:
             _load_locked(st, db_path)
 
 
@@ -342,6 +356,124 @@ def get_full_graph(
                 pass
 
     return {"nodes": list(nodes.values()), "links": links}
+
+
+def get_class_graph(project_id: str | None) -> dict:
+    """Class-level ontology graph: entities as types, edges as object properties."""
+    onto = _require_onto(project_id)
+    class_names = {c.name for c in onto.classes()}
+    nodes: list[dict] = []
+    links: list[dict] = []
+    seen_links: set[tuple[str, str, str]] = set()
+
+    for cls in onto.classes():
+        count = len(list(cls.instances()))
+        nodes.append(
+            {
+                "id": cls.name,
+                "label": cls.name,
+                "group": cls.name,
+                "count": count,
+                "properties": {"instances": count},
+            }
+        )
+
+    for prop in onto.object_properties():
+        try:
+            domains = list(prop.domain) if prop.domain else []
+            ranges = list(prop.range) if prop.range else []
+        except Exception:
+            continue
+        label = str(getattr(prop, "python_name", None) or getattr(prop, "name", "relates"))
+        for domain in domains:
+            d_name = getattr(domain, "name", None)
+            if not d_name or d_name not in class_names:
+                continue
+            for range_cls in ranges:
+                r_name = getattr(range_cls, "name", None)
+                if not r_name or r_name not in class_names:
+                    continue
+                key = (d_name, r_name, label)
+                if key in seen_links:
+                    continue
+                seen_links.add(key)
+                links.append({"source": d_name, "target": r_name, "label": label})
+
+    # Fallback: link Observation to classes that share time-series columns in DuckDB mirror
+    if "Observation" in class_names and not links:
+        for cls_name in class_names:
+            if cls_name != "Observation":
+                links.append({"source": cls_name, "target": "Observation", "label": "observedAs"})
+
+    return {"nodes": nodes, "links": links}
+
+
+def get_database_graph(project_id: str | None, db_path: str | None = None) -> dict:
+    """Table-level graph of the hydrated DuckDB artifact (row counts + shared columns)."""
+    import duckdb
+
+    path = db_path or get_db_path(project_id)
+    if not path:
+        raise RuntimeError("Database path unavailable. Run hydration first.")
+    path = str(Path(path).resolve())
+    if path.endswith(".db") and not path.endswith(".duckdb"):
+        duck = path.replace(".db", ".duckdb")
+        if Path(duck).exists():
+            path = duck
+
+    if not Path(path).exists():
+        raise FileNotFoundError(f"DuckDB artifact not found at {path}")
+
+    con = duckdb.connect(path, read_only=True)
+    try:
+        tables = [r[0] for r in con.execute("SHOW TABLES").fetchall()]
+        schema: dict[str, list[str]] = {}
+        nodes: list[dict] = []
+        for table in sorted(tables):
+            count = int(con.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
+            cols = [r[0] for r in con.execute(f'DESCRIBE "{table}"').fetchall()]
+            schema[table] = cols
+            nodes.append(
+                {
+                    "id": table,
+                    "label": table,
+                    "group": "table",
+                    "count": count,
+                    "properties": {"rows": count, "columns": cols},
+                }
+            )
+
+        skip_cols = {"_id", "_iri", "id", "row_is_current"}
+        links: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        table_set = set(tables)
+        for t1, cols1 in schema.items():
+            for t2, cols2 in schema.items():
+                if t1 >= t2:
+                    continue
+                shared = set(cols1) & set(cols2) - skip_cols
+                for col in sorted(shared):
+                    if col.startswith("_"):
+                        continue
+                    key = (t1, t2, col)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    links.append({"source": t1, "target": t2, "label": col})
+                # Heuristic: column name matches another table (e.g. municipality → Municipality)
+                for col in cols1:
+                    if col in skip_cols or not col[0].islower():
+                        continue
+                    candidate = col[0].upper() + col[1:]
+                    if candidate in table_set and candidate != t1:
+                        key = (t1, candidate, col)
+                        if key not in seen:
+                            seen.add(key)
+                            links.append({"source": t1, "target": candidate, "label": col})
+
+        return {"nodes": nodes, "links": links}
+    finally:
+        con.close()
 
 
 def search_entities(project_id: str | None, q: str, types: Union[List[str], None] = None) -> List[dict]:
