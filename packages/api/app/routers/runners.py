@@ -493,19 +493,31 @@ async def ask_question(
     if not question:
         raise HTTPException(status_code=400, detail="Question is required")
 
-    from app.services import running_agent_service, planner_service
+    from app.services import running_agent_service, planner_answer_service
     from app.runners.base import RunnerEvent, RunnerEventType
     import time
 
     agent_session = await running_agent_service.get_running_agent(session_id)
     
+    # Tiered resolution
+    resolution = await planner_answer_service.resolve_question(
+        project_slug=project_slug,
+        session_id=session_id,
+        question=question,
+    )
+
     if agent_session:
         from app.services.convex_client import convex
         event = RunnerEvent(
             event_type=RunnerEventType.QUESTION_ASKED,
             session_id=session_id,
-            normalized_payload={"question": question},
-            raw_payload={},
+            normalized_payload={
+                "question": question,
+                "answer": resolution.get("answer"),
+                "tier": resolution.get("tier"),
+                "status": resolution.get("status"),
+            },
+            raw_payload=resolution,
         )
         await convex.mutation(
             "runnerEvents:append",
@@ -516,4 +528,4 @@ async def ask_question(
             },
         )
 
-    return {"ok": True, "status": "pending", "message": "Question received and recorded."}
+    return resolution
