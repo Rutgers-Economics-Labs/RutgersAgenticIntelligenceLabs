@@ -24,14 +24,18 @@ from app.runners.contracts.session_result import (
     Blocker,
     ClaimCandidate,
     DatasetRecord,
+    DomainProgress,
     RecommendedTask,
     SessionResult,
     SessionStatus,
     SourceRecord,
+    TrustChange,
     VerificationRequest,
 )
 from app.runners.contracts.work_order import (
     Capability,
+    ExpectedProgress,
+    FailurePolicy,
     TaskType,
     TrustPolicy,
     WorkOrder,
@@ -40,6 +44,8 @@ from app.runners.contracts.work_order import (
 __all__ = [
     # work_order
     "Capability",
+    "ExpectedProgress",
+    "FailurePolicy",
     "TaskType",
     "TrustPolicy",
     "WorkOrder",
@@ -47,10 +53,12 @@ __all__ = [
     "Blocker",
     "ClaimCandidate",
     "DatasetRecord",
+    "DomainProgress",
     "RecommendedTask",
     "SessionResult",
     "SessionStatus",
     "SourceRecord",
+    "TrustChange",
     "VerificationRequest",
     # runner_profile
     "AdapterType",

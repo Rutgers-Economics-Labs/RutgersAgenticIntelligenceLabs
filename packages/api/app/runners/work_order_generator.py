@@ -95,6 +95,30 @@ def _infer_capabilities(task_type: TaskType, task: dict[str, Any] | None) -> lis
     return _TASK_TYPE_CAPABILITIES.get(task_type, [Capability.EDIT_FILES])
 
 
+def _infer_expected_progress(task_type: TaskType) -> dict[str, Any]:
+    """Provide structured expected progress based on task type (Track B)."""
+    if task_type == TaskType.ANALYSIS:
+        return {"one_of": [
+            "claim_candidate_created",
+            "hypothesis_rejected_with_evidence",
+            "analysis_dataset_missing_declared",
+            "method_blocker_declared"
+        ]}
+    elif task_type == TaskType.DATA_INGESTION:
+        return {"one_of": [
+            "new_remote_source_fetched",
+            "source_marked_inadmissible",
+            "source_marked_unavailable_with_reason",
+            "replacement_source_registered"
+        ]}
+    elif task_type == TaskType.ARTIFACT_WRITING:
+        return {"one_of": [
+            "draft_artifact_created",
+            "artifact_updated",
+            "promotion_blocker_declared"
+        ]}
+    return {"one_of": ["domain_progress_recorded", "typed_blocker_declared", "scope_reduced_with_reason"]}
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -109,33 +133,25 @@ def generate_work_order(
     allowed_paths: list[str],
     runner_name: str | None,
 ) -> WorkOrder:
-    """Generate a WorkOrder for a new session dispatch.
-
-    Parameters are taken from the planner dispatch context so callers
-    don't need to know the WorkOrder schema.  The resulting work order is
-    conservative by default, using the minimal capabilities that the role
-    typically requires.
-
-    Args:
-        session_id: The RAIL session ID (Convex) that is being launched.
-        project_slug: Project slug (e.g. ``nj-housing-analysis``).
-        role: Agent role (``research``, ``artifact``, ``health``, …).
-        task_id: Convex task _id if this dispatch is tied to a task.
-        task: Full Convex task record, used to read optional explicit fields.
-        allowed_paths: Filesystem paths the agent may write within.
-        runner_name: Preferred runner (operator override), or None.
-
-    Returns:
-        A validated WorkOrder instance.
-    """
+    """Generate a WorkOrder for a new session dispatch."""
     task_type = _infer_task_type(role, task)
     capabilities = _infer_capabilities(task_type, task)
+    
+    expected_progress = _infer_expected_progress(task_type)
+    failure_policy = {"max_attempts": 2, "if_no_progress": "downgrade_or_escalate"}
 
     # Stable work order ID: deterministic from project + task (or session).
     # Using a hash keeps the ID compact and safe for filenames.
     wo_seed = f"{project_slug}:{task_id or session_id}"
     wo_hash = hashlib.sha256(wo_seed.encode()).hexdigest()[:12]
     wo_id = f"wo_{wo_hash}"
+    
+    # Track B: Idempotency and hashing
+    idempotency_key = f"{project_slug}:{task_type.value}:{task_id or session_id}"
+    input_hash = None
+    if task:
+        # A simple stable hash of the task dictionary state
+        input_hash = hashlib.sha256(json.dumps(task, sort_keys=True).encode()).hexdigest()[:16]
 
     # Sanitise allowed_paths — the WorkOrder validator requires relative paths.
     safe_paths = [
@@ -145,10 +161,15 @@ def generate_work_order(
     if not safe_paths:
         safe_paths = ["research_plan/"]
 
+    from app.runners.contracts import ExpectedProgress, FailurePolicy
     return WorkOrder(
         work_order_id=wo_id,
         project_slug=project_slug,
         task_type=task_type,
+        expected_progress=ExpectedProgress(**expected_progress),
+        failure_policy=FailurePolicy(**failure_policy),
+        idempotency_key=idempotency_key,
+        input_hash=input_hash,
         capabilities_required=capabilities,
         runner_preferred=runner_name,
         allowed_paths=safe_paths,

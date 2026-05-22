@@ -71,6 +71,19 @@ class TrustPolicy(BaseModel):
     promotion_requires: list[str] = Field(default_factory=list)
 
 
+class FailurePolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    max_attempts: int = 2
+    if_no_progress: str = "downgrade_or_escalate"
+
+
+class ExpectedProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    one_of: list[str] = Field(default_factory=list)
+
+
 WorkOrderId = Annotated[
     str,
     StringConstraints(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9_:.\-]+$"),
@@ -95,6 +108,12 @@ class WorkOrder(BaseModel):
     project_slug: str
     task_type: TaskType
     phase: str | None = None
+
+    # Track B: Liveness and Anti-Stuck
+    expected_progress: ExpectedProgress = Field(default_factory=ExpectedProgress)
+    failure_policy: FailurePolicy = Field(default_factory=FailurePolicy)
+    idempotency_key: str | None = None
+    input_hash: str | None = None
 
     # Routing
     capabilities_required: list[Capability]

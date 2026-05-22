@@ -95,13 +95,24 @@ class Blocker(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    blocker_id: str | None = None
     category: str
     """data_gap | methodology_choice | runtime_error | permission_denied |
-    out_of_scope | needs_human | unknown"""
+    out_of_scope | needs_human | unknown | source_admissibility"""
     summary: str
     detail: str | None = None
     recommended_followup: str | None = None
     """One-line suggestion for what task to spawn next."""
+
+    # Track B: Liveness & Anti-Stuck fields
+    severity: str | None = None
+    """e.g. promotion_blocking, research_blocking"""
+    blocks: list[str] = Field(default_factory=list)
+    does_not_block: list[str] = Field(default_factory=list)
+    owner_lane: str | None = None
+    allowed_resolutions: list[str] = Field(default_factory=list)
+    max_repair_attempts: int | None = None
+    next_action: str | None = None
 
 
 class VerificationRequest(BaseModel):
@@ -136,6 +147,25 @@ class RecommendedTask(BaseModel):
     capabilities_hint: list[str] = Field(default_factory=list)
 
 
+class DomainProgress(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    new_sources: int = 0
+    new_datasets: int = 0
+    new_claim_candidates: int = 0
+    new_analysis_artifacts: int = 0
+    new_verified_claims: int = 0
+
+
+class TrustChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    object_type: str
+    object_id: str
+    from_state: str = Field(alias="from")
+    to_state: str = Field(alias="to")
+
+
 class SessionResult(BaseModel):
     """The required exit artifact for every session, every runner, every time.
 
@@ -164,6 +194,12 @@ class SessionResult(BaseModel):
     sources: list[SourceRecord] = Field(default_factory=list)
     datasets: list[DatasetRecord] = Field(default_factory=list)
     blockers: list[Blocker] = Field(default_factory=list)
+
+    # Track B: Liveness
+    domain_progress: DomainProgress = Field(default_factory=DomainProgress)
+    trust_changes: list[TrustChange] = Field(default_factory=list)
+    promotion_blockers: list[str] = Field(default_factory=list)
+    research_blockers: list[str] = Field(default_factory=list)
 
     # Q&A linkage (Phase 4)
     questions_asked: list[str] = Field(default_factory=list)

@@ -2133,6 +2133,15 @@ def _certify_session_result_if_present(
         _log.warning("certify_session_result raised unexpectedly for %s: %s", convex_session_id, _exc)
         return
 
+    # Track B: Record domain progress in the progress ledger
+    try:
+        from app.services import liveness_service
+        import json
+        raw = json.loads(result_path.read_text(encoding="utf-8"))
+        liveness_service.record_session_result(project_root, convex_session_id, raw)
+    except Exception as _exc:
+        _log.warning("Liveness tracking failed for %s: %s", convex_session_id, _exc)
+
     session_files.update_state(
         session_root,
         session_result_certified=cert.passed,

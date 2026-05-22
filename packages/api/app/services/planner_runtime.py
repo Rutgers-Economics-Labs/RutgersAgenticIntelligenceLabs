@@ -704,6 +704,27 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             await planner_service.sync_planner_files(project, board)
             return {"status": "awaiting_approval", "approvalId": approval_id, "taskId": task_id}
 
+        # Track B: Liveness Guard
+        from app.services.liveness_service import check_liveness
+        if project.get("localRepoPath"):
+            from pathlib import Path
+            liveness_check = check_liveness(
+                Path(project["localRepoPath"]), 
+                task_type=tmp_wo.task_type.value,
+                idempotency_key=tmp_wo.idempotency_key,
+                input_hash=tmp_wo.input_hash
+            )
+            if not liveness_check["allowed"]:
+                await planner_service.update_task(
+                    str(task["_id"]),
+                    project=project,
+                    status="blocked",
+                    runner=selected_runner,
+                    latestRunSummary=liveness_check["reason"],
+                )
+                await planner_service.sync_planner_files(project, board)
+                return {"status": "blocked", "taskId": task_id, "reason": liveness_check["reason"]}
+
         result = await session_lifecycle.create_runner_session(
             project_id=project["_id"],
             project_slug=project["slug"],
