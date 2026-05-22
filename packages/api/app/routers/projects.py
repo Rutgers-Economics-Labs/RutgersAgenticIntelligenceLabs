@@ -9,7 +9,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 from pathlib import Path
 
-from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks, Path as FPath
 from pydantic import BaseModel
 from rail.bootstrap import bootstrap_future_project
 from rail.manifest import ManifestValidationError, load_manifest
@@ -3543,3 +3543,20 @@ def _recommend_next_action(
     if phase == "closed":
         return "Project is closed. Review artifacts and consider follow-up questions."
     return "Review auditor statuses to determine next step."
+
+
+@router.get("/{slug}/next-best-action")
+async def get_next_best_action(
+    slug: str = FPath(...),
+) -> dict[str, Any]:
+    """Fetch the next best research action for a project (Track B)."""
+    from app.services import lifecycle_service, planner_service
+    
+    project = await planner_service.get_project_by_slug(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+        
+    board = await planner_service.ensure_main_board(project)
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
+    
+    return await lifecycle_service.evaluate_lifecycle(project, tasks)

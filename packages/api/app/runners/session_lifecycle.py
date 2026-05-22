@@ -2136,11 +2136,21 @@ def _certify_session_result_if_present(
     # Track B: Record domain progress in the progress ledger
     try:
         from app.services import liveness_service
+        from app.research import loop_closure
+        from app.runners.contracts import SessionResult
         import json
         raw = json.loads(result_path.read_text(encoding="utf-8"))
+        
+        # 1. Update Ledger
         liveness_service.record_session_result(project_root, convex_session_id, raw)
+        
+        # 2. Update Research State (Claims, Sources, Memo)
+        parsed = SessionResult.model_validate(raw)
+        closure_updates = loop_closure.apply_session_results(project_root, parsed)
+        _log.info(f"Session {convex_session_id} loop closure updates: {closure_updates}")
+        
     except Exception as _exc:
-        _log.warning("Liveness tracking failed for %s: %s", convex_session_id, _exc)
+        _log.warning("Liveness tracking / Loop closure failed for %s: %s", convex_session_id, _exc)
 
     session_files.update_state(
         session_root,
