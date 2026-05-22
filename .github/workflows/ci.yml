@@ -9,6 +9,9 @@ on:
 jobs:
   api-tests:
     runs-on: ubuntu-latest
+    # Hard cap so a hung Convex/network call can't burn a runner for an hour.
+    # The full local suite runs in ~2:20 parallelized; 10 min is generous.
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: packages/api
@@ -24,6 +27,8 @@ jobs:
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
           pip install pytest pytest-asyncio pytest-xdist httpx
       - name: Run tests
+        # Per-test timeout via pytest-timeout would be cleaner but adding a dep
+        # for this is overkill; the job-level timeout above is the safety net.
         run: python -m pytest tests/ -q --tb=line --maxfail=10 -n auto
 
   web-build:
