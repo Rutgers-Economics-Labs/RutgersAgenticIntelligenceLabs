@@ -27,18 +27,28 @@ async def route_task(
     task_type: TaskType,
     *,
     explicit_runner: str | None = None,
+    project: dict[str, Any] | None = None,
 ) -> str:
     """
     Select the best runner for a task.
     Returns the runner name.
     Writes a routing decision log to the project repo.
+
+    The caller may pass an already-resolved ``project`` record to avoid an
+    extra DB lookup; otherwise we fetch by slug.
     """
-    project = await planner_service.get_project_by_slug(project_slug)
+    if project is None:
+        project = await planner_service.get_project_by_slug(project_slug)
     root = planner_service.project_root_from_record(project)
     
-    # 1. Load project-level runner policy from rail.yaml
-    manifest = planner_service.load_validated_manifest(project)
-    allowed_runners = getattr(manifest.agents, "runner_policy", None)
+    # 1. Load project-level runner policy from rail.yaml. Missing or invalid
+    # manifests should not crash routing — fall back to "no allow-list".
+    allowed_runners = None
+    try:
+        manifest = planner_service.load_validated_manifest(project)
+        allowed_runners = getattr(manifest.agents, "runner_policy", None)
+    except Exception as exc:
+        logger.debug("Capability Router: no manifest policy for %s (%s)", project_slug, exc)
     
     # 2. Filter available runners by capabilities
     profiles = load_all_profiles()

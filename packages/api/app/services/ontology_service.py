@@ -28,6 +28,8 @@ class _ProjectOntology:
     onto: Any | None = None
     db_path: str | None = None
     executor: Any | None = None
+    db_mtime_ns: int | None = None
+    db_size: int | None = None
 
 
 _states_by_id: dict[str, _ProjectOntology] = {}
@@ -132,7 +134,19 @@ def ensure_loaded(db_path: Union[str, Path], *, project_id: str | None = None) -
     # Guard the check + load together to prevent concurrent requests from both
     # trying to open/analyze the same SQLite quadstore at once.
     with st.lock:
-        if st.db_path != db_path or st.onto is None or st.world is None:
+        needs_reload = (
+            st.db_path != db_path
+            or st.onto is None
+            or st.world is None
+        )
+        if not needs_reload and st.db_mtime_ns is not None:
+            try:
+                stat = Path(db_path).stat()
+                if stat.st_mtime_ns != st.db_mtime_ns or stat.st_size != st.db_size:
+                    needs_reload = True
+            except OSError:
+                needs_reload = True
+        if needs_reload:
             _load_locked(st, db_path)
 
 

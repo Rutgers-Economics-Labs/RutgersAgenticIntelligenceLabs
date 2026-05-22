@@ -1,32 +1,36 @@
 import asyncio
-import os
 import sys
 from pathlib import Path
 
-# Add app to path
+import pytest
+
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from app.services.subprocess_code_runner import run_user_code
-from app.services.convex_client import convex
 
-async def test_code_streaming():
-    print("Starting code streaming test...")
-    # This assumes a mock job_id or a valid one if we want to check Convex
-    # For local verification, we'll just check if it runs without error and logs to stdout locally
-    
-    code = """
-import time
-print("Step 1: Initializing...")
-time.sleep(1)
-print("Step 2: Processing data...")
-time.sleep(1)
-print("Step 3: Done!")
-"""
-    
-    result = await run_user_code(code, timeout_seconds=10)
-    print("\nResult:")
-    print(f"Stdout: {result.get('stdout')}")
-    print(f"Error: {result.get('error')}")
+
+@pytest.mark.asyncio
+async def test_code_streaming(tmp_path):
+    # run_user_code requires a DuckDB; create a trivial one so the smoke check
+    # actually executes the subprocess instead of bailing on the early return.
+    import duckdb
+
+    db_path = tmp_path / "smoke.duckdb"
+    conn = duckdb.connect(str(db_path))
+    conn.execute("CREATE TABLE IF NOT EXISTS smoke(id INTEGER)")
+    conn.close()
+
+    code = (
+        "print('Step 1: Initializing...')\n"
+        "print('Step 2: Processing data...')\n"
+        "print('Step 3: Done!')\n"
+    )
+    result = await run_user_code(code, timeout_seconds=10, duckdb_path=db_path)
+    stdout = result.get("stdout") or ""
+    assert "Step 1" in stdout
+    assert "Step 3" in stdout
+    assert not result.get("error")
+
 
 if __name__ == "__main__":
     asyncio.run(test_code_streaming())

@@ -662,6 +662,7 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             required_capabilities=tmp_wo.capabilities_required,
             task_type=tmp_wo.task_type,
             explicit_runner=args.get("runner") or task.get("runner"),
+            project=project,
         )
         
         if selected_runner == "default":

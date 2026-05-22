@@ -1565,10 +1565,15 @@ def test_autopilot_creates_ontology_lifecycle_tasks_for_not_hydrated_project(mon
     asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
 
     created_titles = [item["title"] for item in created]
+    # During bootstrap (state=not_hydrated) only the populate + hydrate tasks
+    # are created. Verify / research / follow-up come once hydration is live —
+    # this is by design (see _is_ontology_data_bootstrap_phase) to keep health
+    # agents from running before the ontology has real rows to validate.
+    assert "Populate ontology pipeline steps for project sources" in created_titles
     assert "Hydrate project ontology and register active artifacts" in created_titles
-    assert "Verify hydrated ontology health before research" in created_titles
-    assert "Launch ontology-backed research after hydration" in created_titles
-    assert "Propose ontology-answerable follow-up questions" in created_titles
+    assert "Verify hydrated ontology health before research" not in created_titles
+    assert "Launch ontology-backed research after hydration" not in created_titles
+    assert "Propose ontology-answerable follow-up questions" not in created_titles
     assert sync_calls
 
 
