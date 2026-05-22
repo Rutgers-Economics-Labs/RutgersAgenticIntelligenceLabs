@@ -1974,6 +1974,17 @@ async def _finalize_workspace_review(
                 await record_publish_failure(project["_id"], publish_error)
 
     state = session_files.read_state(session_root)
+    # Verification never runs when the session terminated failed/cancelled or
+    # the publish step errored out. Without an explicit transition the bootstrap
+    # value (None) persists, _normalize_completion_summary downgrades it to
+    # "pending", and the integrity/closeout auditors block project promotion
+    # forever waiting on a verification run that will never come. Anchor it to
+    # "failed" here so the audit certificate carries a terminal status.
+    if (
+        terminal_status in {"failed", "cancelled"} or publish_error
+    ) and state.get("verification_status") not in {"passed", "failed", "skipped"}:
+        session_files.update_state(session_root, verification_status="failed")
+        state = session_files.read_state(session_root)
     should_rerun_verification = terminal_status == "completed" and not publish_error and (
         state.get("verification_status") not in {"passed", "failed", "skipped"}
         or (

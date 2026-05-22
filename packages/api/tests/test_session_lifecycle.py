@@ -189,6 +189,72 @@ def test_materialize_workspace_overlays_untracked_local_files_into_workspace(tmp
     assert workspace_panel.read_text(encoding="utf-8") == "a,b\n1,2\n"
 
 
+def test_finalize_workspace_review_anchors_verification_status_when_session_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression guard for the workspace_verification "pending forever" bug.
+
+    When a session terminates `failed` or `cancelled`, _run_workspace_verification
+    is skipped (correctly — there's nothing to verify). But before this fix,
+    `verification_status` was never transitioned from its bootstrap value of
+    None, so _normalize_completion_summary downgraded it to "pending" and the
+    integrity/closeout auditors blocked promotion forever on a verification
+    run that would never happen.
+
+    With the fix, _finalize_workspace_review explicitly anchors
+    `verification_status` to "failed" in that path so the audit certificate
+    carries a terminal status the auditors can act on.
+    """
+    bootstrap_future_project(tmp_path, name="Failed Session Verification Anchor")
+    _init_repo(tmp_path)
+
+    session_root = session_files.ensure_session_root(tmp_path, "data", "sess-fail")
+    workspace_root, workspace_branch, _ = session_lifecycle._prepare_workspace(
+        tmp_path, "data", "sess-fail",
+    )
+    asyncio.run(
+        session_lifecycle._materialize_workspace(
+            project_root=tmp_path,
+            workspace_root=workspace_root,
+            base_branch="main",
+            workspace_branch=workspace_branch,
+        )
+    )
+    session_files.update_state(
+        session_root,
+        status="failed",
+        workspace_path=str(workspace_root),
+        workspace_branch=workspace_branch,
+        review_status="pending",
+    )
+
+    # Before the fix, verification_status starts as None and stays None.
+    pre = session_files.read_state(session_root)
+    assert pre.get("verification_status") is None
+
+    async def _mock_write_post_run_audit(**kwargs):
+        return {"auditors": {}}
+
+    monkeypatch.setattr(session_lifecycle, "write_post_run_audit", _mock_write_post_run_audit)
+
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-fail",
+            session={"role": "data"},
+            project={"slug": "failed-session-verification-anchor", "defaultBranch": "main"},
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    state = session_files.read_state(session_root)
+    assert state["verification_status"] == "failed", (
+        "failed sessions must anchor verification_status to a terminal value, "
+        "not leave it None for _normalize_completion_summary to downgrade to 'pending'"
+    )
+
+
 def test_finalize_workspace_review_writes_post_run_audit_without_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bootstrap_future_project(tmp_path, name="No Workspace Audit Project")
     _init_repo(tmp_path)
