@@ -87,15 +87,21 @@ class ExecutionCapabilities(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: AdapterType
-    supports_streaming: bool
+    supports_streaming: CapabilityState = CapabilityState.UNKNOWN
+    """Three-valued because some runners stream natively, some don't, and
+    some (e.g. cursor_cli) depend on which invocation mode the operator
+    uses. Treat configurable as "operator must wire it up."""
     supports_resume: CapabilityState = CapabilityState.UNKNOWN
     supports_midrun_messages: bool = False
     supports_native_approval: bool = False
     supports_cancel: bool = True
     supports_mcp: CapabilityState = CapabilityState.UNKNOWN
-    supports_native_questions: bool = False
-    """Whether the runner can emit rail.ask() mid-session. Runners without
-    this fall back to the file-based questions.json polling path."""
+    supports_native_questions: CapabilityState = CapabilityState.NO
+    """Whether the runner can emit rail.ask() mid-session. Three-valued
+    because Q&A support usually rides on MCP config (configurable), is
+    natively true for some (yes), and never available for others (no).
+    Runners that resolve to no/configurable fall back to the file-based
+    questions.json polling path."""
     steering_mode: SteeringMode = SteeringMode.RELAUNCH_ONLY
 
 

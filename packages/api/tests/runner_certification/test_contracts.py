@@ -240,13 +240,13 @@ def test_runner_profile_accepts_full_payload():
             "status": "certified",
             "execution": {
                 "mode": "local_cli",
-                "supports_streaming": True,
+                "supports_streaming": "yes",
                 "supports_resume": "configurable",
                 "supports_midrun_messages": True,
                 "supports_native_approval": False,
                 "supports_cancel": True,
                 "supports_mcp": "yes",
-                "supports_native_questions": True,
+                "supports_native_questions": "yes",
                 "steering_mode": "native_or_relaunch",
             },
             "capabilities": {
@@ -295,7 +295,7 @@ def test_runner_profile_rejects_empty_capabilities():
             {
                 "name": "test_runner",
                 "adapter": "local_cli",
-                "execution": {"mode": "local_cli", "supports_streaming": True},
+                "execution": {"mode": "local_cli", "supports_streaming": "yes"},
                 "capabilities": {},
             }
         )
@@ -306,7 +306,7 @@ def test_runner_profile_status_defaults_to_experimental():
         {
             "name": "new_runner",
             "adapter": "local_cli",
-            "execution": {"mode": "local_cli", "supports_streaming": False},
+            "execution": {"mode": "local_cli", "supports_streaming": "no"},
             "capabilities": {"edit_files": "yes"},
         }
     )
@@ -322,7 +322,7 @@ def test_runner_profile_advisory_only_is_a_valid_status():
             "status": "advisory_only",
             "execution": {
                 "mode": "local_cli",
-                "supports_streaming": False,
+                "supports_streaming": "no",
                 "supports_mcp": "no",
                 "steering_mode": "unsupported",
             },

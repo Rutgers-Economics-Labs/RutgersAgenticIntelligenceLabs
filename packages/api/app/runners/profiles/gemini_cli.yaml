@@ -1,0 +1,47 @@
+# Runner Profile: Google Gemini CLI
+#
+# Strong at search and source discovery (web search is native). Large
+# context window. MCP support is newer than Claude's but functional;
+# declared configurable until probe confirms operator setup.
+name: gemini_cli
+adapter: local_cli
+default_command: gemini
+status: experimental    # promote to certified after Phase 7 smoke test
+
+execution:
+  mode: local_cli
+  supports_streaming: "yes"
+  supports_resume: "unknown"
+  supports_midrun_messages: false
+  supports_native_approval: false
+  supports_cancel: true
+  supports_mcp: "configurable"
+  supports_native_questions: "configurable"
+  steering_mode: native_or_relaunch
+
+capabilities:
+  edit_files: "yes"
+  run_shell: "yes"
+  fetch_remote_data: "yes"
+  query_duckdb: "configurable"
+  execute_python: "yes"
+  use_mcp_tools: "configurable"
+  browse_web: "yes"             # Google native; strong web search
+  extract_pdf_tables: "unknown"
+  write_long_artifacts: "yes"
+  handle_large_context: "yes"   # 1M+ context window
+  write_structured_output: "yes"
+
+task_affinity:
+  data_ingestion: 0.7
+  analysis: 0.7
+  source_discovery: 0.9    # web search built in = highest for this task type
+  artifact_writing: 0.7
+  health_repair: 0.6
+  claim_extraction: 0.65
+  verification: 0.6
+
+notes: |
+  Best routing slot is source_discovery — native web search outperforms
+  CLIs that have to be wired up with WebFetch/scrape tools. Large
+  context lets it carry broader source registries in-prompt.

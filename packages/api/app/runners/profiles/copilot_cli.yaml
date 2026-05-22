@@ -1,0 +1,45 @@
+# Runner Profile: GitHub Copilot CLI (gh copilot suggest)
+#
+# Advisory only. `gh copilot suggest` returns suggestions; it does not
+# autonomously edit files, run shell, or produce structured output. This
+# profile exists to make that honest in the operator UI — the capability
+# router will NOT route autonomous work orders here.
+#
+# If a future upgrade lands a true autonomous Copilot CLI, replace this
+# profile rather than mutating it; existing projects relying on
+# advisory_only routing should not silently get promoted to autonomous.
+name: copilot_cli
+adapter: local_cli
+default_command: gh copilot suggest
+status: advisory_only
+
+execution:
+  mode: local_cli
+  supports_streaming: "no"
+  supports_resume: "no"
+  supports_midrun_messages: false
+  supports_native_approval: false
+  supports_cancel: true
+  supports_mcp: "no"
+  supports_native_questions: "no"
+  steering_mode: unsupported
+
+capabilities:
+  edit_files: "no"
+  run_shell: "no"
+  fetch_remote_data: "no"
+  query_duckdb: "no"
+  execute_python: "no"
+  use_mcp_tools: "no"
+  browse_web: "no"
+  extract_pdf_tables: "no"
+  write_long_artifacts: "no"
+  handle_large_context: "no"
+  write_structured_output: "no"
+
+task_affinity: {}    # empty == ineligible for autonomous routing
+
+notes: |
+  Suggestion CLI. Surfaced for completeness; explicitly excluded from
+  the autonomous routing pool. Use for narrow advisory queries an
+  operator can copy/paste, not for work order dispatch.

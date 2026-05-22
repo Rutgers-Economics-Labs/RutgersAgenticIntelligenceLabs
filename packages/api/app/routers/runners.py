@@ -106,9 +106,60 @@ async def _launch_blocker_for_project_session(
 
 @router.get("")
 async def list_runners():
-    """Return metadata for all registered runner adapters."""
+    """Return metadata for all registered runner adapters.
+
+    Combines three layers:
+      - factory registration (which adapter classes exist)
+      - static profile (capability declarations from YAML)
+      - dynamic probe (installed? authenticated? versioned?)
+
+    Profile and probe are optional in the response — a runner registered in
+    the factory but missing a profile YAML still shows up, just without
+    capability/readiness info. That way operators can see a registered-but-
+    unprofiled state explicitly instead of silently dropping it.
+    """
     from app.runners.factory import RunnerFactory
-    return {"runners": RunnerFactory.list_runners()}
+    from app.runners.profile_loader import load_all_profiles
+    from app.runners.probe import probe_all
+
+    registered = {item["name"]: item for item in RunnerFactory.list_runners()}
+    profiles = load_all_profiles()
+    probes = await probe_all()
+
+    rows: list[dict[str, Any]] = []
+    names = sorted(set(registered.keys()) | set(profiles.keys()))
+    for name in names:
+        row: dict[str, Any] = {
+            "name": name,
+            "registered": name in registered,
+            "description": (registered.get(name) or {}).get("description", ""),
+        }
+        profile = profiles.get(name)
+        if profile is not None:
+            row["profile"] = profile.model_dump(mode="json")
+        probe = probes.get(name)
+        if probe is not None:
+            row["probe"] = probe.model_dump(mode="json")
+        rows.append(row)
+    return {"runners": rows}
+
+
+@router.get("/{runner}/probe")
+async def probe_runner_endpoint(
+    runner: str = FPath(..., description="Runner name, e.g. 'claude_code'"),
+) -> dict[str, Any]:
+    """Run a fresh probe for one runner. Cheap; safe to call from UI on demand.
+
+    Probes do not make outbound API calls — they check command presence,
+    version, and credential env vars. Authentication is not verified to
+    avoid burning API budget on every UI tick.
+    """
+    from app.runners.probe import probe_runner as _probe
+
+    result = await _probe(runner)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"no profile for runner {runner!r}")
+    return result.model_dump(mode="json")
 
 
 @router.post("/{runner}/sessions")
