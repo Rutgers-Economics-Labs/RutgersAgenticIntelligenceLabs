@@ -36,16 +36,17 @@ _wake_events: dict[str, asyncio.Event] = {}
 ONTOLOGY_READY_STATES = {"hydrated_on_this_device", "hydrated_on_another_device", "hydrating"}
 ONTOLOGY_TASK_SPECS = (
     {
-        "title": "Populate ontology pipeline steps for attachable sources",
+        "title": "Populate ontology pipeline steps for project sources",
         "match": ("populate", "pipeline", "source"),
         "status": "ready",
         "agent_role": "data",
         "repo_paths": [".ontology/pipelines", ".ontology/sources", ".ontology/transforms", "research_plan", "topics"],
         "acceptance_criteria": [
-            "the default ontology pipeline declares concrete hydration steps for at least one attachable, project-relevant source",
+            "the default ontology pipeline declares concrete hydration steps for at least one project-relevant source",
             "each step names a real source config and any required transform or parameterization",
+            "at least one source actually fetches data (via api, url, or remote handler) rather than registering a local metadata stub as its source — a source whose only data is a single-row catalog CSV does not count",
             "pipeline notes distinguish immediately ingestable sources from manual-ingest-only sources",
-            "do not introduce unrelated cross-project harnesses, placeholder datasets, or out-of-domain fallback sources just to satisfy hydration",
+            "do not introduce unrelated cross-project harnesses, placeholder datasets, smoke-test fixtures, or out-of-domain fallback sources just to satisfy hydration",
             "the project is ready to rerun hydration against non-empty pipeline steps",
         ],
         "depends_on_task_ids": [],
@@ -972,7 +973,7 @@ async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: li
                     blockerCategory=None,
                     approvalState=None,
                     latestRunSummary=(
-                        "Superseded by the committed non-empty soccer pipeline and successful hydration rerun."
+                        "Superseded by a successful hydration rerun: the active ontology pipeline now produces populated rows."
                     ),
                 )
         elif _matches_task_identity(task, ("verify", "non-empty", "ontology")) or _matches_task_identity(task, ("verify", "ontology", "health")):
@@ -1020,12 +1021,27 @@ def _should_skip_planner_for_ready_repair(
     tasks: list[dict[str, Any]],
     auditors: dict[str, Any] | None,
 ) -> bool:
+    """Skip a planner turn only when a matching repair task is ready to dispatch.
+
+    Under background-health-governance, `_filter_ready_tasks_for_auditors`
+    keeps research/data/coding tasks alongside repair tasks when ontology or
+    integrity is blocked. Skipping the planner whenever *any* filtered task is
+    ready would skip planner on regular research, which is wrong — we only
+    want to skip when there's a concrete repair task ready that the planner
+    would otherwise just re-plan around.
+    """
     auditors = auditors or {}
-    ready_tasks = [task for task in tasks if str(task.get("status") or "") == "ready" and task.get("approvalState") != "pending"]
-    filtered_ready = _filter_ready_tasks_for_auditors(project, ready_tasks, auditors)
-    if (auditors.get("ontology") or {}).get("status") == "blocked" and filtered_ready:
+    ready_tasks = [
+        task for task in tasks
+        if str(task.get("status") or "") == "ready" and task.get("approvalState") != "pending"
+    ]
+    if (auditors.get("ontology") or {}).get("status") == "blocked" and any(
+        _task_matches_ontology_repair_work(task) for task in ready_tasks
+    ):
         return True
-    if (auditors.get("integrity") or {}).get("status") == "blocked" and filtered_ready:
+    if (auditors.get("integrity") or {}).get("status") == "blocked" and any(
+        _task_matches_integrity_repair_work(task) for task in ready_tasks
+    ):
         return True
     if (auditors.get("closeout") or {}).get("status") == "blocked" and _has_ready_task_title(tasks, "Resolve closeout blockers"):
         return True
@@ -1119,7 +1135,8 @@ def _task_matches_ontology_repair_work(task: dict[str, Any]) -> bool:
     if title == "repair ontology readiness blockers":
         return True
     if title in {
-        "populate ontology pipeline steps for attachable sources",
+        "populate ontology pipeline steps for attachable sources",  # legacy title; match for old projects
+        "populate ontology pipeline steps for project sources",
         "hydrate project ontology and register active artifacts",
         "verify hydrated ontology health before research",
     }:
@@ -1149,10 +1166,18 @@ def _task_matches_bootstrap_data_work(task: dict[str, Any]) -> bool:
         return False
     return title in {
         "repair ontology readiness blockers",
-        "populate ontology pipeline steps for attachable sources",
+        "populate ontology pipeline steps for attachable sources",  # legacy title; match for old projects
+        "populate ontology pipeline steps for project sources",
         "hydrate project ontology and register active artifacts",
         "repair dataset provenance and freshness metadata",
     }
+
+
+def _is_promotion_role(task: dict[str, Any]) -> bool:
+    """Roles whose output is a trust-boundary action and must respect
+    promotion-blocking auditors (ontology/integrity/closeout)."""
+    role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+    return role == "artifact"
 
 
 def _filter_ready_tasks_for_auditors(
@@ -1160,55 +1185,42 @@ def _filter_ready_tasks_for_auditors(
     ready_tasks: list[dict[str, Any]],
     auditors: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
+    """Decide which ready tasks autopilot may dispatch this tick.
+
+    Background-health-governance: ontology/integrity audit findings must not
+    starve research, data, or coding work. They only deprioritize it (via
+    `_apply_auditor_priority_boosts`) and gate promotion-class tasks
+    (currently `artifact`-role meta-synthesis / closeout).
+
+    Hard control-plane problems (session/planner auditors blocked) still
+    suspend everything except the explicit control-plane repair task —
+    those represent runtime safety issues, not learning blockers.
+    """
     if not ready_tasks:
         return []
-    ontology_auditor = (auditors or {}).get("ontology") or {}
     filtered = _apply_auditor_priority_boosts(project, ready_tasks, auditors)
     if _control_plane_auditor_gate(auditors).get("blocked"):
-        filtered = [
+        # Session/planner auditors flag runtime-safety issues (zombie sessions,
+        # drift). Holding off other work until the repair task lands prevents
+        # double-spawning on stale state.
+        return [
             task for task in filtered
             if str(task.get("title") or "") == "Reconcile control-plane drift and stale sessions"
         ]
-    bootstrap_phase = _is_ontology_data_bootstrap_phase(project)
-    if ontology_auditor.get("status") == "blocked":
-        ontology_ready = []
-        for task in filtered:
-            role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
-            if role not in {"planner", "data", "health"}:
-                continue
-            if bootstrap_phase and not _task_matches_bootstrap_data_work(task):
-                continue
-            if _task_matches_ontology_repair_work(task) or _task_matches_integrity_repair_work(task):
-                ontology_ready.append(task)
-    else:
-        ontology_ready = list(filtered)
 
+    ontology_auditor = (auditors or {}).get("ontology") or {}
     integrity_auditor = (auditors or {}).get("integrity") or {}
-    if integrity_auditor.get("status") == "blocked":
-        integrity_ready = [
-            task
-            for task in filtered
-            if _task_matches_integrity_repair_work(task)
-            and (
-                ontology_auditor.get("status") != "blocked"
-                or str(task.get("agentRole") or task.get("agent_role") or "").strip().lower() in {"planner", "data", "health"}
-            )
-        ]
-    else:
-        integrity_ready = list(filtered)
+    promotion_blocked = (
+        ontology_auditor.get("status") == "blocked"
+        or integrity_auditor.get("status") == "blocked"
+    )
+    if not promotion_blocked:
+        return filtered
 
-    if bootstrap_phase and ontology_auditor.get("status") == "blocked":
-        return ontology_ready
-    if ontology_auditor.get("status") == "blocked" and integrity_auditor.get("status") == "blocked":
-        filtered_by_id: dict[str, dict[str, Any]] = {}
-        for task in ontology_ready + integrity_ready:
-            filtered_by_id[str(task.get("_id") or "")] = task
-        return list(filtered_by_id.values())
-    if ontology_auditor.get("status") == "blocked":
-        return ontology_ready
-    if integrity_auditor.get("status") == "blocked":
-        return integrity_ready
-    return filtered
+    # Promotion-class tasks (final artifact synthesis, closeout) must wait for
+    # ontology + integrity to clear. Everything else — including draft
+    # research, data ingestion, and coding work — is allowed to keep running.
+    return [task for task in filtered if not _is_promotion_role(task)]
 
 
 def _task_allowed_for_auditors(
@@ -1300,7 +1312,8 @@ async def cancel_stale_repair_tasks(
     project_root = Path(str(project.get("localRepoPath") or "")).resolve()
     stale_titles_by_auditor = {
         "ontology": [
-            "Populate ontology pipeline steps for attachable sources",
+            "Populate ontology pipeline steps for project sources",
+            "Populate ontology pipeline steps for attachable sources",  # legacy title; cancel for old projects
             "Verify hydrated ontology health before research",
         ],
         "integrity": [

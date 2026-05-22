@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import subprocess
@@ -13,9 +14,45 @@ from rail.manifest import load_manifest
 
 _log = logging.getLogger(__name__)
 
+# Fields that change on every audit write but do not reflect a real state change.
+# Excluded from the payload hash so identical audits don't churn the repo.
+_AUDIT_HASH_EXCLUDED_FIELDS = ("generatedAt", "payloadHash")
+
 
 def _audit_root(project_root: Path) -> Path:
     return project_root / "research_plan" / "audits"
+
+
+def _compute_payload_hash(payload: dict[str, Any]) -> str:
+    """Stable identity for an audit payload, ignoring timestamp churn.
+
+    Two audits with identical session/planner/integrity/auditor state but
+    different generatedAt values produce the same hash, so reconciliation
+    rewrites of an unchanged audit short-circuit before touching disk or git.
+    """
+    canonical = {k: v for k, v in payload.items() if k not in _AUDIT_HASH_EXCLUDED_FIELDS}
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _existing_payload_hash(json_path: Path) -> str | None:
+    if not json_path.is_file():
+        return None
+    try:
+        existing = json.loads(json_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(existing, dict):
+        return None
+    stored = existing.get("payloadHash")
+    if isinstance(stored, str) and stored:
+        return stored
+    # Older audit files predate payloadHash. Recompute on the fly so we can
+    # still detect "nothing changed" against them.
+    try:
+        return _compute_payload_hash(existing)
+    except Exception:
+        return None
 
 
 async def _commit_audit_to_git(project_root: Path, paths: list[Path]) -> None:
@@ -410,6 +447,27 @@ async def write_post_run_audit(
         integrity_gate=payload["integrity"],
         planner_snapshot=planner,
     )
+    payload["payloadHash"] = _compute_payload_hash(payload)
+    audit_root = _audit_root(project_root)
+    json_path = audit_root / f"{session_id}.json"
+    md_path = audit_root / f"{session_id}.md"
+    # Skip the rewrite + git commit when the audit payload is byte-identical
+    # to the one already on disk (ignoring timestamp churn). This is what
+    # stops the autopilot/reconciliation loop from producing a fresh
+    # "audit: durable post-run certificates" commit on every tick when
+    # nothing about the session, planner, or integrity state has changed.
+    if _existing_payload_hash(json_path) == payload["payloadHash"]:
+        _log.debug(
+            "write_post_run_audit skipped (payload unchanged) session=%s hash=%s",
+            session_id,
+            payload["payloadHash"],
+        )
+        return {
+            "jsonPath": str(json_path),
+            "markdownPath": str(md_path),
+            "payload": payload,
+            "skipped": True,
+        }
     _log.info(
         "write_post_run_audit session=%s role=%s status=%s review=%s verification=%s publish=%s current_blocker=%s changed_files=%s",
         session_id,
@@ -421,10 +479,7 @@ async def write_post_run_audit(
         payload.get("currentBlocker"),
         len(changed_files),
     )
-    audit_root = _audit_root(project_root)
     audit_root.mkdir(parents=True, exist_ok=True)
-    json_path = audit_root / f"{session_id}.json"
-    md_path = audit_root / f"{session_id}.md"
     json_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     md_path.write_text(_render_audit_markdown(payload), encoding="utf-8")
     await _commit_audit_to_git(project_root, [json_path, md_path])

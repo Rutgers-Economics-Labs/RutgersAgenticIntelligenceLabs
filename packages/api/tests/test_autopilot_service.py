@@ -2339,7 +2339,13 @@ def test_autopilot_filters_ready_tasks_when_ontology_auditor_is_blocked(monkeypa
     asyncio.run(autopilot_service.run_autopilot_loop("soccer-project"))
 
     assert planner_turns == []
-    assert launched == [{"task_ids": ["hydrate-task"]}]
+    # Background-health-governance: ontology blocked no longer excludes the
+    # research task from dispatch. Both tasks reach the launcher together;
+    # ordering between them is determined by priority + repair-boost and is
+    # not asserted here.
+    assert len(launched) == 1
+    launched_ids = set(launched[0]["task_ids"])
+    assert launched_ids == {"hydrate-task", "research-task"}
 
 
 def test_autopilot_filters_ready_tasks_when_integrity_auditor_is_blocked(monkeypatch):
@@ -2482,7 +2488,15 @@ def test_filter_ready_tasks_prioritizes_matching_repair_tasks_for_blocked_audito
     assert ranked_ids[0] == "task-2"
 
 
-def test_filter_ready_tasks_allows_repair_union_when_ontology_and_integrity_are_both_blocked():
+def test_filter_ready_tasks_keeps_research_alongside_repair_when_both_blocked():
+    """Background-health-governance: ontology+integrity blocked must not starve research.
+
+    Under the previous restrictive behavior the filter dropped the research
+    task and surfaced only the two repair tasks. That trapped projects in
+    repair loops while the actual research backlog grew. Now the filter
+    preserves research/data/coding tasks; the priority boost still sorts
+    repair tasks ahead of them.
+    """
     ready_tasks = [
         {
             "_id": "ontology-repair",
@@ -2518,10 +2532,13 @@ def test_filter_ready_tasks_allows_repair_union_when_ontology_and_integrity_are_
     )
 
     filtered_ids = {task["_id"] for task in filtered}
-    assert filtered_ids == {"ontology-repair", "integrity-repair"}
+    assert filtered_ids == {"ontology-repair", "integrity-repair", "research-task"}
 
 
-def test_filter_ready_tasks_excludes_non_launchable_coding_repair_when_ontology_blocked():
+def test_filter_ready_tasks_keeps_coding_repair_when_ontology_blocked():
+    """Coding-role repair work is no longer excluded just because the ontology
+    auditor is flagging. The repair still runs (priority-boosted) and the
+    coding task is no longer arbitrarily dropped."""
     ready_tasks = [
         {
             "_id": "coding-repair",
@@ -2550,11 +2567,27 @@ def test_filter_ready_tasks_excludes_non_launchable_coding_repair_when_ontology_
     )
 
     filtered_ids = {task["_id"] for task in filtered}
-    assert filtered_ids == {"health-repair"}
+    assert filtered_ids == {"coding-repair", "health-repair"}
 
 
-def test_filter_ready_tasks_prefers_data_bootstrap_work_when_ontology_is_data_poor(monkeypatch):
+def test_filter_ready_tasks_excludes_artifact_role_when_promotion_blocked():
+    """The one role that *is* still gated by ontology/integrity is `artifact` —
+    the promotion-class meta-synthesis/closeout work. Everything else flows."""
     ready_tasks = [
+        {
+            "_id": "final-memo",
+            "title": "Synthesize final report",
+            "status": "ready",
+            "agentRole": "artifact",
+            "priority": "high",
+        },
+        {
+            "_id": "research-task",
+            "title": "Continue downstream research synthesis",
+            "status": "ready",
+            "agentRole": "research",
+            "priority": "high",
+        },
         {
             "_id": "data-repair",
             "title": "Repair ontology readiness blockers",
@@ -2562,87 +2595,75 @@ def test_filter_ready_tasks_prefers_data_bootstrap_work_when_ontology_is_data_po
             "agentRole": "data",
             "priority": "high",
         },
-        {
-            "_id": "health-repair",
-            "title": "Resolve failed verification runs before trusted promotion",
-            "status": "ready",
-            "agentRole": "health",
-            "priority": "high",
-        },
     ]
-
-    monkeypatch.setattr(autopilot_service, "_is_ontology_data_bootstrap_phase", lambda project, hydration=None: True)
 
     filtered = autopilot_service._filter_ready_tasks_for_auditors(
         {"localRepoPath": "/tmp/soccer-project"},
         ready_tasks,
         {
             "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
-            "integrity": {"status": "blocked", "blockers": ["Failed verification runs must be resolved."]},
-            "closeout": {"status": "blocked", "blockers": ["2 non-terminal task(s) remain."]},
+            "integrity": {"status": "ready", "blockers": []},
         },
     )
 
     filtered_ids = {task["_id"] for task in filtered}
-    assert filtered_ids == {"data-repair"}
+    assert filtered_ids == {"research-task", "data-repair"}
+    assert "final-memo" not in filtered_ids
 
 
-def test_task_allowed_for_auditors_blocks_unrelated_ontology_promotion():
-    allowed = autopilot_service._task_allowed_for_auditors(
+def test_task_allowed_for_auditors_keeps_research_when_ontology_blocked():
+    """Background-health-governance: ontology blocked must NOT block research.
+
+    Only promotion-class (`artifact`-role) tasks are gated on ontology/integrity.
+    Research/data/coding tasks continue to produce candidate work that the
+    promotion gates will later evaluate.
+    """
+    auditors_ontology_blocked = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+        "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
+        "integrity": {"status": "ready", "blockers": []},
+        "closeout": {"status": "ready", "blockers": []},
+    }
+
+    hydrate_allowed = autopilot_service._task_allowed_for_auditors(
         {"localRepoPath": "/tmp/soccer-project"},
-        {
-            "_id": "hydrate-task",
-            "title": "Hydrate ontology and refresh source registry",
-            "agentRole": "data",
-            "priority": "medium",
-        },
-        {
-            "session": {"status": "ready", "blockers": []},
-            "planner": {"status": "ready", "blockers": []},
-            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
-            "integrity": {"status": "ready", "blockers": []},
-            "closeout": {"status": "ready", "blockers": []},
-        },
+        {"_id": "hydrate-task", "title": "Hydrate ontology and refresh source registry", "agentRole": "data", "priority": "medium"},
+        auditors_ontology_blocked,
     )
-    blocked = autopilot_service._task_allowed_for_auditors(
+    research_allowed = autopilot_service._task_allowed_for_auditors(
         {"localRepoPath": "/tmp/soccer-project"},
-        {
-            "_id": "research-task",
-            "title": "Continue downstream research synthesis",
-            "agentRole": "research",
-            "priority": "high",
-        },
-        {
-            "session": {"status": "ready", "blockers": []},
-            "planner": {"status": "ready", "blockers": []},
-            "ontology": {"status": "blocked", "blockers": ["Ontology hydration state is `not_hydrated`."]},
-            "integrity": {"status": "ready", "blockers": []},
-            "closeout": {"status": "ready", "blockers": []},
-        },
+        {"_id": "research-task", "title": "Continue downstream research synthesis", "agentRole": "research", "priority": "high"},
+        auditors_ontology_blocked,
+    )
+    final_memo_allowed = autopilot_service._task_allowed_for_auditors(
+        {"localRepoPath": "/tmp/soccer-project"},
+        {"_id": "final-memo", "title": "Synthesize final report", "agentRole": "artifact", "priority": "high"},
+        auditors_ontology_blocked,
     )
 
-    assert allowed is True
-    assert blocked is False
+    assert hydrate_allowed is True
+    assert research_allowed is True, "research must be allowed even when ontology auditor is blocked"
+    assert final_memo_allowed is False, "promotion-class artifact tasks must wait for ontology to clear"
 
 
-def test_task_allowed_for_auditors_blocks_unrelated_integrity_promotion():
-    allowed = autopilot_service._task_allowed_for_auditors(
+def test_task_allowed_for_auditors_keeps_coding_when_integrity_blocked():
+    """Coding tasks (refactors, helpers, repairs) keep running while integrity
+    blocks. The integrity gate only stops promotion of trusted outputs."""
+    auditors_integrity_blocked = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+        "ontology": {"status": "ready", "blockers": []},
+        "integrity": {"status": "blocked", "blockers": ["Unsupported claims prevent trusted promotion."]},
+        "closeout": {"status": "ready", "blockers": []},
+    }
+
+    repair_allowed = autopilot_service._task_allowed_for_auditors(
         {"localRepoPath": "/tmp/soccer-project"},
-        {
-            "_id": "integrity-repair",
-            "title": "Repair analysis lineage and verification metadata",
-            "agentRole": "coding",
-            "priority": "medium",
-        },
-        {
-            "session": {"status": "ready", "blockers": []},
-            "planner": {"status": "ready", "blockers": []},
-            "ontology": {"status": "ready", "blockers": []},
-            "integrity": {"status": "blocked", "blockers": ["Unsupported claims prevent trusted promotion."]},
-            "closeout": {"status": "ready", "blockers": []},
-        },
+        {"_id": "integrity-repair", "title": "Repair analysis lineage and verification metadata", "agentRole": "coding", "priority": "medium"},
+        auditors_integrity_blocked,
     )
-    blocked = autopilot_service._task_allowed_for_auditors(
+    coding_allowed = autopilot_service._task_allowed_for_auditors(
         {"localRepoPath": "/tmp/soccer-project"},
         {
             "_id": "coding-task",
@@ -2659,8 +2680,8 @@ def test_task_allowed_for_auditors_blocks_unrelated_integrity_promotion():
         },
     )
 
-    assert allowed is True
-    assert blocked is False
+    assert repair_allowed is True
+    assert coding_allowed is True, "coding tasks must continue while integrity blocks promotion"
 
 
 def test_autopilot_does_not_auto_promote_unrelated_pending_task_when_ontology_blocked(monkeypatch):
@@ -3952,12 +3973,15 @@ def test_ontology_task_specs_do_not_encourage_cross_project_harnesses():
     populate_spec = next(
         spec
         for spec in autopilot_service.ONTOLOGY_TASK_SPECS
-        if spec["title"] == "Populate ontology pipeline steps for attachable sources"
+        if spec["title"] == "Populate ontology pipeline steps for project sources"
     )
     joined = " ".join(str(item) for item in populate_spec["acceptance_criteria"]).lower()
     assert "soccer source" not in joined
+    assert "smoke-test fixtures" in joined  # explicit guard against smoke-test pollution
     assert "cross-project harnesses" in joined
     assert "project-relevant source" in joined
+    # Real-data gate: at least one source must fetch data, not register a stub.
+    assert "actually fetches data" in joined
 
 
 def test_project_reality_snapshot_returns_drift_details(tmp_path: Path, monkeypatch):
@@ -5703,7 +5727,7 @@ frontend:
     changed = asyncio.run(autopilot_service._ensure_ontology_lifecycle_tasks(project, tasks_state))
 
     assert changed is True
-    assert any(item["title"] == "Populate ontology pipeline steps for attachable sources" for item in created)
+    assert any(item["title"] == "Populate ontology pipeline steps for project sources" for item in created)
 
 
 def test_reconcile_ontology_lifecycle_state_advances_tasks_after_successful_hydration(monkeypatch):
