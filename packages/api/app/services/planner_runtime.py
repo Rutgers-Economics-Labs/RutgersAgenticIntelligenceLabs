@@ -642,19 +642,18 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
         # Phase 5: Capability-based routing
         from app.services.capability_router import route_task
         from app.runners.work_order_generator import generate_work_order
-        
-        # We need a work order to know the required capabilities
-        # This is a bit of a chicken-and-egg situation because generate_work_order
-        # currently takes runner_name. 
-        # Strategy: Derive required capabilities from role/task, then route, then generate final WO.
-        
-        # Temporary WO to get capabilities
+
+        # Probe WO used only to derive capabilities + task_type for routing.
+        # The authoritative WO is built later from the TaskPayload in
+        # session_lifecycle, with the routed runner_name and final allowed_paths.
         tmp_wo = generate_work_order(
             session_id="tmp",
             project_slug=project["slug"],
             role=task["agentRole"],
             task_id=str(task["_id"]),
             task=task,
+            allowed_paths=task.get("repoPaths") or role_config.policy.paths.write or [],
+            runner_name=None,
         )
 
         selected_runner = await route_task(

@@ -41,10 +41,12 @@ class JsonStreamNormalizer(EventNormalizer):
         payload_type = payload.get("type")
 
         if payload_type == "assistant":
-            # Handle text content
             content = payload.get("message", {}).get("content") or []
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
+                if not isinstance(block, dict):
+                    continue
+                block_type = block.get("type")
+                if block_type == "text":
                     text = block.get("text")
                     if text:
                         events.append(
@@ -55,6 +57,31 @@ class JsonStreamNormalizer(EventNormalizer):
                                 raw_payload=payload,
                             )
                         )
+                elif block_type == "tool_use":
+                    tool_name = block.get("name")
+                    tool_input = block.get("input") or {}
+                    if tool_name == "Bash":
+                        command = tool_input.get("command")
+                        if command:
+                            events.append(
+                                RunnerEvent(
+                                    event_type=RunnerEventType.BASH_COMMAND_STARTED,
+                                    session_id=session_id,
+                                    normalized_payload={"command": command},
+                                    raw_payload=payload,
+                                )
+                            )
+                    elif tool_name in {"Write", "Edit", "NotebookEdit"}:
+                        path = tool_input.get("file_path")
+                        if path:
+                            events.append(
+                                RunnerEvent(
+                                    event_type=RunnerEventType.FILE_CHANGE_DETECTED,
+                                    session_id=session_id,
+                                    normalized_payload={"path": path, "kind": str(tool_name).lower()},
+                                    raw_payload=payload,
+                                )
+                            )
         
         elif payload_type == "tool_call":
             tool_use = payload.get("tool_use") or {}

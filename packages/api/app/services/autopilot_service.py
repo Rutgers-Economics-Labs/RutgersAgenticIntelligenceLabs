@@ -2005,8 +2005,12 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
                 active_sessions=[active_worker] if active_worker else [],
                 autopilot_enabled=bool(config.get("desired_enabled", True)),
             )
-        # Track B: Audit-only commit throttling
-        ledger = liveness_service.read_ledger(project_root)
+        # Track B: Audit-only commit throttling — only meaningful when we have
+        # a local project root to track commit cadence against.
+        ledger: dict[str, Any] = {}
+        if project_root:
+            from app.services import liveness_service
+            ledger = liveness_service.read_ledger(project_root)
         if ledger.get("consecutive_audit_only_commits", 0) >= 1:
             # Check if there are any non-audit ready tasks. 
             # If everything is just audit repair, and we already tried one, we pause.

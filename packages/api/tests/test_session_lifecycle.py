@@ -3770,6 +3770,22 @@ def test_finalize_workspace_review_allows_artifact_task_with_evidence_links(tmp_
         "# Memo\n\n## Evidence Links\n- research_plan/state/claims.json#claim-001\n- research_plan/state/sources.json#source-001\n",
         encoding="utf-8",
     )
+    # Phase 2 protocol: promotion-class sessions must emit session_result.json.
+    session_result_dir = workspace_root / "research_plan" / "sessions" / "sess-artifact-structured"
+    session_result_dir.mkdir(parents=True, exist_ok=True)
+    (session_result_dir / "session_result.json").write_text(
+        json.dumps(
+            {
+                "session_id": "sess-artifact-structured",
+                "status": "completed",
+                "summary": "Wrote memo with evidence links.",
+                "task_type": "artifact_writing",
+                "runner_name": "test_runner",
+                "files_changed": ["artifacts/memo.md"],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     task_updates: list[dict[str, object]] = []
 
