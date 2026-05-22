@@ -1460,6 +1460,149 @@ async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str
     return last_result
 
 
+# ---------------------------------------------------------------------------
+# Stuck detection / anti-stall mechanics
+# ---------------------------------------------------------------------------
+# Prevents repeated audit/repair cycles from consuming the entire autopilot
+# run budget.  The invariant from the spec:
+#
+#   Every run must either produce research progress, downgrade scope, or emit
+#   a typed blocker with a bounded next action.  It should never silently
+#   relaunch the same kind of repair forever.
+#
+# Implementation:
+# - We hash each blocked task's (task_id, blocker_category) pair so identical
+#   blocked states are recognised across iterations.
+# - After STUCK_RUN_BUDGET consecutive blocked/needs_changes runs we write a
+#   stuck report and mark the task blocked with blocker_category="stuck_loop"
+#   so the planner can decide what to do (cancel, downgrade, or ask user).
+# - The stuck report is written to research_plan/stuck_reports/<task_id>.json.
+
+STUCK_RUN_BUDGET: int = 3  # max consecutive identical blocked runs before flagging
+
+# In-memory counter: task_id → (action_hash, consecutive_count)
+_task_stuck_counters: dict[str, tuple[str, int]] = {}
+
+
+def _compute_task_action_hash(task: dict[str, Any]) -> str:
+    """Stable hash of the task's stuck state for repeated-run detection.
+
+    Uses task_id + status + blockerCategory so that changing either resets
+    the counter.  We deliberately do NOT hash the full latestRunSummary
+    because that changes on every run even when the underlying problem is
+    the same.
+    """
+    import hashlib
+    key = "|".join([
+        str(task.get("_id") or ""),
+        str(task.get("status") or ""),
+        str(task.get("blockerCategory") or ""),
+    ])
+    return hashlib.sha1(key.encode(), usedforsecurity=False).hexdigest()[:12]
+
+
+def _write_stuck_report(project_root: Path, task: dict[str, Any], consecutive_count: int) -> None:
+    """Write a stuck-loop report to research_plan/stuck_reports/<task_id>.json."""
+    import datetime
+    try:
+        stuck_dir = project_root / "research_plan" / "stuck_reports"
+        stuck_dir.mkdir(parents=True, exist_ok=True)
+        task_id = str(task.get("_id") or "unknown")
+        report = {
+            "task_id": task_id,
+            "title": task.get("title") or "",
+            "role": task.get("agentRole") or task.get("agent_role") or "",
+            "status": task.get("status") or "",
+            "blocker_category": task.get("blockerCategory") or "",
+            "latest_run_summary": task.get("latestRunSummary") or "",
+            "consecutive_blocked_runs": consecutive_count,
+            "recorded_at": datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "") + "Z",
+            "recommended_actions": [
+                "Downgrade task scope (e.g. mark as candidate instead of draft)",
+                "Cancel this repair task and create a more targeted replacement",
+                "Ask the operator whether to continue or abandon",
+            ],
+        }
+        report_path = stuck_dir / f"{task_id}.json"
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        logger.info(
+            "Autopilot: wrote stuck report for task %s after %d consecutive blocked runs",
+            task_id, consecutive_count,
+        )
+    except Exception as exc:
+        logger.warning("Autopilot: failed to write stuck report for task %s: %s", task.get("_id"), exc)
+
+
+async def _detect_and_handle_stuck_tasks(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+) -> bool:
+    """Scan tasks for stuck loops and flag them before launching anything.
+
+    A task is stuck when it has been in a blocked/needs_changes state with
+    the same blocker_category for STUCK_RUN_BUDGET or more consecutive
+    autopilot iterations.
+
+    Returns True if any task was flagged (so the caller can reload tasks).
+    """
+    project_root_str = project.get("localRepoPath") or ""
+    project_root = Path(project_root_str).resolve() if project_root_str else None
+
+    flagged = False
+    for task in tasks:
+        task_id = str(task.get("_id") or "")
+        if not task_id:
+            continue
+        status = str(task.get("status") or "")
+        if status not in {"blocked", "needs_changes"}:
+            # Task advanced — reset the counter
+            if task_id in _task_stuck_counters:
+                del _task_stuck_counters[task_id]
+            continue
+
+        action_hash = _compute_task_action_hash(task)
+        prev_hash, count = _task_stuck_counters.get(task_id, ("", 0))
+        if prev_hash == action_hash:
+            count += 1
+        else:
+            count = 1
+        _task_stuck_counters[task_id] = (action_hash, count)
+
+        if count < STUCK_RUN_BUDGET:
+            continue
+
+        # Task is stuck — write a report and flag it so the planner must decide.
+        logger.warning(
+            "Autopilot: task %s (%s) is stuck after %d consecutive blocked runs; flagging.",
+            task_id,
+            task.get("title") or "",
+            count,
+        )
+        if project_root and project_root.exists():
+            _write_stuck_report(project_root, task, count)
+        try:
+            await planner_service.update_task(
+                task_id,
+                project=project,
+                status="blocked",
+                blockerCategory="stuck_loop",
+                latestRunSummary=(
+                    f"Stuck loop detected: task has been in a blocked/needs_changes state "
+                    f"for {count} consecutive autopilot iterations with the same blocker "
+                    f"({task.get('blockerCategory') or 'unknown'}). "
+                    "A stuck report has been written to research_plan/stuck_reports/. "
+                    "The planner must decide whether to cancel, downgrade scope, or retry with a narrower task."
+                ),
+            )
+        except Exception as exc:
+            logger.warning("Autopilot: failed to flag stuck task %s: %s", task_id, exc)
+        # Reset counter so we don't re-flag on the very next iteration
+        _task_stuck_counters[task_id] = (action_hash, 0)
+        flagged = True
+
+    return flagged
+
+
 async def _launch_ready_tasks_if_available(
     project: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -1827,6 +1970,12 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
             )
         if await cancel_stale_repair_tasks(project, tasks, auditors):
             tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+        # Anti-stall: detect tasks that have been stuck in the same blocked/
+        # needs_changes state for too many consecutive iterations and flag them
+        # so the planner must decide (cancel, downgrade scope, or reroute).
+        if await _detect_and_handle_stuck_tasks(project, tasks):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+            consecutive_idle_turns = 0
         if await _ensure_ontology_lifecycle_tasks(project, tasks):
             tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
             consecutive_idle_turns = 0

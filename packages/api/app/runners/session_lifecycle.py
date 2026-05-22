@@ -29,6 +29,11 @@ from typing import Any
 from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
 from app.runners.cli_base import LocalCLIRunner, runner_runtime_paths
 from app.runners.factory import RunnerFactory
+from app.runners.contracts import (
+    Capability,
+    TaskType,
+    WorkOrder,
+)
 from app.services.audit_service import write_post_run_audit
 from app.services.integrity_service import get_integrity_repo
 from app.services import planner_service, running_agent_service, session_files
@@ -73,6 +78,126 @@ EVENT_TYPE_MAP = {
     RunnerEventType.FAILED.value: "failed",
     RunnerEventType.CANCELLED.value: "cancelled",
 }
+
+
+# ---------------------------------------------------------------------------
+# WorkOrder generation shim (Phase 2 of runner-protocol spec)
+# ---------------------------------------------------------------------------
+
+# Role → TaskType mapping.  Conservative defaults — runners that don't map
+# to a canonical task type get ANALYSIS so they're still routable.
+_ROLE_TO_TASK_TYPE: dict[str, TaskType] = {
+    "data": TaskType.DATA_INGESTION,
+    "research": TaskType.ANALYSIS,
+    "analysis": TaskType.ANALYSIS,
+    "artifact": TaskType.ARTIFACT_WRITING,
+    "health": TaskType.HEALTH_REPAIR,
+    "coding": TaskType.ANALYSIS,
+    "planner": TaskType.ANALYSIS,
+    "verification": TaskType.VERIFICATION,
+    "source_discovery": TaskType.SOURCE_DISCOVERY,
+    "claim": TaskType.CLAIM_EXTRACTION,
+}
+
+# Role → minimum Capability set used when no explicit allowed_paths guidance
+# is available.  Capability router (Phase 5) may refine this further.
+_ROLE_TO_CAPABILITIES: dict[str, list[Capability]] = {
+    "data": [Capability.EDIT_FILES, Capability.FETCH_REMOTE_DATA],
+    "research": [Capability.EDIT_FILES, Capability.EXECUTE_PYTHON],
+    "analysis": [Capability.EDIT_FILES, Capability.EXECUTE_PYTHON],
+    "artifact": [Capability.EDIT_FILES, Capability.WRITE_LONG_ARTIFACTS],
+    "health": [Capability.EDIT_FILES, Capability.RUN_SHELL],
+    "coding": [Capability.EDIT_FILES, Capability.RUN_SHELL],
+    "planner": [Capability.EDIT_FILES, Capability.WRITE_STRUCTURED_OUTPUT],
+    "verification": [Capability.RUN_SHELL, Capability.WRITE_STRUCTURED_OUTPUT],
+    "source_discovery": [Capability.BROWSE_WEB, Capability.EDIT_FILES],
+    "claim": [Capability.EDIT_FILES, Capability.WRITE_STRUCTURED_OUTPUT],
+}
+
+
+def _derive_work_order_from_task_payload(
+    payload: "TaskPayload",
+    *,
+    session_id: str,
+    runner_name: str,
+) -> WorkOrder:
+    """Translate a legacy TaskPayload into a typed WorkOrder contract.
+
+    This is the Phase 2 migration shim.  New planner-emitted dispatches
+    will produce WorkOrders directly; legacy TaskPayload-based callers go
+    through here so every session has a WorkOrder on disk for audit.
+
+    The shim is intentionally conservative:
+    - unknown roles fall back to TaskType.ANALYSIS
+    - unknown capabilities fall back to [Capability.EDIT_FILES]
+    - all paths from allowed_paths are forwarded verbatim (WorkOrder
+      validator rejects absolute paths / .. escapes)
+    - outputs_required is set to ["session_result_json"] unconditionally
+      so the finalization gate can enforce the artifact
+    """
+    role = str(payload.role or "").strip().lower()
+    task_type = _ROLE_TO_TASK_TYPE.get(role, TaskType.ANALYSIS)
+    capabilities = _ROLE_TO_CAPABILITIES.get(role, [Capability.EDIT_FILES])
+
+    # Sanitise allowed_paths: strip absolute paths / .. segments so WorkOrder
+    # validator won't reject the generated work order on malformed legacy data.
+    safe_paths: list[str] = []
+    for p in (payload.allowed_paths or []):
+        p = p.strip().lstrip("/")
+        if p and ".." not in p.split("/"):
+            safe_paths.append(p)
+    if not safe_paths:
+        # Minimum viable path scope based on role
+        safe_paths = {"artifact": ["artifacts", "research_plan"]}.get(
+            role, ["research_plan", "topics", "artifacts"]
+        )
+
+    wo = WorkOrder.model_validate({
+        "work_order_id": f"wo_{session_id}",
+        "project_slug": payload.project_slug or "unknown",
+        "task_type": task_type.value,
+        "capabilities_required": [c.value for c in capabilities],
+        "runner_preferred": runner_name,
+        "allowed_paths": safe_paths,
+        "inputs": {},
+        "outputs_required": ["session_result_json"],
+        "created_by": "planner",
+    })
+    return wo
+
+
+def _write_work_order(project_root: Path, work_order: WorkOrder) -> None:
+    """Persist a WorkOrder to research_plan/work_orders/<wo_id>.json.
+
+    Creates intermediate directories if they don't exist.  Errors are
+    swallowed so a write failure never breaks session launch — the session
+    simply won't have a machine-readable work order for this run.
+    """
+    try:
+        wo_dir = project_root / "research_plan" / "work_orders"
+        wo_dir.mkdir(parents=True, exist_ok=True)
+        wo_path = wo_dir / f"{work_order.work_order_id}.json"
+        wo_path.write_text(work_order.model_dump_json(indent=2), encoding="utf-8")
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "WorkOrder write failed for %s: %s", work_order.work_order_id, exc
+        )
+
+
+def _load_work_order_for_session(project_root: Path, session_id: str) -> "WorkOrder | None":
+    """Re-load a previously persisted WorkOrder from disk.
+
+    Returns None if the file is absent or invalid (backward compat).
+    """
+    try:
+        wo_path = project_root / "research_plan" / "work_orders" / f"wo_{session_id}.json"
+        if not wo_path.is_file():
+            return None
+        from app.runners.contracts import WorkOrder as _WO
+        return _WO.model_validate_json(wo_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
 
 def _should_retry_post_publish_verification(state: dict[str, Any]) -> bool:
@@ -1902,6 +2027,141 @@ async def archive_session_workspace(convex_session_id: str) -> dict[str, Any]:
     return result
 
 
+def _certify_session_result_if_present(
+    *,
+    project_root: Path,
+    workspace_root: Path | None,
+    session_root: Path,
+    convex_session_id: str,
+    session: dict[str, Any],
+    terminal_status: str | None,
+    review_status: str,
+    summary: dict[str, Any],
+    resolved_task_id: str | None,
+) -> None:
+    """Certify session_result.json if the runner emitted one.
+
+    Phase 2 of the runner protocol: every runner is expected to write a
+    structured ``session_result.json`` exit artifact.  This function:
+
+    1. Looks for the file under the workspace (runner's write root) and the
+       project-side session directory.
+    2. If found, runs ``certify_session_result`` against the WorkOrder
+       contract (loaded from disk if available).
+    3. Records the outcome in session state (``session_result_certified``,
+       ``session_result_issues``).
+    4. If certification fails AND the session role is promotion-class
+       (``artifact``), downgrades ``review_status`` to ``needs_changes``
+       and appends a blocker so the task finalization gate can surface it.
+    5. If the file is absent AND the role is promotion-class, treats this
+       as a soft ``complete_unverified`` blocker (records it but does NOT
+       block candidate research roles).
+
+    All errors inside this function are caught and logged — it must never
+    crash the finalization path.
+    """
+    import logging as _logging
+    _log = _logging.getLogger(__name__)
+
+    role = str(session.get("role") or "").strip().lower()
+    is_promotion_role = role == "artifact"
+
+    if terminal_status not in TERMINAL_STATUSES:
+        return  # only certify when the session has reached a terminal state
+
+    # Locate the session_result.json.  Runners write it relative to the
+    # workspace root; we also check the canonical session directory path.
+    candidates: list[Path] = []
+    if workspace_root is not None:
+        candidates.append(
+            workspace_root / "research_plan" / "sessions" / convex_session_id / "session_result.json"
+        )
+        candidates.append(workspace_root / "session_result.json")
+    candidates.append(session_root / "session_result.json")
+
+    result_path: Path | None = next((p for p in candidates if p.is_file()), None)
+
+    if result_path is None:
+        if is_promotion_role and terminal_status == "completed":
+            # Promotion-class session completed but didn't emit session_result.json.
+            # Mark as complete_unverified so audit reflects the gap.
+            _log.warning(
+                "Promotion-class session %s completed without session_result.json; "
+                "marking complete_unverified.",
+                convex_session_id,
+            )
+            session_files.update_state(session_root, session_result_certified=False)
+            summary.setdefault("blockers", [])
+            blocker_msg = (
+                "session_result.json not emitted; promotion-class sessions must "
+                "write a structured exit artifact."
+            )
+            if blocker_msg not in summary["blockers"]:
+                summary["blockers"].append(blocker_msg)
+            session_files.update_state(session_root, completion_summary=summary, review_status="needs_changes")
+        return  # non-promotion roles: absence of session_result.json is allowed
+
+    # Re-load the WorkOrder if one was written at session launch.
+    work_order = None
+    try:
+        work_order = _load_work_order_for_session(project_root, convex_session_id)
+    except Exception:
+        pass
+
+    # Run the certification harness.
+    try:
+        from tests.runner_certification.harness import certify_session_result
+        cert = certify_session_result(result_path, work_order=work_order)
+    except ImportError:
+        # Harness not importable in this environment (e.g., production deploy
+        # without test deps).  Fall back to a schema-only check via contracts.
+        try:
+            import json
+            from app.runners.contracts import SessionResult
+            raw = json.loads(result_path.read_text(encoding="utf-8"))
+            SessionResult.model_validate(raw)
+
+            class _Cert:
+                passed = True
+                issues: list[str] = []
+        except Exception as _exc:
+            class _Cert:  # type: ignore[no-redef]
+                passed = False
+                issues = [str(_exc)]
+        cert = _Cert()
+    except Exception as _exc:
+        _log.warning("certify_session_result raised unexpectedly for %s: %s", convex_session_id, _exc)
+        return
+
+    session_files.update_state(
+        session_root,
+        session_result_certified=cert.passed,
+        session_result_issues=cert.issues or [],
+    )
+    if cert.passed:
+        _log.info("Session %s: session_result.json certified OK.", convex_session_id)
+        return
+
+    issues_str = "; ".join(cert.issues[:5])
+    _log.warning(
+        "Session %s: session_result.json certification FAILED: %s",
+        convex_session_id,
+        issues_str,
+    )
+    if is_promotion_role:
+        # Only promotion-class sessions are blocked by certification failure.
+        # Candidate research sessions just get the issue recorded.
+        blocker_msg = f"session_result.json failed protocol certification: {issues_str}"
+        summary.setdefault("blockers", [])
+        if blocker_msg not in summary["blockers"]:
+            summary["blockers"].append(blocker_msg)
+        session_files.update_state(
+            session_root,
+            completion_summary=summary,
+            review_status="needs_changes",
+        )
+
+
 async def _finalize_workspace_review(
     *,
     convex_session_id: str,
@@ -2120,6 +2380,26 @@ async def _finalize_workspace_review(
             session=session,
             changed_files=changed_files,
         )
+
+    # Phase 2 — certify session_result.json against the runner protocol contract.
+    # Runners that emit a valid session_result.json get a richer audit trail;
+    # those that don't are gated only at promotion (artifact role), not at
+    # candidate research (research/data/coding roles).
+    _certify_session_result_if_present(
+        project_root=project_root,
+        workspace_root=workspace_root,
+        session_root=session_root,
+        convex_session_id=convex_session_id,
+        session=session,
+        terminal_status=terminal_status,
+        review_status=review_status,
+        summary=summary,
+        resolved_task_id=resolved_task_id,
+    )
+    # Re-read review_status in case certification downgraded it
+    review_status = session_files.read_state(session_root).get("review_status") or review_status
+    summary = session_files.read_state(session_root).get("completion_summary") or summary
+
     if (
         terminal_status == "completed"
         and review_status == "review"
@@ -2584,6 +2864,32 @@ async def create_runner_session(
         project_context=project_context,
         session_root=str(session_root),
     )
+
+    # Phase 2 — derive a typed WorkOrder from the legacy TaskPayload and
+    # persist it to research_plan/work_orders/<wo_id>.json so every session
+    # has an auditable dispatch envelope.  The work_order_id is stored in
+    # session state so _finalize_workspace_review can reload it for
+    # certification.
+    try:
+        work_order = _derive_work_order_from_task_payload(
+            task_payload,
+            session_id=running_session_id,
+            runner_name=runner_name,
+        )
+        _write_work_order(project_root, work_order)
+        _write_work_order(workspace_root, work_order)  # also available inside workspace
+        session_files.update_state(session_root, work_order_id=work_order.work_order_id)
+
+        # Update payload so the runner's prompt builder includes work order instructions
+        task_payload.work_order_id = work_order.work_order_id
+        task_payload.work_order_path = f"research_plan/work_orders/{work_order.work_order_id}.json"
+        task_payload.session_result_path = f"research_plan/sessions/{running_session_id}/session_result.json"
+    except Exception as _wo_exc:
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "WorkOrder derivation failed for session %s: %s", running_session_id, _wo_exc
+        )
+
     try:
         result = await runner.create_session(task_payload)
     except Exception as exc:
