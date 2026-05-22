@@ -341,7 +341,7 @@ async def list_planner_messages(project: dict, thread_id: str = PLANNER_THREAD_I
 
 
 async def ensure_main_board(project: dict, session_id: str | None = None) -> dict:
-    project_id = project.get("_id") or project.get("projectId")
+    project_id = project.get("_id") or project.get("projectId") or project.get("slug")
     if not project_id:
         raise ValueError("Project record is missing a durable id")
     return {

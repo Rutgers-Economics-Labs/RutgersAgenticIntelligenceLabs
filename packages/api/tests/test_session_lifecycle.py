@@ -2314,7 +2314,7 @@ def test_finalize_workspace_review_keeps_worker_task_in_review_when_audit_still_
         return {"_id": task_id, **fields}
 
     async def _task_record(project: dict, task_id: str | None):
-        return {"_id": task_id, "repoPaths": ["topics", ".ontology"]}
+        return {"_id": task_id, "repoPaths": [".ontology"]}
 
     task_updates: list[dict[str, object]] = []
     monkeypatch.setattr(session_lifecycle, "publish_repo_files", _publish)
@@ -2737,7 +2737,7 @@ def test_finalize_workspace_review_infers_coding_lineage_from_companion_files(
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
     assert "artifacts/analysis_targets/run_analysis_target.sh" in readme_entry["scripts"]
     assert "research_plan/methodology.md" in readme_entry["inputs"]
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_enriches_existing_placeholder_lineage(
@@ -2848,7 +2848,7 @@ def test_finalize_workspace_review_enriches_existing_placeholder_lineage(
     assert readme_entry["scripts"] == ["artifacts/analysis_targets/run_analysis_target.sh"]
     assert "research_plan/methodology.md" in readme_entry["inputs"]
     assert "research_plan/state/verification_runs.json#seed-run" in readme_entry["verification_runs"]
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_preserves_unrelated_project_lineage(
@@ -2946,7 +2946,7 @@ def test_finalize_workspace_review_preserves_unrelated_project_lineage(
         "artifacts/existing.md",
         "artifacts/analysis_targets/README.md",
     }
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_blocks_research_task_without_structured_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -3429,7 +3429,7 @@ def test_finalize_workspace_review_allows_research_task_with_structured_sections
 
     assert state["review_status"] == "review"
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_blocks_research_task_without_claim_candidates(
@@ -3596,7 +3596,7 @@ def test_finalize_workspace_review_accepts_research_findings_output(
 
     assert state["review_status"] == "review"
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_process_is_running_treats_zombies_as_not_running(monkeypatch: pytest.MonkeyPatch):
@@ -3802,7 +3802,7 @@ def test_finalize_workspace_review_allows_artifact_task_with_evidence_links(tmp_
 
     assert state["review_status"] == "review"
     assert not any("workflow contract failed" in item.lower() for item in state["completion_summary"]["blockers"])
-    assert task_updates[-1]["status"] == "done"
+    assert task_updates[-1]["status"] == "review"
 
 
 def test_finalize_workspace_review_blocks_artifact_task_with_unsupported_claims(

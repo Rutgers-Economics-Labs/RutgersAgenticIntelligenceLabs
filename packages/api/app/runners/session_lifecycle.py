@@ -770,26 +770,36 @@ async def _normalize_completion_summary(
     task_id: str | None,
     status: str,
     role: str,
+    pre_calculated_diffs: dict[str, tuple[list[str], list[str]]] | None = None,
 ) -> dict[str, Any]:
     summary = _collect_runner_summary_from_events(session_root, status)
-    assumptions_added, assumptions_changed = _diff_index_keys(
-        project_root=project_root,
-        workspace_root=workspace_root,
-        file_name="assumptions.json",
-        key_field="assumption_key",
-    )
-    source_added, source_changed = _diff_index_keys(
-        project_root=project_root,
-        workspace_root=workspace_root,
-        file_name="sources.json",
-        key_field="source_key",
-    )
-    claim_added, _claim_changed = _diff_index_keys(
-        project_root=project_root,
-        workspace_root=workspace_root,
-        file_name="claims.json",
-        key_field="claim_key",
-    )
+    if pre_calculated_diffs and "assumptions.json" in pre_calculated_diffs:
+        assumptions_added, assumptions_changed = pre_calculated_diffs["assumptions.json"]
+    else:
+        assumptions_added, assumptions_changed = _diff_index_keys(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            file_name="assumptions.json",
+            key_field="assumption_key",
+        )
+    if pre_calculated_diffs and "sources.json" in pre_calculated_diffs:
+        source_added, source_changed = pre_calculated_diffs["sources.json"]
+    else:
+        source_added, source_changed = _diff_index_keys(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            file_name="sources.json",
+            key_field="source_key",
+        )
+    if pre_calculated_diffs and "claims.json" in pre_calculated_diffs:
+        claim_added, _claim_changed = pre_calculated_diffs["claims.json"]
+    else:
+        claim_added, _claim_changed = _diff_index_keys(
+            project_root=project_root,
+            workspace_root=workspace_root,
+            file_name="claims.json",
+            key_field="claim_key",
+        )
     changed_files = await _list_changed_files(workspace_root)
     datasets_created = [
         path
@@ -1934,6 +1944,19 @@ async def _finalize_workspace_review(
     review_status = state.get("review_status") or "pending"
     config = _workspace_config(project_root)
     changed_files = await _list_changed_files(workspace_root)
+    pre_calculated_diffs = {}
+    for name, key in [("assumptions.json", "assumption_key"), ("sources.json", "source_key"), ("claims.json", "claim_key")]:
+        try:
+            added, changed = _diff_index_keys(
+                project_root=project_root,
+                workspace_root=workspace_root,
+                file_name=name,
+                key_field=key,
+            )
+            pre_calculated_diffs[name] = (added, changed)
+        except Exception:
+            pre_calculated_diffs[name] = ([], [])
+
     if terminal_status in {"failed", "cancelled"}:
         review_status = "needs_changes"
 
@@ -2015,6 +2038,7 @@ async def _finalize_workspace_review(
         task_id=_session_task_id(session, session_root),
         status=terminal_status or "unknown",
         role=session.get("role") or "agent",
+        pre_calculated_diffs=pre_calculated_diffs,
     )
     if publish_error:
         summary["blockers"] = _dedupe((summary.get("blockers") or []) + [f"Connector publish failed: {publish_error}"])
