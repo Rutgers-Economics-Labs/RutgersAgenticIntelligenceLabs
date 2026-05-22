@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "rail": {
+      "command": "rail-mcp",
+      "args": [
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "RAIL_PROJECT": "nj-housing-affordability",
+        "RAIL_SESSION_ID": "claude_code_b547ba94e747",
+        "RAIL_WORK_ORDER_ID": "wo_9264644440f9",
+        "RAIL_LOCAL": "1",
+        "RAIL_PATH": "/Users/akashdubey/Documents/CodingProjects/RAIL/RutgersAgenticIntelligenceLabs/docs/validation/nj-housing-affordability"
+      }
+    }
+  }
+}
