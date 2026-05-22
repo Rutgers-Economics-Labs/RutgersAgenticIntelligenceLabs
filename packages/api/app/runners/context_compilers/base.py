@@ -44,8 +44,11 @@ class ContextCompiler(ABC):
         if payload.session_result_path:
             sections.append(
                 f"## Final Output Requirement\n\n"
-                f"When you are finished, you MUST write a valid JSON object to:\n"
-                f"  {payload.session_result_path}\n\n"
+                f"Before ending this session, you MUST:\n"
+                f"1. Write a valid JSON session_result.json to: {payload.session_result_path}\n"
+                f"2. Add or update at least one structured state file (e.g., claim_candidates.json).\n"
+                f"3. Declare whether you produced domain progress.\n"
+                f"4. Declare blockers if progress was impossible.\n\n"
                 f"The JSON must conform to the SessionResult schema defined in your Work Order."
             )
             
