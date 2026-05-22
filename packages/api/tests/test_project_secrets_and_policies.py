@@ -13,7 +13,18 @@ pytestmark = pytest.mark.asyncio
 
 # Use a stable test key so encrypt/decrypt round-trips work in tests.
 TEST_FERNET_KEY = "9Zqz24eLhTvUa_N4Ty8DyPimlOh8_zQEIyRiJa2Ggok="
-os.environ.setdefault("RAIL_SECRET_FERNET_KEY", TEST_FERNET_KEY)
+
+
+@pytest.fixture(autouse=True)
+def _force_test_fernet_key(monkeypatch):
+    """Forcefully set the Fernet key before every test in this module.
+
+    Module-level os.environ.setdefault is racy under pytest-xdist: another
+    test can have set RAIL_SECRET_FERNET_KEY to a different value first,
+    and then this module's secrets (encrypted with TEST_FERNET_KEY at import
+    time) won't decrypt against whatever key the service ends up reading.
+    """
+    monkeypatch.setenv("RAIL_SECRET_FERNET_KEY", TEST_FERNET_KEY)
 
 PROJECT_ID = "project-id-secrets-test"
 PROJECT_SLUG = "secrets-project"
@@ -358,7 +369,6 @@ async def test_resolve_secrets_no_policy_returns_empty(client, convex_mock):
 
 async def test_resolve_secrets_service_unit(convex_mock):
     """Unit test: resolve_secrets_for_role respects the allowlist."""
-    os.environ["RAIL_SECRET_FERNET_KEY"] = TEST_FERNET_KEY
 
     def _query(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())

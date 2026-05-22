@@ -17,12 +17,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: packages/api/pyproject.toml
       - name: Install API package
         run: |
           pip install -e ".[dev]" 2>/dev/null || pip install -e .
-          pip install pytest pytest-asyncio httpx
+          pip install pytest pytest-asyncio pytest-xdist httpx
       - name: Run tests
-        run: python -m pytest tests/ -q --tb=line --maxfail=10
+        run: python -m pytest tests/ -q --tb=line --maxfail=10 -n auto
 
   web-build:
     runs-on: ubuntu-latest
