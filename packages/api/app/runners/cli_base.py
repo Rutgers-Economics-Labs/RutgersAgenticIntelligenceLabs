@@ -424,6 +424,7 @@ class LocalCLIRunner(BaseRunner):
         stdout_handle.close()
         stderr_handle.close()
         session.pid = process.pid
+        session.status = "running"
         runtime_paths["pid"].write_text(f"{process.pid}\n", encoding="utf-8")
         self._sessions[session_id] = session
         return {
@@ -437,8 +438,48 @@ class LocalCLIRunner(BaseRunner):
             },
         }
 
+    def _reconcile_status_from_files(self, session: "LocalCliSession") -> None:
+        """Observe the file-backed exit code and advance session.status.
+
+        ``create_session`` detaches the subprocess via ``subprocess.Popen``
+        (instead of ``asyncio.create_subprocess_exec``), so there is no
+        in-process awaitable that observes completion. Without this
+        reconciliation, callers polling ``get_session(...)``/``list_events(...)``
+        would see ``status="running"`` forever even after the subprocess
+        wrote ``exit_code.txt`` and exited.
+
+        Idempotent: only mutates state when the file-backed state has
+        actually advanced past what's already in memory.
+        """
+        if session.status in {"completed", "failed", "cancelled"}:
+            return
+        if not session.session_root:
+            return
+        runtime_paths = runner_runtime_paths(session.session_root)
+        exit_code_path = runtime_paths.get("exit_code")
+        if not exit_code_path or not exit_code_path.is_file():
+            return
+        try:
+            raw = exit_code_path.read_text(encoding="utf-8").strip()
+            if not raw:
+                return
+            rc = int(raw)
+        except (OSError, ValueError):
+            return
+        session.returncode = rc
+        session.status = "completed" if rc == 0 else "failed"
+        terminal_event = RunnerEvent(
+            event_type=RunnerEventType.COMPLETED if rc == 0 else RunnerEventType.FAILED,
+            session_id=session.session_id,
+            normalized_payload={"returncode": rc},
+        )
+        session.events.append(terminal_event)
+        self._persist_event(session, terminal_event)
+
     async def get_session(self, session_id: str) -> dict[str, Any]:
         session = self._sessions.get(session_id)
+        if session is not None:
+            self._reconcile_status_from_files(session)
         if not session:
             detached = self._detached_session_snapshot(session_id)
             if detached is None:
@@ -483,6 +524,8 @@ class LocalCLIRunner(BaseRunner):
 
     async def list_events(self, session_id: str) -> list[RunnerEvent]:
         session = self._sessions.get(session_id)
+        if session is not None:
+            self._reconcile_status_from_files(session)
         if not session:
             detached = self._detached_session_snapshot(session_id)
             if detached is None:
