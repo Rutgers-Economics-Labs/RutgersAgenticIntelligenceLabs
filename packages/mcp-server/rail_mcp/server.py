@@ -266,6 +266,52 @@ def integrity_rerun_plan(assumption_key: str, apply: bool = False) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Runner Protocol / Session tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def list_project_state() -> str:
+    """Return a comprehensive snapshot of the project's state: ontology classes, data sources, and pipelines."""
+    return _json(_get_project().get_state())
+
+
+@mcp.tool()
+def get_work_order(work_order_id: str = "") -> str:
+    """
+    Fetch the typed WorkOrder for the current session.
+
+    Args:
+        work_order_id: Optional. If omitted, uses the RAIL_WORK_ORDER_ID from the environment.
+    """
+    return _json(_get_project().get_work_order(work_order_id or None))
+
+
+@mcp.tool()
+def submit_session_result(result: dict, session_id: str = "") -> str:
+    """
+    Submit the final structured session result for the current session.
+
+    Args:
+        result: The structured output (JSON object) matching the session's work order.
+        session_id: Optional. If omitted, uses the RAIL_SESSION_ID from the environment.
+    """
+    return _json(_get_project().submit_session_result(result, session_id=session_id or None))
+
+
+@mcp.tool()
+def ask(question: str, session_id: str = "") -> str:
+    """
+    Ask a question to the planner or human mid-session if you are blocked or need clarification.
+
+    Args:
+        question: The question to ask.
+        session_id: Optional. If omitted, uses the RAIL_SESSION_ID from the environment.
+    """
+    return _json(_get_project().ask(question, session_id=session_id or None))
+
+
+# ---------------------------------------------------------------------------
 # Secrets
 # ---------------------------------------------------------------------------
 

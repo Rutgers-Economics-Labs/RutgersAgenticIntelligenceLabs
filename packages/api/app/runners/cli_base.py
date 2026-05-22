@@ -732,13 +732,36 @@ class LocalCLIRunner(BaseRunner):
         session_id = f"{self.runner_name}_{uuid.uuid4().hex[:12]}"
         if not task_payload.session_root:
             raise RuntimeError(f"{self.runner_name} runner requires a session_root")
+        
+        # Phase 3: Inject RAIL environment variables and MCP config
+        from app.runners.mcp_injector import inject_mcp_config
+        from pathlib import Path
+        
+        workspace_root = Path(task_payload.local_repo_path) if task_payload.local_repo_path else Path(task_payload.session_root)
+        
+        inject_mcp_config(
+            workspace_root,
+            project_slug=task_payload.project_slug,
+            session_id=session_id,
+            work_order_id=task_payload.work_order_id,
+            local_mode=True, # default to local mode for CLI runners
+        )
+
+        env = dict(task_payload.allowed_secrets)
+        env["RAIL_PROJECT"] = task_payload.project_slug
+        env["RAIL_SESSION_ID"] = session_id
+        if task_payload.work_order_id:
+            env["RAIL_WORK_ORDER_ID"] = task_payload.work_order_id
+        if task_payload.work_order_path:
+            env["RAIL_WORK_ORDER_PATH"] = task_payload.work_order_path
+
         session = LocalCliSession(
             session_id=session_id,
             command=self._command_args(prompt, task_payload),
             cwd=task_payload.local_repo_path,
             prompt=prompt,
             session_root=task_payload.session_root,
-            env=dict(task_payload.allowed_secrets),
+            env=env,
         )
         runtime_paths = runner_runtime_paths(task_payload.session_root)
         runtime_paths["root"].mkdir(parents=True, exist_ok=True)

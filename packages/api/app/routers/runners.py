@@ -20,7 +20,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Body, HTTPException, Path as FPath
+from fastapi import APIRouter, Body, HTTPException, Path as FPath, Query
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/runners", tags=["runners"])
@@ -409,3 +409,111 @@ async def ingest_events(
         "ingested": len(persisted),
         "events": persisted,
     }
+
+
+@router.get("/sessions/{session_id}/work-order")
+async def get_work_order(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+) -> dict[str, Any]:
+    """Fetch the typed WorkOrder for a session."""
+    from app.services import running_agent_service, planner_service
+    from pathlib import Path
+    import json
+
+    agent_session = await running_agent_service.get_running_agent(session_id)
+    
+    # In Phase 2, we wrote work orders to research_plan/work_orders/<wo_id>.json
+    # and recorded work_order_id in the session state on disk.
+    
+    project = await planner_service.get_project_by_slug(project_slug)
+    if not project or not project.get("localRepoPath"):
+        raise HTTPException(status_code=404, detail="Project or local path not found")
+    
+    project_root = Path(project["localRepoPath"])
+    
+    # Try to find the session directory to get the work order ID
+    role = (agent_session or {}).get("role", "research")
+    from app.services import session_files
+    session_root = session_files.session_root(project_root, role, session_id)
+    
+    work_order_id = None
+    if session_root.exists():
+        state = session_files.read_state(session_root)
+        work_order_id = state.get("work_order_id")
+        
+    if not work_order_id:
+        # Fallback: check if we can derive it from the agent_session title or metadata
+        # if it was recorded there. For now, if we can't find it, we fail.
+        raise HTTPException(status_code=404, detail="Session has no work order ID associated")
+
+    wo_path = project_root / "research_plan" / "work_orders" / f"{work_order_id}.json"
+    
+    if not wo_path.exists():
+        raise HTTPException(status_code=404, detail=f"Work order file not found: {work_order_id}")
+    
+    return json.loads(wo_path.read_text(encoding="utf-8"))
+
+
+@router.post("/sessions/{session_id}/result")
+async def submit_session_result(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+    result: dict = Body(...),
+) -> dict[str, Any]:
+    """Submit the final session result."""
+    from app.services import running_agent_service, session_files, planner_service
+    from pathlib import Path
+    import json
+
+    agent_session = await running_agent_service.get_running_agent(session_id)
+    project = await planner_service.get_project_by_slug(project_slug)
+    if not project or not project.get("localRepoPath"):
+        raise HTTPException(status_code=404, detail="Project or local path not found")
+    
+    project_root = Path(project["localRepoPath"])
+    role = (agent_session or {}).get("role", "research")
+    
+    session_root = session_files.session_root(project_root, role, session_id)
+    session_root.mkdir(parents=True, exist_ok=True)
+    
+    (session_root / "session_result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    
+    return {"ok": True, "path": str(session_root / "session_result.json")}
+
+
+@router.post("/sessions/{session_id}/ask")
+async def ask_question(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+    data: dict = Body(...),
+) -> dict[str, Any]:
+    """Ask a question to the planner mid-session."""
+    question = data.get("question")
+    if not question:
+        raise HTTPException(status_code=400, detail="Question is required")
+
+    from app.services import running_agent_service, planner_service
+    from app.runners.base import RunnerEvent, RunnerEventType
+    import time
+
+    agent_session = await running_agent_service.get_running_agent(session_id)
+    
+    if agent_session:
+        from app.services.convex_client import convex
+        event = RunnerEvent(
+            event_type=RunnerEventType.QUESTION_ASKED,
+            session_id=session_id,
+            normalized_payload={"question": question},
+            raw_payload={},
+        )
+        await convex.mutation(
+            "runnerEvents:append",
+            {
+                "agentSessionId": agent_session["_id"],
+                **event.to_convex_dict(),
+                "createdAt": int(time.time() * 1000),
+            },
+        )
+
+    return {"ok": True, "status": "pending", "message": "Question received and recorded."}

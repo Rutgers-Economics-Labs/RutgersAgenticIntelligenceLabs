@@ -88,3 +88,15 @@ class CloudClient:
 
     def apply_integrity_rerun_plan(self, project_slug: str, assumption_key: str) -> dict:
         return self.post(f"/projects/{project_slug}/integrity/rerun-plan/apply", {"assumptionKey": assumption_key})
+
+    def get_project_state(self, project_slug: str) -> dict:
+        return self.get(f"/projects/{project_slug}/context")
+
+    def get_work_order(self, project_slug: str, work_order_id: str) -> dict:
+        return self.get(f"/projects/{project_slug}/work-orders/{work_order_id}")
+
+    def submit_session_result(self, project_slug: str, session_id: str, result: dict) -> dict:
+        return self.post(f"/projects/{project_slug}/sessions/{session_id}/result", result)
+
+    def ask_question(self, project_slug: str, session_id: str, question: str) -> dict:
+        return self.post(f"/projects/{project_slug}/sessions/{session_id}/ask", {"question": question})

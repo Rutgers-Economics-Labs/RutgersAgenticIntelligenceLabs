@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import datetime
 from pathlib import Path
 
 import yaml
@@ -593,3 +594,61 @@ class LocalEngine:
         )
         result["mode"] = "local"
         return result
+
+    def get_project_state(self, project_slug: str) -> dict:
+        # Mocking the /context response for local mode
+        # In a real scenario, this would involve more complex logic
+        # For now, return a basic structure
+        return {
+            "project": {"slug": project_slug, "status": "local"},
+            "mode": "local",
+        }
+
+    def get_work_order(self, project_slug: str, work_order_id: str) -> dict:
+        wo_path = self.project_path / "research_plan" / "work_orders" / f"{work_order_id}.json"
+        if not wo_path.exists():
+            raise FileNotFoundError(f"Work order not found: {wo_path}")
+        return json.loads(wo_path.read_text(encoding="utf-8"))
+
+    def submit_session_result(self, project_slug: str, session_id: str, result: dict) -> dict:
+        # For local mode, we just write it to the session directory
+        # How do we find the session directory? 
+        # We can try to resolve it like session_lifecycle does
+        sessions_root = self.project_path / "research_plan" / "sessions"
+        # Search for any session with this ID (sessions are nested by role)
+        result_path = None
+        for candidate in sessions_root.glob(f"*/{session_id}"):
+            if candidate.is_dir():
+                result_path = candidate / "session_result.json"
+                break
+        
+        if not result_path:
+            # Fallback to a default location if session directory not found
+            result_path = sessions_root / "adhoc" / session_id / "session_result.json"
+            result_path.parent.mkdir(parents=True, exist_ok=True)
+
+        result_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+        return {"ok": True, "path": str(result_path)}
+
+    def ask_question(self, project_slug: str, session_id: str, question: str) -> dict:
+        # For local mode, we write the question to a log
+        qa_log_path = self.project_path / "research_plan" / "decisions" / "qa_log.json"
+        qa_log_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        entry = {
+            "session_id": session_id,
+            "question": question,
+            "timestamp": datetime.datetime.now(datetime.UTC).isoformat() + "Z",
+            "status": "pending"
+        }
+        
+        log = []
+        if qa_log_path.exists():
+            try:
+                log = json.loads(qa_log_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        
+        log.append(entry)
+        qa_log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
+        return {"ok": True, "status": "pending", "message": "Question recorded locally."}
