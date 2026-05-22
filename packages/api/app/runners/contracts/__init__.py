@@ -28,8 +28,10 @@ from app.runners.contracts.session_result import (
     RecommendedTask,
     SessionResult,
     SessionStatus,
+    SourceMaterializationState,
     SourceRecord,
     TrustChange,
+    TrustState,
     VerificationRequest,
 )
 from app.runners.contracts.work_order import (
@@ -57,8 +59,10 @@ __all__ = [
     "RecommendedTask",
     "SessionResult",
     "SessionStatus",
+    "SourceMaterializationState",
     "SourceRecord",
     "TrustChange",
+    "TrustState",
     "VerificationRequest",
     # runner_profile
     "AdapterType",

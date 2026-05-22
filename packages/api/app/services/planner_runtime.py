@@ -299,6 +299,21 @@ def _planner_tools() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "create_mvr_task",
+                "description": "Create a Minimum Viable Research (MVR) task to break a project deadlock. Focuses on a single source, single dataset, and single claim candidate.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "focus_source": {"type": "string"},
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["focus_source"],
+                },
+            },
+        },
     ]
 
 
@@ -758,6 +773,34 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             limit=50,
         )
         return {"sessions": sessions}
+
+    if name == "create_mvr_task":
+        focus_source = args["focus_source"]
+        reason = args.get("reason") or "Breaking project deadlock via Minimum Viable Research (MVR)."
+        
+        task_title = f"MVR: Analyze {focus_source} and produce first claim"
+        await planner_service.create_task(
+            project=project,
+            board_id=board["_id"],
+            title=task_title,
+            description=(
+                f"GOAL: Produce the first research finding for this project using a narrow vertical slice.\n\n"
+                f"1. Fetch/Query {focus_source}.\n"
+                f"2. Create a single descriptive analysis result.\n"
+                f"3. Emit at least one claim candidate.\n"
+                f"4. Write a draft memo section.\n\n"
+                f"REASON: {reason}"
+            ),
+            agent_role="research",
+            status="ready",
+            acceptance_criteria=[
+                f"at least one claim candidate is created based on {focus_source}",
+                "a draft memo section is written to research_plan/state/draft_memo.md",
+                "session_result.json records domain progress"
+            ]
+        )
+        await planner_service.sync_planner_files(project, board)
+        return {"status": "created", "title": task_title}
 
     if name == "grant_approval":
         approval_id = args.get("approval_id", "").strip()

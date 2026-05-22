@@ -1173,6 +1173,11 @@ def _task_matches_bootstrap_data_work(task: dict[str, Any]) -> bool:
     }
 
 
+def _is_audit_repair_task(task: dict[str, Any]) -> bool:
+    """True if the task is a platform-maintenance or audit-repair task."""
+    title = str(task.get("title") or "").lower()
+    return any(needle in title for needle in ["reconcile control-plane", "audit", "integrity repair", "ontology health"])
+
 def _is_promotion_role(task: dict[str, Any]) -> bool:
     """Roles whose output is a trust-boundary action and must respect
     promotion-blocking auditors (ontology/integrity/closeout)."""
@@ -1549,7 +1554,33 @@ async def _detect_and_handle_stuck_tasks(
     project_root = Path(project_root_str).resolve() if project_root_str else None
 
     flagged = False
+
+    # Track B: Project-level stuck detection
+    from app.services import stuck_detector
+    if project_root:
+        diagnosis = stuck_detector.detect_stuck_state(project_root)
+        if diagnosis:
+            stuck_detector.write_stuck_report(project_root, diagnosis)
+            logger.warning("Autopilot: Project-level stuck state detected for %s", project.get("slug"))
+            
+            # Track B: Automated escape
+            for issue in diagnosis["issues"]:
+                if issue["type"] in {"maintenance_loop", "no_domain_progress", "no_progress_edges"}:
+                    # Try to break the cycle by creating an MVR task
+                    if not _has_ready_task_title(tasks, "MVR:"):
+                        await planner_runtime._execute_planner_tool(
+                            project,
+                            "create_mvr_task",
+                            {
+                                "focus_source": "primary project source", # Fallback
+                                "reason": f"Automated escape from {issue['type']} loop."
+                            }
+                        )
+                        flagged = True
+                        break
+
     for task in tasks:
+
         task_id = str(task.get("_id") or "")
         if not task_id:
             continue
@@ -1959,6 +1990,12 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
 
         board = await planner_service.ensure_main_board(project)
         tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+        
+        # Track B: Ensure research artifacts exist
+        if project_root:
+            from app.services import artifact_service
+            artifact_service.ensure_draft_artifacts(project_root)
+
         if goal_mode:
             goal_service.sync_goal_runtime(
                 project,
@@ -1968,6 +2005,19 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
                 active_sessions=[active_worker] if active_worker else [],
                 autopilot_enabled=bool(config.get("desired_enabled", True)),
             )
+        # Track B: Audit-only commit throttling
+        ledger = liveness_service.read_ledger(project_root)
+        if ledger.get("consecutive_audit_only_commits", 0) >= 1:
+            # Check if there are any non-audit ready tasks. 
+            # If everything is just audit repair, and we already tried one, we pause.
+            ready_tasks = [t for t in tasks if t.get("status") == "ready"]
+            non_audit_ready = [t for t in ready_tasks if not _is_audit_repair_task(t)]
+            
+            if not non_audit_ready and not active_worker:
+                logger.info("Autopilot: Throttling consecutive audit-only wakeup for %s", project_slug)
+                _wake_event(project_slug).clear()
+                continue
+
         if await cancel_stale_repair_tasks(project, tasks, auditors):
             tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
         # Anti-stall: detect tasks that have been stuck in the same blocked/

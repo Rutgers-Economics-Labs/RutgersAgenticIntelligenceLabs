@@ -270,6 +270,15 @@ class SecretsSection(BaseModel):
     allowed: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class ResearchSlice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    question: str
+    required_sources: list[str] = Field(default_factory=list)
+    minimum_dataset: str | None = None
+    output: str | None = None
+
+
 class LifecycleSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -295,6 +304,7 @@ class LifecycleSection(BaseModel):
             "final_artifacts_present",
         ]
     )
+    slices: dict[str, ResearchSlice] = Field(default_factory=dict)
 
 
 class RailManifest(BaseModel):

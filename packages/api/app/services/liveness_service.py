@@ -23,25 +23,27 @@ def get_ledger_path(project_root: Path) -> Path:
 
 def read_ledger(project_root: Path) -> dict[str, Any]:
     path = get_ledger_path(project_root)
+    defaults = {
+        "last_domain_progress_at": None,
+        "domain_progress_events": [],
+        "progress_edges": [], # Track B: source -> extract -> ...
+        "consecutive_maintenance_sessions": 0,
+        "consecutive_no_progress_sessions": 0,
+        "consecutive_audit_only_commits": 0,
+        "repeated_blockers": {},
+        "executed_hashes": {}
+    }
     if not path.exists():
-        return {
-            "last_domain_progress_at": None,
-            "domain_progress_events": [],
-            "consecutive_maintenance_sessions": 0,
-            "consecutive_audit_only_commits": 0,
-            "repeated_blockers": {}
-        }
+        return defaults
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        for k, v in defaults.items():
+            if k not in data:
+                data[k] = v
+        return data
     except Exception:
         logger.warning("Failed to parse progress_ledger.json")
-        return {
-            "last_domain_progress_at": None,
-            "domain_progress_events": [],
-            "consecutive_maintenance_sessions": 0,
-            "consecutive_audit_only_commits": 0,
-            "repeated_blockers": {}
-        }
+        return defaults
 
 def write_ledger(project_root: Path, ledger: dict[str, Any]) -> None:
     path = get_ledger_path(project_root)
@@ -63,7 +65,6 @@ def check_liveness(project_root: Path, task_type: str, idempotency_key: str | No
             }
             
     # Rule 2: No-repeat hash
-    # We need to track executed hashes. Let's add them to the ledger.
     executed = ledger.get("executed_hashes", {})
     if idempotency_key and input_hash:
         if executed.get(idempotency_key) == input_hash:
@@ -75,7 +76,6 @@ def check_liveness(project_root: Path, task_type: str, idempotency_key: str | No
     return {"allowed": True, "reason": "ok"}
     
 def record_session_result(project_root: Path, session_id: str, raw_result: dict[str, Any]) -> None:
-
     """Update the progress ledger based on a session's structured result."""
     try:
         result = SessionResult.model_validate(raw_result)
@@ -100,16 +100,39 @@ def record_session_result(project_root: Path, session_id: str, raw_result: dict[
     if has_progress:
         ledger["last_domain_progress_at"] = now_iso
         ledger["consecutive_maintenance_sessions"] = 0
+        ledger["consecutive_no_progress_sessions"] = 0
         ledger["domain_progress_events"].append({
             "session_id": session_id,
             "timestamp": now_iso,
             "progress": dp.model_dump()
         })
+        
+        # Track B: Update progress edges
+        for source in result.sources:
+            ledger["progress_edges"].append({
+                "type": "source_materialized",
+                "id": source.source_id,
+                "state": source.materialization_state.value
+            })
+        for dataset in result.datasets:
+            ledger["progress_edges"].append({
+                "type": "dataset_created",
+                "id": dataset.dataset_id,
+                "sources": dataset.source_ids
+            })
+        for claim in result.claims:
+            ledger["progress_edges"].append({
+                "type": "claim_created",
+                "id": claim.claim_id,
+                "evidence": claim.evidence_refs
+            })
+
         # Reset repeated blockers if we made progress
         ledger["repeated_blockers"] = {}
     else:
+        ledger["consecutive_no_progress_sessions"] = ledger.get("consecutive_no_progress_sessions", 0) + 1
         # If it was a health/maintenance task that made no domain progress
-        if result.task_type.value == "health_repair" or result.task_type.value == "verification":
+        if result.task_type.value in {"health_repair", "verification"}:
             ledger["consecutive_maintenance_sessions"] = ledger.get("consecutive_maintenance_sessions", 0) + 1
 
     # Record blockers
@@ -119,7 +142,6 @@ def record_session_result(project_root: Path, session_id: str, raw_result: dict[
 
     # Record executed hash
     if result.work_order_id:
-        # We need to load the work order to get the idempotency key and input hash
         wo_path = project_root / "research_plan" / "work_orders" / f"{result.work_order_id}.json"
         try:
             wo_data = json.loads(wo_path.read_text(encoding="utf-8"))
@@ -134,4 +156,3 @@ def record_session_result(project_root: Path, session_id: str, raw_result: dict[
 
     write_ledger(project_root, ledger)
     logger.info(f"Liveness: Updated progress ledger for session {session_id}. Has progress: {has_progress}")
-

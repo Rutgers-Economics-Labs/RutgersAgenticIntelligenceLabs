@@ -26,6 +26,31 @@ class SessionStatus(str, Enum):
     NEEDS_FOLLOWUP = "needs_followup"
 
 
+class TrustState(str, Enum):
+    """Granular trust levels for research artifacts (Track B)."""
+    DRAFT = "draft"
+    CANDIDATE = "candidate"
+    ANALYSIS_READY = "analysis_ready"
+    PARTIALLY_VERIFIED = "partially_verified"
+    VERIFIED = "verified"
+    REJECTED = "rejected"
+    BLOCKED_FOR_PROMOTION = "blocked_for_promotion"
+    SUPERSEDED = "superseded"
+
+
+class SourceMaterializationState(str, Enum):
+    """Granular source states (Track B)."""
+    CANDIDATE = "candidate"
+    ADMISSIBLE = "admissible"
+    CONFIGURED = "configured"
+    FETCHABLE = "fetchable"
+    FETCHED = "fetched_extract"
+    NORMALIZED = "normalized_dataset"
+    HYDRATED = "hydrated_dataset"
+    ANALYSIS_READY = "analysis_ready_dataset"
+    TRUSTED = "trusted_evidence_source"
+
+
 class ClaimCandidate(BaseModel):
     """A claim the agent surfaced during the session.
 
@@ -39,7 +64,7 @@ class ClaimCandidate(BaseModel):
 
     claim_id: str
     text: str
-    status: str = "candidate"
+    status: TrustState = TrustState.CANDIDATE
     evidence_refs: list[str] = Field(default_factory=list)
     verification_status: str = "pending"
     confidence: float | None = None
@@ -64,6 +89,7 @@ class SourceRecord(BaseModel):
     """fetched | manual_ingest | scraped | api_call | local_file"""
     admissibility: str = "unverified"
     """unverified | admissible | inadmissible | pending_review"""
+    materialization_state: SourceMaterializationState = SourceMaterializationState.CANDIDATE
     materialized_path: str | None = None
     notes: str | None = None
 
