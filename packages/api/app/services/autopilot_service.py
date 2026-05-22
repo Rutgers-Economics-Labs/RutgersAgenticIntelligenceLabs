@@ -1823,6 +1823,16 @@ async def start_autopilot(project_slug: str, auto_approve: bool = False):
     """
     Starts the autopilot loop for a project if not already running.
     """
+    from app.services import kill_switch_service
+
+    if kill_switch_service.is_killed(project_slug):
+        logger.warning(
+            "Autopilot refused to start for %s: kill switch engaged. "
+            "Release via POST /api/v1/autopilot/release-all or /projects/%s/autopilot/release.",
+            project_slug, project_slug,
+        )
+        return
+
     _update_config(project_slug, auto_approve=auto_approve, desired_enabled=True)
     await _persist_autopilot_state(project_slug, enabled=True, auto_approve=auto_approve)
 
@@ -1893,6 +1903,13 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
         iteration += 1
         if not _active_autopilots.get(project_slug):
             logger.info(f"Autopilot stopped for {project_slug}")
+            break
+        # Kill switch check — file-backed, checked every iteration so a kill
+        # engaged from another API process or via direct file write still wins.
+        from app.services import kill_switch_service
+        if kill_switch_service.is_killed(project_slug):
+            logger.warning("Autopilot loop exiting for %s: kill switch engaged.", project_slug)
+            _active_autopilots[project_slug] = False
             break
             
         limit_display = "infinite" if max_iterations is None else str(max_iterations)

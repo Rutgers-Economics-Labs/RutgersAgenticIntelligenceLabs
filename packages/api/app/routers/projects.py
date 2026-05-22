@@ -3428,6 +3428,26 @@ async def get_autopilot_status(slug: str):
     }
 
 
+@router.post("/{slug}/autopilot/kill")
+async def kill_project_autopilot(slug: str, payload: dict = Body(default_factory=dict)):
+    """Engage the project-scoped kill switch.
+
+    Stops the autopilot loop for this project and cancels its active runner
+    session (if any). The global kill switch is unaffected.
+    """
+    from app.services import kill_switch_service
+    reason = payload.get("reason") if isinstance(payload, dict) else None
+    engaged_by = payload.get("engagedBy") if isinstance(payload, dict) else None
+    return await kill_switch_service.engage_project(slug, reason=reason, engaged_by=engaged_by)
+
+
+@router.post("/{slug}/autopilot/release")
+async def release_project_autopilot(slug: str):
+    """Release the project-scoped kill switch."""
+    from app.services import kill_switch_service
+    return await kill_switch_service.release_project(slug)
+
+
 @router.get("/{slug}/phase")
 async def get_project_phase(slug: str):
     """Single authoritative phase projection for a project.
