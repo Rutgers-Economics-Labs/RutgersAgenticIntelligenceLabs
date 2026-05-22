@@ -34,7 +34,7 @@ class ContextCompiler(ABC):
         # 3. Work Order Reference
         if payload.work_order_id:
             sections.append(
-                f"## Work Order\n\n"
+                f"## RAIL Protocol — Structured I/O (required)\n\n"
                 f"You are executing Work Order: {payload.work_order_id}\n"
                 f"Full details are available in: {payload.work_order_path}\n"
                 f"You MUST read this work order before starting."
