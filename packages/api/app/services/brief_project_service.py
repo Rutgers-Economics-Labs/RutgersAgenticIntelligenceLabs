@@ -11,6 +11,10 @@ import yaml
 
 from app.services import llm_service, registry_service
 
+# Module-level constant — f-strings in Python 3.11 can't contain backslashes
+# inside their expression part, so we hoist this out for join() calls.
+_NEWLINE = "\n"
+
 
 READY = "ready"
 DRAFT = "draft_for_review"
@@ -447,7 +451,7 @@ def _current_plan_md(project: dict[str, Any], graph: dict[str, Any], sources: li
 
         ## Next Steps
 
-        {"\n".join(next_steps)}
+        {_NEWLINE.join(next_steps)}
         """
     )
 

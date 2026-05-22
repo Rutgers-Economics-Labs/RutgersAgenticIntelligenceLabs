@@ -176,6 +176,17 @@ class CodexCliNormalizer(EventNormalizer):
                             raw_payload=payload,
                         )
                     )
+            elif item_type == "agent_message":
+                text = item.get("text")
+                if text:
+                    events.append(
+                        RunnerEvent(
+                            event_type=RunnerEventType.PROGRESS,
+                            session_id=session_id,
+                            normalized_payload={"message": text},
+                            raw_payload=payload,
+                        )
+                    )
 
         elif payload_type == "turn.completed":
             events.append(
@@ -209,7 +220,36 @@ class GeminiCliNormalizer(EventNormalizer):
         if payload is None:
             return []
 
-        if payload.get("type") != "tool_use":
+        payload_type = payload.get("type")
+
+        if payload_type == "message" and payload.get("role") == "assistant":
+            content = payload.get("content")
+            if isinstance(content, str) and content:
+                return [
+                    RunnerEvent(
+                        event_type=RunnerEventType.PROGRESS,
+                        session_id=session_id,
+                        normalized_payload={"message": content},
+                        raw_payload=payload,
+                    )
+                ]
+            return []
+
+        if payload_type == "result":
+            status = str(payload.get("status") or "completed").lower()
+            return [
+                RunnerEvent(
+                    event_type=RunnerEventType.COMPLETED,
+                    session_id=session_id,
+                    normalized_payload={
+                        "status": status,
+                        "stats": payload.get("stats") or {},
+                    },
+                    raw_payload=payload,
+                )
+            ]
+
+        if payload_type != "tool_use":
             return []
 
         events: list[RunnerEvent] = []
@@ -273,6 +313,7 @@ class CursorCliNormalizer(EventNormalizer):
 
         events: list[RunnerEvent] = []
         payload_type = payload.get("type")
+        subtype = payload.get("subtype")
 
         if payload_type == "assistant":
             content = payload.get("message", {}).get("content") or []
@@ -289,7 +330,25 @@ class CursorCliNormalizer(EventNormalizer):
                             )
                         )
 
+        elif payload_type == "thinking" and subtype == "delta":
+            text = payload.get("text")
+            if text:
+                events.append(
+                    RunnerEvent(
+                        event_type=RunnerEventType.PROGRESS,
+                        session_id=session_id,
+                        normalized_payload={"message": text, "kind": "thinking"},
+                        raw_payload=payload,
+                    )
+                )
+
         elif payload_type == "tool_call":
+            # Cursor emits the same tool_call envelope twice (started + completed);
+            # only surface the completed one to avoid duplicate FILE_CHANGE events.
+            # Treat envelopes without a subtype as completed for forward compat
+            # with the previous test fixture shape.
+            if subtype not in (None, "completed"):
+                return events
             tool_call = payload.get("tool_call") or {}
             for key in self._FILE_TOOL_KEYS:
                 envelope = tool_call.get(key)
@@ -307,6 +366,20 @@ class CursorCliNormalizer(EventNormalizer):
                         )
                     )
                     break
+
+        elif payload_type == "result":
+            status = "completed" if not payload.get("is_error") else "failed"
+            events.append(
+                RunnerEvent(
+                    event_type=RunnerEventType.COMPLETED,
+                    session_id=session_id,
+                    normalized_payload={
+                        "status": status,
+                        "usage": payload.get("usage") or {},
+                    },
+                    raw_payload=payload,
+                )
+            )
 
         return events
 
