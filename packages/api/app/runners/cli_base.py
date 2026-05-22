@@ -90,6 +90,31 @@ class LocalCLIRunner(BaseRunner):
             f"Acceptance criteria:\n{criteria}",
         ]
 
+        # Phase 2 — Structured I/O protocol instructions
+        if task_payload.work_order_id:
+            wo_path = task_payload.work_order_path or (
+                f"research_plan/work_orders/{task_payload.work_order_id}.json"
+            )
+            sr_path = task_payload.session_result_path or (
+                f"research_plan/sessions/{task_payload.task_id}/session_result.json"
+            )
+            sections.extend([
+                "",
+                "## RAIL Protocol — Structured I/O (required)",
+                f"Work order ID: {task_payload.work_order_id}",
+                f"Work order file (machine-readable task specification): {wo_path}",
+                "Read this file at session start to get the full typed task specification.",
+                "",
+                f"Session result required at: {sr_path}",
+                (
+                    "Before ending this session you MUST write a valid session_result.json to "
+                    "that path. The schema is defined in app/runners/contracts/session_result.py. "
+                    "Minimum required fields: session_id, work_order_id, status, summary, "
+                    "task_type, runner_name. Without this file the session is marked "
+                    "complete_unverified and cannot be promoted."
+                ),
+            ])
+
         if task_payload.project_context:
             sections.append("")
             sections.append("Project context:")
