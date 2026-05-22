@@ -103,6 +103,30 @@ def _check_work_order_consistency(result: SessionResult, work_order: WorkOrder) 
             f"work order requested {work_order.task_type.value!r}"
         )
 
+    # Track B: Analysis tasks must produce claims or declare why they failed
+    from app.runners.contracts import TaskType
+    if result.task_type == TaskType.ANALYSIS and result.status == "completed":
+        if not result.claims and not result.domain_progress.new_claim_candidates:
+            # If no claims were created, there must be a valid blocker/reason
+            valid_reasons = {
+                "hypothesis_rejected", 
+                "insufficient_data_declared", 
+                "method_not_applicable_declared",
+                "method_blocker_declared",
+                "analysis_dataset_missing_declared"
+            }
+            has_valid_blocker = any(b.category in valid_reasons for b in result.blockers)
+            
+            # Check if domain progress indicates hypothesis rejection
+            has_rejected_progress = False
+            
+            if not has_valid_blocker and not has_rejected_progress:
+                issues.append(
+                    "Analysis task completed but produced no claim candidates and "
+                    "no valid blocker (e.g., insufficient_data_declared) was reported. "
+                    "No silent analysis is allowed."
+                )
+
     # Required outputs are declared in the work order; spot-check that the
     # session_result has the corresponding fields populated.
     output_checks = {
