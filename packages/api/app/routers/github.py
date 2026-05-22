@@ -104,8 +104,8 @@ async def _sync_repo_changes(repo: str, before_sha: str, after_sha: str, project
     pipeline_changed = False
 
     for path in watched:
-        content = await github_service.get_file(repo, path, ref=after_sha)
         if path == "rail.yaml":
+            content = await github_service.get_file(repo, path, ref=after_sha)
             updates = manifest_updates_from_content(content)
             if updates:
                 await convex.mutation("projects:update", {
@@ -118,6 +118,7 @@ async def _sync_repo_changes(repo: str, before_sha: str, after_sha: str, project
         parsed = parse_config_path(path)
         if not parsed:
             continue
+        content = await github_service.get_file(repo, path, ref=after_sha)
         kind, slug = parsed
         if kind == "apis":
             existing = await convex.query("configs:getApi", {"slug": slug})

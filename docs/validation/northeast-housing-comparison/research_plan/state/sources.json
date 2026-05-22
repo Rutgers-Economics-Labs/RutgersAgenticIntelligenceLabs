@@ -1,0 +1,41 @@
+[
+  {
+    "source_key": "NJSTHPI",
+    "source_type": "api",
+    "title": "New Jersey State House Price Index",
+    "url_or_path": "https://api.stlouisfed.org/fred/series/observations?series_id=NJSTHPI&api_key=YOUR_API_KEY",
+    "origin": "https://fred.stlouisfed.org/series/NJSTHPI",
+    "access_method": "rest_api",
+    "admissibility_status": "observed",
+    "quality_status": "validated",
+    "freshness_status": "fresh",
+    "acquired_at": "2026-05-19T00:41:15.081093+00:00",
+    "retrieved_at": "2026-05-19T16:43:14Z"
+  },
+  {
+    "source_key": "NYSTHPI",
+    "source_type": "api",
+    "title": "New York State House Price Index",
+    "url_or_path": "https://api.stlouisfed.org/fred/series/observations?series_id=NYSTHPI&api_key=YOUR_API_KEY",
+    "origin": "https://fred.stlouisfed.org/series/NYSTHPI",
+    "access_method": "rest_api",
+    "admissibility_status": "observed",
+    "quality_status": "validated",
+    "freshness_status": "fresh",
+    "acquired_at": "2026-05-19T00:41:15.081093+00:00",
+    "retrieved_at": "2026-05-19T16:43:14Z"
+  },
+  {
+    "source_key": "CTSTHPI",
+    "source_type": "api",
+    "title": "Connecticut State House Price Index",
+    "url_or_path": "https://api.stlouisfed.org/fred/series/observations?series_id=CTSTHPI&api_key=YOUR_API_KEY",
+    "origin": "https://fred.stlouisfed.org/series/CTSTHPI",
+    "access_method": "rest_api",
+    "admissibility_status": "observed",
+    "quality_status": "validated",
+    "freshness_status": "fresh",
+    "acquired_at": "2026-05-19T00:41:15.081093+00:00",
+    "retrieved_at": "2026-05-19T16:43:14Z"
+  }
+]

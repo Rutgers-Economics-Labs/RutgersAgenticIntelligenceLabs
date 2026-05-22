@@ -1,7 +1,7 @@
 {
   "project": "nj-housing-affordability",
   "archetype": "time-series-econ",
-  "llmModel": "gemini-2.5-flash",
+  "llmModel": "gemini-flash-latest",
   "llmUsed": true,
   "realFredData": true,
   "phasesCompleted": [
@@ -10,14 +10,23 @@
     "3-discover-sources (FRED typed)",
     "4-build-pipeline (config written)",
     "5-hydrate-verify (real FRED HTTP)",
+    "5b-data-session (data worker recorded)",
     "6-run-research (Gemini analysis of DuckDB)",
+    "6b-coding-session (stats script + output)",
     "7-artifacts (lineage-backed report)",
-    "8-self-audit (post-run auditors)",
+    "7b-dashboard (HTML + register_final_artifact)",
+    "7c-artifact-session (artifact worker recorded)",
+    "8-self-audit (post-run auditors for all five roles)",
     "9-follow-ups (ontology-answerable questions)"
   ],
+  "fullE2e": true,
+  "deferExpansion": false,
   "sessionsWritten": {
-    "planner": "live-pla-dc3056ea8329463896cc0f77",
-    "research": "live-res-c3dede1c921b42348020f16c"
+    "planner": "live-pla-50411443ac9c451bb0467f8f",
+    "data": "live-dat-50f1666896b045c3ad7b8175",
+    "research": "live-res-1f3d8fb397e24dfe8be7e62d",
+    "coding": "live-cod-43927023efba49b7a96e4cc3",
+    "artifact": "live-art-cee5fa4aa4164b74b2d1e1f2"
   },
   "dbStats": {
     "hpiRows": 44,

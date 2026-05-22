@@ -1,31 +1,26 @@
 {
-  "finished_at": "2026-05-19T19:00:00Z",
+  "finished_at": "2026-05-19T20:05:47Z",
   "projects": [
     {
       "slug": "european-soccer-competitive-ecosystem-analysis",
-      "phase": "closed",
       "hypotheses": 1,
       "claims": 1,
       "verification": "passed",
-      "deliverable": "artifacts/final_ontology_backed_soccer_ecosystem_report.md"
+      "phase": "closed"
     },
     {
       "slug": "assessing-the-economic-impact-of-the-urban-enterprise-zone-program-reform",
-      "phase": "synthesis_ready",
       "hypotheses": 4,
       "claims": 4,
       "verification": "passed",
-      "deliverable": "research/NJ_UEZ_2021_Impact_Assessment_Paper.pdf",
-      "open_work": "Paper hardening in Review column; see research/paper_readiness.md"
+      "phase": "synthesis_ready"
     },
     {
       "slug": "assessing-data-center-impacts-on-new-jersey-grid-costs-and-pjm-forecasting",
-      "phase": "synthesis_ready",
       "hypotheses": 2,
       "claims": 2,
       "verification": "passed",
-      "deliverable": "artifacts/econometric_results.md",
-      "open_work": "Paper alignment tasks in Review column"
+      "phase": "synthesis_ready"
     }
   ]
 }

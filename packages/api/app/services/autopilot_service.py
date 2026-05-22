@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.services import planner_runtime, planner_service, running_agent_service
+from app.services import goal_service
 from app.runners import session_lifecycle
 from app.services.audit_service import audit_gate_status
 from app.services.convex_client import convex
@@ -41,9 +42,10 @@ ONTOLOGY_TASK_SPECS = (
         "agent_role": "data",
         "repo_paths": [".ontology/pipelines", ".ontology/sources", ".ontology/transforms", "research_plan", "topics"],
         "acceptance_criteria": [
-            "the default ontology pipeline declares concrete hydration steps for at least one attachable soccer source",
+            "the default ontology pipeline declares concrete hydration steps for at least one attachable, project-relevant source",
             "each step names a real source config and any required transform or parameterization",
             "pipeline notes distinguish immediately ingestable sources from manual-ingest-only sources",
+            "do not introduce unrelated cross-project harnesses, placeholder datasets, or out-of-domain fallback sources just to satisfy hydration",
             "the project is ready to rerun hydration against non-empty pipeline steps",
         ],
         "depends_on_task_ids": [],
@@ -114,10 +116,119 @@ def trigger_wake(project_slug: str):
     if project_slug in _wake_events:
         _wake_events[project_slug].set()
 
+
+def _wake_event(project_slug: str) -> asyncio.Event:
+    event = _wake_events.get(project_slug)
+    if event is None:
+        event = asyncio.Event()
+        _wake_events[project_slug] = event
+    return event
+
 def _update_config(project_slug: str, **kwargs):
     if project_slug not in _autopilot_configs:
         _autopilot_configs[project_slug] = {}
     _autopilot_configs[project_slug].update(kwargs)
+
+
+def _desired_autopilot_enabled(project_slug: str) -> bool:
+    return bool(_autopilot_configs.get(project_slug, {}).get("desired_enabled"))
+
+
+def _goal_mode_enabled(project: dict[str, Any]) -> bool:
+    try:
+        return bool(goal_service.load_goal_bundle(project))
+    except Exception:
+        return False
+
+
+def _record_goal_gate_failure(
+    project: dict[str, Any],
+    *,
+    failure_class: str,
+    summary: str,
+    root_cause_hypothesis: str,
+    reusable_lesson: str,
+    next_repair_action: str,
+    retry_eligible: bool = True,
+) -> None:
+    if not _goal_mode_enabled(project):
+        return
+    goal_service.record_failure(
+        project,
+        failure_class=failure_class,
+        summary=summary,
+        root_cause_hypothesis=root_cause_hypothesis,
+        reusable_lesson=reusable_lesson,
+        next_repair_action=next_repair_action,
+        retry_eligible=retry_eligible,
+        phase_override="blocked",
+    )
+
+
+async def _persist_autopilot_state(project_slug: str, *, enabled: bool, auto_approve: bool | None = None) -> None:
+    try:
+        project = await planner_service.get_project_by_slug(project_slug)
+    except Exception as exc:
+        logger.warning("Failed to load project %s while persisting autopilot state: %s", project_slug, exc)
+        return
+    local_repo_path = str(project.get("localRepoPath") or "").strip()
+    if not local_repo_path:
+        return
+    try:
+        repo_root = Path(local_repo_path).resolve()
+        state_path = repo_root / ".rail" / "autopilot_state.json"
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, Any] = {"enabled": enabled}
+        if auto_approve is not None:
+            payload["autoApprove"] = auto_approve
+        state_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to persist autopilot state for %s: %s", project_slug, exc)
+
+
+async def _disable_autopilot_desired_state(project_slug: str, *, auto_approve: bool | None = None) -> None:
+    _update_config(project_slug, desired_enabled=False)
+    await _persist_autopilot_state(project_slug, enabled=False, auto_approve=auto_approve)
+
+
+async def ensure_autopilot_running(project_slug: str) -> dict[str, Any]:
+    """Revive a desired autopilot loop if the process forgot it or it exited."""
+    desired_enabled = _desired_autopilot_enabled(project_slug)
+    auto_approve = bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False))
+    try:
+        project = await planner_service.get_project_by_slug(project_slug)
+    except Exception as exc:
+        logger.warning("Unable to inspect autopilot desired state for %s: %s", project_slug, exc)
+        return {
+            "desired_enabled": desired_enabled,
+            "auto_approve": auto_approve,
+            "active": is_autopilot_active(project_slug),
+        }
+    local_repo_path = str(project.get("localRepoPath") or "").strip()
+    if local_repo_path:
+        try:
+            payload = json.loads(
+                (Path(local_repo_path).resolve() / ".rail" / "autopilot_state.json").read_text(encoding="utf-8")
+            )
+            if isinstance(payload, dict):
+                desired_enabled = bool(payload.get("enabled", desired_enabled))
+                auto_approve = bool(payload.get("autoApprove", auto_approve))
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            logger.warning("Failed to read persisted autopilot state for %s: %s", project_slug, exc)
+    desired_enabled = bool(project.get("autopilotEnabled", desired_enabled))
+    auto_approve = bool(project.get("autopilotAutoApprove", auto_approve))
+    _update_config(project_slug, desired_enabled=desired_enabled, auto_approve=auto_approve)
+    active = is_autopilot_active(project_slug)
+    if desired_enabled and not active:
+        logger.info("Reviving desired autopilot loop for %s", project_slug)
+        asyncio.create_task(start_autopilot(project_slug, auto_approve))
+    return {
+        "desired_enabled": desired_enabled,
+        "auto_approve": auto_approve,
+        "active": active,
+    }
 
 
 def _dependency_ids(task: dict[str, Any]) -> list[str]:
@@ -213,6 +324,31 @@ def _hydration_duckdb_path(hydration: dict[str, Any]) -> str | None:
     return None
 
 
+def _is_ontology_data_bootstrap_phase(
+    project: dict[str, Any],
+    *,
+    hydration: dict[str, Any] | None = None,
+) -> bool:
+    """True when ontology projects still need more source/data work before health-heavy repair loops.
+
+    Early ontology phases should favor data ingestion, pipeline population, and hydration over
+    deterministic health verification. This keeps autopilot from over-triggering health agents
+    before the ontology contains enough real project-scoped data to validate meaningfully.
+    """
+    if not _is_ontology_project(project):
+        return False
+
+    state = str((hydration or {}).get("state") or "").strip().lower()
+    if state and state not in ONTOLOGY_READY_STATES:
+        return True
+    if not _pipeline_has_steps(project):
+        return True
+
+    duckdb_path = _hydration_duckdb_path(hydration or {})
+    ontology_has_rows = _duckdb_has_populated_rows(duckdb_path) or _ontology_has_populated_rows(project)
+    return not ontology_has_rows
+
+
 def _matches_task(task: dict[str, Any], needles: tuple[str, ...]) -> bool:
     haystack = " ".join(
         [
@@ -273,6 +409,7 @@ async def _ensure_ontology_lifecycle_tasks(project: dict[str, Any], tasks: list[
     state = hydration.get("state")
     pipeline_has_steps = _pipeline_has_steps(project)
     ontology_has_rows = _duckdb_has_populated_rows(_hydration_duckdb_path(hydration)) or _ontology_has_populated_rows(project)
+    bootstrap_phase = _is_ontology_data_bootstrap_phase(project, hydration=hydration)
     needs_pipeline_population = not pipeline_has_steps
     hydrated_but_empty = state in ONTOLOGY_READY_STATES and not ontology_has_rows
     if state in ONTOLOGY_READY_STATES and not needs_pipeline_population and not hydrated_but_empty:
@@ -285,6 +422,11 @@ async def _ensure_ontology_lifecycle_tasks(project: dict[str, Any], tasks: list[
 
     for spec in ONTOLOGY_TASK_SPECS:
         if spec["match"] == ("populate", "pipeline", "source") and not needs_pipeline_population:
+            continue
+        if bootstrap_phase and spec["match"] not in {
+            ("populate", "pipeline", "source"),
+            ("hydrate", "ontology", "artifact"),
+        }:
             continue
         existing = _find_existing_task(live_tasks, spec["match"])
         depends = []
@@ -346,11 +488,12 @@ async def _ensure_ontology_lifecycle_tasks(project: dict[str, Any], tasks: list[
     if changed:
         await planner_service.sync_planner_files(project, board)
         logger.info(
-            "Autopilot: ensured ontology lifecycle tasks for %s (state=%s, pipeline_has_steps=%s, ontology_has_rows=%s)",
+            "Autopilot: ensured ontology lifecycle tasks for %s (state=%s, pipeline_has_steps=%s, ontology_has_rows=%s, bootstrap_phase=%s)",
             project.get("slug"),
             state,
             pipeline_has_steps,
             ontology_has_rows,
+            bootstrap_phase,
         )
     return changed
 
@@ -466,6 +609,12 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     root = planner_service.project_root_from_record(project)
     if root is None:
         return False
+    hydration: dict[str, Any] | None = None
+    try:
+        hydration = await get_hydration_status(project=project) if _is_ontology_project(project) else None
+    except Exception:
+        hydration = None
+    bootstrap_phase = _is_ontology_data_bootstrap_phase(project, hydration=hydration)
     workflow = summarize_agent_workflow_health(root)
     data = workflow.get("data") or {}
     coding = workflow.get("coding") or {}
@@ -546,7 +695,7 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
             live_titles.add(task_title)
             changed = True
 
-    if missing_evidence_claims:
+    if missing_evidence_claims and not bootstrap_phase:
         task_title = "Repair unsupported claims and verification evidence"
         if task_title not in live_titles:
             await planner_service.create_task(
@@ -571,7 +720,7 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
             live_titles.add(task_title)
             changed = True
 
-    if stale_sources:
+    if stale_sources and not bootstrap_phase:
         task_title = "Refresh stale sources or rerun dependent analyses"
         if task_title not in live_titles:
             await planner_service.create_task(
@@ -595,7 +744,7 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
             live_titles.add(task_title)
             changed = True
 
-    if failed_verification_runs:
+    if failed_verification_runs and not bootstrap_phase:
         task_title = "Resolve failed verification runs before trusted promotion"
         if task_title not in live_titles:
             await planner_service.create_task(
@@ -619,7 +768,7 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
             live_titles.add(task_title)
             changed = True
 
-    if reproducibility_gaps:
+    if reproducibility_gaps and not bootstrap_phase:
         task_title = "Repair reproducibility metadata for trusted artifacts"
         if task_title not in live_titles:
             await planner_service.create_task(
@@ -644,7 +793,7 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
             changed = True
 
     task_title = "Resolve inadmissible sources for trusted outputs"
-    if inadmissible_sources and task_title not in live_titles:
+    if inadmissible_sources and not bootstrap_phase and task_title not in live_titles:
         await planner_service.create_task(
             project=project,
             board_id=board["_id"],
@@ -669,8 +818,9 @@ async def _ensure_integrity_repair_tasks(project: dict[str, Any], tasks: list[di
     if changed:
         await planner_service.sync_planner_files(project, board)
         logger.info(
-            "Autopilot: ensured integrity repair tasks for %s (dataset_provenance=%s, dataset_freshness=%s, analysis_lineage=%s, analysis_verification_commands=%s, analysis_verification_runs=%s, claims=%s, stale_sources=%s, failed_verification_runs=%s, reproducibility_gaps=%s, inadmissible_sources=%s)",
+            "Autopilot: ensured integrity repair tasks for %s (bootstrap_phase=%s, dataset_provenance=%s, dataset_freshness=%s, analysis_lineage=%s, analysis_verification_commands=%s, analysis_verification_runs=%s, claims=%s, stale_sources=%s, failed_verification_runs=%s, reproducibility_gaps=%s, inadmissible_sources=%s)",
             project.get("slug"),
+            bootstrap_phase,
             len(datasets_missing_provenance),
             len(datasets_missing_freshness),
             len(artifacts_missing_lineage),
@@ -695,17 +845,41 @@ async def _ensure_ontology_repair_task(
         return False
 
     task_title = "Repair ontology readiness blockers"
-    if any(str(task.get("title") or "") == task_title for task in tasks):
-        return False
-
+    existing_task = next(
+        (
+            task
+            for task in tasks
+            if str(task.get("title") or "") == task_title
+            and str(task.get("status") or "") != "cancelled"
+        ),
+        None,
+    )
     board = await planner_service.ensure_main_board(project)
+    if existing_task is not None:
+        existing_status = str(existing_task.get("status") or "")
+        if existing_status in {"ready", "running", "awaiting_approval"}:
+            return False
+        await planner_service.update_task(
+            str(existing_task["_id"]),
+            project=project,
+            status="ready",
+            blockerCategory=None,
+            approvalState="granted",
+            latestRunSummary="Reopened by Autopilot because ontology readiness is still blocked.",
+        )
+        await planner_service.sync_planner_files(project, board)
+        logger.info("Autopilot: reopened ontology repair task for %s", project.get("slug"))
+        return True
+
     await planner_service.create_task(
         project=project,
         board_id=board["_id"],
         title=task_title,
         description=(
             "Repair ontology blockers that still prevent ontology-backed work. "
-            "This includes hydration failures, empty artifacts, broken active pointers, or missing ontology-health verification."
+            "This includes hydration failures, empty artifacts, broken active pointers, or missing ontology-health verification. "
+            "Keep the repair strictly within this project's domain and source inventory: do not introduce cross-project smoke tests, "
+            "unrelated fallback datasets, or placeholder harnesses simply to make hydration appear non-empty."
         ),
         status="ready",
         agent_role="data",
@@ -968,6 +1142,19 @@ def _task_matches_integrity_repair_work(task: dict[str, Any]) -> bool:
     }
 
 
+def _task_matches_bootstrap_data_work(task: dict[str, Any]) -> bool:
+    title = str(task.get("title") or "").strip().lower()
+    role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+    if role != "data":
+        return False
+    return title in {
+        "repair ontology readiness blockers",
+        "populate ontology pipeline steps for attachable sources",
+        "hydrate project ontology and register active artifacts",
+        "repair dataset provenance and freshness metadata",
+    }
+
+
 def _filter_ready_tasks_for_auditors(
     project: dict[str, Any],
     ready_tasks: list[dict[str, Any]],
@@ -982,12 +1169,45 @@ def _filter_ready_tasks_for_auditors(
             task for task in filtered
             if str(task.get("title") or "") == "Reconcile control-plane drift and stale sessions"
         ]
+    bootstrap_phase = _is_ontology_data_bootstrap_phase(project)
     if ontology_auditor.get("status") == "blocked":
-        filtered = [task for task in filtered if _task_matches_ontology_repair_work(task)]
+        ontology_ready = []
+        for task in filtered:
+            role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+            if role not in {"planner", "data", "health"}:
+                continue
+            if bootstrap_phase and not _task_matches_bootstrap_data_work(task):
+                continue
+            if _task_matches_ontology_repair_work(task) or _task_matches_integrity_repair_work(task):
+                ontology_ready.append(task)
+    else:
+        ontology_ready = list(filtered)
 
     integrity_auditor = (auditors or {}).get("integrity") or {}
     if integrity_auditor.get("status") == "blocked":
-        filtered = [task for task in filtered if _task_matches_integrity_repair_work(task)]
+        integrity_ready = [
+            task
+            for task in filtered
+            if _task_matches_integrity_repair_work(task)
+            and (
+                ontology_auditor.get("status") != "blocked"
+                or str(task.get("agentRole") or task.get("agent_role") or "").strip().lower() in {"planner", "data", "health"}
+            )
+        ]
+    else:
+        integrity_ready = list(filtered)
+
+    if bootstrap_phase and ontology_auditor.get("status") == "blocked":
+        return ontology_ready
+    if ontology_auditor.get("status") == "blocked" and integrity_auditor.get("status") == "blocked":
+        filtered_by_id: dict[str, dict[str, Any]] = {}
+        for task in ontology_ready + integrity_ready:
+            filtered_by_id[str(task.get("_id") or "")] = task
+        return list(filtered_by_id.values())
+    if ontology_auditor.get("status") == "blocked":
+        return ontology_ready
+    if integrity_auditor.get("status") == "blocked":
+        return integrity_ready
     return filtered
 
 
@@ -1023,8 +1243,30 @@ async def _ensure_control_plane_repair_tasks(
 
     board = await planner_service.ensure_main_board(project)
     task_title = "Reconcile control-plane drift and stale sessions"
-    if any(str(task.get("title") or "") == task_title for task in tasks):
-        return False
+    existing_task = next(
+        (
+            task
+            for task in tasks
+            if str(task.get("title") or "") == task_title
+            and str(task.get("status") or "") != "cancelled"
+        ),
+        None,
+    )
+    if existing_task is not None:
+        existing_status = str(existing_task.get("status") or "")
+        if existing_status in {"ready", "running", "awaiting_approval"}:
+            return False
+        await planner_service.update_task(
+            str(existing_task["_id"]),
+            project=project,
+            status="ready",
+            blockerCategory=None,
+            approvalState="granted",
+            latestRunSummary="Reopened by Autopilot because control-plane auditors remain blocked.",
+        )
+        await planner_service.sync_planner_files(project, board)
+        logger.info("Autopilot: reopened control-plane repair task for %s", project.get("slug"))
+        return True
 
     await planner_service.create_task(
         project=project,
@@ -1064,12 +1306,6 @@ async def cancel_stale_repair_tasks(
         "integrity": [
             "Repair dataset provenance and freshness metadata",
         ],
-        "session": [
-            "Reconcile control-plane drift and stale sessions",
-        ],
-        "planner": [
-            "Reconcile control-plane drift and stale sessions",
-        ],
     }
     research_followup_titles = {
         "Launch ontology-backed research after hydration",
@@ -1085,6 +1321,12 @@ async def cancel_stale_repair_tasks(
     for auditor_key, titles in stale_titles_by_auditor.items():
         if (auditors or {}).get(auditor_key, {}).get("status") == "ready":
             titles_to_cancel.update(titles)
+    control_plane_titles = {"Reconcile control-plane drift and stale sessions"}
+    if (
+        (auditors or {}).get("session", {}).get("status") == "ready"
+        and (auditors or {}).get("planner", {}).get("status") == "ready"
+    ):
+        titles_to_cancel.update(control_plane_titles)
     if research_exists and (auditors or {}).get("ontology", {}).get("status") == "ready":
         titles_to_cancel.update(research_followup_titles)
 
@@ -1186,13 +1428,23 @@ def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
 async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
     if not ready_tasks:
         return None
-    candidate = sorted(ready_tasks, key=_task_priority)[0]
-    result = await planner_runtime._execute_planner_tool(
-        project,
-        "launch_task_runner",
-        {"task_id": str(candidate["_id"])},
-    )
-    return result
+    last_result: dict[str, Any] | None = None
+    for candidate in sorted(ready_tasks, key=_task_priority):
+        try:
+            result = await planner_runtime._execute_planner_tool(
+                project,
+                "launch_task_runner",
+                {"task_id": str(candidate["_id"])},
+            )
+        except Exception as exc:
+            result = {
+                "error": str(exc),
+                "taskId": str(candidate["_id"]),
+            }
+        last_result = result
+        if result and not result.get("error"):
+            return result
+    return last_result
 
 
 async def _launch_ready_tasks_if_available(
@@ -1263,6 +1515,15 @@ async def _poll_active_worker_if_present(
         return None
     session_id = active_worker["_id"]
     if active_worker.get("status") == "awaiting_input":
+        if _goal_mode_enabled(project):
+            goal_service.record_human_decision(
+                project,
+                decision_kind="scope_decision",
+                blocked=f"Worker session {session_id} is awaiting input.",
+                autonomy_limit="Autonomy cannot continue because the worker needs a concrete answer or reroute decision.",
+                decision_needed="Choose whether to answer, reroute, cancel, or ask the user.",
+                next_step_after_decision="Autopilot will resume the worker or replan once the decision is recorded.",
+            )
         await raise_decision_event(
             project,
             source="autopilot",
@@ -1375,29 +1636,58 @@ async def start_autopilot(project_slug: str, auto_approve: bool = False):
     """
     Starts the autopilot loop for a project if not already running.
     """
-    _autopilot_configs[project_slug] = {"auto_approve": auto_approve}
-    
+    _update_config(project_slug, auto_approve=auto_approve, desired_enabled=True)
+    await _persist_autopilot_state(project_slug, enabled=True, auto_approve=auto_approve)
+
     if _active_autopilots.get(project_slug):
         logger.info(f"Autopilot already running for {project_slug}")
         return
-    
-    if project_slug not in _wake_events:
-        _wake_events[project_slug] = asyncio.Event()
-        
+
+    _wake_event(project_slug)
     _active_autopilots[project_slug] = True
     try:
-        await run_autopilot_loop(project_slug)
+        while _desired_autopilot_enabled(project_slug):
+            try:
+                await run_autopilot_loop(project_slug, max_iterations=None)
+            except Exception as exc:
+                logger.exception("Autopilot loop crashed for %s: %s", project_slug, exc)
+                _update_config(
+                    project_slug,
+                    last_action="Recovering from autopilot crash",
+                    last_turn_result=str(exc),
+                )
+            if not _desired_autopilot_enabled(project_slug):
+                break
+            try:
+                project = await planner_service.get_project_by_slug(project_slug)
+            except Exception as exc:
+                logger.warning("Failed to reload project %s after autopilot loop exit: %s", project_slug, exc)
+                await asyncio.sleep(5)
+                continue
+            if str(project.get("status") or "").strip().lower() in {"completed", "closed"}:
+                await _disable_autopilot_desired_state(project_slug, auto_approve=auto_approve)
+                break
+            _update_config(
+                project_slug,
+                last_action="Restarting autopilot loop",
+                last_turn_result="Loop exited before project completion; restarting because autopilot is still desired.",
+            )
+            await asyncio.sleep(1)
     finally:
         _active_autopilots[project_slug] = False
-        _wake_events.pop(project_slug, None)
+        if not _desired_autopilot_enabled(project_slug):
+            _wake_events.pop(project_slug, None)
 
 async def stop_autopilot(project_slug: str):
     """
     Stops the autopilot loop for a project.
     """
+    auto_approve = bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False))
+    await _disable_autopilot_desired_state(project_slug, auto_approve=auto_approve)
     _active_autopilots[project_slug] = False
+    trigger_wake(project_slug)
 
-async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
+async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 40):
     """
     God Mode: Continuously run the planner and agents until the project is done.
     """
@@ -1408,20 +1698,40 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
         _wake_events[project_slug] = asyncio.Event()
 
     project = await planner_service.get_project_by_slug(project_slug)
+    goal_mode = _goal_mode_enabled(project)
     consecutive_idle_turns = 0
     
-    for i in range(max_iterations):
+    iteration = 0
+    while max_iterations is None or iteration < max_iterations:
+        iteration += 1
         if not _active_autopilots.get(project_slug):
             logger.info(f"Autopilot stopped for {project_slug}")
             break
             
-        logger.info(f"Autopilot iteration {i+1}/{max_iterations} for {project_slug}")
+        limit_display = "infinite" if max_iterations is None else str(max_iterations)
+        logger.info("Autopilot iteration %s/%s for %s", iteration, limit_display, project_slug)
         project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
         if project_root and project_root.exists() and (project_root / "rail.yaml").is_file():
             try:
                 planner_service.load_validated_manifest(project)
             except Exception as exc:
                 logger.warning("Autopilot: manifest validation failed for %s: %s", project_slug, exc)
+                if goal_mode:
+                    goal_service.record_failure(
+                        project,
+                        failure_class="setup_failure",
+                        summary=f"Manifest validation failed: {exc}",
+                        root_cause_hypothesis="Project manifest or repo bootstrap is invalid, so goal mode cannot safely start.",
+                        reusable_lesson="Do not begin goal execution until repo bootstrap and manifest validation are green.",
+                        next_repair_action="Repair rail.yaml or bootstrap metadata, then rerun goal preflight.",
+                        retry_eligible=False,
+                        phase_override="blocked",
+                    )
+                    await _disable_autopilot_desired_state(
+                        project_slug,
+                        auto_approve=bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False)),
+                    )
+                    break
                 _update_config(
                     project_slug,
                     last_action="Blocked: invalid project manifest",
@@ -1456,6 +1766,14 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
             )
         audit_gate = audit_gate_status(project_root) if project_root and project_root.exists() else {"blocked": False}
         if audit_gate.get("blocked"):
+            _record_goal_gate_failure(
+                project,
+                failure_class="audit_drift",
+                summary=str(audit_gate.get("reason") or "Audit gate blocked autopilot."),
+                root_cause_hypothesis="Post-run audit truth is stale or missing, so the control plane cannot safely advance.",
+                reusable_lesson="Do not continue research execution while audit truth is stale; repair the control plane first.",
+                next_repair_action="Finalize or rebuild post-run audits and reconcile session truth before continuing.",
+            )
             _update_config(
                 project_slug,
                 last_action="Waiting for audited truth",
@@ -1474,9 +1792,9 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     "Advance only after audited truth is refreshed",
                 ],
             )
-            _wake_events[project_slug].clear()
+            _wake_event(project_slug).clear()
             try:
-                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=30.0)
             except asyncio.TimeoutError:
                 pass
             continue
@@ -1485,6 +1803,15 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
 
         board = await planner_service.ensure_main_board(project)
         tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+        if goal_mode:
+            goal_service.sync_goal_runtime(
+                project,
+                tasks=tasks,
+                auditors=auditors,
+                reality=reconciliation,
+                active_sessions=[active_worker] if active_worker else [],
+                autopilot_enabled=bool(config.get("desired_enabled", True)),
+            )
         if await cancel_stale_repair_tasks(project, tasks, auditors):
             tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
         if await _ensure_ontology_lifecycle_tasks(project, tasks):
@@ -1514,6 +1841,14 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                 logger.info("Autopilot: control-plane repair task is ready; bypassing wait gate to allow repair launch.")
             else:
                 blockers = control_plane_gate.get("blockers") or []
+                _record_goal_gate_failure(
+                    project,
+                    failure_class="planner_drift",
+                    summary=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+                    root_cause_hypothesis="Session or planner truth has drifted away from canonical control-plane state.",
+                    reusable_lesson="Research track must pause whenever control-plane truth is broken.",
+                    next_repair_action="Launch or complete control-plane reconciliation before additional domain work.",
+                )
                 _update_config(
                     project_slug,
                     last_action="Waiting for control-plane repair",
@@ -1532,9 +1867,9 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                         "Advance only after control-plane blockers are removed",
                     ],
                 )
-                _wake_events[project_slug].clear()
+                _wake_event(project_slug).clear()
                 try:
-                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                    await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=30.0)
                 except asyncio.TimeoutError:
                     pass
                 continue
@@ -1549,6 +1884,14 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     continue
                 closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
+                _record_goal_gate_failure(
+                    project,
+                    failure_class="integrity_invalid",
+                    summary=str(blockers[0] if blockers else "Closeout gate blocked autopilot completion."),
+                    root_cause_hypothesis="Completion requirements are not yet satisfied even though planner tasks are terminal.",
+                    reusable_lesson="Completion must be certified by closeout evidence, not inferred from task activity.",
+                    next_repair_action="Resolve closeout blockers, refresh integrity or ontology state, and rerun closeout.",
+                )
                 await raise_decision_event(
                     project,
                     source="autopilot",
@@ -1569,9 +1912,9 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                 )
                 if not _active_autopilots.get(project_slug):
                     break
-                _wake_events[project_slug].clear()
+                _wake_event(project_slug).clear()
                 try:
-                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                    await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=30.0)
                 except asyncio.TimeoutError:
                     pass
                 continue
@@ -1582,7 +1925,16 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     last_action="Completed",
                     last_turn_result="All planner tasks reached terminal status and closeout gate passed.",
                 )
+                if goal_mode:
+                    goal_service.mark_completed(
+                        project,
+                        summary="Success criteria are satisfied, closeout is green, and no blocking repairs remain.",
+                    )
                 await _mark_project_completed(project)
+                await _disable_autopilot_desired_state(
+                    project_slug,
+                    auto_approve=bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False)),
+                )
                 break
 
         # 2. Check if a worker is already running before doing any new planning or launch work.
@@ -1613,10 +1965,29 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     persist=False # Do not spam the chat thread
                 )
                 tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+                if goal_mode:
+                    goal_service.sync_goal_runtime(
+                        project,
+                        tasks=tasks,
+                        auditors=auditors,
+                        reality=reconciliation,
+                        active_sessions=[active_worker] if active_worker else [],
+                        autopilot_enabled=bool(config.get("desired_enabled", True)),
+                    )
                 _update_config(project_slug, last_turn_result="Planner turn completed.")
                 logger.info("Planner turn complete.")
             except Exception as e:
                 logger.error(f"Planner turn failed in autopilot: {e}")
+                if goal_mode:
+                    goal_service.record_failure(
+                        project,
+                        failure_class="platform_bug",
+                        summary=f"Planner turn failed: {e}",
+                        root_cause_hypothesis="Planner execution failed inside the control plane rather than from a domain blocker.",
+                        reusable_lesson="When planner execution fails, stop domain progress and repair the control plane first.",
+                        next_repair_action="Inspect planner runtime, recent tasks, and session state; then rerun the planner turn.",
+                        retry_eligible=True,
+                    )
                 _update_config(project_slug, last_action="Idle (Recovering from error)", last_turn_result=f"Error: {e}")
                 await asyncio.sleep(60)
                 continue
@@ -1640,6 +2011,14 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                 control_plane_gate = _control_plane_auditor_gate(auditors)
             if not _has_ready_task_title(tasks, "Reconcile control-plane drift and stale sessions"):
                 blockers = control_plane_gate.get("blockers") or []
+                _record_goal_gate_failure(
+                    project,
+                    failure_class="planner_drift",
+                    summary=str(blockers[0] if blockers else "Control-plane auditors blocked autopilot."),
+                    root_cause_hypothesis="Session or planner truth has drifted away from canonical control-plane state.",
+                    reusable_lesson="Research track must pause whenever control-plane truth is broken.",
+                    next_repair_action="Launch or complete control-plane reconciliation before additional domain work.",
+                )
                 _update_config(
                     project_slug,
                     last_action="Waiting for control-plane repair",
@@ -1658,9 +2037,9 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                         "Advance only after control-plane blockers are removed",
                     ],
                 )
-                _wake_events[project_slug].clear()
+                _wake_event(project_slug).clear()
                 try:
-                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                    await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=30.0)
                 except asyncio.TimeoutError:
                     pass
                 continue
@@ -1694,6 +2073,14 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     continue
                 closeout_auditor = auditors.get("closeout") or {}
                 blockers = closeout_auditor.get("blockers") or []
+                _record_goal_gate_failure(
+                    project,
+                    failure_class="integrity_invalid",
+                    summary=str(blockers[0] if blockers else "Closeout gate blocked autopilot completion."),
+                    root_cause_hypothesis="Completion requirements are not yet satisfied even though planner tasks are terminal.",
+                    reusable_lesson="Completion must be certified by closeout evidence, not inferred from task activity.",
+                    next_repair_action="Resolve closeout blockers, refresh integrity or ontology state, and rerun closeout.",
+                )
                 await raise_decision_event(
                     project,
                     source="autopilot",
@@ -1714,9 +2101,9 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                 )
                 if not _active_autopilots.get(project_slug):
                     break
-                _wake_events[project_slug].clear()
+                _wake_event(project_slug).clear()
                 try:
-                    await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                    await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=30.0)
                 except asyncio.TimeoutError:
                     pass
                 continue
@@ -1727,7 +2114,16 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     last_action="Completed",
                     last_turn_result="All planner tasks reached terminal status and closeout gate passed.",
                 )
+                if goal_mode:
+                    goal_service.mark_completed(
+                        project,
+                        summary="Success criteria are satisfied, closeout is green, and no blocking repairs remain.",
+                    )
                 await _mark_project_completed(project)
+                await _disable_autopilot_desired_state(
+                    project_slug,
+                    auto_approve=bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False)),
+                )
                 break
 
         task_by_id = {str(t["_id"]): t for t in tasks}
@@ -1869,6 +2265,14 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
         ontology_auditor = auditors.get("ontology") or {}
         if not ready_tasks and ontology_auditor.get("status") == "blocked":
             blockers = ontology_auditor.get("blockers") or []
+            _record_goal_gate_failure(
+                project,
+                failure_class="ontology_invalid",
+                summary=str(blockers[0] if blockers else "Ontology auditor blocked autopilot."),
+                root_cause_hypothesis="Hydration state, ontology artifacts, or ontology health remain invalid for trusted work.",
+                reusable_lesson="Do not continue downstream research while ontology readiness is blocked.",
+                next_repair_action="Repair hydration, source coverage, pipeline steps, or ontology health verification.",
+            )
             _update_config(
                 project_slug,
                 last_action="Waiting for ontology repair",
@@ -1887,15 +2291,23 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     "Advance only after ontology blockers are cleared",
                 ],
             )
-            _wake_events[project_slug].clear()
+            _wake_event(project_slug).clear()
             try:
-                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=30.0)
             except asyncio.TimeoutError:
                 pass
             continue
         integrity_auditor = auditors.get("integrity") or {}
         if not ready_tasks and integrity_auditor.get("status") == "blocked":
             blockers = integrity_auditor.get("blockers") or []
+            _record_goal_gate_failure(
+                project,
+                failure_class="integrity_invalid",
+                summary=str(blockers[0] if blockers else "Integrity auditor blocked autopilot."),
+                root_cause_hypothesis="Claims, provenance, verification, or source admissibility are not yet valid for trusted promotion.",
+                reusable_lesson="Do not promote final outputs until integrity blockers are repaired or downgraded.",
+                next_repair_action="Repair evidence, provenance, freshness, admissibility, or verification state before continuing.",
+            )
             _update_config(
                 project_slug,
                 last_action="Waiting for integrity repair",
@@ -1914,9 +2326,9 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                     "Advance only after integrity blockers are cleared",
                 ],
             )
-            _wake_events[project_slug].clear()
+            _wake_event(project_slug).clear()
             try:
-                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=30.0)
+                await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=30.0)
             except asyncio.TimeoutError:
                 pass
             continue
@@ -1941,13 +2353,22 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int = 40):
                         "Ask user for project direction",
                     ],
                 )
-            if consecutive_idle_turns >= 3:
+            if not unfinished and consecutive_idle_turns >= 3:
                 logger.info("Autopilot: Stalled or finished (3 consecutive idle turns). Stopping.")
                 break
+            if unfinished:
+                _update_config(
+                    project_slug,
+                    last_action="Waiting for repair wake event",
+                    last_turn_result=(
+                        f"No ready tasks yet; {len(unfinished)} unfinished task(s) remain. "
+                        "Autopilot will keep watching for reconciliation or newly ready work."
+                    ),
+                )
             # Give the planner a chance to think/refine, or wait for a wake-up event
-            _wake_events[project_slug].clear()
+            _wake_event(project_slug).clear()
             try:
-                await asyncio.wait_for(_wake_events[project_slug].wait(), timeout=60.0)
+                await asyncio.wait_for(_wake_event(project_slug).wait(), timeout=60.0)
                 logger.info(f"Autopilot: Waking up due to event for {project_slug}")
             except asyncio.TimeoutError:
                 pass

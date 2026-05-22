@@ -1,1 +1,66 @@
-[]
+[
+  {
+    "claim_key": "claim-nj-housing-prices-njsthpi-rose-99-0-nominally-fr-51522e11",
+    "claim_text": "NJ housing prices (NJSTHPI) rose 99.0% nominally from 2015-01-01 to 2025-10-01 (472.09 \u2192 939.31).",
+    "artifact_path": "artifacts/nj_housing_affordability_analysis.md",
+    "evidence_paths": [
+      "artifacts/nj_housing_affordability_analysis.md"
+    ],
+    "evidence_chunk_keys": [],
+    "source_keys": [
+      "fred-njsthpi"
+    ],
+    "contradicts_claim_keys": [],
+    "evidence_kind": "direct",
+    "status": "supported",
+    "confidence": 0.95,
+    "source_path": "research_plan/state/claims.json",
+    "caveats": [],
+    "open_questions": [],
+    "created_at": "2026-05-19T15:16:55Z",
+    "updated_at": "2026-05-19T15:16:55Z"
+  },
+  {
+    "claim_key": "claim-real-cpi-adjusted-nj-housing-change-over-the-per-ade3657c",
+    "claim_text": "Real (CPI-adjusted) NJ housing change over the period is +57.4% (nominal +99.0% minus CPI +41.6%).",
+    "artifact_path": "artifacts/nj_housing_affordability_analysis.md",
+    "evidence_paths": [
+      "artifacts/nj_housing_affordability_analysis.md"
+    ],
+    "evidence_chunk_keys": [],
+    "source_keys": [
+      "fred-njsthpi",
+      "fred-cpiaucsl"
+    ],
+    "contradicts_claim_keys": [],
+    "evidence_kind": "direct",
+    "status": "supported",
+    "confidence": 0.9,
+    "source_path": "research_plan/state/claims.json",
+    "caveats": [],
+    "open_questions": [],
+    "created_at": "2026-05-19T15:16:55Z",
+    "updated_at": "2026-05-19T15:16:55Z"
+  },
+  {
+    "claim_key": "claim-nj-unemployment-njurn-fell-from-6-9-to-4-7-acros-ea88f4cf",
+    "claim_text": "NJ unemployment (NJURN) fell from 6.9% to 4.7% across the 134-month observation window.",
+    "artifact_path": "artifacts/nj_housing_affordability_analysis.md",
+    "evidence_paths": [
+      "artifacts/nj_housing_affordability_analysis.md"
+    ],
+    "evidence_chunk_keys": [],
+    "source_keys": [
+      "fred-njurn"
+    ],
+    "contradicts_claim_keys": [],
+    "evidence_kind": "direct",
+    "status": "supported",
+    "confidence": 0.95,
+    "source_path": "research_plan/state/claims.json",
+    "caveats": [],
+    "open_questions": [],
+    "created_at": "2026-05-19T15:16:55Z",
+    "updated_at": "2026-05-19T15:16:55Z"
+  }
+]

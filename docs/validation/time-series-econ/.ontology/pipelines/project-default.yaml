@@ -1,0 +1,12 @@
+version: 1
+pipeline_id: project-default
+description: Hydration pipeline for archetype closeout (auto-generated).
+linked_sources:
+  - fred_njsthpi
+  - fred_njurn
+  - fred_cpi
+steps:
+  - api: fred_njsthpi
+  - api: fred_njurn
+  - api: fred_cpi
+output: .ontology/onto.duckdb

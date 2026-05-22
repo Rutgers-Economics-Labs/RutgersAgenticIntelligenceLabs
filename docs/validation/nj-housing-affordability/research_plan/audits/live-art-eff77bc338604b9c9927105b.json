@@ -1,0 +1,105 @@
+{
+  "auditors": {
+    "closeout": {
+      "blockers": [
+        "Missing ontology expansion task for follow-up question: 1. How did NJ housing price growth compare to neighboring states (NY, PA, CT)?",
+        "Missing ontology expansion task for follow-up question: 2. What was the real mortgage affordability index for NJ during peak rate periods (2022-2023)?",
+        "Missing data-blocker task for follow-up question: 3. Which NJ county-level markets showed the highest price volatility?"
+      ],
+      "status": "blocked"
+    },
+    "integrity": {
+      "blockers": [],
+      "status": "ready"
+    },
+    "ontology": {
+      "blockers": [],
+      "duckdbPath": "/Users/akashdubey/Documents/CodingProjects/RAIL/RutgersAgenticIntelligenceLabs/docs/validation/nj-housing-affordability/.ontology/onto.duckdb",
+      "state": "hydrated_on_this_device",
+      "stateClassification": "ready",
+      "status": "ready"
+    },
+    "planner": {
+      "blockers": [],
+      "status": "ready",
+      "taskSaturationCount": 0
+    },
+    "session": {
+      "blockers": [],
+      "status": "ready"
+    }
+  },
+  "completionSummary": {
+    "artifacts_created": [
+      "artifacts/dashboard.html"
+    ],
+    "assumptions_added": [],
+    "assumptions_changed": [],
+    "blockers": [],
+    "claims_created": [
+      "claim-nj-housing-prices-njsthpi-rose-99-0-nominally-fr-51522e11",
+      "claim-real-cpi-adjusted-nj-housing-change-over-the-per-ade3657c",
+      "claim-nj-unemployment-njurn-fell-from-6-9-to-4-7-acros-ea88f4cf"
+    ],
+    "datasets_created": [],
+    "open_questions": [],
+    "recommended_next_tasks": [
+      "closeout"
+    ],
+    "sources_used": [
+      "research_plan/state/sources.json#fred-njsthpi",
+      "research_plan/state/sources.json#fred-njurn",
+      "research_plan/state/sources.json#fred-cpiaucsl"
+    ],
+    "status": "completed",
+    "verification_results": [
+      {
+        "artifacts_checked": [
+          "artifacts/dashboard.html"
+        ],
+        "blockers": [],
+        "checks": [
+          {
+            "name": "dashboard_lineage_recorded",
+            "status": "passed"
+          }
+        ],
+        "claims_checked": [
+          "claim-nj-housing-prices-njsthpi-rose-99-0-nominally-fr-51522e11",
+          "claim-real-cpi-adjusted-nj-housing-change-over-the-per-ade3657c",
+          "claim-nj-unemployment-njurn-fell-from-6-9-to-4-7-acros-ea88f4cf"
+        ],
+        "loop_type": "analysis_reproducibility",
+        "run_id": "live-art-eff77bc338604b9c9927105b-verification",
+        "scope": "artifact",
+        "status": "passed",
+        "task_id": "render-affordability-dashboard"
+      }
+    ]
+  },
+  "currentBlocker": null,
+  "generatedAt": "2026-05-19T14:58:36Z",
+  "integrity": {
+    "action": "artifact_generation",
+    "blocked": false,
+    "reasons": []
+  },
+  "planner": {
+    "activeTasks": [],
+    "blockedTasks": [],
+    "readyTasks": [],
+    "taskCounts": {}
+  },
+  "session": {
+    "changedFiles": [
+      "artifacts/dashboard.html"
+    ],
+    "id": "live-art-eff77bc338604b9c9927105b",
+    "publishStatus": "not_started",
+    "reviewStatus": "review",
+    "role": "artifact",
+    "status": "completed",
+    "taskId": "render-affordability-dashboard",
+    "verificationStatus": "pending"
+  }
+}

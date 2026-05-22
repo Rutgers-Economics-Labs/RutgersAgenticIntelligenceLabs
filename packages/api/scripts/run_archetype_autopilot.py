@@ -56,7 +56,10 @@ def _is_ontology_archetype(manifest: dict) -> bool:
 
 def _convex_approach(manifest: dict) -> str:
     mode = str((manifest.get("project") or {}).get("mode") or "ontology_first")
-    return "research-first" if mode == "research_first" else "ontology-first"
+    # Convex still persists the older narrow approach enum. For live validation,
+    # research_first projects are represented as data-first in Convex while the
+    # repo manifest remains the source of truth for auditor/autopilot behavior.
+    return "data-first" if mode == "research_first" else "ontology-first"
 
 
 def _backfill_source_provenance(project_root: Path) -> int:

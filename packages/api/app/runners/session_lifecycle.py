@@ -125,15 +125,20 @@ def _runner_launch_blocked_by_auditors(
     planner_auditor = auditors.get("planner") or {}
     ontology_auditor = auditors.get("ontology") or {}
     integrity_auditor = auditors.get("integrity") or {}
+    role_name = str(role or "").strip().lower()
+    description = str(task_description or "").strip().lower()
+    is_control_plane_repair = (
+        role_name == "health"
+        and "reconcile control-plane drift and stale sessions" in description
+    )
 
     for auditor in (session_auditor, planner_auditor):
+        if is_control_plane_repair:
+            continue
         if auditor.get("status") == "blocked":
             blockers = [str(item) for item in (auditor.get("blockers") or []) if item]
             if blockers:
                 return blockers[0]
-
-    role_name = str(role or "").strip().lower()
-    description = str(task_description or "").strip().lower()
 
     if ontology_auditor.get("status") == "blocked":
         if role_name not in {"planner", "data", "health"}:
@@ -657,29 +662,6 @@ async def _publish_completed_session_outputs(
     session_root: Path,
     changed_files: list[str],
 ) -> dict[str, Any]:
-    if not infer_github_repo(project.get("github") or project.get("gitRepoUrl")):
-        session_files.update_state(
-            session_root,
-            publish_status="skipped",
-            publish_strategy="github_app_commit",
-            publish_branch=project.get("defaultBranch") or "main",
-            publish_error="",
-        )
-        session_files.append_event(
-            session_root,
-            "publish_completed",
-            content="Connector publish skipped because the project is not linked to a GitHub repository.",
-            status=session_files.read_state(session_root).get("status"),
-        )
-        return {
-            "published": False,
-            "strategy": "github_app_commit",
-            "commit_sha": None,
-            "branch": project.get("defaultBranch") or "main",
-            "changed": False,
-            "files": [],
-            "skipped_files": changed_files,
-        }
     task = await _task_record(project, _session_task_id(session, session_root))
     allowed_paths = (task or {}).get("repoPaths") or None
     mirrored = _copy_workspace_files_to_project(
@@ -695,6 +677,34 @@ async def _publish_completed_session_outputs(
         changed_files=mirrored,
         role=session.get("role") or "agent",
     )
+    if not infer_github_repo(project.get("github") or project.get("gitRepoUrl")):
+        session_files.update_state(
+            session_root,
+            publish_status="published" if mirrored else "skipped",
+            publish_strategy="local_workspace_mirror",
+            publish_branch=project.get("defaultBranch") or "main",
+            publish_changed_files=mirrored,
+            publish_skipped_files=[path for path in changed_files if path not in mirrored],
+            publish_error="",
+        )
+        session_files.append_event(
+            session_root,
+            "publish_completed",
+            content=(
+                f"Local workspace mirror {'copied' if mirrored else 'skipped'} "
+                f"{len(mirrored)} file(s); project is not linked to a GitHub repository."
+            ),
+            status=session_files.read_state(session_root).get("status"),
+        )
+        return {
+            "published": bool(mirrored),
+            "strategy": "local_workspace_mirror",
+            "commit_sha": None,
+            "branch": project.get("defaultBranch") or "main",
+            "changed": bool(mirrored),
+            "files": [{"path": path, "changed": True} for path in mirrored],
+            "skipped_files": [path for path in changed_files if path not in mirrored],
+        }
     commit_message = (
         f"chore({session.get('role') or 'agent'}): publish task {session.get('taskId') or session.get('title') or 'session outputs'}"
     )
@@ -1430,7 +1440,71 @@ async def _materialize_workspace(
     base_branch: str,
     workspace_branch: str,
 ) -> dict[str, Any]:
+    def _is_ignored_materialization_path(relative_path: str) -> bool:
+        normalized = relative_path.strip()
+        return (
+            not normalized
+            or normalized.startswith(".git")
+            or normalized.startswith(".rail/workspaces/")
+            or normalized.startswith("research_plan/sessions/")
+            or normalized.startswith("research_plan/audits/")
+        )
+
+    def _iter_status_paths(status_output: str) -> list[str]:
+        paths: list[str] = []
+        for raw_line in status_output.splitlines():
+            if len(raw_line) < 4:
+                continue
+            payload = raw_line[3:]
+            if "->" in payload:
+                old_path, new_path = [part.strip() for part in payload.split("->", 1)]
+                paths.extend([old_path, new_path])
+                continue
+            paths.append(payload)
+        return paths
+
+    async def _overlay_project_working_tree() -> None:
+        if not (project_root / ".git").exists():
+            return
+
+        status_result = await _run_process(
+            ["git", "-C", str(project_root), "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=project_root,
+        )
+        if status_result["returncode"] != 0:
+            return
+
+        def _apply_path(relative_path: str) -> None:
+            normalized = relative_path.strip()
+            if _is_ignored_materialization_path(normalized):
+                return
+            source = project_root / normalized
+            destination = workspace_root / normalized
+            if source.exists():
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+                return
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            elif destination.exists():
+                destination.unlink()
+
+        for status_path in _iter_status_paths(status_result["stdout"] or ""):
+            _apply_path(status_path)
+
+    async def _reconcile_workspace_planner_files() -> None:
+        workspace_project = {"slug": workspace_root.name, "localRepoPath": str(workspace_root)}
+        try:
+            await planner_service.reconcile_task_files(workspace_project)
+            await planner_service.reconcile_planner_metadata(workspace_project)
+        except Exception:
+            # Workspace cleanup is defensive: never fail materialization just
+            # because planner-file canonicalization could not run.
+            return
+
     if (workspace_root / ".git").exists():
+        await _overlay_project_working_tree()
+        await _reconcile_workspace_planner_files()
         return {"status": "ready", "mode": "existing"}
 
     git_dir = project_root / ".git"
@@ -1438,18 +1512,72 @@ async def _materialize_workspace(
         return {"status": "ready", "mode": "directory"}
 
     resolved_base_ref = base_branch
-    fetch_result = await _run_process(
-        ["git", "-C", str(project_root), "fetch", "origin", base_branch],
+    local_ref = f"refs/heads/{base_branch}"
+    remote_ref = f"refs/remotes/origin/{base_branch}"
+    show_local_ref = await _run_process(
+        ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", local_ref],
         cwd=project_root,
     )
+    fetch_result = await _run_process(
+        [
+            "git",
+            "-C",
+            str(project_root),
+            "fetch",
+            "origin",
+            f"{base_branch}:refs/remotes/origin/{base_branch}",
+        ],
+        cwd=project_root,
+    )
+    show_remote_ref = None
     if fetch_result["returncode"] == 0:
-        remote_ref = f"refs/remotes/origin/{base_branch}"
+        show_remote_ref = await _run_process(
+            ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", remote_ref],
+            cwd=project_root,
+        )
+    if show_local_ref["returncode"] == 0:
+        status_result = await _run_process(
+            ["git", "-C", str(project_root), "status", "--porcelain=v1", "--untracked-files=all"],
+            cwd=project_root,
+        )
+        relevant_status_paths = [
+            path
+            for path in _iter_status_paths(status_result["stdout"] or "")
+            if not _is_ignored_materialization_path(path)
+        ]
+        has_local_worktree_changes = bool(relevant_status_paths)
+        if not has_local_worktree_changes and show_remote_ref and show_remote_ref["returncode"] == 0:
+            local_head = await _run_process(
+                ["git", "-C", str(project_root), "rev-parse", base_branch],
+                cwd=project_root,
+            )
+            remote_head = await _run_process(
+                ["git", "-C", str(project_root), "rev-parse", f"origin/{base_branch}"],
+                cwd=project_root,
+            )
+            if (
+                local_head["returncode"] == 0
+                and remote_head["returncode"] == 0
+                and local_head["stdout"].strip() != remote_head["stdout"].strip()
+            ):
+                local_is_ancestor = await _run_process(
+                    ["git", "-C", str(project_root), "merge-base", "--is-ancestor", base_branch, f"origin/{base_branch}"],
+                    cwd=project_root,
+                )
+                if local_is_ancestor["returncode"] == 0:
+                    resolved_base_ref = f"origin/{base_branch}"
+    elif show_remote_ref and show_remote_ref["returncode"] == 0:
+        resolved_base_ref = f"origin/{base_branch}"
+    elif fetch_result["returncode"] == 0:
         show_ref = await _run_process(
             ["git", "-C", str(project_root), "show-ref", "--verify", "--quiet", remote_ref],
             cwd=project_root,
         )
         if show_ref["returncode"] == 0:
             resolved_base_ref = f"origin/{base_branch}"
+
+    if show_local_ref["returncode"] != 0 and show_remote_ref and show_remote_ref["returncode"] == 0:
+        resolved_base_ref = f"origin/{base_branch}"
 
     result = await _run_process(
         [
@@ -1482,6 +1610,8 @@ async def _materialize_workspace(
         )
     if result["returncode"] != 0:
         raise RuntimeError(result["stderr"].strip() or result["stdout"].strip() or "git worktree add failed")
+    await _overlay_project_working_tree()
+    await _reconcile_workspace_planner_files()
     return {
         "status": "ready",
         "mode": "git-worktree",
@@ -1955,14 +2085,32 @@ async def _finalize_workspace_review(
             session=session,
             changed_files=changed_files,
         )
+    if (
+        terminal_status == "completed"
+        and review_status == "review"
+        and resolved_task_id
+        and str(session.get("role") or "").strip().lower() not in {"", "planner"}
+        and not planner_service._audit_allows_worker_done(project_root, resolved_task_id)
+    ):
+        review_status = "review"
+        summary["recommended_next_tasks"] = _dedupe(
+            (summary.get("recommended_next_tasks") or [])
+            + ["Wait for a reviewed post-run audit to clear remaining blockers before task closeout."]
+        )
+        session_files.update_state(session_root, review_status=review_status)
+        session_files.update_state(session_root, completion_summary=summary)
+        session_files.refresh_summary(session_root)
     # Audited merge: once a session is published and passes review, merge the
     # workspace branch back into the base branch via the GitHub API.
     github_repo = infer_github_repo(project.get("github") or project.get("gitRepoUrl"))
+    published_branch = str(state.get("publish_branch") or "").strip()
     if (
         terminal_status == "completed"
         and review_status == "review"
         and not publish_error
         and github_repo
+        and published_branch
+        and published_branch != base_branch
     ):
         try:
             from app.services.github_service import github_service
@@ -1974,17 +2122,35 @@ async def _finalize_workspace_review(
             )
         except Exception as merge_exc:
             merge_error = str(merge_exc)
-            session_files.update_state(
-                session_root,
-                publish_status="failed",
-                publish_error=merge_error,
-            )
-            session_files.append_event(
-                session_root,
-                "publish_failed",
-                content=f"Audited branch merge failed: {merge_error}",
-                status=session_files.read_state(session_root).get("status"),
-            )
+            current_publish_state = session_files.read_state(session_root)
+            current_publish_branch = str(current_publish_state.get("publish_branch") or "").strip()
+            if current_publish_branch == base_branch:
+                # A concurrent finalize path can attempt the audited merge after a
+                # direct-to-base publish already succeeded. Preserve the successful
+                # publish and record the merge error as informational only.
+                session_files.append_event(
+                    session_root,
+                    "publish_completed",
+                    content=(
+                        "Skipped redundant audited merge after direct publish to "
+                        f"`{base_branch}`: {merge_error}"
+                    ),
+                    status=session_files.read_state(session_root).get("status"),
+                )
+                session_files.refresh_summary(session_root)
+                merge_error = ""
+            if merge_error:
+                session_files.update_state(
+                    session_root,
+                    publish_status="failed",
+                    publish_error=merge_error,
+                )
+                session_files.append_event(
+                    session_root,
+                    "publish_failed",
+                    content=f"Audited branch merge failed: {merge_error}",
+                    status=session_files.read_state(session_root).get("status"),
+                )
     if publish_error and resolved_task_id:
         await planner_service.update_task(
             resolved_task_id,
@@ -2019,7 +2185,15 @@ async def _finalize_workspace_review(
             latestRunSummary="; ".join(role_contract_blockers),
         )
     elif resolved_task_id:
-        task_status = "done" if review_status == "review" else "blocked"
+        role_name = str(session.get("role") or "").strip().lower()
+        audit_allows_done = planner_service._audit_allows_worker_done(project_root, resolved_task_id)
+        if review_status == "review":
+            if role_name in {"", "planner"} or audit_allows_done:
+                task_status = "done"
+            else:
+                task_status = "review"
+        else:
+            task_status = "blocked"
         current_state = session_files.read_state(session_root)
         verification_paths = _verification_failure_paths(current_state)
         summary_bits: list[str] = []
@@ -2028,6 +2202,8 @@ async def _finalize_workspace_review(
             summary_bits.append(f"Published commit {publish_commit}")
         if summary.get("blockers") and review_status != "review":
             summary_bits.append("; ".join(str(item) for item in (summary.get("blockers") or [])[:3]))
+        elif task_status == "review":
+            summary_bits.append("Session completed and is awaiting a reviewed post-run audit before task closeout.")
         elif verification_paths and review_status == "review":
             summary_bits.append(
                 "Remaining verification failures are outside this task scope: " + ", ".join(verification_paths[:4])
@@ -2225,10 +2401,16 @@ async def create_runner_session(
 
     if project_id and project:
         from app.services.auditor_service import build_auditor_statuses
+        from app.services import planner_service
+
+        board = await planner_service.ensure_main_board(project)
+        await planner_service.reconcile_task_files(project)
+        await planner_service.reconcile_task_session_states(project)
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
 
         auditors = await build_auditor_statuses(
             project,
-            tasks=None,
+            tasks=tasks,
             active_sessions=active_sessions,
         )
         auditor_blocker = _runner_launch_blocked_by_auditors(role, task_description, auditors)

@@ -10,8 +10,8 @@
     "metadata": {
       "evidenceKind": "unspecified"
     },
-    "created_at": "2026-05-18T22:18:53Z",
-    "updated_at": "2026-05-18T22:18:53Z"
+    "created_at": "2026-05-19T05:19:02Z",
+    "updated_at": "2026-05-19T05:19:02Z"
   },
   {
     "edge_key": "artifact:artifacts/literature_review.md|generated_by|method:scripts/compile_literature_review.py",
@@ -22,8 +22,8 @@
     "source_record_key": "artifacts/literature_review.md",
     "target_record_key": "scripts/compile_literature_review.py",
     "metadata": {},
-    "created_at": "2026-05-18T22:18:53Z",
-    "updated_at": "2026-05-18T22:18:53Z"
+    "created_at": "2026-05-19T05:19:02Z",
+    "updated_at": "2026-05-19T05:19:02Z"
   },
   {
     "edge_key": "artifact:artifacts/literature_review.md|verified_by|verification_run:run-lit-001",
@@ -34,7 +34,7 @@
     "source_record_key": "artifacts/literature_review.md",
     "target_record_key": "run-lit-001",
     "metadata": {},
-    "created_at": "2026-05-18T22:18:53Z",
-    "updated_at": "2026-05-18T22:18:53Z"
+    "created_at": "2026-05-19T05:19:02Z",
+    "updated_at": "2026-05-19T05:19:02Z"
   }
 ]

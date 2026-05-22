@@ -13,6 +13,7 @@ in Convex so API reads can reliably select the right ontology per project.
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -68,6 +69,58 @@ async def _materialize(storage_key_or_path: str, *, filename: str, project_id: s
 
 class HydrationRequiredError(RuntimeError):
     pass
+
+
+_NON_QUADSTORE_SUFFIXES = {".yaml", ".yml", ".owl", ".json", ".md", ".txt", ".csv"}
+
+
+def _is_valid_quadstore_path(path: str | None) -> bool:
+    if not path:
+        return False
+    candidate = Path(path)
+    suffix = candidate.suffix.lower()
+    if suffix in _NON_QUADSTORE_SUFFIXES:
+        return False
+    if suffix != ".db":
+        return False
+    if not candidate.exists():
+        return False
+    try:
+        with sqlite3.connect(f"file:{candidate.resolve()}?mode=ro", uri=True) as conn:
+            conn.execute("SELECT 1 FROM sqlite_master LIMIT 1")
+        return True
+    except Exception:
+        return False
+
+
+def _quadstore_fallback_paths(db_key: str | None) -> list[str]:
+    if not db_key:
+        return []
+    parent = Path(db_key).parent
+    return [str(parent / "onto.db")]
+
+
+async def _resolve_active_db_key(project: dict, db_key: str | None) -> str | None:
+    if db_key and _is_valid_quadstore_path(db_key):
+        return db_key
+
+    for candidate in _quadstore_fallback_paths(db_key):
+        if _is_valid_quadstore_path(candidate):
+            return candidate
+
+    job = await find_latest_success_job_with_outputs(project)
+    if not job:
+        return db_key
+
+    job_db = job.get("outputDbPath")
+    if job_db and _is_valid_quadstore_path(str(job_db)):
+        return str(job_db)
+
+    for candidate in _quadstore_fallback_paths(str(job_db) if job_db else None):
+        if _is_valid_quadstore_path(candidate):
+            return candidate
+
+    return db_key
 
 
 def _job_has_stored_outputs(job: dict) -> bool:
@@ -156,6 +209,13 @@ async def resolve(project_id: str) -> ProjectArtifacts:
         raise HydrationRequiredError(
             "No ontology is active for this project. Run hydration from this project, "
             "or ensure the FastAPI server can read the artifact paths stored with the job."
+        )
+
+    db_key = await _resolve_active_db_key(project, db_key)
+    if not db_key or not _is_valid_quadstore_path(db_key):
+        raise HydrationRequiredError(
+            "No valid ontology quadstore (onto.db) is active for this project. "
+            "Run hydration or repair activeOntologyDbPath to point at onto.db, not ontology.yaml."
         )
 
     db_path = await _materialize(db_key, filename="onto.db", project_id=project_id)

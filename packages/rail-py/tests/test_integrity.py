@@ -114,6 +114,34 @@ def test_integrity_repo_upserts_and_rebuilds_indexes(tmp_path):
     assert any(item.relationship == "supports" for item in rebuilt.integrity_edges)
 
 
+def test_integrity_repo_loads_legacy_artifact_lineage_records(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "artifact_lineage.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "artifact_path": "artifacts/report.md",
+                    "artifact_type": "report",
+                    "title": "Legacy Report",
+                    "promotion_state": "draft",
+                    "registered_at": "2026-05-16T00:00:00Z",
+                    "producer": "scripts/build_report.py",
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    record = ResearchIntegrityRepo(root).load_artifact_lineage()[0]
+
+    assert record.artifact_path == "artifacts/report.md"
+    assert record.created_at == "2026-05-16T00:00:00Z"
+    assert record.scripts == ["scripts/build_report.py"]
+
+
 def test_integrity_repo_loads_legacy_verification_run_records(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     path = root / "research_plan" / "state" / "verification_runs.json"
@@ -152,6 +180,134 @@ def test_integrity_repo_loads_legacy_verification_run_records(tmp_path):
     assert run.checks[0]["name"] == "deterministic_repo_audit"
 
 
+def test_integrity_repo_loads_legacy_dataset_source_records(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "sources.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "dataset_id": "power-markets-noaa-weather-datasets",
+                    "dataset_name": "NOAA weather datasets",
+                    "dataset_path": "artifacts/ontology_seed/power-markets-noaa-weather-datasets.csv",
+                    "source_record_id": "power-markets-noaa-weather-datasets",
+                    "source_record_path": ".ontology/sources/power-markets-noaa-weather-datasets.yaml",
+                    "provenance": {
+                        "status": "linked",
+                        "provider": "National Oceanic and Atmospheric Administration",
+                        "access_url": "https://www.ncei.noaa.gov/",
+                        "official_urls": [
+                            "https://www.ncei.noaa.gov/",
+                            "https://api.weather.gov/",
+                        ],
+                    },
+                    "freshness": {
+                        "checked_at": "2026-05-20",
+                        "manifest_state": "current",
+                        "upstream_state": "blocked_pending_hydration",
+                        "reason": "No normalized NOAA weather extract is materialized in this workspace.",
+                    },
+                    "trusted_for_promotion": False,
+                    "trust_blockers": [
+                        "Upstream weather datasets must be hydrated before freshness can be attested."
+                    ],
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    source = ResearchIntegrityRepo(root).load_sources()[0]
+
+    assert source.source_key == "power-markets-noaa-weather-datasets"
+    assert source.source_type == "dataset"
+    assert source.title == "NOAA weather datasets"
+    assert source.url_or_path == "https://www.ncei.noaa.gov/"
+    assert source.origin == "National Oceanic and Atmospheric Administration"
+    assert source.freshness_status == "needs_refresh"
+    assert source.quality_status == "candidate"
+    assert source.admissibility_status == "observed"
+    assert source.quality_notes == "No normalized NOAA weather extract is materialized in this workspace."
+    assert source.provenance["dataset_path"] == "artifacts/ontology_seed/power-markets-noaa-weather-datasets.csv"
+    assert source.provenance["config_path"] == ".ontology/sources/power-markets-noaa-weather-datasets.yaml"
+    assert source.provenance["url"] == "https://www.ncei.noaa.gov/"
+
+
+def test_integrity_repo_loads_restricted_source_records_without_crashing(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "sources.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "source_key": "ice-fuel-indices",
+                    "source_type": "manual",
+                    "title": "Intercontinental Exchange (ICE) fuel indices",
+                    "url_or_path": "https://www.ice.com/physical-gas-markets",
+                    "origin": "https://www.ice.com/physical-gas-markets",
+                    "acquired_at": "2026-05-20T23:32:58Z",
+                    "access_method": "https",
+                    "freshness_status": "stale",
+                    "admissibility_status": "restricted",
+                    "impact_level": "high",
+                    "provenance": {
+                        "config_path": ".ontology/sources/ice-fuel-indices.yaml",
+                        "url": "https://www.ice.com/energy/gas",
+                    },
+                    "quality_notes": "Validated vendor landing pages, but subscribed data was unavailable locally.",
+                    "retrieved_at": "2026-05-20T23:32:58Z",
+                    "quality_status": "blocked",
+                    "notes": "Still stale for trusted promotion because the market-data stream is subscription-gated.",
+                    "created_at": "2026-05-20T23:32:58Z",
+                    "updated_at": "2026-05-20T23:32:58Z",
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    source = ResearchIntegrityRepo(root).load_sources()[0]
+
+    assert source.source_key == "ice-fuel-indices"
+    assert source.admissibility_status == "missing"
+    assert source.quality_status == "blocked"
+    assert source.provenance["original_admissibility_status"] == "restricted"
+    assert "access-restricted" in (source.notes or "")
+
+
+def test_integrity_repo_write_sources_normalizes_restricted_records(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_sources(
+        [
+            {
+                "source_key": "ice-fuel-indices",
+                "source_type": "manual",
+                "title": "Intercontinental Exchange (ICE) fuel indices",
+                "url_or_path": "https://www.ice.com/physical-gas-markets",
+                "admissibility_status": "restricted",
+                "quality_status": "validated",
+                "provenance": {
+                    "config_path": ".ontology/sources/ice-fuel-indices.yaml",
+                    "url": "https://www.ice.com/energy/gas",
+                },
+            }
+        ]
+    )
+
+    source = repo.load_sources()[0]
+
+    assert source.source_key == "ice-fuel-indices"
+    assert source.admissibility_status == "missing"
+    assert source.quality_status == "blocked"
+    assert source.provenance["original_admissibility_status"] == "restricted"
+
+
 def test_integrity_repo_loads_legacy_planner_claim_candidate_records(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     path = root / "research_plan" / "state" / "claims.json"
@@ -186,6 +342,100 @@ def test_integrity_repo_loads_legacy_planner_claim_candidate_records(tmp_path):
     assert claim.evidence_paths == ["research_plan/uefa_plan.md", "artifacts/uefa_execution.md"]
     assert "Legacy planner-side claim candidate." in claim.caveats
     assert "legacy_scope:planning_evidence" in claim.caveats
+
+
+def test_integrity_repo_loads_source_freshness_repair_verification_runs(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "verification_runs.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "run_id": "refresh-001",
+                    "scope": "health",
+                    "loop_type": "source_freshness_repair",
+                    "status": "passed",
+                    "checks": [{"name": "source_registry_refresh", "status": "passed"}],
+                    "artifacts_checked": ["topics/source_notes.md"],
+                    "claims_checked": [],
+                    "artifact_paths": ["topics/source_notes.md"],
+                    "blockers": [],
+                    "created_at": "2026-05-20T23:32:58Z",
+                    "updated_at": "2026-05-20T23:32:58Z",
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    run = ResearchIntegrityRepo(root).load_verification_runs()[0]
+
+    assert run.run_id == "refresh-001"
+    assert run.loop_type == "source_freshness"
+
+
+def test_integrity_repo_loads_ontology_readiness_repair_verification_runs(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "verification_runs.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "run_id": "ontology-repair-001",
+                    "scope": "data",
+                    "loop_type": "ontology_readiness_repair",
+                    "status": "failed",
+                    "checks": [{"name": "workspace_verification", "status": "pending"}],
+                    "artifacts_checked": [".ontology/.rail_hydration.json"],
+                    "claims_checked": [],
+                    "artifact_paths": [".ontology/.rail_hydration.json"],
+                    "blockers": ["Hydration artifact still stale on this device."],
+                    "created_at": "2026-05-21T03:54:29Z",
+                    "updated_at": "2026-05-21T03:54:29Z",
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    run = ResearchIntegrityRepo(root).load_verification_runs()[0]
+
+    assert run.run_id == "ontology-repair-001"
+    assert run.loop_type == "analysis_reproducibility"
+
+
+def test_integrity_repo_loads_verification_runs_with_resolution_metadata(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "verification_runs.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "run_id": "run-1",
+                    "scope": "health",
+                    "loop_type": "analysis_reproducibility",
+                    "status": "failed",
+                    "checks": [{"name": "workspace_verification", "status": "failed"}],
+                    "resolution": {
+                        "status": "superseded",
+                        "superseded_by": "run-2",
+                        "reason": "Superseded by a passing rerun.",
+                    },
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    [run] = ResearchIntegrityRepo(root).load_verification_runs()
+    assert run.run_id == "run-1"
+    assert run.status == "failed"
 
 
 def test_integrity_record_models_validate_required_fields():

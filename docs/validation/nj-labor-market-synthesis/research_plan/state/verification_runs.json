@@ -1,0 +1,13 @@
+[
+  {
+    "run_id": "hydration-verification-20260518203859",
+    "loop_type": "analysis_reproducibility",
+    "status": "passed",
+    "scope": "data",
+    "task_id": "hydrate-fred-data",
+    "artifacts_checked": [".ontology/onto.duckdb"],
+    "claims_checked": [],
+    "checks": [{"name": "duckdb_rows_populated", "status": "passed"}],
+    "blockers": []
+  }
+]

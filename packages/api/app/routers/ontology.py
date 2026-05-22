@@ -92,12 +92,12 @@ async def get_entity_graph(uri: str, project_id: str | None = Query(None, alias=
 
 @router.get("/graph")
 async def get_full_graph(
-    types: str = Query("Observation,DataCenterFacilities,LoadZones,Electricutilities,Geography,Measure"),
+    types: str = Query("", description="Comma-separated class names; empty = all populated classes"),
     state_fips: Union[str, None] = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     project_id: str | None = Query(None, alias="projectId"),
 ):
-    type_list = [t.strip() for t in types.split(",") if t.strip()]
+    type_list = [t.strip() for t in types.split(",") if t.strip()] or None
     if project_id:
         art = await project_artifacts_service.resolve(project_id)
         return await ontology_service._run_with_ensure(
@@ -111,6 +111,38 @@ async def get_full_graph(
     return await ontology_service._run(
         project_id, ontology_service.get_full_graph, type_list, state_fips, limit
     )
+
+
+@router.get("/class-graph")
+async def get_class_graph(project_id: str | None = Query(None, alias="projectId")):
+    if not project_id:
+        raise HTTPException(400, detail="projectId is required")
+    try:
+        art = await project_artifacts_service.resolve(project_id)
+        return await ontology_service._run_with_ensure(
+            project_id,
+            art.db_path,
+            ontology_service.get_class_graph,
+        )
+    except Exception as e:
+        _handle_artifact_error(e)
+
+
+@router.get("/database-graph")
+async def get_database_graph(project_id: str | None = Query(None, alias="projectId")):
+    if not project_id:
+        raise HTTPException(400, detail="projectId is required")
+    try:
+        art = await project_artifacts_service.resolve(project_id)
+        import asyncio
+
+        return await asyncio.to_thread(
+            ontology_service.get_database_graph, project_id, art.duckdb_path
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(428, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(503, detail=str(e))
 
 
 @router.get("/search")

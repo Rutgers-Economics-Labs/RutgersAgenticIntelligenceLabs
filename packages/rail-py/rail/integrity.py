@@ -127,6 +127,87 @@ def _normalize_legacy_claim_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_legacy_source_record(record: dict[str, Any]) -> dict[str, Any]:
+    if {"source_key", "source_type", "title", "url_or_path"}.issubset(record):
+        normalized = dict(record)
+        admissibility = str(
+            normalized.get("admissibility_status")
+            or normalized.get("admissibilityStatus")
+            or ""
+        ).strip().lower()
+        if admissibility == "restricted":
+            provenance = dict(normalized.get("provenance") or {})
+            provenance.setdefault("original_admissibility_status", "restricted")
+            normalized["provenance"] = provenance
+            normalized["admissibility_status"] = "missing"
+            normalized["quality_status"] = "blocked"
+            note = str(normalized.get("notes") or "").strip()
+            restriction_note = "Source is access-restricted and cannot be treated as directly admissible in the current workspace."
+            normalized["notes"] = f"{note} {restriction_note}".strip() if note else restriction_note
+        return normalized
+    dataset_id = str(record.get("dataset_id") or "").strip()
+    source_record_id = str(record.get("source_record_id") or "").strip()
+    dataset_name = str(record.get("dataset_name") or "").strip()
+    source_record_path = str(record.get("source_record_path") or "").strip()
+    dataset_path = str(record.get("dataset_path") or "").strip()
+    provenance = dict(record.get("provenance") or {})
+    freshness = dict(record.get("freshness") or {})
+    trust_blockers = record.get("trust_blockers") if isinstance(record.get("trust_blockers"), list) else []
+    source_key = source_record_id or dataset_id
+    if not source_key:
+        return record
+    upstream_state = str(freshness.get("upstream_state") or "").strip().lower()
+    manifest_state = str(freshness.get("manifest_state") or "").strip().lower()
+    freshness_status: SourceFreshnessStatus = "unknown"
+    if upstream_state in {"current", "fresh"} and manifest_state in {"current", "fresh"}:
+        freshness_status = "fresh"
+    elif upstream_state.startswith("blocked_") or manifest_state.startswith("blocked_"):
+        freshness_status = "needs_refresh"
+    elif upstream_state in {"stale", "expired"} or manifest_state in {"stale", "expired"}:
+        freshness_status = "stale"
+    normalized_provenance = dict(provenance)
+    access_url = str(provenance.get("access_url") or "").strip()
+    official_urls = provenance.get("official_urls") if isinstance(provenance.get("official_urls"), list) else []
+    if access_url:
+        normalized_provenance.setdefault("url", access_url)
+    if dataset_path:
+        normalized_provenance.setdefault("path", dataset_path)
+    if source_record_path:
+        normalized_provenance.setdefault("config_path", source_record_path)
+    normalized_provenance.setdefault("dataset_id", dataset_id or source_key)
+    normalized_provenance.setdefault("dataset_path", dataset_path)
+    normalized_provenance.setdefault("source_record_id", source_record_id or source_key)
+    normalized_provenance.setdefault("source_record_path", source_record_path)
+    if trust_blockers:
+        normalized_provenance.setdefault("trust_blockers", trust_blockers)
+    if freshness:
+        normalized_provenance.setdefault("freshness", freshness)
+    if official_urls:
+        normalized_provenance.setdefault("official_urls", official_urls)
+    return {
+        "source_key": source_key,
+        "source_type": "dataset",
+        "title": dataset_name or source_key,
+        "url_or_path": access_url or dataset_path or source_record_path or source_key,
+        "origin": str(provenance.get("provider") or provenance.get("origin") or "").strip() or None,
+        "acquired_at": _stringify_timestamp(record.get("acquired_at") or record.get("acquiredAt")),
+        "retrieved_at": _stringify_timestamp(
+            record.get("retrieved_at")
+            or record.get("retrievedAt")
+            or freshness.get("checked_at")
+        ),
+        "access_method": "dataset_registry",
+        "freshness_status": freshness_status,
+        "admissibility_status": "observed",
+        "quality_status": "candidate",
+        "quality_notes": str(freshness.get("reason") or "").strip() or None,
+        "notes": "; ".join(str(item).strip() for item in trust_blockers if str(item).strip()) or None,
+        "provenance": normalized_provenance,
+        "created_at": _stringify_timestamp(record.get("created_at")),
+        "updated_at": _stringify_timestamp(record.get("updated_at")),
+    }
+
+
 def _normalize_reference_key(reference: str) -> str:
     return reference.split("#", 1)[-1].strip()
 
@@ -381,11 +462,53 @@ class VerificationRunRecord(BaseModel):
     updated_at: str | None = None
 
 
+def _normalize_legacy_artifact_lineage_record(record: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(record, dict):
+        return record
+    normalized = dict(record)
+    if normalized.get("registered_at") and not normalized.get("created_at"):
+        normalized["created_at"] = normalized.pop("registered_at")
+    else:
+        normalized.pop("registered_at", None)
+    producer = normalized.pop("producer", None)
+    if producer:
+        scripts = [str(item) for item in (normalized.get("scripts") or []) if str(item).strip()]
+        producer_str = str(producer).strip()
+        if producer_str and producer_str not in scripts:
+            scripts.append(producer_str)
+        normalized["scripts"] = scripts
+    allowed = set(ArtifactLineageRecord.model_fields.keys())
+    return {key: value for key, value in normalized.items() if key in allowed}
+
+
 def _normalize_legacy_verification_run_record(record: dict[str, Any]) -> dict[str, Any]:
     if "run_id" in record:
         normalized = dict(record)
-        for key in ("timestamp", "agent_role", "check_type", "command", "failures", "notes"):
+        resolution = normalized.pop("resolution", None)
+        if isinstance(resolution, dict):
+            normalized.setdefault("resolution_status", resolution.get("status"))
+            normalized.setdefault("superseded_by", resolution.get("superseded_by"))
+            normalized.setdefault("resolution_notes", resolution.get("reason") or resolution.get("notes"))
+        for key in (
+            "timestamp",
+            "agent_role",
+            "check_type",
+            "command",
+            "failures",
+            "notes",
+            "resolution_status",
+            "superseded_by",
+            "resolution_notes",
+        ):
             normalized.pop(key, None)
+        loop_type = str(normalized.get("loop_type") or normalized.get("loopType") or "").strip().lower()
+        if loop_type == "source_freshness_repair":
+            normalized["loop_type"] = "source_freshness"
+        elif loop_type == "ontology_readiness_repair":
+            # Treat ontology-repair verification as a reproducibility-style
+            # run so older integrity schemas do not crash when newer repair
+            # workflows record this loop type.
+            normalized["loop_type"] = "analysis_reproducibility"
         return normalized
 
     legacy_keys = {"timestamp", "agent_role", "check_type", "command", "failures", "notes"}
@@ -1242,7 +1365,12 @@ class ResearchIntegrityRepo:
     def write_sources(self, records: list[SourceRecord] | list[dict[str, Any]]) -> None:
         normalized_records: list[SourceRecord] = []
         for record in records:
-            normalized = SourceRecord.model_validate(record)
+            candidate = (
+                _normalize_legacy_source_record(record)
+                if isinstance(record, dict)
+                else record
+            )
+            normalized = SourceRecord.model_validate(candidate)
             normalized_records.append(
                 normalized.model_copy(
                     update={
@@ -1259,7 +1387,12 @@ class ResearchIntegrityRepo:
         self.rebuild_integrity_edges()
 
     def upsert_source(self, record: SourceRecord | dict[str, Any]) -> SourceRecord:
-        normalized = SourceRecord.model_validate(record)
+        candidate = (
+            _normalize_legacy_source_record(record)
+            if isinstance(record, dict)
+            else record
+        )
+        normalized = SourceRecord.model_validate(candidate)
         normalized = normalized.model_copy(
             update={
                 "quality_status": _normalize_validated_source_quality(
@@ -3765,9 +3898,19 @@ class ResearchIntegrityRepo:
                 _normalize_legacy_verification_run_record(item) if isinstance(item, dict) else item
                 for item in raw
             ]
+        elif model_cls is SourceRecord:
+            normalized_raw = [
+                _normalize_legacy_source_record(item) if isinstance(item, dict) else item
+                for item in raw
+            ]
         elif model_cls is ClaimRecord:
             normalized_raw = [
                 _normalize_legacy_claim_record(item) if isinstance(item, dict) else item
+                for item in raw
+            ]
+        elif model_cls is ArtifactLineageRecord:
+            normalized_raw = [
+                _normalize_legacy_artifact_lineage_record(item) if isinstance(item, dict) else item
                 for item in raw
             ]
         try:

@@ -461,6 +461,104 @@ Canonical task file.
     assert canonical.exists()
 
 
+def test_reconcile_task_files_tolerates_preferred_duplicate_removed_mid_reconcile(tmp_path: Path, monkeypatch):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    legacy = task_dir / "source-inventory-short.md"
+    canonical = task_dir / "source-inventory-canonical.md"
+    _write(
+        legacy,
+        """---
+title: Source inventory
+status: awaiting_approval
+assigned_role: research
+---
+
+## Description
+
+Legacy task file.
+""",
+    )
+    _write(
+        canonical,
+        """---
+task_id: source-inventory-canonical
+title: Source inventory
+status: awaiting_approval
+assigned_role: research
+---
+
+## Description
+
+Canonical task file.
+""",
+    )
+
+    real_pref = planner_service._task_preference_key
+    seen = {"removed": False}
+
+    def _pref(task: dict, path: Path):
+        if path == legacy and not seen["removed"]:
+            legacy.unlink(missing_ok=True)
+            seen["removed"] = True
+        return real_pref(task, path)
+
+    monkeypatch.setattr(planner_service, "_task_preference_key", _pref)
+
+    result = asyncio.run(planner_service.reconcile_task_files(project))
+
+    assert canonical.exists()
+    assert result["removed"] == []
+
+
+def test_sync_planner_files_removes_duplicate_task_paths(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    board = asyncio.run(planner_service.ensure_main_board(project))
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+
+    _write(
+        task_dir / "source-inventory-short.md",
+        """---
+title: Source inventory
+status: awaiting_approval
+assigned_role: research
+approval_state: pending
+---
+
+## Description
+
+Legacy file.
+""",
+    )
+    _write(
+        task_dir / "source-inventory-canonical.md",
+        """---
+task_id: source-inventory-canonical
+title: Source inventory
+status: awaiting_approval
+assigned_role: research
+approval_state: pending
+---
+
+## Description
+
+Canonical file.
+""",
+    )
+
+    asyncio.run(planner_service.sync_planner_files(project, board))
+
+    files = sorted(path.name for path in task_dir.glob("*.md"))
+    assert files == ["source-inventory-canonical.md"]
+
+
 def test_list_tasks_hides_stale_terminal_task_metadata(tmp_path: Path):
     from app.services import planner_service
 
@@ -810,4 +908,248 @@ Hydrate the ontology.
     assert result == {"updated": ["hydrate-task"]}
     assert tasks[0]["status"] == "done"
     assert tasks[0]["approvalState"] is None
+    assert tasks[0]["latestRunSummary"] == "Published commit abc123"
+
+
+def test_reconcile_task_session_states_keeps_worker_task_in_review_until_audit_exists(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "hydrate-task.md",
+        """---
+task_id: hydrate-task
+title: Hydrate task
+status: running
+assigned_role: data
+approval_state: granted
+latest_run_summary: Not started
+---
+
+## Description
+
+Hydrate the ontology.
+""",
+    )
+
+    session_root = planner_service.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    planner_service.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="hydrate-task",
+        status="completed",
+        review_status="review",
+        publish_commit_sha="abc123",
+        completion_summary={
+            "status": "completed",
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "sources_used": [],
+            "datasets_created": [],
+            "artifacts_created": [],
+            "claims_created": [],
+            "verification_results": [],
+            "open_questions": [],
+            "blockers": [],
+            "recommended_next_tasks": [],
+        },
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_session_states(project))
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert result == {"updated": ["hydrate-task"]}
+    assert tasks[0]["status"] == "review"
+    assert tasks[0]["approvalState"] is None
+    assert (
+        tasks[0]["latestRunSummary"]
+        == "Session completed and is awaiting a reviewed post-run audit before task closeout."
+    )
+
+
+def test_reconcile_task_session_states_holds_planner_task_in_review_when_worker_session_completed(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "hydrate-task.md",
+        """---
+task_id: hydrate-task
+title: Hydrate task
+status: running
+assigned_role: planner
+approval_state: granted
+latest_run_summary: Not started
+---
+
+## Description
+
+Hydrate the ontology.
+""",
+    )
+
+    session_root = planner_service.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    planner_service.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="hydrate-task",
+        role="data",
+        status="completed",
+        review_status="review",
+        publish_commit_sha="abc123",
+        completion_summary={
+            "status": "completed",
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "sources_used": [],
+            "datasets_created": [],
+            "artifacts_created": [],
+            "claims_created": [],
+            "verification_results": [],
+            "open_questions": [],
+            "blockers": [],
+            "recommended_next_tasks": [],
+        },
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_session_states(project))
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert result == {"updated": ["hydrate-task"]}
+    assert tasks[0]["status"] == "review"
+    assert tasks[0]["approvalState"] is None
+    assert (
+        tasks[0]["latestRunSummary"]
+        == "Session completed and is awaiting a reviewed post-run audit before task closeout."
+    )
+
+
+def test_reconcile_task_session_states_preserves_explicitly_reopened_task(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "hydrate-task.md",
+        """---
+task_id: hydrate-task
+title: Hydrate task
+status: ready
+assigned_role: data
+approval_state: granted
+latest_run_summary: Reopened by Autopilot because hydration state is `not_hydrated`.
+---
+
+## Description
+
+Hydrate the ontology.
+""",
+    )
+
+    session_root = planner_service.session_files.ensure_session_root(tmp_path, "data", "sess-1")
+    planner_service.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="hydrate-task",
+        status="completed",
+        review_status="needs_changes",
+        completion_summary={
+            "status": "completed",
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "sources_used": [],
+            "datasets_created": [],
+            "artifacts_created": [],
+            "claims_created": [],
+            "verification_results": [],
+            "open_questions": [],
+            "blockers": ["Deterministic verification failed."],
+            "recommended_next_tasks": ["Fix verification failures and rerun the worker task."],
+        },
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_session_states(project))
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert result == {"updated": []}
+    assert tasks[0]["status"] == "ready"
+    assert tasks[0]["approvalState"] == "granted"
+    assert tasks[0]["latestRunSummary"].startswith("Reopened by Autopilot")
+
+
+def test_reconcile_task_session_states_uses_latest_terminal_session_per_task(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "hydrate-task.md",
+        """---
+task_id: hydrate-task
+title: Hydrate task
+status: running
+assigned_role: data
+approval_state: granted
+latest_run_summary: Not started
+---
+
+## Description
+
+Hydrate the ontology.
+""",
+    )
+
+    old_root = planner_service.session_files.ensure_session_root(tmp_path, "data", "sess-old")
+    planner_service.session_files.update_state(
+        old_root,
+        session_id="sess-old",
+        task_id="hydrate-task",
+        status="completed",
+        review_status="needs_changes",
+        updated_at="2026-01-01T00:00:00Z",
+        completion_summary={
+            "status": "completed",
+            "blockers": ["Deterministic verification failed."],
+            "recommended_next_tasks": ["Fix verification failures and rerun the worker task."],
+        },
+    )
+
+    new_root = planner_service.session_files.ensure_session_root(tmp_path, "data", "sess-new")
+    planner_service.session_files.update_state(
+        new_root,
+        session_id="sess-new",
+        task_id="hydrate-task",
+        status="completed",
+        review_status="review",
+        updated_at="2026-01-02T00:00:00Z",
+        publish_commit_sha="abc123",
+        completion_summary={
+            "status": "completed",
+            "blockers": [],
+            "recommended_next_tasks": [],
+        },
+    )
+
+    import json as _json
+
+    audit_dir = tmp_path / "research_plan" / "audits"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "hydrate-task.json").write_text(
+        _json.dumps(
+            {
+                "session": {
+                    "taskId": "hydrate-task",
+                    "reviewStatus": "review",
+                    "status": "completed",
+                },
+                "integrity": {"blocked": False},
+                "currentBlocker": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_session_states(project))
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert result == {"updated": ["hydrate-task"]}
+    assert tasks[0]["status"] == "done"
     assert tasks[0]["latestRunSummary"] == "Published commit abc123"

@@ -68,7 +68,14 @@ def _slugify(text: str) -> str:
 
 def _snapshot_path(task: dict[str, Any]) -> str:
     """Return the canonical research_plan/ path for a task file."""
-    slug = _slugify(task.get("title", task.get("_id", "unknown")))
+    explicit = str(task.get("gitSnapshotPath") or "").strip()
+    if explicit.startswith("research_plan/tasks/") and explicit.endswith(".md"):
+        return explicit
+    task_id = str(task.get("_id") or "").strip()
+    if task_id:
+        slug = _slugify(task_id)
+    else:
+        slug = _slugify(task.get("title", "unknown"))
     return f"research_plan/tasks/{slug}.md"
 
 
@@ -91,6 +98,8 @@ def render_task_md(task: dict[str, Any]) -> str:
     dep_ids: list[str] = [str(d) for d in (task.get("dependsOnTaskIds") or [])]
 
     lines: list[str] = ["---"]
+    if task.get("_id"):
+        lines.append(f"task_id: {task['_id']}")
     lines.append(f"title: {title}")
     lines.append(f"status: {status}")
     lines.append(f"assigned_role: {agent_role}")
@@ -156,10 +165,10 @@ def render_task_board_md(board: dict[str, Any], tasks: list[dict[str, Any]]) -> 
         lines.append("")
         if col_tasks:
             for t in col_tasks:
-                slug = _slugify(t.get("title", ""))
+                rel_path = _snapshot_path(t)
                 role = t.get("agentRole", "")
                 title = t.get("title") or t.get("_id") or "task"
-                lines.append(f"- **{title}** (`{role}`) → `research_plan/tasks/{slug}.md`")
+                lines.append(f"- **{title}** (`{role}`) → `{rel_path}`")
         else:
             lines.append("_empty_")
         lines.append("")

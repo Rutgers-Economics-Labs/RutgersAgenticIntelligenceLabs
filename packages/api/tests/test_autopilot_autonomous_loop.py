@@ -19,13 +19,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from app.services import autopilot_service, session_files
-from app.services.audit_service import write_post_run_audit
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +72,39 @@ _CLEAN_REALITY: dict[str, Any] = {
     "repairedAuditSessionIds": [],
     "hasChanges": False,
 }
+_LANE_AVAILABLE: dict[str, Any] = {
+    "available": True,
+    "policy": "single_active_worker",
+    "activeSessionCount": 0,
+    "reason": None,
+    "repairedSessionIds": [],
+    "activeSessions": [],
+}
+_TIMESTAMP_SEQ = 0
+
+
+class _InstantEvent:
+    """Wake-event test double that prevents 30-60s sleeps inside the loop."""
+
+    def clear(self) -> None:
+        return None
+
+    async def wait(self) -> None:
+        await asyncio.sleep(0)
+
+
+async def _noop_decision_event(*args, **kwargs) -> Any:
+    return None
+
+
+def _next_test_iso() -> str:
+    global _TIMESTAMP_SEQ
+    # Keep audit timestamps far in the future relative to the file state's
+    # real-clock updated_at so audit_gate_status treats them as the newest truth.
+    base = datetime(2100, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+    value = base + timedelta(seconds=_TIMESTAMP_SEQ)
+    _TIMESTAMP_SEQ += 1
+    return value.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _seed_minimal_project(root: Path, archetype: str = "time-series-econ") -> None:
@@ -121,6 +154,7 @@ lifecycle:
         ".ontology/pipelines",
         ".ontology/sources",
         "agents",
+        "skills",
         "topics",
         "specs",
         ".git",
@@ -141,7 +175,7 @@ def _write_completed_session(root: Path, session_id: str, role: str) -> Path:
             "review_status": "review",
             "verification_status": "passed",
             "publish_status": "published",
-            "updated_at": session_files.utc_now_iso(),
+            "updated_at": _next_test_iso(),
         },
     )
     session_files.append_event(session_root, "session_completed", content="Task completed.", status="completed")
@@ -151,20 +185,27 @@ def _write_completed_session(root: Path, session_id: str, role: str) -> Path:
 async def _write_audit_for_session(
     root: Path, session_root: Path, session_id: str, role: str
 ) -> None:
-    """Write a real post-run audit file so audit_gate_status unblocks."""
-    project_stub = {
-        "_id": None,
-        "slug": root.name,
-        "localRepoPath": str(root),
+    """Write the minimal durable audit artifacts needed by audit_gate_status()."""
+    audit_root = root / "research_plan" / "audits"
+    audit_root.mkdir(parents=True, exist_ok=True)
+    generated_at = _next_test_iso()
+    payload = {
+        "generatedAt": generated_at,
+        "currentBlocker": None,
+        "session": {
+            "id": session_id,
+            "role": role,
+            "status": "completed",
+            "reviewStatus": "review",
+            "verificationStatus": "passed",
+            "publishStatus": "published",
+            "changedFiles": [],
+        },
+        "planner": {"taskCounts": {}, "readyTasks": [], "blockedTasks": [], "activeTasks": []},
+        "integrity": {"action": "artifact_generation", "blocked": False, "reasons": []},
     }
-    await write_post_run_audit(
-        project=project_stub,
-        project_root=root,
-        session_root=session_root,
-        session_id=session_id,
-        session={"_id": session_id, "role": role},
-        changed_files=[],
-    )
+    (audit_root / f"{session_id}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    (audit_root / f"{session_id}.md").write_text("# Post-Run Audit\n", encoding="utf-8")
 
 
 def _build_archetype_fixture(
@@ -275,8 +316,10 @@ def test_autopilot_drives_time_series_econ_to_closeout(monkeypatch, tmp_path):
     monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _fake_find_active_worker)
     monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _fake_build_auditor_statuses)
     monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _fake_reconcile)
+    monkeypatch.setattr(autopilot_service, "ensure_execution_lane_available", lambda *_a, **_kw: asyncio.sleep(0, result=dict(_LANE_AVAILABLE)))
     monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _fake_run_planner_turn)
     monkeypatch.setattr(autopilot_service, "list_decision_events", _fake_list_decision_events)
+    monkeypatch.setattr(autopilot_service, "raise_decision_event", _noop_decision_event)
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", _fake_mark_completed)
     monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", lambda p, t: asyncio.sleep(0, result=False))
     monkeypatch.setattr(autopilot_service, "_ensure_ontology_expansion_tasks", lambda p, t: asyncio.sleep(0, result=False))
@@ -289,7 +332,7 @@ def test_autopilot_drives_time_series_econ_to_closeout(monkeypatch, tmp_path):
 
     autopilot_service._active_autopilots[archetype] = True
     autopilot_service._autopilot_configs[archetype] = {"auto_approve": True}
-    autopilot_service._wake_events[archetype] = asyncio.Event()
+    autopilot_service._wake_events[archetype] = _InstantEvent()  # type: ignore[assignment]
 
     asyncio.run(autopilot_service.run_autopilot_loop(archetype))
 
@@ -414,8 +457,10 @@ def test_autopilot_drives_document_synthesis_to_closeout(monkeypatch, tmp_path):
     monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _fake_find_active_worker)
     monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _fake_build_auditor_statuses)
     monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _fake_reconcile)
+    monkeypatch.setattr(autopilot_service, "ensure_execution_lane_available", lambda *_a, **_kw: asyncio.sleep(0, result=dict(_LANE_AVAILABLE)))
     monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _fake_run_planner_turn)
     monkeypatch.setattr(autopilot_service, "list_decision_events", _fake_list_decision_events)
+    monkeypatch.setattr(autopilot_service, "raise_decision_event", _noop_decision_event)
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", _fake_mark_completed)
     monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", lambda p, t: asyncio.sleep(0, result=False))
     monkeypatch.setattr(autopilot_service, "_ensure_ontology_expansion_tasks", lambda p, t: asyncio.sleep(0, result=False))
@@ -428,7 +473,7 @@ def test_autopilot_drives_document_synthesis_to_closeout(monkeypatch, tmp_path):
 
     autopilot_service._active_autopilots[archetype] = True
     autopilot_service._autopilot_configs[archetype] = {"auto_approve": True}
-    autopilot_service._wake_events[archetype] = asyncio.Event()
+    autopilot_service._wake_events[archetype] = _InstantEvent()  # type: ignore[assignment]
 
     asyncio.run(autopilot_service.run_autopilot_loop(archetype))
 
@@ -553,8 +598,10 @@ def test_autopilot_drives_cross_sectional_to_closeout(monkeypatch, tmp_path):
     monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _fake_find_active_worker)
     monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _fake_build_auditor_statuses)
     monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _fake_reconcile)
+    monkeypatch.setattr(autopilot_service, "ensure_execution_lane_available", lambda *_a, **_kw: asyncio.sleep(0, result=dict(_LANE_AVAILABLE)))
     monkeypatch.setattr(autopilot_service.planner_runtime, "run_planner_turn", _fake_run_planner_turn)
     monkeypatch.setattr(autopilot_service, "list_decision_events", _fake_list_decision_events)
+    monkeypatch.setattr(autopilot_service, "raise_decision_event", _noop_decision_event)
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", _fake_mark_completed)
     monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", lambda p, t: asyncio.sleep(0, result=False))
     monkeypatch.setattr(autopilot_service, "_ensure_ontology_expansion_tasks", lambda p, t: asyncio.sleep(0, result=False))
@@ -567,7 +614,7 @@ def test_autopilot_drives_cross_sectional_to_closeout(monkeypatch, tmp_path):
 
     autopilot_service._active_autopilots[archetype] = True
     autopilot_service._autopilot_configs[archetype] = {"auto_approve": True}
-    autopilot_service._wake_events[archetype] = asyncio.Event()
+    autopilot_service._wake_events[archetype] = _InstantEvent()  # type: ignore[assignment]
 
     asyncio.run(autopilot_service.run_autopilot_loop(archetype))
 
@@ -699,6 +746,7 @@ def test_autopilot_audit_gate_blocks_until_audit_is_written(monkeypatch, tmp_pat
     monkeypatch.setattr(autopilot_service.running_agent_service, "find_active_worker", _fake_find_active_worker)
     monkeypatch.setattr(autopilot_service, "build_auditor_statuses", _fake_build_auditor_statuses)
     monkeypatch.setattr(autopilot_service, "reconcile_project_reality", _fake_reconcile)
+    monkeypatch.setattr(autopilot_service, "ensure_execution_lane_available", lambda *_a, **_kw: asyncio.sleep(0, result=dict(_LANE_AVAILABLE)))
     monkeypatch.setattr(autopilot_service, "list_decision_events", _fake_list_decision_events)
     monkeypatch.setattr(autopilot_service, "raise_decision_event", _fake_raise_decision_event)
     monkeypatch.setattr(autopilot_service, "_mark_project_completed", _fake_mark_completed)

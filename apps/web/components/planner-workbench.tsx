@@ -2,17 +2,19 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ApprovalPanel } from "@/components/approval-panel";
+import { GoalModePanel } from "@/components/goal-mode-panel";
 import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
 import { TaskBoard } from "@/components/task-board";
 import {
+  fetchProjectGoal,
   createPlannerTask,
   fetchAutopilotStatus,
   fetchPlannerBoard,
   toggleProjectAutopilot,
   updatePlannerTask,
 } from "@/lib/api";
-import { AutopilotStatus, PlannerApproval, PlannerBoard, PlannerTask, PlannerTaskDraft } from "@/lib/types";
+import { AutopilotStatus, GoalBundle, PlannerApproval, PlannerBoard, PlannerTask, PlannerTaskDraft } from "@/lib/types";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -389,6 +391,7 @@ function TaskDraftPanel({
 export function PlannerWorkbench({ slug }: { slug: string }) {
   const [board, setBoard] = useState<PlannerBoard | null>(null);
   const [autopilot, setAutopilot] = useState<AutopilotStatus>({ enabled: false, autoApprove: false });
+  const [goal, setGoal] = useState<GoalBundle | null>(null);
   const [draft, setDraft] = useState<PlannerTaskDraft>(blankDraft());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -401,12 +404,14 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
   async function load() {
     try {
       setError(null);
-      const [nextBoard, nextAutopilot] = await Promise.all([
+      const [nextBoard, nextAutopilot, nextGoal] = await Promise.all([
         fetchPlannerBoard(slug),
         fetchAutopilotStatus(slug),
+        fetchProjectGoal(slug).catch(() => null),
       ]);
       setBoard(nextBoard);
       setAutopilot(nextAutopilot);
+      setGoal(nextGoal);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load planner state");
     } finally {
@@ -555,6 +560,39 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
 
         <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, alignItems: "start" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {goal ? (
+              <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+                <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+                  <span className="rail-label">Goal Mode</span>
+                </div>
+                <GoalModePanel
+                  slug={slug}
+                  center={{
+                    project: { id: "", name: "", slug },
+                    currentPlan: {},
+                    nextAction: "",
+                    taskCounts: { total: 0, byStatus: {} },
+                    activeSessions: [],
+                    pendingApprovals: [],
+                    recentArtifacts: [],
+                    sourceSummary: { count: 0, statusCounts: {} },
+                    skillSummary: { count: 0, agentRolesWithSkillAccess: [] },
+                    repoHealth: { hasLocalRepo: true, hasRailYaml: true, hasResearchPlan: true },
+                    goal: {
+                      objective: goal.contract.objective,
+                      phase: goal.state.phase,
+                      currentBlocker: goal.state.currentBlocker,
+                      retryBudget: goal.state.retryBudget,
+                      success: goal.state.success,
+                      dashboard: goal.state.dashboard,
+                      tracks: goal.state.tracks,
+                    },
+                  }}
+                  goal={goal}
+                />
+              </div>
+            ) : null}
+
             <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
               <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <span className="rail-label">Planner Copilot</span>
