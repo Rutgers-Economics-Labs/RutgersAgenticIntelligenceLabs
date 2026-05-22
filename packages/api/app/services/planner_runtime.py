@@ -623,10 +623,36 @@ async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[s
             return {"error": "A worker session is already active", "activeSession": active_worker}
 
         role_config = load_role_runtime_config(project, task["agentRole"])
-        selected_runner = args.get("runner") or task.get("runner") or role_config.policy.runner.default
-        selected_runner = selected_runner if selected_runner else role_config.policy.runner.default
+        
+        # Phase 5: Capability-based routing
+        from app.services.capability_router import route_task
+        from app.runners.work_order_generator import generate_work_order
+        
+        # We need a work order to know the required capabilities
+        # This is a bit of a chicken-and-egg situation because generate_work_order
+        # currently takes runner_name. 
+        # Strategy: Derive required capabilities from role/task, then route, then generate final WO.
+        
+        # Temporary WO to get capabilities
+        tmp_wo = generate_work_order(
+            session_id="tmp",
+            project_slug=project["slug"],
+            role=task["agentRole"],
+            task_id=str(task["_id"]),
+            task=task,
+        )
+
+        selected_runner = await route_task(
+            project_slug=project["slug"],
+            work_order_id=f"wo-{task['_id']}",
+            required_capabilities=tmp_wo.capabilities_required,
+            task_type=tmp_wo.task_type,
+            explicit_runner=args.get("runner") or task.get("runner"),
+        )
+        
         if selected_runner == "default":
             selected_runner = role_config.policy.runner.default
+            
         # Prefer task-scoped outputs when they are declared so a task can narrow
         # or extend the writable surface intentionally for the current run.
         # Fall back to the role's default write policy when the task does not

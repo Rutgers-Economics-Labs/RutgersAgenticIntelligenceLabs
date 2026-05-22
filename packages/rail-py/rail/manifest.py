@@ -105,11 +105,19 @@ class HydrationSection(BaseModel):
         return _validate_repo_relative_path(value)
 
 
+class RunnerPolicySection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    allowed: list[RunnerName] = Field(default_factory=list)
+    preferred: list[RunnerName] = Field(default_factory=list)
+
+
 class AgentsSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     roles_dir: str = "agents"
     default_runner: RunnerName = "jules"
+    runner_policy: RunnerPolicySection = Field(default_factory=RunnerPolicySection)
     sequential_execution: bool = True
     approval_required_for_write_runs: bool | None = None
     planner_thread_mode: PlannerThreadMode = "project"
