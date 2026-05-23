@@ -25,6 +25,7 @@ import {
   RunnerSessionDetail,
   ZenResponse
 } from "@/lib/types";
+import { WorkOrder, SessionResult, DispatchDecision } from "./contract-types";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -133,8 +134,8 @@ export async function configureProjectGoal(
 
 export async function toggleProjectAutopilot(
   slug: string,
-  payload: { enabled: boolean; autoApprove: boolean },
-): Promise<{ status: string; slug: string; autoApprove?: boolean }> {
+  payload: { enabled: boolean; autoApprove: boolean; dispatchApprovalRequired?: boolean },
+): Promise<{ status: string; slug: string; autoApprove?: boolean; dispatchApprovalRequired?: boolean }> {
   return postJson(`/projects/${slug}/autopilot`, payload);
 }
 
@@ -525,4 +526,40 @@ export async function fetchOntologyClassGraph(projectId: string): Promise<Ontolo
 
 export async function fetchOntologyDatabaseGraph(projectId: string): Promise<OntologyGraphPayload> {
   return fetchOntologyGraphEndpoint("database-graph", projectId);
+}
+
+export async function fetchWorkOrder(sessionId: string, slug: string): Promise<WorkOrder> {
+  return getJson<WorkOrder>(`/runners/sessions/${encodeURIComponent(sessionId)}/work-order?project_slug=${encodeURIComponent(slug)}`);
+}
+
+export async function fetchDispatchDecision(sessionId: string, slug: string): Promise<DispatchDecision> {
+  return getJson<DispatchDecision>(`/runners/sessions/${encodeURIComponent(sessionId)}/dispatch-decision?project_slug=${encodeURIComponent(slug)}`);
+}
+
+export async function fetchSessionResult(sessionId: string, slug: string): Promise<SessionResult> {
+  return getJson<SessionResult>(`/runners/sessions/${encodeURIComponent(sessionId)}/result?project_slug=${encodeURIComponent(slug)}`);
+}
+
+export async function fetchPlannerDecisions(slug: string, limit = 50): Promise<any[]> {
+  return getJson<any[]>(`/projects/${encodeURIComponent(slug)}/planner/decisions?limit=${limit}`);
+}
+
+export async function fetchPendingQa(slug: string): Promise<any[]> {
+  return getJson<any[]>(`/projects/${encodeURIComponent(slug)}/qa/pending`);
+}
+
+export async function answerPendingQuestion(slug: string, questionId: string, answer: string): Promise<any> {
+  return postJson(`/projects/${encodeURIComponent(slug)}/qa/${encodeURIComponent(questionId)}/answer`, { answer });
+}
+
+export async function fetchPendingDispatches(slug: string): Promise<any[]> {
+  return getJson<any[]>(`/projects/${encodeURIComponent(slug)}/dispatches/pending`);
+}
+
+export async function approvePendingDispatch(slug: string, woId: string, edits?: any): Promise<any> {
+  return postJson(`/projects/${encodeURIComponent(slug)}/dispatches/${encodeURIComponent(woId)}/approve`, edits ? { edits } : {});
+}
+
+export async function rejectPendingDispatch(slug: string, woId: string, reason: string): Promise<any> {
+  return postJson(`/projects/${encodeURIComponent(slug)}/dispatches/${encodeURIComponent(woId)}/reject`, { reason });
 }

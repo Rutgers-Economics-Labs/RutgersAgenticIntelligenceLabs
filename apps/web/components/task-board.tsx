@@ -7,6 +7,7 @@ import { fetchRunnerSessions, launchTask } from "@/lib/api";
 import type { RunnerSession } from "@/lib/types";
 import { StatusPill } from "@/components/status-pill";
 import { ApprovalPanel } from "@/components/approval-panel";
+import { WorkOrderInspector } from "@/components/work-order-inspector";
 
 /**
  * Maps the canonical task blockerCategory values used by the planner service
@@ -103,6 +104,7 @@ function TaskModal({
   const [verifyAfter, setVerifyAfter] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [inspectingSessionId, setInspectingSessionId] = useState<string | null>(null);
 
   async function handleRun() {
     setLaunching(true);
@@ -270,30 +272,58 @@ function TaskModal({
           {linkedSessions.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <div className="rail-label" style={{ marginBottom: 6 }}>Linked sessions</div>
-              <div style={{ display: "grid", gap: 4 }}>
+              <div style={{ display: "grid", gap: 6 }}>
                 {linkedSessions.map((s) => {
                   const sid = s._id ?? s.id;
                   return (
-                    <Link
+                    <div
                       key={String(sid)}
-                      href={`/projects/${slug}/runs/${sid}`}
                       style={{
                         display: "flex",
-                        justifyContent: "space-between",
-                        gap: 8,
-                        padding: "4px 8px",
-                        border: "1px solid var(--border)",
-                        background: "var(--bg)",
-                        textDecoration: "none",
-                        fontSize: 11,
-                        color: "var(--fg)",
+                        alignItems: "center",
+                        gap: 6,
                       }}
                     >
-                      <span style={{ fontFamily: "JetBrains Mono, monospace" }}>
-                        {(s.role ?? "agent").toUpperCase()} · {s.runner ?? "—"}
-                      </span>
-                      <StatusPill value={s.status} />
-                    </Link>
+                      <Link
+                        href={`/projects/${slug}/runs/${sid}`}
+                        style={{
+                          flex: 1,
+                          display: "flex",
+                          justifyContent: "space-between",
+                          gap: 8,
+                          padding: "4px 8px",
+                          border: "1px solid var(--border)",
+                          background: "var(--bg)",
+                          textDecoration: "none",
+                          fontSize: 11,
+                          color: "var(--fg)",
+                        }}
+                      >
+                        <span style={{ fontFamily: "JetBrains Mono, monospace" }}>
+                          {(s.role ?? "agent").toUpperCase()} · {s.runner ?? "—"}
+                        </span>
+                        <StatusPill value={s.status} />
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setInspectingSessionId(String(sid));
+                        }}
+                        style={{
+                          background: "var(--panel-alt)",
+                          border: "1px solid var(--border)",
+                          color: "var(--fg)",
+                          fontSize: 10,
+                          padding: "4px 8px",
+                          fontFamily: "JetBrains Mono, monospace",
+                          cursor: "pointer",
+                        }}
+                      >
+                        inspect
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -457,6 +487,13 @@ function TaskModal({
           </button>
         </div>
       </div>
+      {inspectingSessionId && (
+        <WorkOrderInspector
+          sessionId={inspectingSessionId}
+          slug={slug}
+          onClose={() => setInspectingSessionId(null)}
+        />
+      )}
     </div>
   );
 }

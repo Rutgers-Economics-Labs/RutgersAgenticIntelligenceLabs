@@ -2909,6 +2909,59 @@ async def create_runner_session(
             "WorkOrder derivation failed for session %s: %s", running_session_id, _wo_exc
         )
 
+    dispatch_approval_required = False
+    try:
+        state_file = project_root / ".rail" / "autopilot_state.json"
+        if state_file.exists():
+            state_data = json.loads(state_file.read_text(encoding="utf-8"))
+            dispatch_approval_required = bool(state_data.get("dispatchApprovalRequired", False))
+    except Exception as exc:
+        _logging.getLogger(__name__).warning("Failed to check dispatchApprovalRequired: %s", exc)
+
+    if dispatch_approval_required:
+        pending_data = {
+            "runner_name": runner_name,
+            "project_id": project_id,
+            "running_session_id": running_session_id,
+            "task_payload": {
+                "project_slug": task_payload.project_slug,
+                "role": task_payload.role,
+                "task_id": task_payload.task_id,
+                "repo_url": task_payload.repo_url,
+                "branch": task_payload.branch,
+                "local_repo_path": task_payload.local_repo_path,
+                "task_description": task_payload.task_description,
+                "allowed_paths": task_payload.allowed_paths,
+                "allowed_secrets": task_payload.allowed_secrets,
+                "acceptance_criteria": task_payload.acceptance_criteria,
+                "project_context": task_payload.project_context,
+                "session_root": task_payload.session_root,
+                "work_order_id": task_payload.work_order_id,
+                "work_order_path": task_payload.work_order_path,
+                "session_result_path": task_payload.session_result_path,
+            }
+        }
+        pending_dir = project_root / "research_plan" / "pending_dispatch"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        pending_file = pending_dir / f"{work_order.work_order_id}.json"
+        pending_file.write_text(json.dumps(pending_data, indent=2), encoding="utf-8")
+        
+        session_files.append_event(
+            session_root,
+            "status_changed",
+            content="Dispatch held awaiting operator approval",
+            status="queued",
+        )
+        
+        return {
+            "convex_session_id": running_session_id,
+            "external_session_id": None,
+            "status": "pending_dispatch",
+            "url": None,
+            "runner": runner_name,
+            "sessionPath": str(session_root),
+        }
+
     try:
         result = await runner.create_session(task_payload)
     except Exception as exc:
@@ -3517,3 +3570,184 @@ async def process_pending_commands(session_root: Path) -> list[dict]:
         session_files.refresh_summary(session_root)
         
     return processed
+
+
+async def resume_pending_dispatch(project_root: Path, work_order_id: str, edits: dict[str, Any] | None = None) -> dict[str, Any]:
+    pending_path = project_root / "research_plan" / "pending_dispatch" / f"{work_order_id}.json"
+    if not pending_path.exists():
+        raise RuntimeError(f"Pending dispatch not found for {work_order_id}")
+    
+    pending_data = json.loads(pending_path.read_text(encoding="utf-8"))
+    runner_name = pending_data["runner_name"]
+    project_id = pending_data["project_id"]
+    running_session_id = pending_data["running_session_id"]
+    payload_dict = pending_data["task_payload"]
+    
+    # Reconstruct TaskPayload
+    from app.runners.base import TaskPayload
+    task_payload = TaskPayload(
+        project_slug=payload_dict["project_slug"],
+        role=payload_dict["role"],
+        task_id=payload_dict["task_id"],
+        repo_url=payload_dict["repo_url"],
+        branch=payload_dict["branch"],
+        local_repo_path=payload_dict["local_repo_path"],
+        task_description=payload_dict["task_description"],
+        allowed_paths=payload_dict["allowed_paths"],
+        allowed_secrets=payload_dict["allowed_secrets"],
+        acceptance_criteria=payload_dict["acceptance_criteria"],
+        project_context=payload_dict["project_context"],
+        session_root=payload_dict["session_root"],
+        work_order_id=payload_dict["work_order_id"],
+        work_order_path=payload_dict["work_order_path"],
+        session_result_path=payload_dict["session_result_path"],
+    )
+    
+    # Apply edits to the WorkOrder if provided
+    wo_path = project_root / "research_plan" / "work_orders" / f"{work_order_id}.json"
+    ws_wo_path = Path(task_payload.local_repo_path) / "research_plan" / "work_orders" / f"{work_order_id}.json"
+    
+    if edits:
+        if wo_path.exists():
+            try:
+                wo_data = json.loads(wo_path.read_text(encoding="utf-8"))
+                for k, v in edits.items():
+                    if isinstance(v, dict) and isinstance(wo_data.get(k), dict):
+                        wo_data[k].update(v)
+                    else:
+                        wo_data[k] = v
+                wo_path.write_text(json.dumps(wo_data, indent=2), encoding="utf-8")
+                if ws_wo_path.parent.exists():
+                     ws_wo_path.write_text(json.dumps(wo_data, indent=2), encoding="utf-8")
+            except Exception as e:
+                logger.warning("Failed to apply edits to WorkOrder: %s", e)
+    
+    # Resume subprocess execution
+    jules_source = None
+    if runner_name == "jules":
+        from app.core.config import settings
+        jules_source = settings.jules_source
+        if "github.com/" in task_payload.repo_url:
+            clean_url = task_payload.repo_url.split("github.com/")[-1].replace(".git", "")
+            jules_source = f"sources/github/{clean_url}"
+    
+    api_key = await resolve_jules_api_key(project_id, task_payload.role) if runner_name == "jules" else None
+    runner = resolve_runner_for_project(runner_name, api_key=api_key, source=jules_source)
+    
+    session_root = Path(task_payload.session_root)
+    workspace_root = Path(task_payload.local_repo_path)
+    
+    try:
+        result = await runner.create_session(task_payload)
+    except Exception as exc:
+        _sync_file_status(session_root, "failed")
+        session_files.append_event(
+            session_root,
+            "failed",
+            content=str(exc),
+            status="failed",
+        )
+        session_files.update_state(session_root, review_status="needs_changes")
+        await running_agent_service.finalize_running_agent(
+            running_session_id,
+            status="failed",
+            ended_at=int(time.time() * 1000),
+        )
+        raise RuntimeError(f"Runner session creation failed: {exc}") from exc
+    
+    external_id = result["session_id"]
+    await running_agent_service.update_running_agent(
+        running_session_id,
+        status="running",
+        externalSessionId=external_id,
+    )
+    session_files.append_event(
+        session_root,
+        "status_changed",
+        content=f"Worker session started with {runner_name} (Approved)",
+        runner=runner_name,
+        external_session_id=external_id,
+        status="running",
+        workspace_path=str(workspace_root),
+    )
+    
+    try:
+        pending_path.unlink()
+    except Exception:
+        pass
+    
+    return {
+        "convex_session_id": running_session_id,
+        "external_session_id": external_id,
+        "status": result.get("status", "running"),
+        "url": result.get("url"),
+        "runner": runner_name,
+        "sessionPath": str(session_root),
+    }
+
+
+async def reject_pending_dispatch(project_root: Path, work_order_id: str, reason: str) -> None:
+    pending_path = project_root / "research_plan" / "pending_dispatch" / f"{work_order_id}.json"
+    if not pending_path.exists():
+        raise RuntimeError(f"Pending dispatch not found for {work_order_id}")
+    
+    pending_data = json.loads(pending_path.read_text(encoding="utf-8"))
+    project_id = pending_data["project_id"]
+    running_session_id = pending_data["running_session_id"]
+    payload_dict = pending_data["task_payload"]
+    
+    role = payload_dict["role"]
+    task_id = payload_dict["task_id"]
+    session_root = Path(payload_dict["session_root"])
+    session_root.mkdir(parents=True, exist_ok=True)
+    
+    # Write blocker to session_result.json
+    session_result = {
+        "status": "failed",
+        "blockers": [
+            {
+                "type": "operator_rejected",
+                "message": reason or "Operator rejected dispatch",
+            }
+        ],
+        "claims": [],
+        "sources": [],
+        "datasets": []
+    }
+    (session_root / "session_result.json").write_text(json.dumps(session_result, indent=2), encoding="utf-8")
+    
+    # Finalize agent session in Convex
+    await running_agent_service.finalize_running_agent(
+        running_session_id,
+        status="failed",
+        ended_at=int(time.time() * 1000),
+    )
+    
+    # Write session status changed event
+    session_files.append_event(
+        session_root,
+        "status_changed",
+        content=f"Worker dispatch rejected: {reason}",
+        status="failed",
+    )
+    _sync_file_status(session_root, "failed")
+    session_files.update_state(session_root, review_status="needs_changes")
+    
+    # Trigger audit run
+    try:
+        project = await _load_project(project_id, None)
+        await write_post_run_audit(
+            project=project or {},
+            project_root=project_root,
+            session_root=session_root,
+            session_id=running_session_id,
+            session={"_id": running_session_id, "role": role, "taskId": task_id},
+            changed_files=[],
+        )
+    except Exception as e:
+        logger.warning("Failed to write post run audit: %s", e)
+    
+    try:
+        pending_path.unlink()
+    except Exception:
+        pass

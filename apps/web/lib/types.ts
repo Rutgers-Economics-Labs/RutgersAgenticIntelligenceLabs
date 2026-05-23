@@ -50,6 +50,7 @@ export type AutopilotStatus = {
   enabled: boolean;
   autoApprove: boolean;
   active?: boolean;
+  dispatchApprovalRequired?: boolean;
 };
 
 export type GoalSpend = {

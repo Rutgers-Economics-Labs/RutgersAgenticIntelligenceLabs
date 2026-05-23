@@ -33,6 +33,9 @@ async def resolve_question(
     The main entry point for resolving an agent's question.
     Returns a dict with 'answer', 'tier', and 'status'.
     """
+    import hashlib
+    question_id = hashlib.sha256(f"{session_id}:{question}".encode("utf-8")).hexdigest()
+
     project = await planner_service.get_project_by_slug(project_slug)
     root = planner_service.project_root_from_record(project)
     if not root:
@@ -46,6 +49,7 @@ async def resolve_question(
     if cached_answer:
         logger.info("Q&A: Tier 1 cache hit for question: %s", question[:50])
         return {
+            "question_id": question_id,
             "answer": cached_answer["answer"],
             "tier": 1,
             "status": "resolved",
@@ -58,8 +62,9 @@ async def resolve_question(
     
     if llm_response["confidence"] >= 0.7:
         answer = llm_response["answer"]
-        _log_qa(qa_log_path, session_id, question, answer, tier=2)
+        _log_qa(qa_log_path, session_id, question, answer, tier=2, question_id=question_id)
         return {
+            "question_id": question_id,
             "answer": answer,
             "tier": 2,
             "status": "resolved",
@@ -67,8 +72,9 @@ async def resolve_question(
 
     # 3. Tier 3: Human Escalation
     logger.info("Q&A: Tier 2 uncertain, escalating to Tier 3 (Human)")
-    _log_qa(qa_log_path, session_id, question, None, tier=3, status="pending")
+    _log_qa(qa_log_path, session_id, question, None, tier=3, status="pending", question_id=question_id)
     return {
+        "question_id": question_id,
         "answer": "I am unsure and have escalated this to the project operator. Please wait or proceed with other tasks if possible.",
         "tier": 3,
         "status": "pending",
@@ -193,8 +199,14 @@ def _log_qa(
     answer: str | None,
     tier: int,
     status: str = "resolved",
+    question_id: str | None = None,
 ):
+    if not question_id:
+        import hashlib
+        question_id = hashlib.sha256(f"{session_id}:{question}".encode("utf-8")).hexdigest()
+
     entry = {
+        "question_id": question_id,
         "session_id": session_id,
         "question": question,
         "answer": answer,
@@ -210,5 +222,15 @@ def _log_qa(
         except Exception:
             pass
     
-    log.append(entry)
+    # Overwrite if exists
+    updated = False
+    for i, item in enumerate(log):
+        if item.get("question_id") == question_id:
+            log[i] = entry
+            updated = True
+            break
+            
+    if not updated:
+        log.append(entry)
+        
     qa_log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")

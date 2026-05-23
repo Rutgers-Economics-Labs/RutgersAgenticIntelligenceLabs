@@ -3,6 +3,7 @@ import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
 import { fetchRunnerSession, fetchRunnerSessionDetail } from "@/lib/api";
 import { RunnerLiveEvents } from "@/components/runner-live-events";
+import { WorkOrderInspector } from "@/components/work-order-inspector";
 import Link from "next/link";
 
 // ── Timeline row renderers ────────────────────────────────────────────
@@ -305,7 +306,7 @@ export default async function RunDetailPage({
     session = simple ?? { sessionId, title: "Session", status: "queued", timeline: [], runner: "unknown" };
   }
   const timeline: any[] = session.timeline ?? [];
-  const tabs = ["summary", "live", "timeline", "files", "commands", "sources", "decisions"];
+  const tabs = ["summary", "live", "timeline", "observability", "files", "commands", "sources", "decisions"];
 
   function tabHref(name: string) {
     return `/projects/${slug}/runs/${sessionId}?tab=${name}`;
@@ -421,6 +422,12 @@ export default async function RunDetailPage({
           ) : (
             timeline.map((row: any) => <TimelineRow key={row.id ?? row.timestamp} row={row} />)
           )
+        )}
+
+        {tab === "observability" && (
+          <div style={{ padding: "12px 0" }}>
+            <WorkOrderInspector sessionId={sessionId} slug={slug} inline />
+          </div>
         )}
 
         {tab === "files" && (

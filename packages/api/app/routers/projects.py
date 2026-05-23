@@ -165,6 +165,7 @@ class PlannerTaskRequest(BaseModel):
 class AutopilotRequest(BaseModel):
     enabled: bool
     autoApprove: bool = False
+    dispatchApprovalRequired: bool = False
 
 
 class GoalSpendRequest(BaseModel):
@@ -3411,8 +3412,8 @@ async def toggle_autopilot(
 ):
     from app.services import autopilot_service
     if data.enabled:
-        background_tasks.add_task(autopilot_service.start_autopilot, slug, data.autoApprove)
-        return {"status": "started", "slug": slug, "autoApprove": data.autoApprove}
+        background_tasks.add_task(autopilot_service.start_autopilot, slug, data.autoApprove, data.dispatchApprovalRequired)
+        return {"status": "started", "slug": slug, "autoApprove": data.autoApprove, "dispatchApprovalRequired": data.dispatchApprovalRequired}
     else:
         await autopilot_service.stop_autopilot(slug)
         return {"status": "stopped", "slug": slug}
@@ -3425,7 +3426,194 @@ async def get_autopilot_status(slug: str):
         "enabled": snapshot["desired_enabled"],
         "active": snapshot["active"],
         "autoApprove": snapshot["auto_approve"],
+        "dispatchApprovalRequired": snapshot.get("dispatch_approval_required", False),
     }
+
+
+@router.get("/{slug}/planner/decisions")
+async def get_planner_decisions(slug: str, limit: int = 50):
+    import json
+    project = await planner_service.get_project_by_slug(slug)
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        return []
+    
+    decisions_path = Path(local_path) / "research_plan" / "planner_decisions.jsonl"
+    if not decisions_path.exists():
+        return []
+    
+    decisions = []
+    try:
+        with open(decisions_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        decisions.append(json.loads(line))
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.warning("Failed to read planner_decisions.jsonl: %s", e)
+        return []
+
+    return decisions[::-1][:limit]
+
+
+class AnswerQaRequest(BaseModel):
+    answer: str
+
+
+@router.get("/{slug}/qa/pending")
+async def get_pending_qa(slug: str):
+    import json
+    project = await planner_service.get_project_by_slug(slug)
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        return []
+    
+    from app.services.planner_answer_service import QA_LOG_REL_PATH
+    qa_path = Path(local_path) / QA_LOG_REL_PATH
+    if not qa_path.exists():
+        return []
+    
+    try:
+        log = json.loads(qa_path.read_text(encoding="utf-8"))
+        return [entry for entry in log if entry.get("status") in {"pending", "awaiting_human"}]
+    except Exception as e:
+        logger.warning("Failed to load Q&A log: %s", e)
+        return []
+
+
+@router.post("/{slug}/qa/{question_id}/answer")
+async def answer_question(slug: str, question_id: str, data: AnswerQaRequest):
+    import json
+    import datetime
+    project = await planner_service.get_project_by_slug(slug)
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        raise HTTPException(status_code=400, detail="Project lacks a local repo path")
+    
+    from app.services.planner_answer_service import QA_LOG_REL_PATH
+    qa_path = Path(local_path) / QA_LOG_REL_PATH
+    if not qa_path.exists():
+        raise HTTPException(status_code=404, detail="Q&A log not found")
+        
+    try:
+        log = json.loads(qa_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read Q&A log: {e}")
+        
+    target_entry = None
+    for entry in log:
+        if entry.get("question_id") == question_id:
+            target_entry = entry
+            break
+            
+    if not target_entry:
+        raise HTTPException(status_code=404, detail=f"Question {question_id} not found")
+        
+    target_entry["answer"] = data.answer
+    target_entry["status"] = "resolved"
+    target_entry["timestamp"] = datetime.datetime.now(datetime.UTC).isoformat() + "Z"
+    qa_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
+    
+    session_id = target_entry.get("session_id")
+    if session_id:
+        agent_session = await running_agent_service.get_running_agent(session_id)
+        if agent_session:
+            from app.runners.base import RunnerEvent, RunnerEventType
+            from app.services.convex_client import convex
+            import time
+            
+            event = RunnerEvent(
+                event_type=RunnerEventType.PROGRESS,
+                session_id=session_id,
+                normalized_payload={
+                    "message": f"Q&A Resolved: {data.answer}",
+                    "question": target_entry.get("question"),
+                    "answer": data.answer,
+                    "status": "resolved"
+                },
+                raw_payload=target_entry,
+            )
+            await convex.mutation(
+                "runnerEvents:append",
+                {
+                    "agentSessionId": agent_session["_id"],
+                    **event.to_convex_dict(),
+                    "createdAt": int(time.time() * 1000),
+                }
+            )
+            await running_agent_service.update_running_agent(session_id, status="running")
+            
+    return {"status": "resolved", "question_id": question_id}
+
+
+class ApproveDispatchRequest(BaseModel):
+    edits: dict[str, Any] | None = None
+
+
+class RejectDispatchRequest(BaseModel):
+    reason: str
+
+
+@router.get("/{slug}/dispatches/pending")
+async def get_pending_dispatches(slug: str):
+    import json
+    project = await planner_service.get_project_by_slug(slug)
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        return []
+    
+    pending_dir = Path(local_path) / "research_plan" / "pending_dispatch"
+    if not pending_dir.exists():
+        return []
+        
+    dispatches = []
+    for f in pending_dir.glob("*.json"):
+        try:
+            dispatches.append(json.loads(f.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    return dispatches
+
+
+@router.post("/{slug}/dispatches/{wo_id}/approve")
+async def approve_pending_dispatch_route(slug: str, wo_id: str, data: ApproveDispatchRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        raise HTTPException(status_code=400, detail="Project lacks a local repo path")
+        
+    from app.runners import session_lifecycle
+    try:
+        res = await session_lifecycle.resume_pending_dispatch(
+            project_root=Path(local_path),
+            work_order_id=wo_id,
+            edits=data.edits,
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{slug}/dispatches/{wo_id}/reject")
+async def reject_pending_dispatch_route(slug: str, wo_id: str, data: RejectDispatchRequest):
+    project = await planner_service.get_project_by_slug(slug)
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        raise HTTPException(status_code=400, detail="Project lacks a local repo path")
+        
+    from app.runners import session_lifecycle
+    try:
+        await session_lifecycle.reject_pending_dispatch(
+            project_root=Path(local_path),
+            work_order_id=wo_id,
+            reason=data.reason,
+        )
+        return {"status": "rejected", "work_order_id": wo_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/{slug}/autopilot/kill")

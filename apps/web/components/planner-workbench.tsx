@@ -13,8 +13,12 @@ import {
   fetchPlannerBoard,
   toggleProjectAutopilot,
   updatePlannerTask,
+  fetchPendingDispatches,
+  approvePendingDispatch,
+  rejectPendingDispatch,
 } from "@/lib/api";
 import { AutopilotStatus, GoalBundle, PlannerApproval, PlannerBoard, PlannerTask, PlannerTaskDraft } from "@/lib/types";
+import { PlannerDecisionFeed } from "./planner-decision-feed";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -390,7 +394,7 @@ function TaskDraftPanel({
 
 export function PlannerWorkbench({ slug }: { slug: string }) {
   const [board, setBoard] = useState<PlannerBoard | null>(null);
-  const [autopilot, setAutopilot] = useState<AutopilotStatus>({ enabled: false, autoApprove: false });
+  const [autopilot, setAutopilot] = useState<AutopilotStatus>({ enabled: false, autoApprove: false, dispatchApprovalRequired: false });
   const [goal, setGoal] = useState<GoalBundle | null>(null);
   const [draft, setDraft] = useState<PlannerTaskDraft>(blankDraft());
   const [loading, setLoading] = useState(true);
@@ -400,18 +404,21 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
   const [plannerPrompt, setPlannerPrompt] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [sendingPrompt, setSendingPrompt] = useState(false);
+  const [pendingDispatches, setPendingDispatches] = useState<any[]>([]);
 
   async function load() {
     try {
       setError(null);
-      const [nextBoard, nextAutopilot, nextGoal] = await Promise.all([
+      const [nextBoard, nextAutopilot, nextGoal, nextDispatches] = await Promise.all([
         fetchPlannerBoard(slug),
         fetchAutopilotStatus(slug),
         fetchProjectGoal(slug).catch(() => null),
+        fetchPendingDispatches(slug).catch(() => []),
       ]);
       setBoard(nextBoard);
       setAutopilot(nextAutopilot);
       setGoal(nextGoal);
+      setPendingDispatches(nextDispatches);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load planner state");
     } finally {
@@ -438,9 +445,21 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
     return "";
   }, [chatMessages]);
 
-  async function handleAutopilot(nextEnabled: boolean, nextAutoApprove = autopilot.autoApprove) {
-    await toggleProjectAutopilot(slug, { enabled: nextEnabled, autoApprove: nextAutoApprove });
-    setAutopilot({ enabled: nextEnabled, autoApprove: nextAutoApprove });
+  async function handleAutopilot(
+    nextEnabled: boolean,
+    nextAutoApprove = autopilot.autoApprove,
+    nextDispatchApprovalRequired = autopilot.dispatchApprovalRequired
+  ) {
+    await toggleProjectAutopilot(slug, {
+      enabled: nextEnabled,
+      autoApprove: nextAutoApprove,
+      dispatchApprovalRequired: nextDispatchApprovalRequired,
+    });
+    setAutopilot({
+      enabled: nextEnabled,
+      autoApprove: nextAutoApprove,
+      dispatchApprovalRequired: nextDispatchApprovalRequired,
+    });
     await load();
   }
 
@@ -626,6 +645,20 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
                   >
                     auto-approve: {autopilot.autoApprove ? "on" : "off"}
                   </button>
+                  <button
+                    onClick={() => handleAutopilot(autopilot.enabled, autopilot.autoApprove, !autopilot.dispatchApprovalRequired)}
+                    style={{
+                      border: "1px solid var(--border)",
+                      background: autopilot.dispatchApprovalRequired ? "var(--fg)" : "var(--bg)",
+                      color: autopilot.dispatchApprovalRequired ? "var(--bg)" : "var(--fg)",
+                      padding: "5px 10px",
+                      fontFamily: "JetBrains Mono, monospace",
+                      fontSize: 10,
+                      cursor: "pointer",
+                    }}
+                  >
+                    hold-dispatches: {autopilot.dispatchApprovalRequired ? "on" : "off"}
+                  </button>
                 </div>
               </div>
 
@@ -763,6 +796,24 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
 
             <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
               <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+                <span className="rail-label">Pending Dispatches Queue</span>
+              </div>
+              <div style={{ padding: 14 }}>
+                <PendingDispatchesQueue slug={slug} dispatches={pendingDispatches} onRefresh={load} />
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
+                <span className="rail-label">Recent Planner Decisions</span>
+              </div>
+              <div style={{ padding: 14 }}>
+                <PlannerDecisionFeed slug={slug} />
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
                 <span className="rail-label">Planner Diagnostics</span>
               </div>
               <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -817,5 +868,213 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
         )}
       </div>
     </ProjectShell>
+  );
+}
+
+
+function PendingDispatchesQueue({
+  slug,
+  dispatches,
+  onRefresh,
+}: {
+  slug: string;
+  dispatches: any[];
+  onRefresh: () => void;
+}) {
+  const [editingWoId, setEditingWoId] = useState<string | null>(null);
+  const [jsonText, setJsonText] = useState("");
+  const [rejectionReasons, setRejectionReasons] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState<string | null>(null);
+
+  async function handleApprove(woId: string) {
+    setSubmitting(woId);
+    try {
+      let edits = undefined;
+      if (editingWoId === woId) {
+        edits = JSON.parse(jsonText);
+      }
+      await approvePendingDispatch(slug, woId, edits);
+      setEditingWoId(null);
+      onRefresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to approve dispatch");
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function handleReject(woId: string) {
+    const reason = rejectionReasons[woId] || "Rejected by operator";
+    setSubmitting(woId);
+    try {
+      await rejectPendingDispatch(slug, woId, reason);
+      onRefresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to reject dispatch");
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+      {dispatches.length === 0 ? (
+        <div style={{ color: "var(--muted)", fontSize: "12px", fontStyle: "italic" }}>
+          No pending dispatches held in queue.
+        </div>
+      ) : (
+        dispatches.map((disp) => {
+          const wo = disp.task_payload;
+          const woId = disp.task_payload?.work_order_id;
+          const isEditing = editingWoId === woId;
+
+          return (
+            <div
+              key={woId}
+              style={{
+                border: "1px solid var(--border)",
+                background: "var(--bg)",
+                padding: "12px",
+                borderRadius: "6px",
+                display: "flex",
+                flexDirection: "column",
+                gap: "8px",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ fontWeight: "bold", fontSize: "12px", fontFamily: "monospace", color: "var(--fg)" }}>
+                  {woId}
+                </span>
+                <span style={{ background: "rgba(255,255,255,0.08)", padding: "2px 6px", borderRadius: "4px", fontSize: "10px", color: "var(--fg-accent, #60a5fa)", fontWeight: "bold" }}>
+                  {disp.runner_name}
+                </span>
+              </div>
+
+              <div style={{ fontSize: "12px", color: "var(--muted)", lineHeight: "1.4" }}>
+                <strong>Task:</strong> {wo?.task_description}
+              </div>
+
+              <div style={{ fontSize: "11px", color: "var(--muted)" }}>
+                <strong>Role:</strong> {wo?.role} | <strong>Branch:</strong> {wo?.branch}
+              </div>
+
+              {isEditing ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <span style={{ fontSize: "10px", fontWeight: "bold", color: "var(--fg-accent, #60a5fa)" }}>
+                    Edit WorkOrder JSON
+                  </span>
+                  <textarea
+                    value={jsonText}
+                    onChange={(e) => setJsonText(e.target.value)}
+                    rows={8}
+                    style={{
+                      width: "100%",
+                      fontFamily: "monospace",
+                      fontSize: "11px",
+                      background: "rgba(0,0,0,0.2)",
+                      color: "#fff",
+                      border: "1px solid var(--border)",
+                      borderRadius: "4px",
+                      padding: "6px",
+                      resize: "vertical",
+                    }}
+                  />
+                  <div style={{ display: "flex", gap: "6px" }}>
+                    <button
+                      onClick={() => setEditingWoId(null)}
+                      style={{
+                        padding: "4px 8px",
+                        fontSize: "10px",
+                        background: "none",
+                        border: "1px solid var(--border)",
+                        color: "var(--fg)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel Edit
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    setEditingWoId(woId);
+                    setJsonText(JSON.stringify(disp.task_payload, null, 2));
+                  }}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: "var(--fg-accent, #60a5fa)",
+                    cursor: "pointer",
+                    fontSize: "11px",
+                    textDecoration: "underline",
+                    textAlign: "left",
+                    padding: 0,
+                  }}
+                >
+                  Edit WorkOrder JSON
+                </button>
+              )}
+
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginTop: "4px" }}>
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button
+                    onClick={() => handleApprove(woId)}
+                    disabled={submitting === woId}
+                    style={{
+                      flex: 1,
+                      background: "var(--fg)",
+                      color: "var(--bg)",
+                      border: "none",
+                      padding: "6px 8px",
+                      fontSize: "11px",
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                      borderRadius: "4px",
+                    }}
+                  >
+                    {submitting === woId ? "Dispatching..." : "Approve & Dispatch"}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                  <input
+                    placeholder="Rejection reason..."
+                    value={rejectionReasons[woId] || ""}
+                    onChange={(e) => setRejectionReasons({ ...rejectionReasons, [woId]: e.target.value })}
+                    style={{
+                      flex: 1,
+                      background: "var(--bg)",
+                      border: "1px solid var(--border)",
+                      color: "var(--fg)",
+                      padding: "4px 8px",
+                      fontSize: "11px",
+                      borderRadius: "4px",
+                      outline: "none",
+                    }}
+                  />
+                  <button
+                    onClick={() => handleReject(woId)}
+                    disabled={submitting === woId}
+                    style={{
+                      background: "rgba(239, 68, 68, 0.15)",
+                      color: "#f87171",
+                      border: "1px solid #ef4444",
+                      padding: "4px 8px",
+                      fontSize: "11px",
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                      borderRadius: "4px",
+                    }}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
   );
 }

@@ -166,7 +166,13 @@ def _record_goal_gate_failure(
     )
 
 
-async def _persist_autopilot_state(project_slug: str, *, enabled: bool, auto_approve: bool | None = None) -> None:
+async def _persist_autopilot_state(
+    project_slug: str,
+    *,
+    enabled: bool,
+    auto_approve: bool | None = None,
+    dispatch_approval_required: bool | None = None,
+) -> None:
     try:
         project = await planner_service.get_project_by_slug(project_slug)
     except Exception as exc:
@@ -182,20 +188,33 @@ async def _persist_autopilot_state(project_slug: str, *, enabled: bool, auto_app
         payload: dict[str, Any] = {"enabled": enabled}
         if auto_approve is not None:
             payload["autoApprove"] = auto_approve
+        if dispatch_approval_required is not None:
+            payload["dispatchApprovalRequired"] = dispatch_approval_required
         state_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     except Exception as exc:
         logger.warning("Failed to persist autopilot state for %s: %s", project_slug, exc)
 
 
-async def _disable_autopilot_desired_state(project_slug: str, *, auto_approve: bool | None = None) -> None:
+async def _disable_autopilot_desired_state(
+    project_slug: str,
+    *,
+    auto_approve: bool | None = None,
+    dispatch_approval_required: bool | None = None,
+) -> None:
     _update_config(project_slug, desired_enabled=False)
-    await _persist_autopilot_state(project_slug, enabled=False, auto_approve=auto_approve)
+    await _persist_autopilot_state(
+        project_slug,
+        enabled=False,
+        auto_approve=auto_approve,
+        dispatch_approval_required=dispatch_approval_required,
+    )
 
 
 async def ensure_autopilot_running(project_slug: str) -> dict[str, Any]:
     """Revive a desired autopilot loop if the process forgot it or it exited."""
     desired_enabled = _desired_autopilot_enabled(project_slug)
     auto_approve = bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False))
+    dispatch_approval_required = bool(_autopilot_configs.get(project_slug, {}).get("dispatch_approval_required", False))
     try:
         project = await planner_service.get_project_by_slug(project_slug)
     except Exception as exc:
@@ -203,6 +222,7 @@ async def ensure_autopilot_running(project_slug: str) -> dict[str, Any]:
         return {
             "desired_enabled": desired_enabled,
             "auto_approve": auto_approve,
+            "dispatch_approval_required": dispatch_approval_required,
             "active": is_autopilot_active(project_slug),
         }
     local_repo_path = str(project.get("localRepoPath") or "").strip()
@@ -214,20 +234,28 @@ async def ensure_autopilot_running(project_slug: str) -> dict[str, Any]:
             if isinstance(payload, dict):
                 desired_enabled = bool(payload.get("enabled", desired_enabled))
                 auto_approve = bool(payload.get("autoApprove", auto_approve))
+                dispatch_approval_required = bool(payload.get("dispatchApprovalRequired", dispatch_approval_required))
         except FileNotFoundError:
             pass
         except Exception as exc:
             logger.warning("Failed to read persisted autopilot state for %s: %s", project_slug, exc)
     desired_enabled = bool(project.get("autopilotEnabled", desired_enabled))
     auto_approve = bool(project.get("autopilotAutoApprove", auto_approve))
-    _update_config(project_slug, desired_enabled=desired_enabled, auto_approve=auto_approve)
+    dispatch_approval_required = bool(project.get("autopilotDispatchApprovalRequired", dispatch_approval_required))
+    _update_config(
+        project_slug,
+        desired_enabled=desired_enabled,
+        auto_approve=auto_approve,
+        dispatch_approval_required=dispatch_approval_required,
+    )
     active = is_autopilot_active(project_slug)
     if desired_enabled and not active:
         logger.info("Reviving desired autopilot loop for %s", project_slug)
-        asyncio.create_task(start_autopilot(project_slug, auto_approve))
+        asyncio.create_task(start_autopilot(project_slug, auto_approve, dispatch_approval_required))
     return {
         "desired_enabled": desired_enabled,
         "auto_approve": auto_approve,
+        "dispatch_approval_required": dispatch_approval_required,
         "active": active,
     }
 
@@ -1819,7 +1847,7 @@ async def _closeout_gate(project: dict[str, Any], tasks: list[dict[str, Any]]) -
 
     return {"blocked": False, "reason": None}
 
-async def start_autopilot(project_slug: str, auto_approve: bool = False):
+async def start_autopilot(project_slug: str, auto_approve: bool = False, dispatch_approval_required: bool = False):
     """
     Starts the autopilot loop for a project if not already running.
     """
@@ -1833,8 +1861,18 @@ async def start_autopilot(project_slug: str, auto_approve: bool = False):
         )
         return
 
-    _update_config(project_slug, auto_approve=auto_approve, desired_enabled=True)
-    await _persist_autopilot_state(project_slug, enabled=True, auto_approve=auto_approve)
+    _update_config(
+        project_slug,
+        auto_approve=auto_approve,
+        dispatch_approval_required=dispatch_approval_required,
+        desired_enabled=True,
+    )
+    await _persist_autopilot_state(
+        project_slug,
+        enabled=True,
+        auto_approve=auto_approve,
+        dispatch_approval_required=dispatch_approval_required,
+    )
 
     if _active_autopilots.get(project_slug):
         logger.info(f"Autopilot already running for {project_slug}")
