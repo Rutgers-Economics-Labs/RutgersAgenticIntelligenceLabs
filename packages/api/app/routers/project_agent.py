@@ -572,7 +572,10 @@ async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:
 
     if name == "get_recent_jobs":
         limit = min(args.get("limit", 5), 20)
-        jobs = await convex.query("jobs:listByProject", {"projectId": project_id, "limit": limit})
+        jobs = await convex.query(
+            "jobs:listByProject",
+            {"projectSlug": await _resolve_project_slug(project_id), "limit": limit},
+        )
         if not jobs:
             return {"jobs": []}
         return {"jobs": [

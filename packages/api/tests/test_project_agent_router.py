@@ -165,3 +165,32 @@ async def test_save_to_knowledge_base_uses_project_slug_for_local_project(monkey
     assert "projectId" not in captured["payload"]
     assert "createdAt" not in captured["payload"]
     assert "updatedAt" not in captured["payload"]
+
+
+async def test_get_recent_jobs_uses_project_slug_for_local_project(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def _query(path: str, payload: dict):
+        if path in {"projects:getById", "projects:get"}:
+            return None
+        if path == "jobs:listByProject":
+            captured["payload"] = payload
+            return [{"_id": "job-1", "status": "success", "createdAt": 123, "stepResults": []}]
+        raise AssertionError(path)
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {"_id": "local:demo-project", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(project_agent_router.convex, "query", _query)
+    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    result = await project_agent_router._execute_project_tool(
+        "get_recent_jobs",
+        {"limit": 3},
+        "local:demo-project",
+    )
+
+    assert captured["payload"] == {"projectSlug": "demo-project", "limit": 3}
+    assert result["jobs"][0]["jobId"] == "job-1"
