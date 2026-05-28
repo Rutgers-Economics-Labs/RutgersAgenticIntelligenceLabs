@@ -1,21 +1,20 @@
 import {
   AutopilotStatus,
-  CommandCenter,
   CatalogActivationResponse,
   DashboardResponse,
   GoalBundle,
   HydrationStatus,
   HydrationRerunResponse,
+  IntegrityRerunPlan,
   OntologyClassesResponse,
-  PlannerBoard,
+  PlannerDecision,
   PlannerHome,
   PlannerTaskDraft,
+  PendingDispatch,
+  PendingQuestion,
   ProjectCatalogResponse,
   ProjectArtifact,
-  ProjectApprovals,
-  ProjectContext,
   ProjectIntegrityResponse,
-  IntegrityRerunPlan,
   ProjectSkill,
   ProjectSource,
   ResearchLaunchPayload,
@@ -56,10 +55,6 @@ export async function fetchZenMode(slug: string): Promise<ZenResponse> {
   return getJson<ZenResponse>(`/projects/${slug}/zen`);
 }
 
-export async function fetchCommandCenter(slug: string): Promise<CommandCenter> {
-  return getJson<CommandCenter>(`/projects/${slug}/command-center`);
-}
-
 export async function reconcileCommandCenter(slug: string): Promise<{
   removedTaskFiles: string[];
   updatedTaskIds: string[];
@@ -98,18 +93,6 @@ export async function activateCatalogProject(slug: string, clone = false): Promi
 
 export async function fetchPlannerHome(slug: string): Promise<PlannerHome> {
   return getJson<PlannerHome>(`/projects/${slug}/planner/home`);
-}
-
-export async function fetchPlannerBoard(slug: string): Promise<PlannerBoard> {
-  return getJson<PlannerBoard>(`/projects/${slug}/planner/board`);
-}
-
-export async function fetchAutopilotStatus(slug: string): Promise<AutopilotStatus> {
-  return getJson<AutopilotStatus>(`/projects/${slug}/autopilot/status`);
-}
-
-export async function fetchProjectGoal(slug: string): Promise<GoalBundle> {
-  return getJson<GoalBundle>(`/projects/${slug}/goal`);
 }
 
 export async function configureProjectGoal(
@@ -182,23 +165,8 @@ export async function cancelRunnerSession(
   return postJson(`/runners/${runner}/sessions/${sessionId}/cancel`, {});
 }
 
-export async function fetchProjectReality(slug: string): Promise<{
-  staleRuntimeSessionIds?: string[];
-  zombieSessionIds?: string[];
-  details?: {
-    staleRuntimeSessionIds?: string[];
-    zombieSessionIds?: string[];
-  };
-} & Record<string, unknown>> {
-  return getJson(`/projects/${slug}/reality`);
-}
-
 export async function fetchRunnerSessionDetail(slug: string, sessionId: string): Promise<RunnerSessionDetail> {
   return getJson(`/projects/${slug}/runner/sessions/${sessionId}/detail`);
-}
-
-export async function fetchProjectContext(slug: string): Promise<ProjectContext> {
-  return getJson(`/projects/${slug}/context`);
 }
 
 export async function fetchHydrationStatus(slug: string): Promise<HydrationStatus> {
@@ -239,10 +207,6 @@ export type HydrationJob = {
 
 export async function fetchHydrationJob(jobId: string): Promise<HydrationJob> {
   return getJson<HydrationJob>(`/jobs/${encodeURIComponent(jobId)}`);
-}
-
-export async function fetchProjectApprovals(slug: string): Promise<ProjectApprovals> {
-  return getJson(`/projects/${slug}/approvals`);
 }
 
 export async function fetchProjectSkills(slug: string): Promise<{ skills: ProjectSkill[]; summary: Record<string, unknown> }> {
@@ -540,20 +504,20 @@ export async function fetchSessionResult(sessionId: string, slug: string): Promi
   return getJson<SessionResult>(`/runners/sessions/${encodeURIComponent(sessionId)}/result?project_slug=${encodeURIComponent(slug)}`);
 }
 
-export async function fetchPlannerDecisions(slug: string, limit = 50): Promise<any[]> {
-  return getJson<any[]>(`/projects/${encodeURIComponent(slug)}/planner/decisions?limit=${limit}`);
+export async function fetchPlannerDecisions(slug: string, limit = 50): Promise<PlannerDecision[]> {
+  return getJson<PlannerDecision[]>(`/projects/${encodeURIComponent(slug)}/planner/decisions?limit=${limit}`);
 }
 
-export async function fetchPendingQa(slug: string): Promise<any[]> {
-  return getJson<any[]>(`/projects/${encodeURIComponent(slug)}/qa/pending`);
+export async function fetchPendingQa(slug: string): Promise<PendingQuestion[]> {
+  return getJson<PendingQuestion[]>(`/projects/${encodeURIComponent(slug)}/qa/pending`);
 }
 
 export async function answerPendingQuestion(slug: string, questionId: string, answer: string): Promise<any> {
   return postJson(`/projects/${encodeURIComponent(slug)}/qa/${encodeURIComponent(questionId)}/answer`, { answer });
 }
 
-export async function fetchPendingDispatches(slug: string): Promise<any[]> {
-  return getJson<any[]>(`/projects/${encodeURIComponent(slug)}/dispatches/pending`);
+export async function fetchPendingDispatches(slug: string): Promise<PendingDispatch[]> {
+  return getJson<PendingDispatch[]>(`/projects/${encodeURIComponent(slug)}/dispatches/pending`);
 }
 
 export async function approvePendingDispatch(slug: string, woId: string, edits?: any): Promise<any> {

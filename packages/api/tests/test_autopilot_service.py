@@ -3506,6 +3506,8 @@ def test_repair_stale_active_sessions_finalizes_runtime_rows(tmp_path: Path, mon
 
 
 def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
     project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
 
     monkeypatch.setattr(reconciliation_service.planner_service, "reconcile_task_files", lambda project_arg: asyncio.sleep(0, result={"removed": ["research_plan/tasks/old.md"]}))
@@ -3517,6 +3519,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
     monkeypatch.setattr(reconciliation_service, "repair_running_agent_role_drift", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-role"]}))
     monkeypatch.setattr(reconciliation_service, "repair_running_agent_runner_drift", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-runner"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_active_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-1"]}))
+    monkeypatch.setattr(reconciliation_service, "repair_zombie_sessions", lambda project_arg: asyncio.sleep(0, result={"repairedSessionIds": ["sess-zombie"]}))
     monkeypatch.setattr(reconciliation_service, "repair_stale_session_audits", lambda project_arg, project_root: asyncio.sleep(0, result={"repairedSessionIds": ["sess-2"]}))
     monkeypatch.setattr(
         reconciliation_service,
@@ -3525,6 +3528,11 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
             0,
             result={"repaired": True, "previousDuckdbPath": "/tmp/old.duckdb", "nextDuckdbPath": "/tmp/new.duckdb"},
         ),
+    )
+    monkeypatch.setattr(
+        command_center_service,
+        "persist_control_plane_snapshot",
+        lambda project_arg: asyncio.sleep(0, result={"path": "research_plan/state/control_plane_snapshot.json", "generatedAt": 123}),
     )
 
     result = asyncio.run(reconciliation_service.reconcile_project_reality(project))
@@ -3538,15 +3546,55 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
         "repairedRunningAgentStatusSessionIds": ["sess-legacy"],
         "repairedRunningAgentRoleSessionIds": ["sess-role"],
         "repairedRunningAgentRunnerSessionIds": ["sess-runner"],
-        "repairedSessionIds": ["sess-1"],
+        "repairedSessionIds": ["sess-1", "sess-zombie"],
         "repairedAuditSessionIds": ["sess-2"],
         "repairedOntologyArtifact": {
             "repaired": True,
             "previousDuckdbPath": "/tmp/old.duckdb",
             "nextDuckdbPath": "/tmp/new.duckdb",
         },
+        "persistedControlPlaneSnapshot": {
+            "path": "research_plan/state/control_plane_snapshot.json",
+            "generatedAt": 123,
+        },
         "hasChanges": True,
     }
+
+
+def test_build_project_control_plane_status_prefers_repo_snapshot(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    snapshot_payload = {
+        "snapshotVersion": command_center_service.CONTROL_PLANE_SNAPSHOT_VERSION,
+        "generatedAt": 1234567890,
+        "commandCenter": {
+            "projectReality": {"hasDrift": True, "taskSessionMismatchCount": 2},
+            "auditors": {"session": {"status": "blocked"}, "planner": {"status": "ready"}},
+        },
+    }
+    snapshot_path = tmp_path / "research_plan" / "state" / "control_plane_snapshot.json"
+    snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+    snapshot_path.write_text(__import__("json").dumps(snapshot_payload, indent=2), encoding="utf-8")
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, active_only=True, limit=50: asyncio.sleep(0, result=[{"_id": "sess-1", "status": "running"}]),
+    )
+
+    async def _unexpected_project_reality_status(*args, **kwargs):
+        raise AssertionError("project_reality_status should not run when repo snapshot is loaded")
+
+    monkeypatch.setattr(reconciliation_service, "project_reality_status", _unexpected_project_reality_status)
+
+    result = asyncio.run(reconciliation_service.build_project_control_plane_status(project))
+
+    assert result["reality"]["hasDrift"] is True
+    assert result["reality"]["taskSessionMismatchCount"] == 2
+    assert result["auditors"]["session"]["status"] == "blocked"
+    assert result["lane"]["available"] is False
+    assert result["snapshot"]["loaded"] is True
 
 
 def test_project_reality_status_reports_drift_counts(tmp_path: Path, monkeypatch):

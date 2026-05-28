@@ -18,8 +18,11 @@ async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any
     project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
     if not project_root or not project_root.exists():
         return {"repairedSessionIds": []}
+    project_id = project.get("_id")
+    if not project_id:
+        return {"repairedSessionIds": []}
     active_sessions = await running_agent_service.list_project_running_agents(
-        project["_id"],
+        str(project_id),
         active_only=True,
         limit=50,
     )
@@ -45,8 +48,11 @@ async def detect_zombie_sessions(project: dict[str, Any]) -> list[str]:
     project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
     if not project_root or not project_root.exists():
         return []
+    project_id = project.get("_id")
+    if not project_id:
+        return []
     active_sessions = await running_agent_service.list_project_running_agents(
-        project["_id"],
+        str(project_id),
         active_only=True,
         limit=50,
     )
@@ -714,8 +720,11 @@ async def project_reality_status(
 
 async def build_project_control_plane_status(project: dict[str, Any]) -> dict[str, Any]:
     """Read-only snapshot for API/UI: drift summary, lane policy, and auditor gates."""
+    from app.services import command_center_service
     from app.services.auditor_service import build_auditor_statuses
 
+    projection = command_center_service.load_control_plane_summary(project)
+    cached_center = projection["summary"]
     active_sessions = []
     project_id = project.get("_id")
     if project_id:
@@ -724,7 +733,6 @@ async def build_project_control_plane_status(project: dict[str, Any]) -> dict[st
             active_only=True,
             limit=50,
         )
-    reality = await project_reality_status(project, active_sessions=active_sessions)
     lane: dict[str, Any] = {
         "available": len(active_sessions) == 0,
         "policy": "unknown",
@@ -738,6 +746,16 @@ async def build_project_control_plane_status(project: dict[str, Any]) -> dict[st
             lane = check_lane_availability(manifest, len(active_sessions))
         except Exception:
             pass
+
+    if projection["snapshot"]["loaded"]:
+        return {
+            "reality": cached_center.get("projectReality") or {"hasDrift": False},
+            "lane": lane,
+            "auditors": cached_center.get("auditors") or {},
+            "snapshot": projection["snapshot"],
+        }
+
+    reality = await project_reality_status(project, active_sessions=active_sessions)
     tasks = []
     if project_id:
         try:
@@ -750,6 +768,12 @@ async def build_project_control_plane_status(project: dict[str, Any]) -> dict[st
         "reality": reality,
         "lane": lane,
         "auditors": auditors,
+        "snapshot": {
+            "loaded": False,
+            "path": command_center_service.CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH,
+            "generatedAt": None,
+            "version": command_center_service.CONTROL_PLANE_SNAPSHOT_VERSION,
+        },
     }
 
 
@@ -766,6 +790,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     repaired_running_agent_runner_session_ids: list[str] = []
     repaired_audit_session_ids: list[str] = []
     repaired_ontology_artifact: dict[str, Any] | None = None
+    persisted_control_plane_snapshot: dict[str, Any] | None = None
 
     removed_task_files = list((await planner_service.reconcile_task_files(project)).get("removed") or [])
     updated_task_ids = list((await planner_service.reconcile_task_session_states(project)).get("updated") or [])
@@ -803,6 +828,14 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     if ontology_repair.get("repaired"):
         repaired_ontology_artifact = ontology_repair
 
+    if root is not None and root.exists():
+        try:
+            from app.services import command_center_service
+
+            persisted_control_plane_snapshot = await command_center_service.persist_control_plane_snapshot(project)
+        except Exception:
+            persisted_control_plane_snapshot = None
+
     return {
         "removedTaskFiles": removed_task_files,
         "updatedTaskIds": updated_task_ids,
@@ -815,6 +848,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
         "repairedSessionIds": repaired_session_ids,
         "repairedAuditSessionIds": repaired_audit_session_ids,
         "repairedOntologyArtifact": repaired_ontology_artifact,
+        "persistedControlPlaneSnapshot": persisted_control_plane_snapshot,
         "hasChanges": bool(
             removed_task_files
             or updated_task_ids
@@ -827,5 +861,6 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
             or repaired_session_ids
             or repaired_audit_session_ids
             or repaired_ontology_artifact
+            or persisted_control_plane_snapshot
         ),
     }

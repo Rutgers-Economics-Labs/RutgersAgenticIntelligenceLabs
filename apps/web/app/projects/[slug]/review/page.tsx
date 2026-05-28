@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { ProjectShell } from "@/components/project-shell";
+import { PageIntro } from "@/components/page-intro";
 import { StatusPill } from "@/components/status-pill";
-import { fetchPlannerHome, fetchProjectApprovals, fetchRunnerSessions } from "@/lib/api";
+import { fetchPlannerHome } from "@/lib/api";
 
 function ReviewRightRail({ home }: { home: any }) {
   const rows = [
@@ -37,13 +38,9 @@ export default async function ReviewPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const [home, approvalsPayload, runs] = await Promise.all([
-    fetchPlannerHome(slug),
-    fetchProjectApprovals(slug),
-    fetchRunnerSessions(slug),
-  ]);
-  const approvals = approvalsPayload.approvals ?? [];
-  const reviewableSessions = (runs.sessions ?? []).filter(
+  const home = await fetchPlannerHome(slug);
+  const approvals = home.planner.approvals ?? [];
+  const reviewableSessions = (home.planner.sessions ?? []).filter(
     (s: any) => s.review?.reviewStatus || s.review?.diffPath
   );
 
@@ -54,6 +51,14 @@ export default async function ReviewPage({
       section="review"
       rightRail={<ReviewRightRail home={home} />}
     >
+      <PageIntro
+        title="Approve or reject work before it lands."
+        detail="Use Review for held dispatches and session outputs that need a human decision. If you want to change the queue itself, go back to Planner."
+        actions={[
+          { label: "Open Planner", href: `/projects/${slug}/planner` },
+          { label: "Open Sessions", href: `/projects/${slug}/runs` },
+        ]}
+      />
       {/* Approvals section */}
       <div style={{ borderBottom: "1px solid var(--border)" }}>
         <div style={{

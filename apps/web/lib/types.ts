@@ -46,6 +46,40 @@ export type PlannerApproval = {
   resolutionNote?: string | null;
 };
 
+export type PlannerDecision = {
+  tool?: string | null;
+  timestamp?: number | null;
+  rationale?: string | null;
+  result_summary?: string | null;
+  args?: Record<string, unknown> | null;
+};
+
+export type PendingQuestion = {
+  question_id?: string;
+  question?: string;
+  status?: string;
+  session_id?: string | null;
+  role?: string | null;
+};
+
+export type PendingDispatch = {
+  work_order_id?: string;
+  title?: string;
+  runner?: string | null;
+  runner_name?: string | null;
+  role?: string | null;
+  task_id?: string | null;
+  created_at?: string | null;
+  task_payload?: {
+    work_order_id?: string;
+    task_description?: string;
+    role?: string | null;
+    branch?: string | null;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+
 export type AutopilotStatus = {
   enabled: boolean;
   autoApprove: boolean;
@@ -285,19 +319,6 @@ export type RunnerSessionDetail = {
   };
 };
 
-export type ProjectContext = {
-  project: {
-    name: string;
-    slug: string;
-    status?: string | null;
-    last_hydrated?: number | null;
-  };
-  ontology?: Record<string, unknown>;
-  data_sources?: Array<Record<string, unknown>>;
-  pipelines?: Array<Record<string, unknown>>;
-  analysis_plugins?: Array<Record<string, unknown>>;
-};
-
 export type HydrationStatus = {
   state: string;
   deviceId: string;
@@ -330,6 +351,15 @@ export type ProjectCatalogItem = {
     localRepoPath?: string | null;
     status?: string | null;
   } | null;
+  progress?: {
+    closed: number;
+    total: number;
+  };
+  controlPlane?: {
+    phase?: string | null;
+    nextAction?: string | null;
+    snapshotLoaded?: boolean;
+  };
   error?: string;
 };
 
@@ -350,10 +380,6 @@ export type HydrationRerunResponse = {
   pipelineSlug: string;
   projectSlug: string;
   device?: Record<string, unknown>;
-};
-
-export type ProjectApprovals = {
-  approvals: PlannerApproval[];
 };
 
 export type RepoEntry = {
@@ -389,9 +415,24 @@ export type PlannerHome = {
     name: string;
     slug: string;
     status?: string | null;
+    description?: string | null;
+    gitRepoUrl?: string | null;
+    defaultBranch?: string | null;
+    agentModel?: string | null;
+    githubSyncMode?: string | null;
     localRepoPath?: string | null;
     manifestPath?: string | null;
   };
+  repoHealth?: {
+    hasLocalRepo?: boolean;
+    hasRailYaml?: boolean;
+    hasResearchPlan?: boolean;
+  } | null;
+  autopilot?: AutopilotStatus;
+  pendingDispatches?: PendingDispatch[];
+  pendingQuestions?: PendingQuestion[];
+  decisions?: PlannerDecision[];
+  refreshedAt?: number;
   planner: {
     threadId: string;
     messages: PlannerMessage[];
@@ -410,6 +451,56 @@ export type PlannerHome = {
     };
     sessions?: RunnerSession[];
   };
+  controlPlane?: {
+    phase?: string | null;
+    nextAction?: string | null;
+    currentBlocker?: string | null;
+    goal?: CommandCenter["goal"] | null;
+    taskCounts?: CommandCenter["taskCounts"];
+    recentArtifacts?: CommandCenter["recentArtifacts"];
+    sourceSummary?: CommandCenter["sourceSummary"];
+    skillSummary?: CommandCenter["skillSummary"];
+    integritySummary?: CommandCenter["integritySummary"];
+    projectReality?: CommandCenter["projectReality"] | null;
+    auditors?: CommandCenter["auditors"] | null;
+    blockerSummary?: CommandCenter["blockerSummary"];
+    repairQueue?: CommandCenter["repairQueue"];
+    recommendedRepairTask?: CommandCenter["recommendedRepairTask"];
+    closeoutCertificate?: CommandCenter["closeoutCertificate"] | null;
+    ontologyFollowUps?: CommandCenter["ontologyFollowUps"];
+    missionBrief?: {
+      current?: string | null;
+      next?: string | null;
+      sourceSessionId?: string | null;
+      sourceRole?: string | null;
+      sourceStatus?: string | null;
+      sourceUpdatedAt?: string | null;
+    } | null;
+    snapshot?: {
+      loaded?: boolean;
+      path?: string | null;
+      generatedAt?: number | null;
+      version?: number | null;
+    } | null;
+  };
+};
+
+export type PlannerControlPlaneSnapshot = {
+  board: PlannerBoard;
+  autopilot: AutopilotStatus;
+  goal: GoalBundle | null;
+  phase?: string | null;
+  nextAction?: string | null;
+  currentBlocker?: string | null;
+  projectReality?: CommandCenter["projectReality"];
+  auditors?: CommandCenter["auditors"];
+  closeoutCertificate?: CommandCenter["closeoutCertificate"];
+  missionBrief?: CommandCenter["missionBrief"];
+  pendingDispatches: PendingDispatch[];
+  pendingQuestions: PendingQuestion[];
+  decisions: PlannerDecision[];
+  snapshot?: CommandCenter["snapshot"];
+  refreshedAt: number;
 };
 
 export type BlockerCategory =
@@ -437,6 +528,14 @@ export type CommandCenter = {
     summary?: string;
     content?: string;
   };
+  missionBrief?: {
+    current: string;
+    next: string;
+    sourceSessionId?: string | null;
+    sourceRole?: string | null;
+    sourceStatus?: string | null;
+    sourceUpdatedAt?: string | null;
+  } | null;
   nextAction: string;
   goal?: {
     objective?: string | null;
@@ -582,6 +681,7 @@ export type CommandCenter = {
     duplicateTaskFileCount: number;
     taskSessionMismatchCount: number;
     staleRuntimeSessionCount: number;
+    zombieSessionCount?: number;
     staleAuditSessionCount: number;
     terminalSessionCount: number;
     activeRuntimeSessionCount: number;
@@ -596,6 +696,7 @@ export type CommandCenter = {
       duplicateTaskFiles: string[];
       taskSessionMismatchTaskIds: string[];
       staleRuntimeSessionIds: string[];
+      zombieSessionIds?: string[];
       staleAuditSessionIds: string[];
       terminalSessionIds: string[];
       activeRuntimeSessionIds: string[];
@@ -659,12 +760,19 @@ export type CommandCenter = {
       status: string;
       blockers?: string[];
       state?: string | null;
+      stateClassification?: string | null;
     }
   >;
   repoHealth: {
     hasLocalRepo: boolean;
     hasRailYaml: boolean;
     hasResearchPlan: boolean;
+  };
+  snapshot?: {
+    loaded?: boolean;
+    path?: string | null;
+    generatedAt?: number | null;
+    version?: number | null;
   };
   lifecyclePhase?: string;
   closeoutCertificate?: {

@@ -4,24 +4,32 @@ import httpx
 from typing import Any
 
 class CloudClient:
-    def __init__(self, base_url: str, api_key: str = ""):
+    def __init__(self, base_url: str, api_key: str = "", timeout_seconds: float = 120.0):
         self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        self.timeout_seconds = timeout_seconds
         self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
 
+    def _client(self) -> httpx.Client:
+        return httpx.Client(timeout=self.timeout_seconds)
+
     def get(self, path: str, **params) -> Any:
-        with httpx.Client() as client:
+        with self._client() as client:
             r = client.get(f"{self.base_url}{path}", params=params, headers=self.headers)
             r.raise_for_status()
             return r.json()
 
     def post(self, path: str, data: dict) -> Any:
-        with httpx.Client() as client:
+        with self._client() as client:
             r = client.post(f"{self.base_url}{path}", json=data, headers=self.headers)
             r.raise_for_status()
             return r.json()
 
     def hydrate(self, pipeline_slug: str) -> dict:
         return self.post("/jobs", {"pipeline_slug": pipeline_slug})
+
+    def reconcile_project(self, project_slug: str) -> dict:
+        return self.post(f"/projects/{project_slug}/command-center/reconcile", {})
 
     def query_sql(self, sql: str) -> dict:
         return self.post("/sql", {"query": sql})
@@ -62,8 +70,7 @@ class CloudClient:
         return self.post(f"/projects/{project_slug}/settings/secrets", {"keyName": key, "plaintextValue": value})
 
     def delete_secret(self, project_slug: str, key: str) -> dict:
-        import httpx
-        with httpx.Client() as client:
+        with self._client() as client:
             r = client.delete(f"{self.base_url}/projects/{project_slug}/settings/secrets/{key}", headers=self.headers)
             r.raise_for_status()
             return r.json()
