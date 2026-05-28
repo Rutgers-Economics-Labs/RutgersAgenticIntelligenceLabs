@@ -86,6 +86,16 @@ from app.services.autonomy_policy import activity_key_for_role, evaluate_autonom
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+async def _ontology_auditor_status(project: dict[str, Any]) -> dict[str, Any]:
+    projection = command_center_service.load_control_plane_summary(project)
+    cached = (projection.get("summary") or {}).get("auditors") or {}
+    ontology_status = cached.get("ontology")
+    if isinstance(ontology_status, dict):
+        return ontology_status
+    auditors = await build_auditor_statuses(project)
+    return (auditors.get("ontology") or {}) if isinstance(auditors, dict) else {}
+
+
 def _resolve_session_path(project: dict, session: dict) -> str | None:
     session_path = session.get("sessionPath")
     if session_path:
@@ -2447,14 +2457,13 @@ async def apply_project_integrity_artifact_promotion(slug: str, data: IntegrityA
             detail=f"Invalid promotion transition: {artifact.promotion_state} -> {data.targetState}",
         )
     if data.targetState in {"partially_verified", "verified"}:
-        auditors = await build_auditor_statuses(project)
+        ontology_status = await _ontology_auditor_status(project)
         # Only treat ontology-auditor blocks as a hard 409 here. Integrity
         # auditor blocks (claims needing evidence, stale sources, etc.) are
         # handled inside promote_artifact, which returns a structured
         # `{status: blocked, gate: {...}}` 200 payload that the operator UI
         # already knows how to render. Pre-empting that with a 409 would
         # discard the structured remediation details the gate produces.
-        ontology_status = auditors.get("ontology") or {}
         if str(ontology_status.get("status") or "") == "blocked":
             blocker = next(
                 (str(item) for item in (ontology_status.get("blockers") or []) if str(item).strip()),
@@ -2614,8 +2623,7 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
     # blocks fall through and get caught by the workflow-contract +
     # reference-validation layers below, which return more actionable detail.
     if data.promotionState in {"partially_verified", "verified"}:
-        auditors = await build_auditor_statuses(project)
-        ontology_status = auditors.get("ontology") or {}
+        ontology_status = await _ontology_auditor_status(project)
         if str(ontology_status.get("status") or "") == "blocked":
             blocker = next(
                 (str(item) for item in (ontology_status.get("blockers") or []) if str(item).strip()),
