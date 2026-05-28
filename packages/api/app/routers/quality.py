@@ -11,10 +11,9 @@ import time
 from typing import Any
 
 import duckdb
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from app.services.convex_client import convex
 from app.services import sql_service, project_artifacts_service
 
 router = APIRouter(prefix="/quality", tags=["quality"])
@@ -24,25 +23,15 @@ router = APIRouter(prefix="/quality", tags=["quality"])
 # Helpers
 # ---------------------------------------------------------------------------
 
-async def _resolve_db_path(project_id: str | None) -> str | None:
+async def _resolve_db_path(project_ref: str | None) -> str | None:
     """Return the DuckDB path for a project (or the globally-loaded one)."""
-    if project_id:
+    if project_ref:
         try:
-            artifacts = await project_artifacts_service.resolve(project_id)
+            artifacts = await project_artifacts_service.resolve(project_ref)
             if artifacts.duckdb_path:
                 return artifacts.duckdb_path
         except Exception:
-            try:
-                proj = await convex.query("projects:getById", {"projectId": project_id})
-            except Exception:
-                proj = None
-            if not proj:
-                try:
-                    proj = await convex.query("projects:get", {"slug": project_id})
-                except Exception:
-                    proj = None
-            if proj and proj.get("activeOntologyDuckdbPath"):
-                return proj["activeOntologyDuckdbPath"]
+            pass
     # Fall back to globally-loaded path
     p = sql_service.get_path()
     return str(p) if p else None
@@ -118,9 +107,13 @@ def _analyze_table(con: duckdb.DuckDBPyConnection, table: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/report")
-async def get_quality_report(project_id: str | None = None):
+async def get_quality_report(
+    project_id: str | None = Query(None, alias="project_id"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
+):
     """Run quality checks against the project's DuckDB and return metrics."""
-    db_path = await _resolve_db_path(project_id)
+    project_ref = project_id or project_slug
+    db_path = await _resolve_db_path(project_ref)
     if not db_path or not sql_service.is_ready(db_path):
         return {"error": "No database loaded for this project", "tables": []}
 
@@ -143,7 +136,7 @@ async def get_quality_report(project_id: str | None = None):
     overall_null_rate = round(total_nulls / total_cells, 4) if total_cells > 0 else 0.0
 
     return {
-        "projectId": project_id,
+        "projectId": project_ref,
         "dbPath": db_path,
         "generatedAt": int(time.time() * 1000),
         "summary": {
@@ -207,12 +200,16 @@ async def save_snapshot(req: SnapshotRequest):
 
 
 @router.get("/diff")
-async def get_diff(project_id: str | None = None):
+async def get_diff(
+    project_id: str | None = Query(None, alias="project_id"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
+):
     """Compare the two most recent snapshots and return changes."""
+    project_ref = project_id or project_slug
     params: dict = {}
-    if project_id:
+    if project_ref:
         # The Convex query expects 'projectSlug'
-        params["projectSlug"] = project_id
+        params["projectSlug"] = project_ref
 
     snapshots = await convex.query("quality:listSnapshots", {**params, "limit": 2})
     if not snapshots or not isinstance(snapshots, list) or len(snapshots) < 2:
