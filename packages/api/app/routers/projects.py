@@ -838,6 +838,53 @@ def _projects_base_dir() -> Path:
     return Path(os.environ.get("RAIL_PROJECTS_DIR", str(default_base))).expanduser().resolve()
 
 
+def _local_catalog_roots() -> list[Path]:
+    base = _projects_base_dir()
+    candidates = [base, base / "generated_projects"]
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen or not resolved.exists() or not resolved.is_dir():
+            continue
+        seen.add(resolved)
+        roots.append(resolved)
+    return roots
+
+
+def _local_catalog_projects() -> list[dict]:
+    projects: list[dict] = []
+    seen_slugs: set[str] = set()
+    for base in _local_catalog_roots():
+        for root in sorted(base.iterdir()):
+            if not root.is_dir() or not (root / "rail.yaml").exists():
+                continue
+            fallback = {
+                "name": root.name,
+                "slug": root.name,
+                "description": "",
+            }
+            metadata = _manifest_metadata(root, fallback)
+            slug = str(metadata.get("slug") or root.name).strip()
+            if not slug or slug in seen_slugs:
+                continue
+            seen_slugs.add(slug)
+            projects.append(
+                {
+                    "_id": f"local:{slug}",
+                    "name": metadata.get("name") or root.name,
+                    "slug": slug,
+                    "description": metadata.get("description") or "",
+                    "status": "ready",
+                    "localRepoPath": str(root),
+                    "manifestPath": "rail.yaml",
+                    "defaultBranch": metadata.get("defaultBranch") or "main",
+                    "pipelineConfigSlug": metadata.get("pipelineConfigSlug"),
+                }
+            )
+    return projects
+
+
 async def _known_project(slug: str) -> dict | None:
     return await convex.query("projects:getBySlug", {"slug": slug})
 
@@ -1268,7 +1315,8 @@ async def create_project(data: CreateProjectRequest):
 
 @router.get("")
 async def list_projects_catalog():
-    projects = _dedupe_projects_for_catalog(await convex.query("projects:list", {}) or [])
+    remote_projects = await convex.query("projects:list", {}) or []
+    projects = _dedupe_projects_for_catalog([*remote_projects, *_local_catalog_projects()])
     rows = []
     for project in projects:
         try:

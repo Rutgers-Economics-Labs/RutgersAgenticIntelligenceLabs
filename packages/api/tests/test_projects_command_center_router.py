@@ -93,6 +93,7 @@ def test_list_projects_catalog_includes_snapshot_progress(monkeypatch):
 
     monkeypatch.setattr(projects_router.convex, "query", _query)
     monkeypatch.setattr(projects_router, "_manifest_metadata", lambda root, project: {})
+    monkeypatch.setattr(projects_router, "_local_catalog_projects", lambda: [])
     monkeypatch.setattr(
         projects_router.command_center_service,
         "read_control_plane_snapshot",
@@ -123,6 +124,51 @@ def test_list_projects_catalog_includes_snapshot_progress(monkeypatch):
         "nextAction": "Review pending approvals",
         "snapshotLoaded": True,
     }
+
+
+def test_list_projects_catalog_includes_local_repo_only_projects(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    local_project = tmp_path / "generated_projects" / "demo-project"
+    local_project.mkdir(parents=True, exist_ok=True)
+    (local_project / "rail.yaml").write_text(
+        """
+project:
+  name: Demo Project
+  slug: demo-project
+  description: Repo-only local project
+  default_branch: main
+hydration:
+  default_pipeline: baseline-pipeline
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _query(path: str, payload: dict):
+        assert path == "projects:list"
+        return []
+
+    monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "read_control_plane_snapshot",
+        lambda project: None,
+    )
+
+    response = client.get("/api/v1/projects")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["projects"]) == 1
+    item = payload["projects"][0]
+    assert item["slug"] == "demo-project"
+    assert item["localExists"] is True
+    assert item["manifestExists"] is True
+    assert item["backendProject"]["_id"] == "local:demo-project"
+    assert item["progress"] == {"closed": 0, "total": 0}
+    assert item["controlPlane"]["snapshotLoaded"] is False
 
 
 def test_create_ontology_follow_up_task_endpoint_creates_expansion_task(monkeypatch):
