@@ -573,6 +573,95 @@ def test_project_phase_endpoint_prefers_repo_snapshot(monkeypatch):
     assert payload["snapshot"]["loaded"] is True
 
 
+def test_sources_route_falls_back_to_control_plane_summary(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "list_project_sources",
+        lambda project: (_ for _ in ()).throw(ValueError("boom")),
+    )
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "sourceSummary": {
+                    "count": 3,
+                    "statusCounts": {"validated": 2, "candidate": 1},
+                    "freshnessCounts": {"fresh": 3},
+                    "admissibilityCounts": {"observed": 3},
+                    "admissibilityHighlights": [],
+                    "notesPath": "topics/source_notes.md",
+                }
+            },
+            "snapshot": {"loaded": True},
+        },
+    )
+
+    response = client.get("/api/v1/projects/demo-project/sources")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["sources"] == []
+    assert payload["summary"]["count"] == 3
+    assert payload["summary"]["statusCounts"] == {"validated": 2, "candidate": 1}
+
+
+def test_integrity_route_falls_back_to_control_plane_summary(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "list_project_integrity",
+        lambda project: (_ for _ in ()).throw(ValueError("boom")),
+    )
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "recentArtifacts": [{"path": "artifacts/report.md"}],
+                "sourceSummary": {
+                    "count": 4,
+                    "freshnessCounts": {"fresh": 4},
+                },
+                "integritySummary": {
+                    "staleArtifactCount": 1,
+                    "agentWorkflow": {
+                        "research": {"status": "ready", "requirements": []},
+                        "data": {"status": "blocked", "requirements": ["hydrate sources"]},
+                        "coding": {"status": "ready", "requirements": []},
+                        "artifact": {"status": "ready", "requirements": []},
+                        "health": {"status": "ready", "requirements": []},
+                    },
+                    "hypothesisRanking": [{"id": "hyp-1", "computedScore": 0.9}],
+                },
+            },
+            "snapshot": {"loaded": True},
+        },
+    )
+
+    response = client.get("/api/v1/projects/demo-project/integrity")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["indexes"]["sources"] == []
+    assert payload["summary"]["sourceCount"] == 4
+    assert payload["summary"]["artifactCount"] == 1
+    assert payload["summary"]["staleArtifactCount"] == 1
+    assert payload["agentWorkflow"]["data"]["status"] == "blocked"
+    assert payload["hypothesisRanking"][0]["id"] == "hyp-1"
+
+
 def test_project_context_endpoint_prefers_local_repo_sources_and_pipelines(monkeypatch, tmp_path):
     import app.routers.projects as projects_router
 

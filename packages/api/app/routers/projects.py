@@ -1928,25 +1928,98 @@ async def create_ontology_follow_up_task(slug: str, request: OntologyFollowUpTas
 @router.get("/{slug}/skills")
 async def get_project_skills(slug: str):
     project = await planner_service.get_project_by_slug(slug)
-    return command_center_service.list_project_skills(project)
+    try:
+        return command_center_service.list_project_skills(project)
+    except Exception:
+        projection = command_center_service.load_control_plane_summary(project)
+        return {
+            "skills": [],
+            "summary": projection["summary"].get("skillSummary") or {
+                "count": 0,
+                "agentRolesWithSkillAccess": [],
+            },
+        }
 
 
 @router.get("/{slug}/sources")
 async def get_project_sources(slug: str):
     project = await planner_service.get_project_by_slug(slug)
-    return command_center_service.list_project_sources(project)
+    try:
+        return command_center_service.list_project_sources(project)
+    except Exception:
+        projection = command_center_service.load_control_plane_summary(project)
+        return {
+            "sources": [],
+            "summary": projection["summary"].get("sourceSummary") or {
+                "count": 0,
+                "statusCounts": {},
+                "freshnessCounts": {},
+                "admissibilityCounts": {},
+                "admissibilityHighlights": [],
+                "notesPath": None,
+            },
+            "notes": None,
+        }
 
 
 @router.get("/{slug}/artifacts")
 async def get_project_artifacts(slug: str):
     project = await planner_service.get_project_by_slug(slug)
-    return command_center_service.list_project_artifacts(project)
+    try:
+        return command_center_service.list_project_artifacts(project)
+    except Exception:
+        projection = command_center_service.load_control_plane_summary(project)
+        return {
+            "artifacts": projection["summary"].get("recentArtifacts") or [],
+            "summary": {
+                "count": len(projection["summary"].get("recentArtifacts") or []),
+                "staleCount": int(((projection["summary"].get("integritySummary") or {}).get("staleArtifactCount")) or 0),
+                "typeCounts": {},
+                "promotionStateCounts": {},
+                "verificationStatusCounts": {},
+            },
+        }
 
 
 @router.get("/{slug}/integrity")
 async def get_project_integrity(slug: str):
     project = await planner_service.get_project_by_slug(slug)
-    return command_center_service.list_project_integrity(project)
+    try:
+        return command_center_service.list_project_integrity(project)
+    except Exception:
+        projection = command_center_service.load_control_plane_summary(project)
+        integrity_summary = projection["summary"].get("integritySummary") or {}
+        source_summary = projection["summary"].get("sourceSummary") or {}
+        return {
+            "indexes": {
+                "assumptions": [],
+                "sources": [],
+                "claims": [],
+                "hypotheses": [],
+                "artifact_lineage": [],
+                "verification_runs": [],
+            },
+            "summary": {
+                "assumptionCount": 0,
+                "sourceCount": int(source_summary.get("count") or 0),
+                "claimCount": 0,
+                "artifactCount": len(projection["summary"].get("recentArtifacts") or []),
+                "staleArtifactCount": int(integrity_summary.get("staleArtifactCount") or 0),
+                "verificationRunCount": 0,
+                "sourceFreshnessCounts": integrity_summary.get("sourceFreshnessCounts") or source_summary.get("freshnessCounts") or {},
+                "verificationStatusCounts": {},
+                "promotionStateCounts": {},
+            },
+            "staleOutputs": [],
+            "agentWorkflow": integrity_summary.get("agentWorkflow") or {
+                "research": {"status": "ready", "requirements": []},
+                "data": {"status": "ready", "requirements": []},
+                "coding": {"status": "ready", "requirements": []},
+                "artifact": {"status": "ready", "requirements": []},
+                "health": {"status": "ready", "requirements": []},
+            },
+            "hypothesisRanking": integrity_summary.get("hypothesisRanking") or [],
+        }
 
 
 @router.get("/{slug}/integrity/assumptions")
