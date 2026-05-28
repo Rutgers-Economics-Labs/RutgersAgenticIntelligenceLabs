@@ -928,11 +928,11 @@ async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
         "slug": slug,
         "description": metadata.get("description") or defn["description"],
         "approach": "ontology-first",
-        "gitRepoUrl": git_repo_url,
         "localRepoPath": str(root),
         "manifestPath": "rail.yaml",
-        "defaultBranch": metadata.get("defaultBranch") or "main",
     }
+    if git_repo_url:
+        payload["gitRepoUrl"] = git_repo_url
     if metadata.get("pipelineConfigSlug"):
         payload["pipelineConfigSlug"] = metadata["pipelineConfigSlug"]
     if existing:

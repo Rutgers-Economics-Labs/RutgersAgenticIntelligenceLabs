@@ -227,6 +227,8 @@ project:
     assert payload["project"]["_id"] == "project-1"
     assert payload["catalogProject"]["slug"] == "demo-project"
     assert created_payloads[0]["localRepoPath"] == str(local_project)
+    assert "gitRepoUrl" not in created_payloads[0]
+    assert "defaultBranch" not in created_payloads[0]
 
 
 def test_create_ontology_follow_up_task_endpoint_creates_expansion_task(monkeypatch):
