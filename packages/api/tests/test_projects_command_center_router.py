@@ -87,6 +87,54 @@ def test_project_repo_routes_use_repo_first_lookup(monkeypatch, tmp_path):
     assert generic_payload["content"] == "# Plan\n"
 
 
+def test_create_project_returns_repo_first_refreshed_project(monkeypatch):
+    import app.routers.projects as projects_router
+
+    created_payloads: list[dict] = []
+
+    async def _mutation(path: str, payload: dict):
+        assert path == "projects:create"
+        created_payloads.append(payload)
+        return "project-123"
+
+    async def _query(path: str, payload: dict):
+        if path == "projects:getBySlug":
+            raise AssertionError("create_project should prefer planner_service refresh")
+        raise AssertionError(path)
+
+    async def _get_project_by_slug(slug: str):
+        assert slug == "demo-project"
+        return {
+            "_id": "local:demo-project",
+            "name": "Demo Project",
+            "slug": slug,
+            "status": "draft",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/",
+        json={
+            "name": "Demo Project",
+            "slug": "demo-project",
+            "description": "Repo-first create",
+            "approach": "ontology-first",
+            "localRepoPath": "/tmp/demo-project-missing-for-test",
+            "ontologyConfigSlug": "demo-ontology",
+            "apiConfigSlugs": ["demo-source"],
+            "pipelineConfigSlug": "demo-pipeline",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["_id"] == "local:demo-project"
+    assert created_payloads[0]["slug"] == "demo-project"
+
+
 def test_pipeline_run_uses_local_repo_hydration_for_repo_only_project(monkeypatch, tmp_path):
     import app.routers.projects as projects_router
 
@@ -957,6 +1005,50 @@ agents:
     assert "default_branch: develop" in manifest
     assert "git_repo_url: https://github.com/example/demo-project" in manifest
     assert "agent_model: claude-opus-4-6" in manifest
+
+
+def test_sync_project_metadata_prefers_repo_first_refresh_for_convex_project(monkeypatch):
+    import app.routers.projects as projects_router
+
+    updated_payloads: list[dict] = []
+
+    async def _get_project_by_slug(slug: str):
+        assert slug == "demo-project"
+        return {
+            "_id": "project-1",
+            "name": "Demo Project",
+            "slug": slug,
+            "status": "ready",
+            "description": "Updated description",
+            "defaultBranch": "develop",
+        }
+
+    async def _mutation(path: str, payload: dict):
+        assert path == "projects:updateById"
+        updated_payloads.append(payload)
+        return None
+
+    async def _query(path: str, payload: dict):
+        if path == "projects:getById":
+            raise AssertionError("sync_project_metadata should prefer planner_service refresh")
+        raise AssertionError(path)
+
+    async def _should_auto_publish(project: dict):
+        return False
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router, "should_auto_publish", _should_auto_publish)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/sync-metadata",
+        json={"description": "Updated description", "defaultBranch": "develop"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["project"]["description"] == "Updated description"
+    assert updated_payloads[0]["projectId"] == "project-1"
 
 
 def test_register_artifacts_accepts_local_repo_only_project_with_explicit_paths(monkeypatch, tmp_path):

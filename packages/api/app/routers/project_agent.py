@@ -468,7 +468,10 @@ async def _persist_project_patch(project: dict, patch: dict) -> dict:
         return refreshed
 
     await convex.mutation("projects:updateById", {"projectId": project["_id"], **patch})
-    refreshed = await convex.query("projects:getById", {"projectId": project["_id"]})
+    try:
+        refreshed = await planner_service.get_project_by_slug(str(project.get("slug") or ""))
+    except Exception:
+        refreshed = await convex.query("projects:getById", {"projectId": project["_id"]})
     return refreshed or {**project, **patch}
 
 

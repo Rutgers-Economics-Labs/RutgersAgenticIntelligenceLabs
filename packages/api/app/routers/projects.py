@@ -1342,7 +1342,10 @@ async def create_project(data: CreateProjectRequest):
             )
 
     project_id = await convex.mutation("projects:create", project_data)
-    return await convex.query("projects:getBySlug", {"slug": data.slug})
+    try:
+        return await planner_service.get_project_by_slug(data.slug)
+    except Exception:
+        return await convex.query("projects:getBySlug", {"slug": data.slug})
 
 
 @router.get("")
@@ -1810,7 +1813,10 @@ async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
             "projectId": project["_id"],
             **patch,
         })
-        updated = await convex.query("projects:getById", {"projectId": project["_id"]})
+        try:
+            updated = await planner_service.get_project_by_slug(slug)
+        except Exception:
+            updated = await convex.query("projects:getById", {"projectId": project["_id"]})
 
     publish_result = None
     should_publish_manifest = any(field in patch for field in MANIFEST_BACKED_FIELDS)

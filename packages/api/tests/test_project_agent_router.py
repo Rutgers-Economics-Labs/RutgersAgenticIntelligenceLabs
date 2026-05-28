@@ -211,3 +211,31 @@ async def test_resolve_project_record_prefers_repo_first_local_project(monkeypat
     project = await project_agent_router._resolve_project_record("local:demo-project")
 
     assert project["_id"] == "local:demo-project"
+
+
+async def test_persist_project_patch_prefers_repo_first_refresh_for_convex_project(monkeypatch):
+    project = {"_id": "project-1", "slug": "demo-project", "name": "Demo"}
+    updated_payloads: list[dict] = []
+
+    async def _mutation(path: str, payload: dict):
+        assert path == "projects:updateById"
+        updated_payloads.append(payload)
+        return None
+
+    async def _get_project_by_slug(slug: str):
+        assert slug == "demo-project"
+        return {"_id": "project-1", "slug": slug, "name": "Updated Demo", "status": "ready"}
+
+    async def _query(path: str, payload: dict):
+        if path == "projects:getById":
+            raise AssertionError("_persist_project_patch should prefer planner_service refresh")
+        raise AssertionError(path)
+
+    monkeypatch.setattr(project_agent_router.convex, "mutation", _mutation)
+    monkeypatch.setattr(project_agent_router.convex, "query", _query)
+    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    refreshed = await project_agent_router._persist_project_patch(project, {"name": "Updated Demo"})
+
+    assert refreshed["name"] == "Updated Demo"
+    assert updated_payloads[0]["projectId"] == "project-1"
