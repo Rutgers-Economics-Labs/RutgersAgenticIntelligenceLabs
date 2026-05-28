@@ -501,3 +501,29 @@ def test_attach_local_hydration_to_convex_promotes_repo_only_project_without_con
     assert captured["promote"]["project"]["_id"] == "local:demo-project"
     assert captured["promote"]["duckdb_artifact_path"] == str(onto_duckdb)
     assert captured["promote"]["ontology_artifact_path"] == str(ontology_yaml)
+
+
+def test_attach_local_hydration_to_convex_skips_when_project_is_not_registered(project_root, monkeypatch):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_duckdb = ontology_root / "onto.duckdb"
+    onto_duckdb.write_bytes(b"duck")
+
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "missing-project"
+        return None
+
+    monkeypatch.setattr("app.services.planner_service.resolve_project_reference", _resolve_project_reference)
+    monkeypatch.setattr(
+        "app.services.hydration_registry_service.convex._require_backend_convex",
+        lambda: (_ for _ in ()).throw(AssertionError("convex backend should not be required when resolver returns no project")),
+    )
+
+    result = asyncio.run(
+        attach_local_hydration_to_convex(
+            slug="missing-project",
+            duckdb_artifact_path=str(onto_duckdb),
+        )
+    )
+
+    assert result == {"status": "skipped", "reason": "project_not_registered"}

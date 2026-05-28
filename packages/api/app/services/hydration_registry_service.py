@@ -195,25 +195,6 @@ async def attach_local_hydration_to_convex(
     except Exception:
         project = None
 
-    if not project:
-        try:
-            local_project_resolver = getattr(planner_service, "_local_project_record_from_repo", None)
-            if callable(local_project_resolver):
-                project = local_project_resolver(slug)
-        except Exception:
-            project = None
-
-    if not project:
-        try:
-            convex._require_backend_convex()
-        except ConvexBackendConfigurationError as exc:
-            return {"status": "skipped", "reason": f"convex_not_configured: {exc}"}
-
-        try:
-            project = await convex.query("projects:getBySlug", {"slug": slug})
-        except Exception as exc:
-            return {"status": "skipped", "reason": f"convex_query_failed: {exc}"}
-
     if not project or not project.get("_id"):
         return {"status": "skipped", "reason": "project_not_registered"}
 
