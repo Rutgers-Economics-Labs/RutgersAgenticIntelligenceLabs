@@ -1659,8 +1659,9 @@ async def register_artifacts_from_job(
     Defaults to the latest successful job for this project that has outputDbPath.
     Optional JSON body: {"output_db_path": "/abs/path/onto.db", "output_owl_path": "..."} to set paths without job lookup.
     """
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
+    try:
+        project = await planner_service.get_project_by_slug(slug)
+    except ValueError:
         raise HTTPException(404, "Project not found")
 
     job: dict | None = None
@@ -1714,7 +1715,7 @@ async def register_artifacts_from_job(
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    if last_job_convex_id is not None:
+    if last_job_convex_id is not None and not str(project.get("_id") or "").startswith("local:"):
         await convex.mutation(
             "projects:updateById",
             {

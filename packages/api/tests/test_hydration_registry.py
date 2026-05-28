@@ -35,6 +35,7 @@ os.environ.setdefault("CONVEX_URL", "https://colorless-elephant-150.convex.cloud
 os.environ.setdefault("CONVEX_DEPLOY_KEY", "test-key")
 
 from app.services.hydration_registry_service import (  # noqa: E402
+    get_hydration_status,
     promote_project_hydration_artifact,
     register_hydration_artifact,
     resolve_pipeline_slug,
@@ -172,6 +173,38 @@ def test_register_hydration_artifact_syncs_repo_dataset_lineage(project_root, mo
     assert source_entry["provenance"]["config_path"] == ".ontology/sources/sample.yaml"
 
 
+def test_register_hydration_artifact_returns_local_id_for_repo_only_project(project_root):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "research_plan" / "state").mkdir(parents=True, exist_ok=True)
+    (project_root / "research_plan" / "state" / "sources.json").write_text("[]", encoding="utf-8")
+    (project_root / ".ontology" / "pipelines").mkdir(parents=True, exist_ok=True)
+    (project_root / ".ontology" / "pipelines" / "my_pipeline.yaml").write_text(
+        "ontology: .ontology/ontology.yaml\nsteps: []\n",
+        encoding="utf-8",
+    )
+    duckdb_path = ontology_root / "onto.duckdb"
+    duckdb_path.write_bytes(b"duck")
+
+    artifact_id = asyncio.run(
+        register_hydration_artifact(
+            project={
+                "_id": "local:demo-project",
+                "slug": "demo-project",
+                "localRepoPath": str(project_root),
+                "manifestPath": "rail.yaml",
+            },
+            pipeline_slug="my_pipeline",
+            hydration_mode="full",
+            ontology_artifact_path=str(project_root / ".ontology" / "onto.db"),
+            duckdb_artifact_path=str(duckdb_path),
+            status="valid",
+        )
+    )
+
+    assert artifact_id == "local-hydration:demo-project:my_pipeline:full"
+
+
 def test_promote_project_hydration_artifact_updates_active_paths(project_root, monkeypatch):
     ontology_root = project_root / ".ontology"
     ontology_root.mkdir(parents=True, exist_ok=True)
@@ -212,6 +245,35 @@ def test_promote_project_hydration_artifact_updates_active_paths(project_root, m
     assert payload["activeOntologyOwlPath"] == str(owl)
     assert payload["activeOntologyEmbeddingsPath"] == str(embeddings)
     assert isinstance(payload["lastHydratedAt"], int)
+
+
+def test_promote_project_hydration_artifact_is_noop_for_local_project(project_root, monkeypatch):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_db = ontology_root / "onto.db"
+    onto_duckdb = ontology_root / "onto.duckdb"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    onto_db.write_bytes(b"db")
+    onto_duckdb.write_bytes(b"duck")
+    hydration_meta.write_text('{"pipeline_slug":"my_pipeline","hydration_mode":"full"}', encoding="utf-8")
+
+    calls: list[tuple[str, dict]] = []
+
+    async def _fake_mutation(path: str, payload: dict):
+        calls.append((path, payload))
+        return "ok"
+
+    monkeypatch.setattr("app.services.hydration_registry_service.convex.mutation", _fake_mutation)
+
+    asyncio.run(
+        promote_project_hydration_artifact(
+            project={"_id": "local:demo-project"},
+            ontology_artifact_path=str(onto_db),
+            duckdb_artifact_path=str(onto_duckdb),
+        )
+    )
+
+    assert calls == []
 
 
 def test_promote_project_hydration_artifact_uses_onto_db_when_yaml_hint(project_root, monkeypatch):
@@ -265,3 +327,64 @@ def test_promote_project_hydration_artifact_rejects_missing_hydration_metadata(p
                 duckdb_artifact_path=str(onto_duckdb),
             )
         )
+
+
+def test_get_hydration_status_prefers_local_disk_over_stale_same_device_registry(project_root, monkeypatch):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_duckdb = ontology_root / "onto.duckdb"
+    onto_db = ontology_root / "onto.db"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    onto_duckdb.write_bytes(b"duck")
+    onto_db.write_bytes(b"db")
+    hydration_meta.write_text(
+        json.dumps(
+            {
+                "pipeline_slug": "my_pipeline",
+                "hydration_mode": "full",
+                "commit_sha": "old-commit",
+                "manifest_fingerprint": "old-fingerprint",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def _fake_query(path: str, payload: dict):
+        if path == "hydrationArtifacts:listByProject":
+            return [
+                {
+                    "deviceId": "device-1",
+                    "pipelineSlug": "my_pipeline",
+                    "hydrationMode": "full",
+                    "status": "success",
+                    "commitSha": "old-commit",
+                    "manifestFingerprint": "old-fingerprint",
+                    "duckdbArtifactPath": str(onto_duckdb),
+                    "ontologyArtifactPath": str(onto_db),
+                }
+            ]
+        if path == "jobs:listByProject":
+            return []
+        return []
+
+    monkeypatch.setattr("app.services.hydration_registry_service.convex.query", _fake_query)
+    monkeypatch.setattr("app.services.hydration_registry_service.get_device_id", lambda: "device-1")
+    monkeypatch.setattr("app.services.hydration_registry_service.get_repo_commit", lambda root: "current-commit")
+    monkeypatch.setattr("app.services.hydration_registry_service.get_manifest_fingerprint", lambda root, manifest_path: "current-fingerprint")
+    monkeypatch.setattr("app.services.hydration_registry_service._duckdb_has_populated_rows", lambda path: True)
+
+    payload = asyncio.run(
+        get_hydration_status(
+            project={
+                "_id": "project-1",
+                "localRepoPath": str(project_root),
+                "manifestPath": "rail.yaml",
+            },
+            pipeline_slug="my_pipeline",
+            hydration_mode="full",
+        )
+    )
+
+    assert payload["state"] == "hydrated_on_this_device"
+    assert payload["reusableArtifact"]["isReusable"] is True
+    assert payload["reusableArtifact"]["synthesizedFromLocalDisk"] is True

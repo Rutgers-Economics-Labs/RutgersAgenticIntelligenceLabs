@@ -15,6 +15,10 @@ from app.services.convex_client import convex, ConvexBackendConfigurationError
 from app.services.device_service import get_device_id
 
 
+def _is_local_project_id(project_id: Any) -> bool:
+    return str(project_id or "").startswith("local:")
+
+
 def _safe_relpath(path: Path, root: Path) -> str:
     try:
         return str(path.resolve().relative_to(root.resolve()))
@@ -141,6 +145,9 @@ async def register_hydration_artifact(
         pipeline_slug=pipeline_slug,
         duckdb_artifact_path=duckdb_artifact_path,
     )
+    if _is_local_project_id(project.get("_id")):
+        project_slug = str(project.get("slug") or Path(project["localRepoPath"]).name)
+        return f"local-hydration:{project_slug}:{pipeline_slug}:{hydration_mode}"
     return await convex.mutation(
         "hydrationArtifacts:register",
         {
@@ -272,6 +279,8 @@ async def promote_project_hydration_artifact(
         patch["activeOntologyDuckdbPath"] = duckdb_path
     if embeddings_path:
         patch["activeOntologyEmbeddingsPath"] = str(embeddings_path)
+    if _is_local_project_id(project_id):
+        return
     await convex.mutation("projects:updateById", patch)
 
 
@@ -400,7 +409,7 @@ async def get_hydration_status(
     # The fallback also makes the auditor robust to Convex outages and
     # offline operation, and lets integration tests work without
     # elaborate hydrationArtifacts mocking.
-    if reusable_local is None and not stale_local and not hydrated_elsewhere:
+    if reusable_local is None:
         local_duckdb = root / ".ontology" / "onto.duckdb"
         local_meta = root / ".ontology" / ".rail_hydration.json"
         if local_duckdb.exists() and local_meta.exists():
@@ -413,22 +422,38 @@ async def get_hydration_status(
                 except Exception:
                     local_meta_payload = {}
                 if _duckdb_has_populated_rows(str(local_duckdb)):
-                    synthesized = {
-                        "deviceId": current_device_id,
-                        "pipelineSlug": pipeline_slug,
-                        "hydrationMode": local_meta_payload.get("hydrationMode") or hydration_mode,
-                        "status": "valid",
-                        "commitSha": current_commit,
-                        "manifestFingerprint": manifest_fingerprint,
-                        "duckdbArtifactPath": str(local_duckdb),
-                        "filesExist": True,
-                        "isCurrentCommit": True,
-                        "isCurrentManifest": True,
-                        "isReusable": True,
-                        "synthesizedFromLocalDisk": True,
-                    }
-                    current_device_matches.append(synthesized)
-                    reusable_local = synthesized
+                    same_device_local = next(
+                        (
+                            item for item in current_device_matches
+                            if Path(str(item.get("duckdbArtifactPath") or "")).resolve() == local_duckdb.resolve()
+                        ),
+                        None,
+                    )
+                    can_trust_local_disk = (
+                        same_device_local is not None
+                        or (not stale_local and not hydrated_elsewhere)
+                    )
+                    if can_trust_local_disk:
+                        synthesized = {
+                            "deviceId": current_device_id,
+                            "pipelineSlug": pipeline_slug,
+                            "hydrationMode": local_meta_payload.get("hydrationMode") or hydration_mode,
+                            "status": "valid",
+                            "commitSha": current_commit,
+                            "manifestFingerprint": manifest_fingerprint,
+                            "duckdbArtifactPath": str(local_duckdb),
+                            "ontologyArtifactPath": str(root / ".ontology" / "onto.db"),
+                            "filesExist": True,
+                            "isCurrentCommit": True,
+                            "isCurrentManifest": True,
+                            "isReusable": True,
+                            "synthesizedFromLocalDisk": True,
+                        }
+                        if same_device_local is not None:
+                            current_device_matches = [item for item in current_device_matches if item is not same_device_local]
+                        current_device_matches.append(synthesized)
+                        reusable_local = synthesized
+                        stale_local = False
             except Exception:
                 pass
 

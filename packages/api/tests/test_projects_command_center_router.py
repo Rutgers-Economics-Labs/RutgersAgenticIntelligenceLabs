@@ -826,6 +826,55 @@ agents:
     assert "agent_model: claude-opus-4-6" in manifest
 
 
+def test_register_artifacts_accepts_local_repo_only_project_with_explicit_paths(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    ontology_root = tmp_path / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_db = ontology_root / "onto.db"
+    onto_duckdb = ontology_root / "onto.duckdb"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    onto_db.write_bytes(b"db")
+    onto_duckdb.write_bytes(b"duck")
+    hydration_meta.write_text('{"pipeline_slug":"default","hydration_mode":"full"}', encoding="utf-8")
+
+    promoted: list[dict] = []
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": f"local:{slug}",
+            "slug": slug,
+            "localRepoPath": str(tmp_path),
+            "manifestPath": "rail.yaml",
+        }
+
+    async def _promote_project_hydration_artifact(**kwargs):
+        promoted.append(kwargs)
+        return None
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(
+        projects_router,
+        "promote_project_hydration_artifact",
+        _promote_project_hydration_artifact,
+    )
+    monkeypatch.setattr(projects_router.ontology_service, "ensure_loaded_async", lambda *args, **kwargs: None)
+    monkeypatch.setattr(projects_router.sql_service, "set_path", lambda *args, **kwargs: None)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/register-artifacts",
+        json={"output_db_path": str(onto_db)},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["jobId"] is None
+    assert payload["activeOntologyDbPath"] == str(onto_db)
+    assert payload["activeOntologyDuckdbPath"] == str(onto_duckdb)
+    assert promoted[0]["project"]["_id"] == "local:demo-project"
+
+
 def test_create_planner_task_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 
