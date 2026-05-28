@@ -3471,33 +3471,19 @@ async def get_project_runner_session_detail(slug: str, session_id: str):
         "decisions": decisions,
     }
 
-
-@router.get("/{slug}/repo/{path:path}")
-async def get_project_repo_file(slug: str, path: str):
-    """
-    Read a file from the project's local Git repository by repo-relative path.
-
-    Used by the frontend repo browser and deep-linked review files
-    (research_plan/current_plan.md, task_board.md, sessions/**/summary.md, etc.)
-
-    Returns the file content as a string plus metadata about the file type
-    so the frontend can choose the right renderer (markdown, yaml, json, text).
-
-    Raises 404 for missing files and 400 for path-traversal attempts.
-    """
-    project = await planner_service.get_project_by_slug(slug)
+def _repo_response_for_path(project: dict[str, Any], path: str | None = None) -> dict[str, Any]:
     if not project.get("localRepoPath"):
         raise HTTPException(status_code=400, detail="Project has no localRepoPath configured")
 
     repo_root = Path(project["localRepoPath"]).resolve()
-    # Normalise and guard against path traversal
-    target = (repo_root / path).resolve()
+    normalized = (path or "").strip("/")
+    target = (repo_root / normalized).resolve() if normalized else repo_root
     if not str(target).startswith(str(repo_root)):
         raise HTTPException(status_code=400, detail="Path traversal not allowed")
     if not target.exists():
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+        missing = normalized or "."
+        raise HTTPException(status_code=404, detail=f"File not found: {missing}")
     if target.is_dir():
-        # Return a directory listing instead of file content
         entries = []
         for child in sorted(target.iterdir()):
             entries.append({
@@ -3505,8 +3491,9 @@ async def get_project_repo_file(slug: str, path: str):
                 "path": str(child.relative_to(repo_root)),
                 "kind": "directory" if child.is_dir() else "file",
                 "extension": child.suffix.lstrip(".") if child.is_file() else None,
+                "sizeBytes": child.stat().st_size if child.is_file() else None,
             })
-        return {"path": path, "kind": "directory", "entries": entries}
+        return {"path": normalized, "kind": "directory", "entries": entries}
 
     suffix = target.suffix.lower()
     syntax_kind = {
@@ -3526,13 +3513,58 @@ async def get_project_repo_file(slug: str, path: str):
         raise HTTPException(status_code=500, detail=f"Could not read file: {exc}")
 
     return {
-        "path": path,
+        "path": normalized,
         "kind": "file",
         "syntaxKind": syntax_kind,
         "extension": suffix.lstrip("."),
         "sizeBytes": target.stat().st_size,
         "content": content,
     }
+
+
+@router.get("/{slug}/repo")
+async def get_project_repo_root(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return _repo_response_for_path(project, None)
+
+
+@router.get("/{slug}/repo/tree")
+async def get_project_repo_tree(slug: str, rootDir: str | None = Query(None), maxDepth: int = Query(3)):
+    project = await planner_service.get_project_by_slug(slug)
+    requested = (rootDir or "").strip("/")
+    response = _repo_response_for_path(project, requested or None)
+    if response.get("kind") != "directory":
+        raise HTTPException(status_code=400, detail="Requested path is not a directory")
+    # `maxDepth` is accepted for backward compatibility even though the response
+    # is intentionally shallow; the repo UI drills in path-by-path.
+    response["maxDepth"] = maxDepth
+    return response
+
+
+@router.get("/{slug}/repo/file")
+async def get_project_repo_file_compat(slug: str, path: str = Query(...)):
+    project = await planner_service.get_project_by_slug(slug)
+    response = _repo_response_for_path(project, path)
+    if response.get("kind") != "file":
+        raise HTTPException(status_code=400, detail="Requested path is not a file")
+    return response
+
+
+@router.get("/{slug}/repo/{path:path}")
+async def get_project_repo_file(slug: str, path: str):
+    """
+    Read a file from the project's local Git repository by repo-relative path.
+
+    Used by the frontend repo browser and deep-linked review files
+    (research_plan/current_plan.md, task_board.md, sessions/**/summary.md, etc.)
+
+    Returns the file content as a string plus metadata about the file type
+    so the frontend can choose the right renderer (markdown, yaml, json, text).
+
+    Raises 404 for missing files and 400 for path-traversal attempts.
+    """
+    project = await planner_service.get_project_by_slug(slug)
+    return _repo_response_for_path(project, path)
 
 
 @router.post("/{slug}/runner/sessions/{session_id}/commands")

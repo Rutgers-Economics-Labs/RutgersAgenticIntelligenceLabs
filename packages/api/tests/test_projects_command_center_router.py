@@ -40,6 +40,53 @@ def test_register_artifacts_rejects_missing_hydration_metadata(monkeypatch, tmp_
     assert response.json()["detail"] == "Hydration metadata must exist before promoting active ontology artifacts."
 
 
+def test_project_repo_routes_use_repo_first_lookup(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    project_root = tmp_path / "demo-project"
+    (project_root / "research_plan").mkdir(parents=True, exist_ok=True)
+    (project_root / "research_plan" / "current_plan.md").write_text("# Plan\n", encoding="utf-8")
+    (project_root / "topics").mkdir(parents=True, exist_ok=True)
+    (project_root / "topics" / "brief.md").write_text("# Brief\n", encoding="utf-8")
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": "local:demo-project",
+            "slug": slug,
+            "localRepoPath": str(project_root),
+        }
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    root_response = client.get("/api/v1/projects/demo-project/repo")
+    tree_response = client.get("/api/v1/projects/demo-project/repo/tree", params={"rootDir": "research_plan"})
+    file_response = client.get("/api/v1/projects/demo-project/repo/file", params={"path": "topics/brief.md"})
+    generic_response = client.get("/api/v1/projects/demo-project/repo/research_plan/current_plan.md")
+
+    assert root_response.status_code == 200
+    assert tree_response.status_code == 200
+    assert file_response.status_code == 200
+    assert generic_response.status_code == 200
+
+    root_payload = root_response.json()
+    tree_payload = tree_response.json()
+    file_payload = file_response.json()
+    generic_payload = generic_response.json()
+
+    assert root_payload["kind"] == "directory"
+    assert {entry["path"] for entry in root_payload["entries"]} == {"research_plan", "topics"}
+    assert tree_payload["kind"] == "directory"
+    assert tree_payload["path"] == "research_plan"
+    assert tree_payload["maxDepth"] == 3
+    assert {entry["path"] for entry in tree_payload["entries"]} == {"research_plan/current_plan.md"}
+    assert file_payload["kind"] == "file"
+    assert file_payload["path"] == "topics/brief.md"
+    assert file_payload["content"] == "# Brief\n"
+    assert generic_payload["kind"] == "file"
+    assert generic_payload["path"] == "research_plan/current_plan.md"
+    assert generic_payload["content"] == "# Plan\n"
+
+
 def test_pipeline_run_uses_local_repo_hydration_for_repo_only_project(monkeypatch, tmp_path):
     import app.routers.projects as projects_router
 
