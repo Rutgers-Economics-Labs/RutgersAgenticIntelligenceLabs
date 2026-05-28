@@ -153,6 +153,67 @@ project:
     }
 
 
+def test_project_phase_prefers_snapshot_without_loading_board(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _list_project_running_agents(project_id: str, active_only: bool = True, limit: int = 50):
+        return [{"_id": "sess-1", "status": "running"}]
+
+    async def _ensure_main_board(project):
+        raise AssertionError("ensure_main_board should not run when snapshot is loaded")
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "lifecyclePhase": "research_active",
+                "currentBlocker": "Waiting on approval",
+                "nextAction": "Review pending approvals",
+                "taskCounts": {
+                    "total": 5,
+                    "byStatus": {"ready": 2, "done": 1, "cancelled": 1, "running": 1},
+                },
+                "auditors": {"planner": {"status": "ready"}},
+            },
+            "snapshot": {
+                "loaded": True,
+                "path": "research_plan/state/control_plane_snapshot.json",
+                "generatedAt": 1234567890,
+                "version": 1,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "app.services.running_agent_service.list_project_running_agents",
+        _list_project_running_agents,
+    )
+
+    response = client.get("/api/v1/projects/demo-project/phase")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "slug": "demo-project",
+        "phase": "research_active",
+        "topBlocker": "Waiting on approval",
+        "nextAction": "Review pending approvals",
+        "auditors": {"planner": {"status": "ready"}},
+        "activeSessions": 1,
+        "openTasks": 3,
+        "snapshot": {
+            "loaded": True,
+            "path": "research_plan/state/control_plane_snapshot.json",
+            "generatedAt": 1234567890,
+            "version": 1,
+        },
+    }
+
+
 def test_list_projects_catalog_includes_snapshot_progress(monkeypatch):
     import app.routers.projects as projects_router
 

@@ -3942,15 +3942,7 @@ async def get_project_phase(slug: str):
 
     projection = command_center_service.load_control_plane_summary(project)
     summary = projection["summary"]
-    root = planner_service.project_root_from_record(project)
-
-    tasks: list[dict] = []
     active_sessions: list[dict] = []
-    try:
-        board = await planner_service.ensure_main_board(project)
-        tasks = await planner_service.list_tasks(board["_id"], project=project)
-    except Exception:
-        pass
     try:
         from app.services.running_agent_service import list_project_running_agents
         active_sessions = await list_project_running_agents(
@@ -3979,6 +3971,14 @@ async def get_project_phase(slug: str):
             "openTasks": max(total_tasks - terminal_tasks, 0),
             "snapshot": projection["snapshot"],
         }
+
+    root = planner_service.project_root_from_record(project)
+    tasks: list[dict] = []
+    try:
+        board = await planner_service.ensure_main_board(project)
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
+    except Exception:
+        pass
 
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
     manifest = load_manifest(root) if root else None
