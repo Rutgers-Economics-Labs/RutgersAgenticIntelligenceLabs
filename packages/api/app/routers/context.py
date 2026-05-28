@@ -14,6 +14,47 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
+from app.services import planner_service
+
+
+async def _resolve_context_project(project_id: str | None) -> dict[str, Any] | None:
+    if not project_id:
+        return None
+
+    try:
+        project = await convex.query("projects:getById", {"projectId": project_id})
+    except Exception:
+        project = None
+
+    if not project:
+        try:
+            project = await convex.query("projects:get", {"slug": project_id})
+        except Exception:
+            project = None
+
+    if not project:
+        candidate_slugs = [project_id]
+        if isinstance(project_id, str) and project_id.startswith("local:"):
+            candidate_slugs.append(project_id.removeprefix("local:"))
+        for candidate in candidate_slugs:
+            try:
+                project = await planner_service.get_project_by_slug(candidate)
+                if project:
+                    break
+            except Exception:
+                project = None
+
+    return project if isinstance(project, dict) else None
+
+
+async def _context_create_payload_project_fields(project_id: str | None) -> dict[str, str | None]:
+    project = await _resolve_context_project(project_id)
+    slug = ""
+    if isinstance(project, dict):
+        slug = str(project.get("slug") or "").strip()
+    if not slug and project_id:
+        slug = str(project_id).removeprefix("local:").strip()
+    return {"projectSlug": slug or None}
 
 
 async def _sync_context_doc_as_integrity_source(
@@ -37,11 +78,8 @@ async def _sync_context_doc_as_integrity_source(
     """
     if not project_id or not doc_id:
         return
-    try:
-        project = await convex.query("projects:getById", {"id": project_id})
-    except Exception:
-        project = None
-    local_repo_path = (project or {}).get("localRepoPath") if isinstance(project, dict) else None
+    project = await _resolve_context_project(project_id)
+    local_repo_path = (project or {}).get("localRepoPath")
     if not local_repo_path:
         return
     root = Path(str(local_repo_path)).resolve()
@@ -197,13 +235,16 @@ async def upload_context(
     else:
         raise HTTPException(415, f"Unsupported file type: {ext}. Use PDF, DOCX, or TXT.")
 
-    doc_id = await convex.mutation("context:create", {
+    payload = {
         "projectId": project_id or None,
         "name": name or filename,
         "type": doc_type,
         "content": content[:100_000],  # cap at 100k chars
         "fileSize": len(data),
-    })
+    }
+    payload.update(await _context_create_payload_project_fields(project_id))
+    payload.pop("projectId", None)
+    doc_id = await convex.mutation("context:create", payload)
     await _sync_context_doc_as_integrity_source(
         project_id=project_id,
         doc_id=str(doc_id) if doc_id else "",
@@ -224,13 +265,14 @@ class AddUrlRequest(BaseModel):
 @router.post("/url")
 async def add_url(req: AddUrlRequest):
     content = _scrape_url(req.url)
-    doc_id = await convex.mutation("context:create", {
-        "projectId": req.project_id or None,
+    payload = {
         "name": req.name or req.url,
         "type": "url",
         "content": content,
         "url": req.url,
-    })
+    }
+    payload.update(await _context_create_payload_project_fields(req.project_id))
+    doc_id = await convex.mutation("context:create", payload)
     await _sync_context_doc_as_integrity_source(
         project_id=req.project_id,
         doc_id=str(doc_id) if doc_id else "",
@@ -250,12 +292,13 @@ class AddTextRequest(BaseModel):
 
 @router.post("/text")
 async def add_text(req: AddTextRequest):
-    doc_id = await convex.mutation("context:create", {
-        "projectId": req.project_id or None,
+    payload = {
         "name": req.name,
         "type": "text",
         "content": req.content[:100_000],
-    })
+    }
+    payload.update(await _context_create_payload_project_fields(req.project_id))
+    doc_id = await convex.mutation("context:create", payload)
     await _sync_context_doc_as_integrity_source(
         project_id=req.project_id,
         doc_id=str(doc_id) if doc_id else "",

@@ -37,6 +37,8 @@ async def test_add_text_syncs_source_and_chunks_into_repo(client, convex_mock, t
     def _mutation(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
         if payload.get("path") == "context:create":
+            assert payload["args"]["projectSlug"] == "context-project"
+            assert "projectId" not in payload["args"]
             return httpx.Response(200, json={"value": "doc-123"})
         return httpx.Response(200, json={"value": None})
 
@@ -100,6 +102,8 @@ async def test_add_url_syncs_source_and_chunks_into_repo(client, convex_mock, tm
     def _mutation(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
         if payload.get("path") == "context:create":
+            assert payload["args"]["projectSlug"] == "context-project"
+            assert "projectId" not in payload["args"]
             return httpx.Response(200, json={"value": "doc-456"})
         return httpx.Response(200, json={"value": None})
 
@@ -168,6 +172,8 @@ async def test_upload_text_file_syncs_source_and_chunks_into_repo(client, convex
     def _mutation(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content.decode())
         if payload.get("path") == "context:create":
+            assert payload["args"]["projectSlug"] == "context-project"
+            assert "projectId" not in payload["args"]
             return httpx.Response(200, json={"value": "doc-789"})
         return httpx.Response(200, json={"value": None})
 
@@ -201,3 +207,56 @@ async def test_upload_text_file_syncs_source_and_chunks_into_repo(client, convex
     assert all(chunk.metadata["source_title"] == "Queue Notes" for chunk in source_chunks)
     assert all(chunk.metadata["source_type"] == "text" for chunk in source_chunks)
     assert all(chunk.metadata["origin"] == "queue-notes.txt" for chunk in source_chunks)
+
+
+async def test_add_text_syncs_source_for_local_repo_only_project_id(
+    client, convex_mock, tmp_path, monkeypatch
+):
+    root = bootstrap_future_project(tmp_path, name="Context Project", slug="context-project")
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in {"projects:getById", "projects:get"}:
+            return httpx.Response(200, json={"value": None})
+        return httpx.Response(200, json={"value": None})
+
+    def _mutation(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") == "context:create":
+            assert payload["args"]["projectSlug"] == "context-project"
+            assert "projectId" not in payload["args"]
+            return httpx.Response(200, json={"value": "doc-local"})
+        return httpx.Response(200, json={"value": None})
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "context-project":
+            raise ValueError(slug)
+        return {
+            "_id": "local:context-project",
+            "name": "Context Project",
+            "slug": "context-project",
+            "status": "ready",
+            "localRepoPath": str(root),
+        }
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    convex_mock.post("/api/mutation").mock(side_effect=_mutation)
+    monkeypatch.setattr(context_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    resp = await client.post(
+        "/api/v1/context/text",
+        json={
+            "name": "Repo Only Note",
+            "content": "Repo-only projects should still sync context notes into integrity.",
+            "project_id": "local:context-project",
+        },
+    )
+
+    assert resp.status_code == 200
+    repo = ResearchIntegrityRepo(root)
+    sources = repo.load_sources()
+    source = next(source for source in sources if source.source_key == "context-doc-local")
+
+    assert source.title == "Repo Only Note"
+    assert source.source_type == "text"
+    assert source.provenance["context_doc_id"] == "doc-local"
