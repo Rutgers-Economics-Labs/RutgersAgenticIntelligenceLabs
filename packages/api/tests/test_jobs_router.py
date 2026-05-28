@@ -85,8 +85,8 @@ async def test_trigger_job_queued(client, convex_mock):
 async def test_trigger_job_repo_only_project_persists_slug_and_local_id(client, convex_mock, monkeypatch):
     captured_mutation_args: dict | None = None
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "local:demo-project"
         return {"_id": "local:demo-project", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
 
     def mutation_dispatch(request: httpx.Request) -> httpx.Response:
@@ -97,7 +97,7 @@ async def test_trigger_job_repo_only_project_persists_slug_and_local_id(client, 
             return httpx.Response(200, json={"value": {"jobId": "job-local"}})
         return httpx.Response(200, json={"value": {}})
 
-    monkeypatch.setattr("app.routers.jobs.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.routers.jobs.planner_service.resolve_project_reference", _resolve_project_reference)
     convex_mock.post("/api/query").mock(side_effect=_convex_query_dispatch)
     convex_mock.post("/api/mutation").mock(side_effect=mutation_dispatch)
 
@@ -199,8 +199,8 @@ async def test_list_jobs(client, convex_mock):
 async def test_list_jobs_normalizes_repo_only_project_slug(client, convex_mock, monkeypatch):
     captured_query_args: dict | None = None
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "local:demo-project"
         return {"_id": "local:demo-project", "slug": "demo-project"}
 
     def dispatch(request: httpx.Request) -> httpx.Response:
@@ -211,7 +211,7 @@ async def test_list_jobs_normalizes_repo_only_project_slug(client, convex_mock, 
             return httpx.Response(200, json={"value": []})
         return httpx.Response(200, json={"value": None})
 
-    monkeypatch.setattr("app.routers.jobs.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.routers.jobs.planner_service.resolve_project_reference", _resolve_project_reference)
     convex_mock.post("/api/query").mock(side_effect=dispatch)
 
     resp = await client.get("/api/v1/jobs", params={"projectId": "local:demo-project"})

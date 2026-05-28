@@ -29,9 +29,9 @@ async def test_scheduler_tick_uses_repo_first_project_lookup(monkeypatch):
         updates.append((path, payload))
         return {"ok": True}
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
-        return {"_id": "local:demo-project", "slug": slug}
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
+        return {"_id": "local:demo-project", "slug": "demo-project"}
 
     async def _trigger_job(pipeline_slug: str, project_id: str | None = None):
         assert pipeline_slug == "demo-pipeline"
@@ -40,7 +40,7 @@ async def test_scheduler_tick_uses_repo_first_project_lookup(monkeypatch):
 
     monkeypatch.setattr(scheduler_service.convex, "query", _query)
     monkeypatch.setattr(scheduler_service.convex, "mutation", _mutation)
-    monkeypatch.setattr(scheduler_service.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(scheduler_service.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr("app.routers.jobs._trigger_job", _trigger_job)
 
     scheduler = SchedulerService()

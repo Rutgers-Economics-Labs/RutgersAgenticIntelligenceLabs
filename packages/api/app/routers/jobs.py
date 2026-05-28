@@ -31,24 +31,10 @@ async def _resolve_job_project(project_ref: str | None) -> dict | None:
     if not project_ref:
         return None
 
-    project = None
-    candidate_slugs = [project_ref]
-    if isinstance(project_ref, str) and project_ref.startswith("local:"):
-        candidate_slugs.append(project_ref.removeprefix("local:"))
-
-    for candidate in candidate_slugs:
-        try:
-            project = await planner_service.get_project_by_slug(candidate)
-            if project:
-                break
-        except Exception:
-            project = None
-
-    if not project and not str(project_ref).startswith("local:"):
-        try:
-            project = await convex.query("projects:getById", {"projectId": project_ref})
-        except Exception:
-            project = None
+    try:
+        project = await planner_service.resolve_project_reference(project_ref)
+    except Exception:
+        project = None
 
     return project if isinstance(project, dict) else None
 

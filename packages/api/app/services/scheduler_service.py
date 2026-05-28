@@ -88,7 +88,7 @@ class SchedulerService:
                 project_slug = str(sched.get("projectSlug") or "").strip()
                 if project_slug:
                     try:
-                        project = await planner_service.get_project_by_slug(project_slug)
+                        project = await planner_service.resolve_project_reference(project_slug)
                     except Exception:
                         project = None
                 job_id = None
