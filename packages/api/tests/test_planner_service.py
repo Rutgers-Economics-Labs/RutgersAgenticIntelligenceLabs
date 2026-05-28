@@ -43,6 +43,36 @@ autonomy:
     assert project["githubSyncMode"] == "assisted"
 
 
+def test_get_project_by_slug_falls_back_to_local_repo_manifest_when_convex_query_fails(monkeypatch, tmp_path):
+    import app.services.planner_service as planner_service
+
+    project_root = tmp_path / "generated_projects" / "demo-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "rail.yaml").write_text(
+        """
+project:
+  name: Demo Project
+  slug: demo-project
+  description: Local fallback project
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _query(path: str, payload: dict):
+        assert path == "projects:getBySlug"
+        raise RuntimeError("convex unavailable")
+
+    monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(planner_service.convex, "query", _query)
+
+    project = asyncio.run(planner_service.get_project_by_slug("demo-project"))
+
+    assert project["slug"] == "demo-project"
+    assert project["name"] == "Demo Project"
+    assert project["localRepoPath"] == str(project_root.resolve())
+
+
 def test_get_project_by_slug_prefers_convex_record(monkeypatch, tmp_path):
     import app.services.planner_service as planner_service
 
@@ -168,6 +198,35 @@ project:
     async def _query(path: str, payload: dict):
         assert path == "projects:getByGithubRepo"
         return None
+
+    monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(planner_service.convex, "query", _query)
+
+    project = asyncio.run(planner_service.get_project_by_github_repo("Rutgers-Economics-Labs/demo-project"))
+
+    assert project["slug"] == "demo-project"
+    assert project["github"] == "Rutgers-Economics-Labs/demo-project"
+
+
+def test_get_project_by_github_repo_falls_back_to_local_repo_manifest_when_convex_query_fails(monkeypatch, tmp_path):
+    import app.services.planner_service as planner_service
+
+    project_root = tmp_path / "generated_projects" / "demo-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "rail.yaml").write_text(
+        """
+project:
+  name: Demo Project
+  slug: demo-project
+  git_repo_url: https://github.com/Rutgers-Economics-Labs/demo-project
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _query(path: str, payload: dict):
+        assert path == "projects:getByGithubRepo"
+        raise RuntimeError("convex unavailable")
 
     monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
     monkeypatch.setattr(planner_service.convex, "query", _query)

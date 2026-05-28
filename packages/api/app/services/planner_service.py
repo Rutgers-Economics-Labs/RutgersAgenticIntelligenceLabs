@@ -385,20 +385,26 @@ def _merge_repo_truth(project: dict[str, Any]) -> dict[str, Any]:
 
 
 async def get_project_by_slug(slug: str) -> dict:
-    project = await convex.query("projects:getBySlug", {"slug": slug})
+    local_project = _local_project_record_from_repo(slug)
+    try:
+        project = await convex.query("projects:getBySlug", {"slug": slug})
+    except Exception:
+        project = None
     if project:
         return _merge_repo_truth(project)
-    local_project = _local_project_record_from_repo(slug)
     if local_project:
         return local_project
     raise ValueError(f"Project '{slug}' not found")
 
 
 async def get_project_by_github_repo(repo: str) -> dict:
-    project = await convex.query("projects:getByGithubRepo", {"github": repo})
+    normalized_repo = str(repo or "").strip().lower()
+    try:
+        project = await convex.query("projects:getByGithubRepo", {"github": repo})
+    except Exception:
+        project = None
     if project:
         return _merge_repo_truth(project)
-    normalized_repo = str(repo or "").strip().lower()
     for project in _iter_local_project_records():
         if str(project.get("github") or "").strip().lower() == normalized_repo:
             return project
