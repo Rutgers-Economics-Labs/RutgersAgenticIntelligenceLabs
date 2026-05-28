@@ -192,9 +192,21 @@ project:
     )
 
     created_payloads: list[dict] = []
+    reconcile_projects: list[dict] = []
+    catalog_projects: list[dict] = []
 
     async def _query(path: str, payload: dict):
         if path == "projects:getBySlug":
+            if payload["slug"] == "demo-project" and created_payloads:
+                return {
+                    "_id": "project-1",
+                    "name": "Demo Project",
+                    "slug": "demo-project",
+                    "description": "Repo-only local project",
+                    "localRepoPath": str(local_project),
+                    "manifestPath": "rail.yaml",
+                    "defaultBranch": "main",
+                }
             return None
         if path == "projects:getById":
             return {
@@ -214,13 +226,25 @@ project:
         return "project-1"
 
     async def _catalog_row(project: dict):
-        return {"slug": project["slug"], "localExists": True}
+        catalog_projects.append(project)
+        return {"slug": project["slug"], "localExists": True, "snapshotLoaded": True}
+
+    async def _reconcile_project_reality(project: dict):
+        reconcile_projects.append(project)
+        return {
+            "persistedControlPlaneSnapshot": {
+                "path": "research_plan/state/control_plane_snapshot.json",
+                "loaded": True,
+            },
+            "hasChanges": False,
+        }
 
     monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
     monkeypatch.setattr(projects_router.convex, "query", _query)
     monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
     monkeypatch.setattr(projects_router, "_catalog_row", _catalog_row)
     monkeypatch.setattr(projects_router, "ensure_project_boot", lambda root: {"ok": True})
+    monkeypatch.setattr(projects_router.reconciliation_service, "reconcile_project_reality", _reconcile_project_reality)
 
     response = client.post("/api/v1/projects/catalog/demo-project/activate", json={})
 
@@ -229,9 +253,90 @@ project:
     assert payload["status"] == "ready"
     assert payload["project"]["_id"] == "project-1"
     assert payload["catalogProject"]["slug"] == "demo-project"
+    assert payload["catalogProject"]["snapshotLoaded"] is True
+    assert payload["reconcile"]["persistedControlPlaneSnapshot"]["loaded"] is True
     assert created_payloads[0]["localRepoPath"] == str(local_project)
     assert "gitRepoUrl" not in created_payloads[0]
     assert "defaultBranch" not in created_payloads[0]
+    assert reconcile_projects == [
+        {
+            "_id": "project-1",
+            "name": "Demo Project",
+            "slug": "demo-project",
+            "description": "Repo-only local project",
+            "localRepoPath": str(local_project),
+            "manifestPath": "rail.yaml",
+            "defaultBranch": "main",
+        }
+    ]
+    assert catalog_projects[0]["_id"] == "project-1"
+
+
+def test_activate_catalog_project_updates_existing_project_without_approach_field(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    local_project = tmp_path / "generated_projects" / "demo-project"
+    local_project.mkdir(parents=True, exist_ok=True)
+    (local_project / "rail.yaml").write_text(
+        """
+project:
+  name: Demo Project
+  slug: demo-project
+  description: Repo-only local project
+  default_branch: main
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    update_payloads: list[dict] = []
+
+    async def _query(path: str, payload: dict):
+        if path == "projects:getBySlug":
+            return {
+                "_id": "project-1",
+                "name": "Demo Project",
+                "slug": "demo-project",
+                "description": "Repo-only local project",
+                "localRepoPath": str(local_project),
+                "manifestPath": "rail.yaml",
+            }
+        raise AssertionError(f"unexpected query: {path}")
+
+    async def _mutation(path: str, payload: dict):
+        assert path == "projects:updateById"
+        update_payloads.append(payload)
+        return None
+
+    async def _catalog_row(project: dict):
+        return {"slug": project["slug"], "localExists": True}
+
+    async def _reconcile_project_reality(project: dict):
+        return {"persistedControlPlaneSnapshot": {"loaded": True}, "hasChanges": False}
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": "project-1",
+            "name": "Demo Project",
+            "slug": slug,
+            "description": "Repo-only local project",
+            "localRepoPath": str(local_project),
+            "manifestPath": "rail.yaml",
+        }
+
+    monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
+    monkeypatch.setattr(projects_router, "_catalog_row", _catalog_row)
+    monkeypatch.setattr(projects_router, "ensure_project_boot", lambda root: {"ok": True})
+    monkeypatch.setattr(projects_router.reconciliation_service, "reconcile_project_reality", _reconcile_project_reality)
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post("/api/v1/projects/catalog/demo-project/activate", json={})
+
+    assert response.status_code == 200
+    assert update_payloads[0]["projectId"] == "project-1"
+    assert "approach" not in update_payloads[0]
 
 
 def test_create_ontology_follow_up_task_endpoint_creates_expansion_task(monkeypatch):

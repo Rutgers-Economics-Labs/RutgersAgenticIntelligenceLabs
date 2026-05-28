@@ -937,7 +937,6 @@ async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
         "name": metadata.get("name") or defn["name"],
         "slug": slug,
         "description": metadata.get("description") or defn["description"],
-        "approach": "ontology-first",
         "localRepoPath": str(root),
         "manifestPath": "rail.yaml",
     }
@@ -954,7 +953,7 @@ async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
             },
         )
         return await convex.query("projects:getBySlug", {"slug": slug}) or {**existing, **payload}
-    project_id = await convex.mutation("projects:create", payload)
+    project_id = await convex.mutation("projects:create", {**payload, "approach": "ontology-first"})
     return await convex.query("projects:getById", {"projectId": project_id}) or {**payload, "_id": project_id}
 
 
@@ -1400,8 +1399,17 @@ async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest)
         ensure_project_boot(root)
     except ManifestValidationError as exc:
         raise HTTPException(status_code=422, detail=manifest_validation_http_detail(exc)) from exc
-    row = await _catalog_row(defn)
-    return {"status": "ready", "project": project, "catalogProject": row}
+    reconcile_result = await reconciliation_service.reconcile_project_reality(project)
+    refreshed_project = await planner_service.get_project_by_slug(project.get("slug") or defn["slug"])
+    if refreshed_project:
+        project = refreshed_project
+    row = await _catalog_row(project)
+    return {
+        "status": "ready",
+        "project": project,
+        "catalogProject": row,
+        "reconcile": reconcile_result,
+    }
 
 
 @router.post("/future/bootstrap")
