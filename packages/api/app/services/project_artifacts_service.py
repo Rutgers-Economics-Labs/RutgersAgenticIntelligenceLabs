@@ -218,26 +218,29 @@ async def resolve(project_id: str) -> ProjectArtifacts:
 
 
 async def _resolve_impl(project_id: str) -> ProjectArtifacts:
-    # 1. Try resolving by Internal ID first
-    project = await convex.query("projects:getById", {"projectId": project_id})
-    
-    # 2. If not found, try resolving by Slug
-    if not project:
-        project = await convex.query("projects:get", {"slug": project_id})
+    from app.services import planner_service
 
-    if not project:
-        from app.services import planner_service
+    project = None
 
+    candidate_slugs = [project_id]
+    if isinstance(project_id, str) and project_id.startswith("local:"):
+        candidate_slugs.append(project_id.removeprefix("local:"))
+
+    for candidate in candidate_slugs:
         try:
-            project = await planner_service.get_project_by_slug(project_id)
+            project = await planner_service.get_project_by_slug(candidate)
+            if project:
+                break
         except Exception:
             project = None
 
-        if not project and isinstance(project_id, str) and project_id.startswith("local:"):
-            try:
-                project = await planner_service.get_project_by_slug(project_id.removeprefix("local:"))
-            except Exception:
-                project = None
+    if not project:
+        # Fall back to direct Convex lookups for internal ids or projects not
+        # yet surfaced through the repo-backed planner resolver.
+        project = await convex.query("projects:getById", {"projectId": project_id})
+
+    if not project:
+        project = await convex.query("projects:get", {"slug": project_id})
 
     if not project:
         raise RuntimeError(f"Project '{project_id}' not found (tried ID and Slug)")

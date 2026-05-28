@@ -18,10 +18,12 @@ async def test_resolve_uses_repo_first_local_artifacts_when_convex_project_missi
         conn.execute("CREATE TABLE demo(id INTEGER)")
     onto_duckdb.write_bytes(b"duck")
 
+    convex_called = False
+
     async def _query(path: str, payload: dict):
-        if path in {"projects:getById", "projects:get"}:
-            return None
-        raise AssertionError(path)
+        nonlocal convex_called
+        convex_called = True
+        raise AssertionError((path, payload))
 
     async def _get_project_by_slug(slug: str):
         return {
@@ -42,6 +44,7 @@ async def test_resolve_uses_repo_first_local_artifacts_when_convex_project_missi
     assert artifacts.duckdb_path == str(onto_duckdb.resolve())
     assert artifacts.owl_path is None
     assert artifacts.embeddings_path == str((ontology_root / "embeddings.db").resolve())
+    assert convex_called is False
 
 
 @pytest.mark.asyncio
@@ -55,10 +58,12 @@ async def test_resolve_accepts_local_prefixed_project_id_for_repo_only_projects(
         conn.execute("CREATE TABLE demo(id INTEGER)")
     onto_duckdb.write_bytes(b"duck")
 
+    convex_called = False
+
     async def _query(path: str, payload: dict):
-        if path in {"projects:getById", "projects:get"}:
-            return None
-        raise AssertionError(path)
+        nonlocal convex_called
+        convex_called = True
+        raise AssertionError((path, payload))
 
     seen_slugs: list[str] = []
 
@@ -83,3 +88,4 @@ async def test_resolve_accepts_local_prefixed_project_id_for_repo_only_projects(
     assert artifacts.project_id == "local:demo-project"
     assert artifacts.db_path == str(onto_db.resolve())
     assert artifacts.duckdb_path == str(onto_duckdb.resolve())
+    assert convex_called is False
