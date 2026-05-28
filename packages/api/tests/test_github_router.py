@@ -13,15 +13,17 @@ def _project_query_response(project: dict) -> httpx.Response:
     return httpx.Response(200, json={"value": project})
 
 
-async def test_publish_route_batches_files_into_single_commit(client, convex_mock):
+async def test_publish_route_batches_files_into_single_commit(client, convex_mock, monkeypatch):
+    from app.routers import github as github_router
+
     project = {
         "_id": "project-1",
         "slug": "sad",
         "github": "Rutgers-Economics-Labs/RAIL-sad",
         "defaultBranch": "main",
     }
-    convex_mock.post("/api/query").mock(return_value=_project_query_response(project))
     convex_mock.post("/api/mutation").mock(return_value=httpx.Response(200, json={"value": {}}))
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", AsyncMock(return_value=project))
 
     # configs/ is no longer in the publish-allow list — only .ontology/ and
     # the other DEFAULT_REPO_PUBLISH_PREFIXES are admissible. Batch two
