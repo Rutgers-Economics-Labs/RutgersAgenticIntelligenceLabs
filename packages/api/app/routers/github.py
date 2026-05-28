@@ -156,10 +156,7 @@ async def _sync_repo_changes(repo: str, before_sha: str, after_sha: str, project
             content = await github_service.get_file(repo, path, ref=after_sha)
             updates = manifest_updates_from_content(content)
             if updates:
-                await convex.mutation("projects:update", {
-                    "slug": project["slug"],
-                    **updates,
-                })
+                project = await _persist_github_project_patch(project, updates)
                 synced_count += 1
             continue
 
@@ -189,7 +186,7 @@ async def _sync_repo_changes(repo: str, before_sha: str, after_sha: str, project
     # Trigger hydration if pipeline or ontology changed
     if pipeline_changed and project.get("pipelineConfigSlug"):
         from app.routers.jobs import _trigger_job
-        await _trigger_job(project["pipelineConfigSlug"], project["_id"])
+        await _trigger_job(project["pipelineConfigSlug"], project.get("slug"))
 
 @router.get("/status/{project_slug}")
 async def github_status(project_slug: str):

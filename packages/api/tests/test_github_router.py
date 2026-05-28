@@ -61,15 +61,18 @@ async def test_sync_repo_changes_prefers_current_layout_and_updates_manifest():
         return "name: census_states\n"
 
     mutation = AsyncMock()
-    query = AsyncMock(side_effect=[
-        None,  # existing api config lookup
-    ])
+    async def _query(path: str, payload: dict):
+        if path == "configs:getApi":
+            return None
+        if path == "projects:get":
+            return {"_id": "project-1", "slug": "sad", "pipelineConfigSlug": "nj-hydration"}
+        raise AssertionError((path, payload))
 
     with patch("app.routers.github.github_service.list_changed_files", new=AsyncMock(return_value=[
         "configs/apis/census_states.yaml",
         ".ontology/sources/census_states.yaml",
         "rail.yaml",
-    ])), patch("app.routers.github.github_service.get_file", new=get_file), patch("app.routers.github.convex.query", new=query), patch("app.routers.github.convex.mutation", new=mutation), patch("app.routers.github._trigger_job", new=AsyncMock(), create=True):
+    ])), patch("app.routers.github.github_service.get_file", new=get_file), patch("app.routers.github.convex.query", new=_query), patch("app.routers.github.convex.mutation", new=mutation), patch("app.routers.github._trigger_job", new=AsyncMock(), create=True):
         await _sync_repo_changes("Rutgers-Economics-Labs/RAIL-sad", "before", "after", project)
 
     calls = mutation.await_args_list
@@ -92,7 +95,12 @@ async def test_sync_repo_changes_skips_binary_watched_paths():
         return "name: census_states\n"
 
     mutation = AsyncMock()
-    query = AsyncMock(side_effect=[None])
+    async def _query(path: str, payload: dict):
+        if path == "configs:getApi":
+            return None
+        if path == "projects:get":
+            return {"_id": "project-1", "slug": "sad", "pipelineConfigSlug": "nj-hydration"}
+        raise AssertionError((path, payload))
 
     with patch(
         "app.routers.github.github_service.list_changed_files",
@@ -104,7 +112,7 @@ async def test_sync_repo_changes_skips_binary_watched_paths():
             ]
         ),
     ), patch("app.routers.github.github_service.get_file", new=get_file), patch(
-        "app.routers.github.convex.query", new=query
+        "app.routers.github.convex.query", new=_query
     ), patch("app.routers.github.convex.mutation", new=mutation), patch(
         "app.routers.github._trigger_job", new=AsyncMock(), create=True
     ):
@@ -217,3 +225,83 @@ async def test_github_sync_uses_repo_first_local_project_link(client, monkeypatc
 
     assert resp.status_code == 200
     assert resp.json() == {"synced": True, "project": "demo-project"}
+
+
+async def test_sync_repo_changes_persists_local_project_manifest(monkeypatch, tmp_path):
+    from app.routers import github as github_router
+    from rail.bootstrap import bootstrap_future_project
+    from rail.manifest import load_manifest
+
+    root = bootstrap_future_project(tmp_path, name="Demo Project", slug="demo-project")
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "name": "Demo Project",
+        "localRepoPath": str(root),
+        "pipelineConfigSlug": None,
+    }
+
+    async def get_file(_repo: str, path: str, ref: str = "after") -> str:
+        if path == "rail.yaml":
+            return (
+                "version: 1\n"
+                "project:\n"
+                "  name: Demo Project\n"
+                "  slug: demo-project\n"
+                "  description: Synced from GitHub\n"
+                "  default_branch: main\n"
+            )
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        github_router.github_service,
+        "list_changed_files",
+        AsyncMock(return_value=["rail.yaml"]),
+    )
+    monkeypatch.setattr(github_router.github_service, "get_file", get_file)
+    monkeypatch.setattr(github_router.convex, "query", AsyncMock())
+    mutation = AsyncMock()
+    monkeypatch.setattr(github_router.convex, "mutation", mutation)
+    monkeypatch.setattr(github_router.planner_service, "project_root_from_record", lambda record: Path(record["localRepoPath"]))
+    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", AsyncMock(return_value={**project, "description": "Synced from GitHub"}))
+
+    await github_router._sync_repo_changes("Rutgers-Economics-Labs/demo-project", "before", "after", project)
+
+    manifest = load_manifest(root)
+    assert manifest.project.description == "Synced from GitHub"
+    mutation.assert_not_awaited()
+
+
+async def test_sync_repo_changes_triggers_pipeline_by_slug_for_repo_only_project(monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "pipelineConfigSlug": "demo-pipeline",
+        "localRepoPath": "/tmp/demo-project",
+    }
+
+    async def get_file(_repo: str, path: str, ref: str = "after") -> str:
+        assert path == ".ontology/pipelines/demo-pipeline.yaml"
+        return "ontology: .ontology/ontology.yaml\nsteps: []\n"
+
+    triggered: list[tuple[str, str | None]] = []
+
+    async def _trigger_job(pipeline_slug: str, project_id: str | None = None):
+        triggered.append((pipeline_slug, project_id))
+        return {"jobId": "job-123"}
+
+    monkeypatch.setattr(
+        github_router.github_service,
+        "list_changed_files",
+        AsyncMock(return_value=[".ontology/pipelines/demo-pipeline.yaml"]),
+    )
+    monkeypatch.setattr(github_router.github_service, "get_file", get_file)
+    monkeypatch.setattr(github_router.convex, "query", AsyncMock(return_value=None))
+    monkeypatch.setattr(github_router.convex, "mutation", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr("app.routers.jobs._trigger_job", _trigger_job)
+
+    await github_router._sync_repo_changes("Rutgers-Economics-Labs/demo-project", "before", "after", project)
+
+    assert triggered == [("demo-pipeline", "demo-project")]
