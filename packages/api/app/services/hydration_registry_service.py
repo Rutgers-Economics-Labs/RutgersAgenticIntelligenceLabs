@@ -45,6 +45,14 @@ def get_manifest_fingerprint(project_root: Path, manifest_path: str = "rail.yaml
     return hashlib.sha256(content).hexdigest()
 
 
+def _artifact_matches_current_commit(artifact_commit: Any, current_commit: str | None) -> bool:
+    normalized_artifact = str(artifact_commit or "").strip().lower()
+    normalized_current = str(current_commit or "").strip().lower()
+    if not normalized_current:
+        return normalized_artifact in {"", "unknown", "none", "null"}
+    return normalized_artifact == normalized_current
+
+
 def resolve_pipeline_slug(project: dict, project_root: Path) -> str:
     # 1. Check if project record has a hardcoded pipeline
     if project.get("pipelineConfigSlug"):
@@ -381,7 +389,7 @@ async def get_hydration_status(
             continue
 
         artifact["filesExist"] = artifact_files_exist(artifact)
-        artifact["isCurrentCommit"] = artifact.get("commitSha") == current_commit
+        artifact["isCurrentCommit"] = _artifact_matches_current_commit(artifact.get("commitSha"), current_commit)
         artifact["isCurrentManifest"] = artifact.get("manifestFingerprint") == manifest_fingerprint
         artifact["isReusable"] = (
             artifact.get("status") == "valid"

@@ -388,3 +388,63 @@ def test_get_hydration_status_prefers_local_disk_over_stale_same_device_registry
     assert payload["state"] == "hydrated_on_this_device"
     assert payload["reusableArtifact"]["isReusable"] is True
     assert payload["reusableArtifact"]["synthesizedFromLocalDisk"] is True
+
+
+def test_get_hydration_status_treats_unknown_commit_as_current_when_repo_has_no_sha(project_root, monkeypatch):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_duckdb = ontology_root / "onto.duckdb"
+    onto_db = ontology_root / "onto.db"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    onto_duckdb.write_bytes(b"duck")
+    onto_db.write_bytes(b"db")
+    hydration_meta.write_text(
+        json.dumps(
+            {
+                "pipeline_slug": "my_pipeline",
+                "hydration_mode": "full",
+                "commit_sha": None,
+                "manifest_fingerprint": "current-fingerprint",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    async def _fake_query(path: str, payload: dict):
+        if path == "hydrationArtifacts:listByProject":
+            return [
+                {
+                    "deviceId": "device-1",
+                    "pipelineSlug": "my_pipeline",
+                    "hydrationMode": "full",
+                    "status": "valid",
+                    "commitSha": "unknown",
+                    "manifestFingerprint": "current-fingerprint",
+                    "duckdbArtifactPath": str(onto_duckdb),
+                    "ontologyArtifactPath": str(onto_db),
+                }
+            ]
+        if path == "jobs:listByProject":
+            return []
+        return []
+
+    monkeypatch.setattr("app.services.hydration_registry_service.convex.query", _fake_query)
+    monkeypatch.setattr("app.services.hydration_registry_service.get_device_id", lambda: "device-1")
+    monkeypatch.setattr("app.services.hydration_registry_service.get_repo_commit", lambda root: None)
+    monkeypatch.setattr("app.services.hydration_registry_service.get_manifest_fingerprint", lambda root, manifest_path: "current-fingerprint")
+
+    payload = asyncio.run(
+        get_hydration_status(
+            project={
+                "_id": "project-1",
+                "localRepoPath": str(project_root),
+                "manifestPath": "rail.yaml",
+            },
+            pipeline_slug="my_pipeline",
+            hydration_mode="full",
+        )
+    )
+
+    assert payload["state"] == "hydrated_on_this_device"
+    assert payload["reusableArtifact"]["isCurrentCommit"] is True
+    assert payload["reusableArtifact"]["isReusable"] is True
