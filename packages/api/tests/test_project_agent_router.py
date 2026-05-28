@@ -16,9 +16,9 @@ async def test_get_project_info_uses_repo_first_local_project(monkeypatch):
             return None
         raise AssertionError(path)
 
-    async def _get_project_by_slug(slug: str):
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref not in {"demo-project", "local:demo-project"}:
+            raise ValueError(project_ref)
         return {
             "_id": "local:demo-project",
             "name": "Demo Project",
@@ -31,7 +31,7 @@ async def test_get_project_info_uses_repo_first_local_project(monkeypatch):
         }
 
     monkeypatch.setattr(project_agent_router.convex, "query", _query)
-    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_agent_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     result = await project_agent_router._execute_project_tool("get_project_info", {}, "local:demo-project")
 
@@ -61,13 +61,13 @@ async def test_link_pipeline_persists_to_local_manifest(monkeypatch, tmp_path):
             return None
         raise AssertionError(path)
 
-    async def _get_project_by_slug(slug: str):
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref not in {"demo-project", "local:demo-project"}:
+            raise ValueError(project_ref)
         return project
 
     monkeypatch.setattr(project_agent_router.convex, "query", _query)
-    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_agent_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(
         project_agent_router.planner_service,
         "project_root_from_record",
@@ -102,13 +102,13 @@ async def test_add_data_source_persists_linked_sources_to_local_manifest(monkeyp
             return None
         raise AssertionError(path)
 
-    async def _get_project_by_slug(slug: str):
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref not in {"demo-project", "local:demo-project"}:
+            raise ValueError(project_ref)
         return project
 
     monkeypatch.setattr(project_agent_router.convex, "query", _query)
-    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_agent_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(
         project_agent_router.planner_service,
         "project_root_from_record",
@@ -135,9 +135,9 @@ async def test_save_to_knowledge_base_uses_project_slug_for_local_project(monkey
             return None
         raise AssertionError(path)
 
-    async def _get_project_by_slug(slug: str):
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref not in {"demo-project", "local:demo-project"}:
+            raise ValueError(project_ref)
         return {
             "_id": "local:demo-project",
             "slug": "demo-project",
@@ -151,7 +151,7 @@ async def test_save_to_knowledge_base_uses_project_slug_for_local_project(monkey
 
     monkeypatch.setattr(project_agent_router.convex, "query", _query)
     monkeypatch.setattr(project_agent_router.convex, "mutation", _mutation)
-    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_agent_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     result = await project_agent_router._execute_project_tool(
         "save_to_knowledge_base",
@@ -197,15 +197,15 @@ async def test_get_recent_jobs_uses_project_slug_for_local_project(monkeypatch):
 
 
 async def test_resolve_project_record_prefers_repo_first_local_project(monkeypatch):
-    async def _get_project_by_slug(slug: str):
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref not in {"demo-project", "local:demo-project"}:
+            raise ValueError(project_ref)
         return {"_id": "local:demo-project", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
 
     async def _query(path: str, payload: dict):
         raise AssertionError((path, payload))
 
-    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_agent_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(project_agent_router.convex, "query", _query)
 
     project = await project_agent_router._resolve_project_record("local:demo-project")
@@ -222,9 +222,9 @@ async def test_persist_project_patch_prefers_repo_first_refresh_for_convex_proje
         updated_payloads.append(payload)
         return None
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
-        return {"_id": "project-1", "slug": slug, "name": "Updated Demo", "status": "ready"}
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
+        return {"_id": "project-1", "slug": "demo-project", "name": "Updated Demo", "status": "ready"}
 
     async def _query(path: str, payload: dict):
         if path == "projects:getById":
@@ -233,7 +233,7 @@ async def test_persist_project_patch_prefers_repo_first_refresh_for_convex_proje
 
     monkeypatch.setattr(project_agent_router.convex, "mutation", _mutation)
     monkeypatch.setattr(project_agent_router.convex, "query", _query)
-    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_agent_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     refreshed = await project_agent_router._persist_project_patch(project, {"name": "Updated Demo"})
 
