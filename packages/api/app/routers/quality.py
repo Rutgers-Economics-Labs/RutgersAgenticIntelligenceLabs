@@ -15,7 +15,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
-from app.services import sql_service
+from app.services import sql_service, project_artifacts_service
 
 router = APIRouter(prefix="/quality", tags=["quality"])
 
@@ -27,18 +27,22 @@ router = APIRouter(prefix="/quality", tags=["quality"])
 async def _resolve_db_path(project_id: str | None) -> str | None:
     """Return the DuckDB path for a project (or the globally-loaded one)."""
     if project_id:
-        proj = None
         try:
-            proj = await convex.query("projects:getById", {"projectId": project_id})
+            artifacts = await project_artifacts_service.resolve(project_id)
+            if artifacts.duckdb_path:
+                return artifacts.duckdb_path
         except Exception:
-            pass
-        if not proj:
             try:
-                proj = await convex.query("projects:get", {"slug": project_id})
+                proj = await convex.query("projects:getById", {"projectId": project_id})
             except Exception:
-                pass
-        if proj and proj.get("activeOntologyDuckdbPath"):
-            return proj["activeOntologyDuckdbPath"]
+                proj = None
+            if not proj:
+                try:
+                    proj = await convex.query("projects:get", {"slug": project_id})
+                except Exception:
+                    proj = None
+            if proj and proj.get("activeOntologyDuckdbPath"):
+                return proj["activeOntologyDuckdbPath"]
     # Fall back to globally-loaded path
     p = sql_service.get_path()
     return str(p) if p else None
