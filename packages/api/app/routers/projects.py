@@ -899,6 +899,20 @@ async def _catalog_row(project: dict) -> dict:
         root = _projects_base_dir() / project["slug"]
         
     metadata = _manifest_metadata(root, project) if root.exists() else {}
+    snapshot = command_center_service.read_control_plane_snapshot(
+        {
+            **project,
+            "localRepoPath": str(root),
+        }
+    )
+    summary = (snapshot or {}).get("commandCenter") or {}
+    task_counts = summary.get("taskCounts") or {}
+    by_status = task_counts.get("byStatus") or {}
+    closed_count = sum(
+        int(count or 0)
+        for status, count in by_status.items()
+        if status in {"done", "completed", "cancelled"}
+    )
     return {
         "name": project.get("name") or metadata.get("name"),
         "slug": project["slug"],
@@ -909,6 +923,15 @@ async def _catalog_row(project: dict) -> dict:
         "manifestExists": (root / "rail.yaml").exists(),
         "backendProject": project,
         "needsClone": not root.exists(),
+        "progress": {
+            "closed": closed_count,
+            "total": int(task_counts.get("total") or 0),
+        },
+        "controlPlane": {
+            "phase": summary.get("lifecyclePhase"),
+            "nextAction": summary.get("nextAction"),
+            "snapshotLoaded": bool(snapshot),
+        },
     }
 
 
@@ -1692,9 +1715,12 @@ async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
 async def get_project_context(slug: str):
     """Returns a structured context snapshot for agent initialization."""
     print(f"  [context] resolving for slug={slug}")
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
+    try:
+        project = await planner_service.get_project_by_slug(slug)
+    except ValueError:
         raise HTTPException(404, "Project not found")
+
+    project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
 
     context = {
         "project": {
@@ -1713,7 +1739,7 @@ async def get_project_context(slug: str):
     if project.get("activeOntologyDuckdbPath") or project.get("status") == "hydrated":
         try:
             from app.services import sql_service, ontology_service, project_artifacts_service
-            art = await project_artifacts_service.resolve(slug)
+            art = await project_artifacts_service.resolve(project.get("_id") or project.get("slug") or slug)
             print(f"  [context] resolved artifacts for {slug}: db={art.db_path}")
             sql_service.set_path(art.duckdb_path)
             classes = await ontology_service._run_with_ensure(
@@ -1727,42 +1753,49 @@ async def get_project_context(slug: str):
             print(f"  [context] ontology load failed for {slug}: {e}")
             pass
 
-    # Fetch data sources (Convex + Local Fallback)
-    api_slugs = project.get("apiConfigSlugs", [])
     found_slugs = set()
-    for slug_s in api_slugs:
-        cfg = await convex.query("configs:getApiBySlug", {"slug": slug_s})
-        if cfg:
-            context["data_sources"].append({"slug": cfg["slug"], "name": cfg["name"]})
-            found_slugs.add(slug_s)
-
-    # Local fallback for sources
-    from pathlib import Path
-    import yaml
-    local_sources = Path(project["localRepoPath"]) / ".ontology" / "sources"
-    if local_sources.exists():
+    local_sources = project_root / ".ontology" / "sources" if project_root else None
+    if local_sources and local_sources.exists():
         for yml in local_sources.glob("*.yaml"):
-            if yml.stem in found_slugs: continue
+            if yml.stem in found_slugs:
+                continue
             try:
                 with open(yml) as f:
                     cfg = yaml.safe_load(f)
                     if cfg and "name" in cfg:
                         context["data_sources"].append({"slug": yml.stem, "name": cfg["name"]})
-            except Exception: pass
+                        found_slugs.add(yml.stem)
+            except Exception:
+                pass
 
-    # Fetch pipeline info (Convex + Local Fallback)
+    for source_slug in project.get("apiConfigSlugs", []):
+        if source_slug in found_slugs:
+            continue
+        cfg = await convex.query("configs:getApiBySlug", {"slug": source_slug})
+        if cfg:
+            context["data_sources"].append({"slug": cfg["slug"], "name": cfg["name"]})
+            found_slugs.add(source_slug)
+
+    found_pipeline_slugs = set()
     pipeline_slug = project.get("pipelineConfigSlug")
-    if pipeline_slug:
+    local_pipelines = project_root / ".ontology" / "pipelines" if project_root else None
+    if pipeline_slug and local_pipelines and local_pipelines.exists():
+        for yml in local_pipelines.glob("*.yaml"):
+            if yml.stem != pipeline_slug:
+                continue
+            try:
+                with open(yml) as f:
+                    cfg = yaml.safe_load(f) or {}
+            except Exception:
+                cfg = {}
+            context["pipelines"].append({"slug": yml.stem, "name": cfg.get("name") or yml.stem})
+            found_pipeline_slugs.add(yml.stem)
+            break
+
+    if pipeline_slug and pipeline_slug not in found_pipeline_slugs:
         pipeline = await convex.query("configs:getPipelineBySlug", {"slug": pipeline_slug})
         if pipeline:
             context["pipelines"].append({"slug": pipeline["slug"], "name": pipeline["name"]})
-        else:
-            # Local fallback
-            local_pipelines = Path(project["localRepoPath"]) / ".ontology" / "pipelines"
-            if local_pipelines.exists():
-                for yml in local_pipelines.glob("*.yaml"):
-                    if yml.stem == pipeline_slug:
-                        context["pipelines"].append({"slug": yml.stem, "name": yml.stem})
 
     return context
 
@@ -2518,29 +2551,46 @@ async def get_planner_thread(slug: str):
     }
 
 
-@router.get("/{slug}/planner/home")
-async def get_planner_home(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+async def _build_planner_home_payload(project: dict[str, Any], slug: str) -> dict[str, Any]:
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     messages = await planner_service.list_planner_messages(project, thread_id=thread_id, limit=50)
     board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
     approvals = await planner_service.list_approvals(project)
+    autopilot_snapshot = await get_autopilot_status(slug)
     sessions = await running_agent_service.list_project_running_agents(project["_id"], active_only=False, limit=20)
     project_root = planner_service.project_root_from_record(project)
     research_plan_root = project_root / "research_plan" if project_root else None
     blockers_path = research_plan_root / "blockers.md" if research_plan_root else None
     sessions_root = research_plan_root / "sessions" if research_plan_root else None
+    projection = command_center_service.load_control_plane_summary(project)
+    summary = projection["summary"]
+    repo_health = summary.get("repoHealth") or {
+        "hasLocalRepo": bool(project_root and project_root.exists()),
+        "hasRailYaml": bool(project_root and (project_root / "rail.yaml").exists()),
+        "hasResearchPlan": bool(research_plan_root and research_plan_root.exists()),
+    }
 
     return {
         "project": {
             "id": project["_id"],
-            "name": project["name"],
-            "slug": project["slug"],
+            "name": project.get("name") or project.get("slug") or "Project",
+            "slug": project.get("slug") or "",
             "status": project.get("status"),
+            "description": project.get("description"),
+            "gitRepoUrl": project.get("gitRepoUrl"),
+            "defaultBranch": project.get("defaultBranch"),
+            "agentModel": project.get("agentModel"),
+            "githubSyncMode": project.get("githubSyncMode"),
             "localRepoPath": project.get("localRepoPath"),
             "manifestPath": project.get("manifestPath") or "rail.yaml",
         },
+        "repoHealth": repo_health,
+        "autopilot": autopilot_snapshot,
+        "pendingDispatches": _load_pending_dispatches(project),
+        "pendingQuestions": _load_pending_qa(project),
+        "decisions": _load_planner_decisions(project),
+        "refreshedAt": int(time.time() * 1000),
         "planner": {
             "threadId": thread_id,
             "messages": list(reversed(messages)),
@@ -2558,7 +2608,33 @@ async def get_planner_home(slug: str):
             },
             "sessions": [_session_review_model(project, session) | {"id": session.get("_id"), "status": session.get("status"), "role": session.get("role")} for session in sessions],
         },
+        "controlPlane": {
+            "phase": summary.get("lifecyclePhase"),
+            "nextAction": summary.get("nextAction"),
+            "currentBlocker": summary.get("currentBlocker"),
+            "goal": summary.get("goal"),
+            "taskCounts": summary.get("taskCounts"),
+            "recentArtifacts": summary.get("recentArtifacts"),
+            "sourceSummary": summary.get("sourceSummary"),
+            "skillSummary": summary.get("skillSummary"),
+            "integritySummary": summary.get("integritySummary"),
+            "projectReality": summary.get("projectReality"),
+            "auditors": summary.get("auditors"),
+            "blockerSummary": summary.get("blockerSummary"),
+            "repairQueue": summary.get("repairQueue"),
+            "recommendedRepairTask": summary.get("recommendedRepairTask"),
+            "closeoutCertificate": summary.get("closeoutCertificate"),
+            "missionBrief": summary.get("missionBrief"),
+            "ontologyFollowUps": summary.get("ontologyFollowUps"),
+            "snapshot": projection["snapshot"],
+        },
     }
+
+
+@router.get("/{slug}/planner/home")
+async def get_planner_home(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return await _build_planner_home_payload(project, slug)
 
 
 @router.post("/{slug}/planner/messages")
@@ -2610,15 +2686,13 @@ async def worker_update_planner(slug: str, data: WorkerUpdateRequest):
 @router.get("/{slug}/planner/board")
 async def get_planner_board(slug: str):
     project = await planner_service.get_project_by_slug(slug)
-    board = await planner_service.ensure_main_board(project)
-    tasks = await planner_service.list_tasks(board["_id"], project=project)
-    sessions = await running_agent_service.list_project_running_agents(project["_id"], active_only=False, limit=20)
+    home = await _build_planner_home_payload(project, slug)
     return {
-        "board": board,
-        "tasks": tasks,
-        "approvals": await planner_service.list_approvals(project),
-        "blockersPath": "research_plan/blockers.md",
-        "sessions": [_session_review_model(project, session) | {"id": session.get("_id"), "status": session.get("status"), "role": session.get("role")} for session in sessions],
+        "board": home["planner"]["board"],
+        "tasks": home["planner"]["tasks"],
+        "approvals": home["planner"]["approvals"],
+        "blockersPath": home["planner"]["files"]["blockers"] or "research_plan/blockers.md",
+        "sessions": home["planner"]["sessions"],
     }
 
 
@@ -3432,31 +3506,8 @@ async def get_autopilot_status(slug: str):
 
 @router.get("/{slug}/planner/decisions")
 async def get_planner_decisions(slug: str, limit: int = 50):
-    import json
     project = await planner_service.get_project_by_slug(slug)
-    local_path = project.get("localRepoPath")
-    if not local_path:
-        return []
-    
-    decisions_path = Path(local_path) / "research_plan" / "planner_decisions.jsonl"
-    if not decisions_path.exists():
-        return []
-    
-    decisions = []
-    try:
-        with open(decisions_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    try:
-                        decisions.append(json.loads(line))
-                    except Exception:
-                        pass
-    except Exception as e:
-        logger.warning("Failed to read planner_decisions.jsonl: %s", e)
-        return []
-
-    return decisions[::-1][:limit]
+    return _load_planner_decisions(project, limit=limit)
 
 
 class AnswerQaRequest(BaseModel):
@@ -3465,23 +3516,8 @@ class AnswerQaRequest(BaseModel):
 
 @router.get("/{slug}/qa/pending")
 async def get_pending_qa(slug: str):
-    import json
     project = await planner_service.get_project_by_slug(slug)
-    local_path = project.get("localRepoPath")
-    if not local_path:
-        return []
-    
-    from app.services.planner_answer_service import QA_LOG_REL_PATH
-    qa_path = Path(local_path) / QA_LOG_REL_PATH
-    if not qa_path.exists():
-        return []
-    
-    try:
-        log = json.loads(qa_path.read_text(encoding="utf-8"))
-        return [entry for entry in log if entry.get("status") in {"pending", "awaiting_human"}]
-    except Exception as e:
-        logger.warning("Failed to load Q&A log: %s", e)
-        return []
+    return _load_pending_qa(project)
 
 
 @router.post("/{slug}/qa/{question_id}/answer")
@@ -3557,25 +3593,111 @@ class RejectDispatchRequest(BaseModel):
     reason: str
 
 
-@router.get("/{slug}/dispatches/pending")
-async def get_pending_dispatches(slug: str):
+def _load_planner_decisions(project: dict, limit: int = 50) -> list[dict[str, Any]]:
     import json
-    project = await planner_service.get_project_by_slug(slug)
+
     local_path = project.get("localRepoPath")
     if not local_path:
         return []
-    
+
+    decisions_path = Path(local_path) / "research_plan" / "planner_decisions.jsonl"
+    if not decisions_path.exists():
+        return []
+
+    decisions: list[dict[str, Any]] = []
+    try:
+        with open(decisions_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    decisions.append(json.loads(line))
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.warning("Failed to read planner_decisions.jsonl: %s", exc)
+        return []
+
+    return decisions[::-1][:limit]
+
+
+def _load_pending_qa(project: dict) -> list[dict[str, Any]]:
+    import json
+
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        return []
+
+    from app.services.planner_answer_service import QA_LOG_REL_PATH
+
+    qa_path = Path(local_path) / QA_LOG_REL_PATH
+    if not qa_path.exists():
+        return []
+
+    try:
+        log = json.loads(qa_path.read_text(encoding="utf-8"))
+        return [entry for entry in log if entry.get("status") in {"pending", "awaiting_human"}]
+    except Exception as exc:
+        logger.warning("Failed to load Q&A log: %s", exc)
+        return []
+
+
+def _load_pending_dispatches(project: dict) -> list[dict[str, Any]]:
+    import json
+
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        return []
+
     pending_dir = Path(local_path) / "research_plan" / "pending_dispatch"
     if not pending_dir.exists():
         return []
-        
-    dispatches = []
-    for f in pending_dir.glob("*.json"):
+
+    dispatches: list[dict[str, Any]] = []
+    for file_path in pending_dir.glob("*.json"):
         try:
-            dispatches.append(json.loads(f.read_text(encoding="utf-8")))
+            dispatches.append(json.loads(file_path.read_text(encoding="utf-8")))
         except Exception:
-            pass
+            continue
     return dispatches
+
+
+@router.get("/{slug}/planner/control-plane")
+async def get_planner_control_plane(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    home = await _build_planner_home_payload(project, slug)
+    summary = home["controlPlane"]
+
+    return {
+        "board": {
+            "board": home["planner"]["board"],
+            "tasks": home["planner"]["tasks"],
+            "approvals": home["planner"]["approvals"],
+            "blockersPath": home["planner"]["files"]["blockers"] or "research_plan/blockers.md",
+            "sessions": home["planner"]["sessions"],
+        },
+        "autopilot": home["autopilot"],
+        "goal": summary.get("goal"),
+        "phase": summary.get("phase"),
+        "nextAction": summary.get("nextAction"),
+        "currentBlocker": summary.get("currentBlocker"),
+        "projectReality": summary.get("projectReality"),
+        "auditors": summary.get("auditors"),
+        "closeoutCertificate": summary.get("closeoutCertificate"),
+        "missionBrief": summary.get("missionBrief"),
+        "pendingDispatches": home["pendingDispatches"],
+        "pendingQuestions": home["pendingQuestions"],
+        "decisions": home["decisions"],
+        "snapshot": summary.get("snapshot"),
+        "refreshedAt": home["refreshedAt"],
+    }
+
+
+@router.get("/{slug}/dispatches/pending")
+async def get_pending_dispatches(slug: str):
+    project = await planner_service.get_project_by_slug(slug)
+    return _load_pending_dispatches(project)
 
 
 @router.post("/{slug}/dispatches/{wo_id}/approve")
@@ -3649,8 +3771,9 @@ async def get_project_phase(slug: str):
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
+    projection = command_center_service.load_control_plane_summary(project)
+    summary = projection["summary"]
     root = planner_service.project_root_from_record(project)
-    manifest = load_manifest(root) if root else None
 
     tasks: list[dict] = []
     active_sessions: list[dict] = []
@@ -3669,7 +3792,27 @@ async def get_project_phase(slug: str):
     except Exception:
         pass
 
+    if projection["snapshot"]["loaded"]:
+        task_counts = summary.get("taskCounts") or {}
+        total_tasks = int(task_counts.get("total") or 0)
+        terminal_tasks = sum(
+            int(count or 0)
+            for status, count in (task_counts.get("byStatus") or {}).items()
+            if status in {"done", "cancelled"}
+        )
+        return {
+            "slug": slug,
+            "phase": summary.get("lifecyclePhase"),
+            "topBlocker": summary.get("currentBlocker"),
+            "nextAction": summary.get("nextAction"),
+            "auditors": summary.get("auditors") or {},
+            "activeSessions": len(active_sessions),
+            "openTasks": max(total_tasks - terminal_tasks, 0),
+            "snapshot": projection["snapshot"],
+        }
+
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
+    manifest = load_manifest(root) if root else None
 
     # Infer current lifecycle phase from auditor and repo state
     phase = _infer_lifecycle_phase(root, manifest, auditors, tasks, active_sessions)
@@ -3695,6 +3838,12 @@ async def get_project_phase(slug: str):
         "auditors": auditors,
         "activeSessions": len(active_sessions),
         "openTasks": sum(1 for t in tasks if t.get("status") not in {"done", "cancelled"}),
+        "snapshot": {
+            "loaded": False,
+            "path": command_center_service.CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH,
+            "generatedAt": None,
+            "version": command_center_service.CONTROL_PLANE_SNAPSHOT_VERSION,
+        },
     }
 
 

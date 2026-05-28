@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -69,6 +71,57 @@ def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
         "repairedSessionIds": ["sess-1"],
         "repairedAuditSessionIds": ["sess-2"],
         "hasChanges": True,
+    }
+
+
+def test_list_projects_catalog_includes_snapshot_progress(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _query(path: str, payload: dict):
+        assert path == "projects:list"
+        return [
+            {
+                "_id": "project-1",
+                "name": "Demo Project",
+                "slug": "demo-project",
+                "description": "Demo",
+                "localRepoPath": "/tmp/demo-project",
+                "gitRepoUrl": "https://example.com/demo.git",
+                "status": "hydrated",
+            }
+        ]
+
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router, "_manifest_metadata", lambda root, project: {})
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "read_control_plane_snapshot",
+        lambda project: {
+            "snapshotVersion": 1,
+            "generatedAt": 1234567890,
+            "path": "research_plan/state/control_plane_snapshot.json",
+            "commandCenter": {
+                "lifecyclePhase": "research_active",
+                "nextAction": "Review pending approvals",
+                "taskCounts": {
+                    "total": 5,
+                    "byStatus": {"ready": 2, "running": 1, "done": 1, "cancelled": 1},
+                },
+            },
+        },
+    )
+
+    response = client.get("/api/v1/projects")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["projects"]) == 1
+    item = payload["projects"][0]
+    assert item["progress"] == {"closed": 2, "total": 5}
+    assert item["controlPlane"] == {
+        "phase": "research_active",
+        "nextAction": "Review pending approvals",
+        "snapshotLoaded": True,
     }
 
 
@@ -144,6 +197,198 @@ def test_create_ontology_follow_up_task_endpoint_returns_existing_task(monkeypat
     assert response.json()["task"]["_id"] == "existing-task"
 
 
+def test_planner_control_plane_endpoint_returns_compact_live_snapshot(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _ensure_main_board(project_arg, session_id=None):
+        return {"_id": "main", "name": "Main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [{"_id": "task-1", "title": "Hydrate data", "status": "running"}]
+
+    async def _list_approvals(project_arg):
+        return [{"_id": "approval-1", "status": "pending"}]
+
+    async def _list_project_running_agents(project_id: str, active_only: bool = False, limit: int = 20):
+        return [{"_id": "sess-1", "status": "running", "role": "coding"}]
+
+    async def _autopilot_status(slug: str):
+        return {"enabled": True, "active": True, "autoApprove": False, "dispatchApprovalRequired": True}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(projects_router.planner_service, "list_approvals", _list_approvals)
+    monkeypatch.setattr(projects_router.running_agent_service, "list_project_running_agents", _list_project_running_agents)
+    monkeypatch.setattr(projects_router, "get_autopilot_status", _autopilot_status)
+    monkeypatch.setattr(projects_router.goal_service, "load_goal_bundle", lambda project: None)
+    monkeypatch.setattr(projects_router, "_load_pending_dispatches", lambda project: [{"work_order_id": "wo-1"}])
+    monkeypatch.setattr(projects_router, "_load_pending_qa", lambda project: [{"question_id": "qa-1", "question": "Need approval?"}])
+    monkeypatch.setattr(projects_router, "_load_planner_decisions", lambda project, limit=50: [{"tool": "query_ontology"}])
+    monkeypatch.setattr(projects_router, "_session_review_model", lambda project, session: {"reviewStatus": "pending"})
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "read_control_plane_snapshot",
+        lambda project: {
+            "snapshotVersion": 1,
+            "generatedAt": 1234567890,
+            "path": "research_plan/state/control_plane_snapshot.json",
+            "commandCenter": {
+                "lifecyclePhase": "research_active",
+                "nextAction": "Review pending approvals",
+                "currentBlocker": "Snapshot blocker",
+                "projectReality": {"hasDrift": True},
+                "auditors": {"session": {"status": "blocked"}},
+                "closeoutCertificate": {"status": "pending"},
+                "missionBrief": {"current": "Now", "next": "Next"},
+            },
+        },
+    )
+
+    response = client.get("/api/v1/projects/demo-project/planner/control-plane")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["autopilot"]["enabled"] is True
+    assert payload["board"]["tasks"][0]["title"] == "Hydrate data"
+    assert payload["pendingDispatches"] == [{"work_order_id": "wo-1"}]
+    assert payload["pendingQuestions"] == [{"question_id": "qa-1", "question": "Need approval?"}]
+    assert payload["decisions"] == [{"tool": "query_ontology"}]
+    assert payload["phase"] == "research_active"
+    assert payload["currentBlocker"] == "Snapshot blocker"
+    assert payload["projectReality"]["hasDrift"] is True
+    assert payload["auditors"]["session"]["status"] == "blocked"
+    assert payload["snapshot"]["loaded"] is True
+    assert isinstance(payload["refreshedAt"], int)
+
+
+def test_planner_home_endpoint_includes_snapshot_backed_control_plane(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": "project-1",
+            "name": "Demo",
+            "slug": slug,
+            "status": "ready",
+            "description": "Demo project",
+            "gitRepoUrl": "https://github.com/example/demo",
+            "defaultBranch": "main",
+            "agentModel": "claude-opus-4-6",
+            "githubSyncMode": "auto",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    async def _ensure_planner_thread(project_id: str):
+        return "thread-1"
+
+    async def _list_planner_messages(project_arg, *, thread_id: str, limit: int = 50):
+        return [{"role": "user", "content": "hello"}]
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main", "name": "Main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [{"_id": "task-1", "title": "Hydrate data", "status": "running"}]
+
+    async def _list_approvals(project_arg):
+        return [{"_id": "approval-1", "status": "pending"}]
+
+    async def _list_project_running_agents(project_id: str, active_only: bool = False, limit: int = 20):
+        return [{"_id": "sess-1", "status": "running", "role": "coding"}]
+
+    async def _autopilot_status(slug: str):
+        return {"enabled": True, "active": True, "autoApprove": False, "dispatchApprovalRequired": True}
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_planner_thread", _ensure_planner_thread)
+    monkeypatch.setattr(projects_router.planner_service, "list_planner_messages", _list_planner_messages)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(projects_router.planner_service, "list_approvals", _list_approvals)
+    monkeypatch.setattr(projects_router.planner_service, "project_root_from_record", lambda project: Path("/tmp/demo-project"))
+    monkeypatch.setattr(projects_router.running_agent_service, "list_project_running_agents", _list_project_running_agents)
+    monkeypatch.setattr(projects_router, "get_autopilot_status", _autopilot_status)
+    monkeypatch.setattr(projects_router, "_session_review_model", lambda project, session: {"reviewStatus": "pending"})
+    monkeypatch.setattr(projects_router, "_load_pending_dispatches", lambda project: [{"work_order_id": "wo-1"}])
+    monkeypatch.setattr(projects_router, "_load_pending_qa", lambda project: [{"question_id": "qa-1", "question": "Need approval?"}])
+    monkeypatch.setattr(projects_router, "_load_planner_decisions", lambda project, limit=50: [{"tool": "query_ontology"}])
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "lifecyclePhase": "research_active",
+                "nextAction": "Review pending approvals",
+                "currentBlocker": "Snapshot blocker",
+                "goal": {"objective": "Ship closeout", "phase": "repair"},
+                "taskCounts": {"total": 4, "byStatus": {"ready": 2, "review": 1, "done": 1}},
+                "recentArtifacts": [{"name": "paper.pdf", "path": "artifacts/paper.pdf"}],
+                "sourceSummary": {"count": 3, "statusCounts": {"active": 3}},
+                "skillSummary": {"count": 2, "agentRolesWithSkillAccess": ["research", "coding"]},
+                "integritySummary": {
+                    "staleArtifactCount": 1,
+                    "sourceFreshnessCounts": {"fresh": 3},
+                    "sourceAdmissibilityCounts": {"admissible": 3},
+                    "agentWorkflow": {
+                        "research": {"status": "ready", "requirements": []},
+                        "data": {"status": "ready", "requirements": []},
+                        "coding": {"status": "blocked", "requirements": ["verification"]},
+                        "artifact": {"status": "ready", "requirements": []},
+                        "health": {"status": "ready", "requirements": []},
+                    },
+                },
+                "projectReality": {"hasDrift": True},
+                "auditors": {"session": {"status": "blocked"}},
+                "blockerSummary": {"blocked": True, "headline": "Snapshot blocker", "reasons": ["Need approval"], "repairs": []},
+                "repairQueue": {"count": 1, "readyCount": 1, "runningCount": 0, "byStatus": {"ready": 1}, "tasks": []},
+                "recommendedRepairTask": {"id": "task-2", "title": "Repair lineage", "status": "ready", "agentRole": "health"},
+                "closeoutCertificate": {"status": "pending"},
+                "missionBrief": {"current": "Now", "next": "Next"},
+                "repoHealth": {"hasLocalRepo": True, "hasRailYaml": True, "hasResearchPlan": True},
+            },
+            "snapshot": {
+                "loaded": True,
+                "path": "research_plan/state/control_plane_snapshot.json",
+                "generatedAt": 1234567890,
+                "version": 1,
+            },
+        },
+    )
+
+    response = client.get("/api/v1/projects/demo-project/planner/home")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["planner"]["threadId"] == "thread-1"
+    assert payload["planner"]["tasks"][0]["title"] == "Hydrate data"
+    assert payload["project"]["description"] == "Demo project"
+    assert payload["project"]["gitRepoUrl"] == "https://github.com/example/demo"
+    assert payload["project"]["agentModel"] == "claude-opus-4-6"
+    assert payload["repoHealth"] == {"hasLocalRepo": True, "hasRailYaml": True, "hasResearchPlan": True}
+    assert payload["autopilot"]["enabled"] is True
+    assert payload["pendingDispatches"] == [{"work_order_id": "wo-1"}]
+    assert payload["pendingQuestions"] == [{"question_id": "qa-1", "question": "Need approval?"}]
+    assert payload["decisions"] == [{"tool": "query_ontology"}]
+    assert isinstance(payload["refreshedAt"], int)
+    assert payload["controlPlane"]["phase"] == "research_active"
+    assert payload["controlPlane"]["goal"]["objective"] == "Ship closeout"
+    assert payload["controlPlane"]["taskCounts"]["total"] == 4
+    assert payload["controlPlane"]["recentArtifacts"][0]["name"] == "paper.pdf"
+    assert payload["controlPlane"]["sourceSummary"]["count"] == 3
+    assert payload["controlPlane"]["skillSummary"]["count"] == 2
+    assert payload["controlPlane"]["integritySummary"]["staleArtifactCount"] == 1
+    assert payload["controlPlane"]["currentBlocker"] == "Snapshot blocker"
+    assert payload["controlPlane"]["projectReality"]["hasDrift"] is True
+    assert payload["controlPlane"]["blockerSummary"]["blocked"] is True
+    assert payload["controlPlane"]["repairQueue"]["count"] == 1
+    assert payload["controlPlane"]["recommendedRepairTask"]["title"] == "Repair lineage"
+    assert payload["controlPlane"]["snapshot"]["loaded"] is True
+
+
 def test_create_planner_task_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 
@@ -164,6 +409,96 @@ def test_create_planner_task_rejects_unknown_status(monkeypatch):
 
     assert response.status_code == 422
     assert "Planner task status must be one of" in response.json()["detail"]
+
+
+def test_project_phase_endpoint_prefers_repo_snapshot(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _get_project_by_slug(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main", "name": "Main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [
+            {"_id": "task-1", "title": "Hydrate data", "status": "running"},
+            {"_id": "task-2", "title": "Done task", "status": "done"},
+        ]
+
+    async def _list_project_running_agents(project_id: str, active_only: bool = True, limit: int = 50):
+        return [{"_id": "sess-1", "status": "running", "role": "coding"}]
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "project_root_from_record", lambda project: Path("/tmp/demo-project"))
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr(projects_router.running_agent_service, "list_project_running_agents", _list_project_running_agents)
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "read_control_plane_snapshot",
+        lambda project: {
+            "snapshotVersion": 1,
+            "generatedAt": 1234567890,
+            "path": "research_plan/state/control_plane_snapshot.json",
+            "commandCenter": {
+                "lifecyclePhase": "research_active",
+                "nextAction": "Review pending approvals",
+                "currentBlocker": "Snapshot blocker",
+                "taskCounts": {"total": 5, "byStatus": {"ready": 2, "running": 1, "done": 1, "cancelled": 1}},
+                "auditors": {"session": {"status": "blocked"}},
+            },
+        },
+    )
+
+    response = client.get("/api/v1/projects/demo-project/phase")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["phase"] == "research_active"
+    assert payload["topBlocker"] == "Snapshot blocker"
+    assert payload["nextAction"] == "Review pending approvals"
+    assert payload["auditors"]["session"]["status"] == "blocked"
+    assert payload["activeSessions"] == 1
+    assert payload["openTasks"] == 3
+    assert payload["snapshot"]["loaded"] is True
+
+
+def test_project_context_endpoint_prefers_local_repo_sources_and_pipelines(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    sources_dir = tmp_path / ".ontology" / "sources"
+    sources_dir.mkdir(parents=True, exist_ok=True)
+    (sources_dir / "census.yaml").write_text("name: Census API\n", encoding="utf-8")
+
+    pipelines_dir = tmp_path / ".ontology" / "pipelines"
+    pipelines_dir.mkdir(parents=True, exist_ok=True)
+    (pipelines_dir / "baseline.yaml").write_text("name: Baseline pipeline\n", encoding="utf-8")
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": "project-1",
+            "name": "Demo",
+            "slug": slug,
+            "status": "ready",
+            "localRepoPath": str(tmp_path),
+            "apiConfigSlugs": ["census"],
+            "pipelineConfigSlug": "baseline",
+        }
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError(f"unexpected convex query: {path}")
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+
+    response = client.get("/api/v1/projects/demo-project/context")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project"]["slug"] == "demo-project"
+    assert payload["data_sources"] == [{"slug": "census", "name": "Census API"}]
+    assert payload["pipelines"] == [{"slug": "baseline", "name": "Baseline pipeline"}]
 
 
 def test_update_planner_task_rejects_unknown_status(monkeypatch):
@@ -842,7 +1177,12 @@ def test_autopilot_status_revives_desired_loop(monkeypatch):
     response = client.get("/api/v1/projects/demo-project/autopilot/status")
 
     assert response.status_code == 200
-    assert response.json() == {"enabled": True, "active": False, "autoApprove": True}
+    assert response.json() == {
+        "enabled": True,
+        "active": False,
+        "autoApprove": True,
+        "dispatchApprovalRequired": False,
+    }
     assert called == ["demo-project"]
 
 
