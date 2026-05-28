@@ -43,6 +43,8 @@ class ProjectSection(BaseModel):
     slug: str
     default_branch: str
     description: str | None = None
+    git_repo_url: str | None = None
+    agent_model: str | None = None
     mode: ProjectMode = "ontology_first"
 
 

@@ -1761,8 +1761,9 @@ async def clear_hydration(slug: str):
 
 @router.post("/{slug}/sync-metadata")
 async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
+    try:
+        project = await planner_service.get_project_by_slug(slug)
+    except ValueError:
         raise HTTPException(404, "Project not found")
 
     patch = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -1771,15 +1772,27 @@ async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
         if inferred_repo:
             patch["github"] = inferred_repo
 
-    await convex.mutation("projects:updateById", {
-        "projectId": project["_id"],
-        **patch,
-    })
-    updated = await convex.query("projects:getById", {"projectId": project["_id"]})
+    is_local_only = str(project.get("_id") or "").startswith("local:")
+    if is_local_only:
+        project_root = planner_service.project_root_from_record(project)
+        if project_root is None:
+            raise HTTPException(status_code=400, detail="Project has no local repo path configured")
+        manifest_path = project_root / (project.get("manifestPath") or "rail.yaml")
+        existing_content = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+        updated_project = {**project, **patch}
+        manifest_content = render_rail_manifest(updated_project, existing_content)
+        manifest_path.write_text(manifest_content, encoding="utf-8")
+        updated = await planner_service.get_project_by_slug(slug)
+    else:
+        await convex.mutation("projects:updateById", {
+            "projectId": project["_id"],
+            **patch,
+        })
+        updated = await convex.query("projects:getById", {"projectId": project["_id"]})
 
     publish_result = None
     should_publish_manifest = any(field in patch for field in MANIFEST_BACKED_FIELDS)
-    if should_publish_manifest and updated and await should_auto_publish(updated):
+    if should_publish_manifest and updated and not is_local_only and await should_auto_publish(updated):
         try:
             publish_result = await publish_manifest(updated)
             await record_publish_success(updated["_id"], publish_result)

@@ -87,6 +87,8 @@ def default_manifest(project: dict[str, Any]) -> dict[str, Any]:
             "slug": slug,
             "default_branch": project.get("defaultBranch") or "main",
             "description": project.get("description") or "RAIL project",
+            "git_repo_url": project.get("gitRepoUrl") or None,
+            "agent_model": project.get("agentModel") or None,
             "mode": "ontology_first",
         },
         "repo_contract": {
@@ -256,6 +258,14 @@ def render_rail_manifest(project: dict[str, Any], existing_content: str | None =
     manifest["project"].setdefault("mode", "ontology_first")
     if project.get("description"):
         manifest["project"]["description"] = project["description"]
+    if project.get("gitRepoUrl"):
+        manifest["project"]["git_repo_url"] = project["gitRepoUrl"]
+    elif "git_repo_url" in manifest["project"]:
+        manifest["project"].pop("git_repo_url", None)
+    if project.get("agentModel"):
+        manifest["project"]["agent_model"] = project["agentModel"]
+    elif "agent_model" in manifest["project"]:
+        manifest["project"].pop("agent_model", None)
 
     repo_contract = manifest.setdefault("repo_contract", {})
     repo_contract.setdefault("required_paths", [".ontology", "specs", "research_plan", "topics", "agents", "skills"])
@@ -446,6 +456,10 @@ def manifest_updates_from_content(content: str) -> dict[str, Any]:
         updates["description"] = project_section["description"]
     if project_section.get("default_branch"):
         updates["defaultBranch"] = project_section["default_branch"]
+    if project_section.get("git_repo_url") is not None:
+        updates["gitRepoUrl"] = project_section["git_repo_url"]
+    if project_section.get("agent_model") is not None:
+        updates["agentModel"] = project_section["agent_model"]
 
     default_pipeline = hydration.get("default_pipeline")
     if isinstance(default_pipeline, str) and default_pipeline.strip():

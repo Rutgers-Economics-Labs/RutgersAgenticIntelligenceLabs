@@ -743,6 +743,89 @@ def test_planner_home_endpoint_includes_snapshot_backed_control_plane(monkeypatc
     assert payload["controlPlane"]["snapshot"]["loaded"] is True
 
 
+def test_sync_project_metadata_updates_local_manifest_for_repo_only_project(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+    import yaml
+
+    project_root = tmp_path / "demo-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+    manifest_path = project_root / "rail.yaml"
+    manifest_path.write_text(
+        """
+version: 1
+project:
+  name: Demo Project
+  slug: demo-project
+  default_branch: main
+  description: Old description
+  mode: ontology_first
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+  planner_thread_mode: project
+  default_planner_role: planner
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _get_project_by_slug(slug: str):
+        raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        project_meta = raw.get("project") or {}
+        return {
+            "_id": f"local:{slug}",
+            "name": project_meta.get("name") or "Demo Project",
+            "slug": slug,
+            "description": project_meta.get("description"),
+            "defaultBranch": project_meta.get("default_branch") or "main",
+            "gitRepoUrl": project_meta.get("git_repo_url"),
+            "agentModel": project_meta.get("agent_model"),
+            "localRepoPath": str(project_root),
+            "manifestPath": "rail.yaml",
+        }
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/sync-metadata",
+        json={
+            "name": "Updated Demo Project",
+            "description": "New description",
+            "gitRepoUrl": "https://github.com/example/demo-project",
+            "defaultBranch": "develop",
+            "agentModel": "claude-opus-4-6",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project"]["name"] == "Updated Demo Project"
+    assert payload["project"]["defaultBranch"] == "develop"
+    assert payload["project"]["gitRepoUrl"] == "https://github.com/example/demo-project"
+    assert payload["project"]["agentModel"] == "claude-opus-4-6"
+    assert payload["publish"] is None
+
+    manifest = manifest_path.read_text(encoding="utf-8")
+    assert "name: Updated Demo Project" in manifest
+    assert "description: New description" in manifest
+    assert "default_branch: develop" in manifest
+    assert "git_repo_url: https://github.com/example/demo-project" in manifest
+    assert "agent_model: claude-opus-4-6" in manifest
+
+
 def test_create_planner_task_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 

@@ -317,6 +317,8 @@ def _local_project_record_from_repo(slug: str) -> dict[str, Any] | None:
             "localRepoPath": str(root),
             "manifestPath": "rail.yaml",
             "defaultBranch": project_meta.get("default_branch") or project_meta.get("defaultBranch") or "main",
+            "gitRepoUrl": project_meta.get("git_repo_url") or project_meta.get("gitRepoUrl"),
+            "agentModel": project_meta.get("agent_model") or project_meta.get("agentModel"),
             "apiConfigSlugs": list(hydration_meta.get("linked_sources") or []),
             "pipelineConfigSlug": hydration_meta.get("default_pipeline") or hydration_meta.get("pipeline"),
             "ontologyConfigSlug": hydration_meta.get("ontology_file"),

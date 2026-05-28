@@ -27,6 +27,8 @@ def test_manifest_updates_reads_linked_sources_and_pipeline():
           slug: "nj-data"
           default_branch: "main"
           description: "Economics"
+          git_repo_url: "https://github.com/example/nj-data"
+          agent_model: "claude-opus-4-6"
         hydration:
           ontology_file: ".ontology/ontologies/nj-core.yaml"
           sources_dir: ".ontology/sources"
@@ -49,6 +51,8 @@ def test_manifest_updates_reads_linked_sources_and_pipeline():
     )
     updates = manifest_updates_from_content(content)
     assert updates["name"] == "NJ Data"
+    assert updates["gitRepoUrl"] == "https://github.com/example/nj-data"
+    assert updates["agentModel"] == "claude-opus-4-6"
     assert updates["pipelineConfigSlug"] == "nj-hydration"
     assert updates["ontologyConfigSlug"] == "nj-core"
     assert updates["apiConfigSlugs"] == ["census_states", "fred_unemployment"]
@@ -84,6 +88,8 @@ def test_render_manifest_preserves_existing_sections():
         "slug": "nj-data",
         "description": "Economics",
         "defaultBranch": "main",
+        "gitRepoUrl": "https://github.com/example/nj-data",
+        "agentModel": "claude-opus-4-6",
         "ontologyConfigSlug": "nj-core",
         "pipelineConfigSlug": "nj-hydration",
         "apiConfigSlugs": ["census_states"],
@@ -126,6 +132,8 @@ def test_render_manifest_preserves_existing_sections():
     )
     rendered = render_rail_manifest(project, existing)
     assert 'name: NJ Data' in rendered
+    assert 'git_repo_url: https://github.com/example/nj-data' in rendered
+    assert 'agent_model: claude-opus-4-6' in rendered
     assert 'default_pipeline: nj-hydration' in rendered
     assert 'linked_sources:' in rendered
     assert 'autonomy:' in rendered
