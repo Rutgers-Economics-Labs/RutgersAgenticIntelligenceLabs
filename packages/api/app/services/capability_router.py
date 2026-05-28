@@ -38,7 +38,7 @@ async def route_task(
     extra DB lookup; otherwise we fetch by slug.
     """
     if project is None:
-        project = await planner_service.get_project_by_slug(project_slug)
+        project = await planner_service.resolve_project_reference(project_slug)
     root = planner_service.project_root_from_record(project)
     
     # 1. Load project-level runner policy from rail.yaml. Missing or invalid

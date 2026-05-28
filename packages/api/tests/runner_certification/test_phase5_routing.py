@@ -34,7 +34,7 @@ def project_root(tmp_path: Path) -> Path:
 @pytest.fixture
 def mock_planner_service(project_root):
     with patch("app.services.capability_router.planner_service") as mock:
-        mock.get_project_by_slug = AsyncMock(return_value={"slug": "test-proj", "localRepoPath": str(project_root)})
+        mock.resolve_project_reference = AsyncMock(return_value={"slug": "test-proj", "localRepoPath": str(project_root)})
         mock.project_root_from_record.return_value = project_root
         
         # Mock manifest

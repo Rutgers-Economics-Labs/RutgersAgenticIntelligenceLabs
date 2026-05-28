@@ -218,7 +218,7 @@ async def _cancel_everything() -> dict[str, Any]:
         slugs = set(autopilot_service._active_autopilots.keys()) | set(autopilot_service._autopilot_configs.keys())
         for slug in slugs:
             try:
-                project = await planner_service.get_project_by_slug(slug)
+                project = await planner_service.resolve_project_reference(slug)
             except Exception:
                 continue
             if not project:
@@ -261,7 +261,7 @@ async def _cancel_for_project(project_slug: str) -> dict[str, Any]:
         from app.services import planner_service, running_agent_service
         from app.runners import session_lifecycle
 
-        project = await planner_service.get_project_by_slug(project_slug)
+        project = await planner_service.resolve_project_reference(project_slug)
         if project:
             worker = await running_agent_service.find_active_worker(project["_id"])
             if worker and worker.get("agentSessionId"):

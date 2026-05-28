@@ -66,7 +66,7 @@ class PlannerHarness:
         model: str | None = None,
         persist: bool = True,
     ) -> "PlannerHarness":
-        project = await planner_service.get_project_by_slug(slug)
+        project = await planner_service.resolve_project_reference(slug)
         return cls(project=project, model=model, persist=persist)
 
     @classmethod

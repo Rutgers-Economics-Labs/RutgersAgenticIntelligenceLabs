@@ -104,7 +104,7 @@ def test_engage_global_signals_active_autopilots_to_stop(_isolate_state_file):
     async def _go():
         # Stub planner_service and running_agent_service so we don't hit Convex.
         with (
-            patch("app.services.planner_service.get_project_by_slug", side_effect=AsyncMockReturnNone),
+            patch("app.services.planner_service.resolve_project_reference", side_effect=AsyncMockReturnNone),
         ):
             return await kill_switch_service.engage_global(reason="test")
 
