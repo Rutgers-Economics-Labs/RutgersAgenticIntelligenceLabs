@@ -92,16 +92,6 @@ async def _refresh_project_record(slug: str) -> dict | None:
     try:
         return await planner_service.resolve_project_reference(slug)
     except Exception:
-        pass
-    try:
-        project = await convex.query("projects:getBySlug", {"slug": slug})
-        if project:
-            return project
-    except Exception:
-        pass
-    try:
-        return await convex.query("projects:get", {"slug": slug})
-    except Exception:
         return None
 
 
