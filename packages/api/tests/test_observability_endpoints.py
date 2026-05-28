@@ -13,10 +13,10 @@ def test_get_planner_decisions(tmp_path, monkeypatch):
     slug = "test-proj"
     local_repo_path = tmp_path
     
-    async def _get_project_by_slug(s):
+    async def _refresh_project_record(s):
         return {"_id": "project-1", "slug": s, "localRepoPath": str(local_repo_path)}
         
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.routers.projects._refresh_project_record", _refresh_project_record)
     
     # Write some fake decisions
     decisions_dir = local_repo_path / "research_plan"
@@ -45,10 +45,10 @@ def test_qa_pending_and_answer(tmp_path, monkeypatch):
     slug = "test-proj"
     local_repo_path = tmp_path
     
-    async def _get_project_by_slug(s):
+    async def _refresh_project_record(s):
         return {"_id": "project-1", "slug": s, "localRepoPath": str(local_repo_path)}
         
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.routers.projects._refresh_project_record", _refresh_project_record)
     
     qa_dir = local_repo_path / "research_plan" / "decisions"
     qa_dir.mkdir(parents=True, exist_ok=True)
@@ -120,10 +120,10 @@ def test_hold_approve_reject_dispatch(tmp_path, monkeypatch):
     slug = "test-proj"
     local_repo_path = tmp_path
     
-    async def _get_project_by_slug(s):
+    async def _refresh_project_record(s):
         return {"_id": "project-1", "slug": s, "localRepoPath": str(local_repo_path)}
         
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.routers.projects._refresh_project_record", _refresh_project_record)
     
     pending_dir = local_repo_path / "research_plan" / "pending_dispatch"
     pending_dir.mkdir(parents=True, exist_ok=True)

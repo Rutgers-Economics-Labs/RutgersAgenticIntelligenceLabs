@@ -1952,14 +1952,16 @@ async def get_project_context(slug: str):
 
 @router.get("/{slug}/command-center")
 async def get_command_center(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return await command_center_service.build_command_center(project)
 
 
 @router.get("/{slug}/reality")
 async def get_project_reality(slug: str):
     """Control-plane snapshot: drift counts, execution lane, and auditor gates."""
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return await reconciliation_service.build_project_control_plane_status(project)
@@ -1967,7 +1969,9 @@ async def get_project_reality(slug: str):
 
 @router.post("/{slug}/command-center/reconcile")
 async def reconcile_command_center_state(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return await reconciliation_service.reconcile_project_reality(project)
 
 
@@ -3783,7 +3787,9 @@ async def get_autopilot_status(slug: str):
 
 @router.get("/{slug}/planner/decisions")
 async def get_planner_decisions(slug: str, limit: int = 50):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return _load_planner_decisions(project, limit=limit)
 
 
@@ -3793,7 +3799,9 @@ class AnswerQaRequest(BaseModel):
 
 @router.get("/{slug}/qa/pending")
 async def get_pending_qa(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return _load_pending_qa(project)
 
 
@@ -3801,7 +3809,9 @@ async def get_pending_qa(slug: str):
 async def answer_question(slug: str, question_id: str, data: AnswerQaRequest):
     import json
     import datetime
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     local_path = project.get("localRepoPath")
     if not local_path:
         raise HTTPException(status_code=400, detail="Project lacks a local repo path")
@@ -3942,7 +3952,9 @@ def _load_pending_dispatches(project: dict) -> list[dict[str, Any]]:
 
 @router.get("/{slug}/planner/control-plane")
 async def get_planner_control_plane(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     home = await _build_planner_home_payload(project, slug)
     summary = home["controlPlane"]
 
@@ -3973,13 +3985,17 @@ async def get_planner_control_plane(slug: str):
 
 @router.get("/{slug}/dispatches/pending")
 async def get_pending_dispatches(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return _load_pending_dispatches(project)
 
 
 @router.post("/{slug}/dispatches/{wo_id}/approve")
 async def approve_pending_dispatch_route(slug: str, wo_id: str, data: ApproveDispatchRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     local_path = project.get("localRepoPath")
     if not local_path:
         raise HTTPException(status_code=400, detail="Project lacks a local repo path")
@@ -3998,7 +4014,9 @@ async def approve_pending_dispatch_route(slug: str, wo_id: str, data: ApproveDis
 
 @router.post("/{slug}/dispatches/{wo_id}/reject")
 async def reject_pending_dispatch_route(slug: str, wo_id: str, data: RejectDispatchRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     local_path = project.get("localRepoPath")
     if not local_path:
         raise HTTPException(status_code=400, detail="Project lacks a local repo path")

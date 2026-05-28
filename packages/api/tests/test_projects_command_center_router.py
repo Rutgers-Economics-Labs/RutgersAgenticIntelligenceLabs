@@ -224,7 +224,7 @@ def test_pipeline_run_uses_local_repo_hydration_for_repo_only_project(monkeypatc
 def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _reconcile_project_reality(project: dict):
@@ -238,7 +238,7 @@ def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
             "hasChanges": True,
         }
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.reconciliation_service, "reconcile_project_reality", _reconcile_project_reality)
 
     response = client.post("/api/v1/projects/demo-project/command-center/reconcile")
