@@ -1214,13 +1214,18 @@ def test_integrity_route_falls_back_to_control_plane_summary(monkeypatch):
 
 
 def test_project_context_endpoint_prefers_local_repo_sources_and_pipelines(monkeypatch, tmp_path):
-    import app.routers.projects as projects_router
+    from types import SimpleNamespace
 
-    sources_dir = tmp_path / ".ontology" / "sources"
+    import app.routers.projects as projects_router
+    import app.services.project_artifacts_service as project_artifacts_service
+
+    (tmp_path / "rail.yaml").write_text("project:\n  slug: demo-project\n", encoding="utf-8")
+
+    sources_dir = tmp_path / "assets" / "sources"
     sources_dir.mkdir(parents=True, exist_ok=True)
     (sources_dir / "census.yaml").write_text("name: Census API\n", encoding="utf-8")
 
-    pipelines_dir = tmp_path / ".ontology" / "pipelines"
+    pipelines_dir = tmp_path / "assets" / "pipelines"
     pipelines_dir.mkdir(parents=True, exist_ok=True)
     (pipelines_dir / "baseline.yaml").write_text("name: Baseline pipeline\n", encoding="utf-8")
 
@@ -1232,20 +1237,66 @@ def test_project_context_endpoint_prefers_local_repo_sources_and_pipelines(monke
             "status": "ready",
             "localRepoPath": str(tmp_path),
             "apiConfigSlugs": ["census"],
-            "pipelineConfigSlug": "baseline",
         }
 
     async def _query(path: str, payload: dict):
         raise AssertionError(f"unexpected convex query: {path}")
 
+    async def _resolve(project_id: str):
+        assert project_id == "project-1"
+        return project_artifacts_service.ProjectArtifacts(
+            project_id=project_id,
+            db_path=str(tmp_path / "assets" / "onto.db"),
+            owl_path=None,
+            duckdb_path=str(tmp_path / "assets" / "onto.duckdb"),
+            embeddings_path=str(tmp_path / "assets" / "embeddings.db"),
+        )
+
+    async def _run_with_ensure(slug: str, db_path: str, fn):
+        return [{"id": "Observation", "label": "Observation"}]
+
     monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
     monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(project_artifacts_service, "resolve", _resolve)
+    monkeypatch.setattr(projects_router.ontology_service, "_run_with_ensure", _run_with_ensure)
+    monkeypatch.setattr(projects_router.sql_service, "set_path", lambda path: None)
+    monkeypatch.setattr(projects_router.sql_service, "get_schema_ddl", lambda: "CREATE TABLE demo();")
+    monkeypatch.setattr(
+        projects_router,
+        "load_manifest",
+        lambda path: SimpleNamespace(
+            hydration=SimpleNamespace(
+                sources_dir="assets/sources",
+                pipelines_dir="assets/pipelines",
+                default_pipeline="baseline",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "lifecyclePhase": "hydration_ready",
+                "nextAction": "Run hydration",
+                "currentBlocker": None,
+                "blockerSummary": {"blocked": False},
+                "closeoutCertificate": {"status": "pending"},
+                "missionBrief": {"current": "Current brief", "next": "Next brief"},
+            },
+            "snapshot": {"loaded": True, "path": "research_plan/state/control_plane_snapshot.json"},
+        },
+    )
 
     response = client.get("/api/v1/projects/demo-project/context")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["project"]["slug"] == "demo-project"
+    assert payload["ontology"] == {
+        "classes": [{"id": "Observation", "label": "Observation"}],
+        "schema_ddl": "CREATE TABLE demo();",
+    }
     assert payload["data_sources"] == [{"slug": "census", "name": "Census API"}]
     assert payload["pipelines"] == [{"slug": "baseline", "name": "Baseline pipeline"}]
 

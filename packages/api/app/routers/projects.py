@@ -1827,6 +1827,12 @@ async def get_project_context(slug: str):
         raise HTTPException(404, "Project not found")
 
     project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
+    manifest = None
+    if project_root:
+        try:
+            manifest = load_manifest(project_root)
+        except Exception:
+            manifest = None
     projection = command_center_service.load_control_plane_summary(project)
     summary = projection["summary"]
     repo_health = summary.get("repoHealth") or {
@@ -1859,26 +1865,25 @@ async def get_project_context(slug: str):
         "analysis_plugins": [],
     }
 
-    # Fetch ontology info if project is hydrated
-    if project.get("activeOntologyDuckdbPath") or project.get("status") == "hydrated":
-        try:
-            from app.services import sql_service, ontology_service, project_artifacts_service
-            art = await project_artifacts_service.resolve(project.get("_id") or project.get("slug") or slug)
-            print(f"  [context] resolved artifacts for {slug}: db={art.db_path}")
-            sql_service.set_path(art.duckdb_path)
-            classes = await ontology_service._run_with_ensure(
-                slug, art.db_path, ontology_service.list_classes
-            )
-            context["ontology"] = {
-                "classes": classes,
-                "schema_ddl": sql_service.get_schema_ddl(),
-            }
-        except Exception as e:
-            print(f"  [context] ontology load failed for {slug}: {e}")
-            pass
+    try:
+        from app.services import sql_service, ontology_service, project_artifacts_service
+        art = await project_artifacts_service.resolve(project.get("_id") or project.get("slug") or slug)
+        print(f"  [context] resolved artifacts for {slug}: db={art.db_path}")
+        sql_service.set_path(art.duckdb_path)
+        classes = await ontology_service._run_with_ensure(
+            slug, art.db_path, ontology_service.list_classes
+        )
+        context["ontology"] = {
+            "classes": classes,
+            "schema_ddl": sql_service.get_schema_ddl(),
+        }
+    except Exception as e:
+        print(f"  [context] ontology load failed for {slug}: {e}")
+        pass
 
     found_slugs = set()
-    local_sources = project_root / ".ontology" / "sources" if project_root else None
+    sources_dir = manifest.hydration.sources_dir if manifest else ".ontology/sources"
+    local_sources = project_root / sources_dir if project_root else None
     if local_sources and local_sources.exists():
         for yml in local_sources.glob("*.yaml"):
             if yml.stem in found_slugs:
@@ -1901,12 +1906,10 @@ async def get_project_context(slug: str):
             found_slugs.add(source_slug)
 
     found_pipeline_slugs = set()
-    pipeline_slug = project.get("pipelineConfigSlug")
-    local_pipelines = project_root / ".ontology" / "pipelines" if project_root else None
-    if pipeline_slug and local_pipelines and local_pipelines.exists():
-        for yml in local_pipelines.glob("*.yaml"):
-            if yml.stem != pipeline_slug:
-                continue
+    pipelines_dir = manifest.hydration.pipelines_dir if manifest else ".ontology/pipelines"
+    local_pipelines = project_root / pipelines_dir if project_root else None
+    if local_pipelines and local_pipelines.exists():
+        for yml in sorted(local_pipelines.glob("*.yaml")):
             try:
                 with open(yml) as f:
                     cfg = yaml.safe_load(f) or {}
@@ -1914,8 +1917,10 @@ async def get_project_context(slug: str):
                 cfg = {}
             context["pipelines"].append({"slug": yml.stem, "name": cfg.get("name") or yml.stem})
             found_pipeline_slugs.add(yml.stem)
-            break
 
+    pipeline_slug = project.get("pipelineConfigSlug") or (
+        manifest.hydration.default_pipeline if manifest else None
+    )
     if pipeline_slug and pipeline_slug not in found_pipeline_slugs:
         pipeline = await convex.query("configs:getPipelineBySlug", {"slug": pipeline_slug})
         if pipeline:

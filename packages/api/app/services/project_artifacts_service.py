@@ -233,6 +233,12 @@ async def _resolve_impl(project_id: str) -> ProjectArtifacts:
         except Exception:
             project = None
 
+        if not project and isinstance(project_id, str) and project_id.startswith("local:"):
+            try:
+                project = await planner_service.get_project_by_slug(project_id.removeprefix("local:"))
+            except Exception:
+                project = None
+
     if not project:
         raise RuntimeError(f"Project '{project_id}' not found (tried ID and Slug)")
 

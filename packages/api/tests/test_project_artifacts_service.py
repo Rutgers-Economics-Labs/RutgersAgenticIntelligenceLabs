@@ -42,3 +42,44 @@ async def test_resolve_uses_repo_first_local_artifacts_when_convex_project_missi
     assert artifacts.duckdb_path == str(onto_duckdb.resolve())
     assert artifacts.owl_path is None
     assert artifacts.embeddings_path == str((ontology_root / "embeddings.db").resolve())
+
+
+@pytest.mark.asyncio
+async def test_resolve_accepts_local_prefixed_project_id_for_repo_only_projects(monkeypatch, tmp_path):
+    project_root = tmp_path / "demo-project"
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_db = ontology_root / "onto.db"
+    onto_duckdb = ontology_root / "onto.duckdb"
+    with sqlite3.connect(onto_db) as conn:
+        conn.execute("CREATE TABLE demo(id INTEGER)")
+    onto_duckdb.write_bytes(b"duck")
+
+    async def _query(path: str, payload: dict):
+        if path in {"projects:getById", "projects:get"}:
+            return None
+        raise AssertionError(path)
+
+    seen_slugs: list[str] = []
+
+    async def _get_project_by_slug(slug: str):
+        seen_slugs.append(slug)
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {
+            "_id": "local:demo-project",
+            "slug": slug,
+            "localRepoPath": str(project_root),
+        }
+
+    monkeypatch.setattr(project_artifacts_service.convex, "query", _query)
+    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_artifacts_service.ontology_service, "ensure_loaded_async", pytest.fail)
+    monkeypatch.setattr(project_artifacts_service.ontology_service, "export_to_duckdb", pytest.fail)
+
+    artifacts = await project_artifacts_service.resolve("local:demo-project")
+
+    assert seen_slugs == ["local:demo-project", "demo-project"]
+    assert artifacts.project_id == "local:demo-project"
+    assert artifacts.db_path == str(onto_db.resolve())
+    assert artifacts.duckdb_path == str(onto_duckdb.resolve())
