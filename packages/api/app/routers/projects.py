@@ -1801,6 +1801,13 @@ async def get_project_context(slug: str):
         raise HTTPException(404, "Project not found")
 
     project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
+    projection = command_center_service.load_control_plane_summary(project)
+    summary = projection["summary"]
+    repo_health = summary.get("repoHealth") or {
+        "hasLocalRepo": bool(project_root and project_root.exists()),
+        "hasRailYaml": bool(project_root and (project_root / "rail.yaml").exists()),
+        "hasResearchPlan": bool(project_root and (project_root / "research_plan").exists()),
+    }
 
     context = {
         "project": {
@@ -1808,6 +1815,17 @@ async def get_project_context(slug: str):
             "slug": project["slug"],
             "status": project.get("status"),
             "last_hydrated": project.get("lastHydratedAt"),
+            "phase": summary.get("lifecyclePhase"),
+        },
+        "controlPlane": {
+            "phase": summary.get("lifecyclePhase"),
+            "nextAction": summary.get("nextAction"),
+            "currentBlocker": summary.get("currentBlocker"),
+            "blockerSummary": summary.get("blockerSummary"),
+            "closeoutCertificate": summary.get("closeoutCertificate"),
+            "missionBrief": summary.get("missionBrief"),
+            "repoHealth": repo_health,
+            "snapshot": projection["snapshot"],
         },
         "ontology": {},
         "data_sources": [],

@@ -74,6 +74,85 @@ def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
     }
 
 
+def test_project_context_includes_snapshot_backed_control_plane(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    local_project = tmp_path / "demo-project"
+    local_project.mkdir(parents=True, exist_ok=True)
+    (local_project / "rail.yaml").write_text(
+        """
+project:
+  name: Demo Project
+  slug: demo-project
+  description: Demo
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": "project-1",
+            "name": "Demo Project",
+            "slug": slug,
+            "status": "draft",
+            "localRepoPath": str(local_project),
+            "apiConfigSlugs": [],
+        }
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(
+        projects_router.command_center_service,
+        "load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "lifecyclePhase": "research_active",
+                "nextAction": "Review pending approvals",
+                "currentBlocker": "Waiting on approval",
+                "blockerSummary": {"blocked": True, "headline": "Waiting on approval"},
+                "closeoutCertificate": {"status": "pending"},
+                "missionBrief": {"current": "Current brief", "next": "Next brief"},
+                "repoHealth": {
+                    "hasLocalRepo": True,
+                    "hasRailYaml": True,
+                    "hasResearchPlan": False,
+                },
+            },
+            "snapshot": {
+                "loaded": True,
+                "path": "research_plan/state/control_plane_snapshot.json",
+                "generatedAt": 1234567890,
+                "version": 1,
+            },
+        },
+    )
+
+    response = client.get("/api/v1/projects/demo-project/context")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["project"]["phase"] == "research_active"
+    assert payload["controlPlane"] == {
+        "phase": "research_active",
+        "nextAction": "Review pending approvals",
+        "currentBlocker": "Waiting on approval",
+        "blockerSummary": {"blocked": True, "headline": "Waiting on approval"},
+        "closeoutCertificate": {"status": "pending"},
+        "missionBrief": {"current": "Current brief", "next": "Next brief"},
+        "repoHealth": {
+            "hasLocalRepo": True,
+            "hasRailYaml": True,
+            "hasResearchPlan": False,
+        },
+        "snapshot": {
+            "loaded": True,
+            "path": "research_plan/state/control_plane_snapshot.json",
+            "generatedAt": 1234567890,
+            "version": 1,
+        },
+    }
+
+
 def test_list_projects_catalog_includes_snapshot_progress(monkeypatch):
     import app.routers.projects as projects_router
 
