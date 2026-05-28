@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["zen"])
 
 async def _known_project(slug: str) -> dict | None:
-    return await planner_service.get_project_by_slug(slug)
+    return await planner_service.resolve_project_reference(slug)
 
 @router.get("/{slug}/zen", response_model=ZenResponse)
 async def get_project_zen(slug: str):

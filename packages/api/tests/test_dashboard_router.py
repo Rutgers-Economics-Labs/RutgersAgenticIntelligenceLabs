@@ -21,15 +21,15 @@ def test_get_dashboard_uses_repo_first_project_resolution(monkeypatch, tmp_path)
         encoding="utf-8",
     )
 
-    async def _get_project_by_slug(slug: str):
+    async def _resolve_project_reference(project_ref: str | None):
         return {
             "_id": "local:demo-project",
             "name": "Demo Project",
-            "slug": slug,
+            "slug": "demo-project",
             "localRepoPath": str(project_root),
         }
 
-    monkeypatch.setattr(dashboard_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(dashboard_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(
         dashboard_router.command_center_service,
         "load_control_plane_summary",
@@ -87,15 +87,15 @@ def test_generate_dashboard_returns_curated_panels_for_repo_only_project(monkeyp
         encoding="utf-8",
     )
 
-    async def _get_project_by_slug(slug: str):
+    async def _resolve_project_reference(project_ref: str | None):
         return {
             "_id": "local:demo-project",
             "name": "Demo Project",
-            "slug": slug,
+            "slug": "demo-project",
             "localRepoPath": str(project_root),
         }
 
-    monkeypatch.setattr(dashboard_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(dashboard_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(
         dashboard_router.command_center_service,
         "load_control_plane_summary",

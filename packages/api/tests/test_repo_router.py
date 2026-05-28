@@ -18,15 +18,15 @@ async def test_repo_tree_uses_repo_first_local_project(monkeypatch, tmp_path):
     notes = root / "research_plan" / "notes.md"
     notes.write_text("hello\n", encoding="utf-8")
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "local:demo-project",
-            "slug": slug,
+            "slug": "demo-project",
             "localRepoPath": str(root),
         }
 
-    monkeypatch.setattr(repo_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(repo_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     body = await repo_router.get_repo_tree("demo-project", root_dir="research_plan", max_depth=3)
 
@@ -42,15 +42,15 @@ async def test_repo_file_uses_repo_first_local_project(monkeypatch, tmp_path):
     brief = root / "topics" / "brief.md"
     brief.write_text("# Demo brief\n", encoding="utf-8")
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "local:demo-project",
-            "slug": slug,
+            "slug": "demo-project",
             "localRepoPath": str(root),
         }
 
-    monkeypatch.setattr(repo_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(repo_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     body = await repo_router.get_repo_file("demo-project", path="topics/brief.md")
 
@@ -62,16 +62,16 @@ async def test_repo_init_uses_repo_first_project_lookup(client, monkeypatch, tmp
 
     target = tmp_path / "repo-target"
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "project-123",
-            "slug": slug,
+            "slug": "demo-project",
             "name": "Demo Project",
         }
 
     update_project = AsyncMock(return_value={"ok": True})
-    monkeypatch.setattr(repo_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(repo_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(repo_router.convex, "mutation", update_project)
 
     resp = await client.post(

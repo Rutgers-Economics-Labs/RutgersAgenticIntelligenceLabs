@@ -12,11 +12,11 @@ async def test_zen_route_prefers_repo_backed_control_plane_summary(client, monke
     project_root.mkdir(parents=True, exist_ok=True)
     (project_root / "research_plan").mkdir(parents=True, exist_ok=True)
 
-    async def _get_project_by_slug(slug: str):
+    async def _resolve_project_reference(project_ref: str | None):
         return {
             "_id": "project-1",
             "name": "Demo Project",
-            "slug": slug,
+            "slug": "demo-project",
             "status": "hydrated",
             "localRepoPath": str(project_root),
         }
@@ -36,7 +36,7 @@ async def test_zen_route_prefers_repo_backed_control_plane_summary(client, monke
     async def _list_decision_events(project: dict, status: str = "open"):
         return []
 
-    monkeypatch.setattr(zen_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(zen_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(zen_router.running_agent_service, "find_active_worker", _find_active_worker)
     monkeypatch.setattr(zen_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(zen_router.planner_service, "list_tasks", _list_tasks)

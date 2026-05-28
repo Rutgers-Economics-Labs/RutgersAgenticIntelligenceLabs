@@ -13,6 +13,13 @@ from rail.manifest import ManifestValidationError
 
 router = APIRouter(prefix="/projects", tags=["repo"])
 
+
+async def _resolve_project(slug: str) -> dict:
+    project = await planner_service.resolve_project_reference(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
 class RepoNode(BaseModel):
     name: str
     path: str
@@ -59,10 +66,7 @@ class RepoInitRequest(BaseModel):
 @router.post("/{slug}/repo/init")
 async def init_repo(slug: str, data: RepoInitRequest):
     """Initialize a RAIL repo scaffold for an existing project that has no localRepoPath."""
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await _resolve_project(slug)
 
     target = Path(data.targetDir).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
@@ -101,10 +105,7 @@ async def get_repo_tree(
     max_depth: int = Query(3, alias="maxDepth")
 ) -> RepoNode:
     """List the project's repository structure."""
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await _resolve_project(slug)
     
     local_path = project.get("localRepoPath")
     if not local_path:
@@ -127,10 +128,7 @@ async def get_repo_tree(
 @router.get("/{slug}/repo/file")
 async def get_repo_file(slug: str, path: str = Query(...)) -> FileContentResponse:
     """Read a specific file from the project's repository."""
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await _resolve_project(slug)
     
     local_path = project.get("localRepoPath")
     if not local_path:

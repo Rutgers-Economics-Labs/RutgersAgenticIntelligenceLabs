@@ -57,9 +57,8 @@ Prefer concise SQL — avoid JOINs unless necessary.
 
 @router.get("/{slug}/dashboard")
 async def get_dashboard(slug: str):
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
+    project = await planner_service.resolve_project_reference(slug)
+    if not project:
         raise HTTPException(404, "Project not found")
 
     panels = _load_curated_panels(project)
@@ -76,9 +75,8 @@ async def get_dashboard(slug: str):
 
 @router.post("/{slug}/dashboard/generate")
 async def generate_dashboard(slug: str):
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
+    project = await planner_service.resolve_project_reference(slug)
+    if not project:
         raise HTTPException(404, "Project not found")
 
     curated = _load_curated_panels(project)
