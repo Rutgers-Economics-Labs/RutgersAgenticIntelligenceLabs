@@ -8,7 +8,7 @@ from app.models.zen import (
     ZenDecision, ZenPlan, ZenAttention, ZenArtifact
 )
 from app.services.convex_client import convex
-from app.services import running_agent_service, planner_service, session_files
+from app.services import running_agent_service, planner_service, session_files, command_center_service
 from app.services.integrity_service import load_integrity_indexes
 from app.services.command_center_service import list_project_artifacts
 from app.services.decision_service import list_decision_events
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["zen"])
 
 async def _known_project(slug: str) -> dict | None:
-    return await convex.query("projects:getBySlug", {"slug": slug})
+    return await planner_service.get_project_by_slug(slug)
 
 @router.get("/{slug}/zen", response_model=ZenResponse)
 async def get_project_zen(slug: str):
@@ -30,11 +30,21 @@ async def get_project_zen(slug: str):
          raise HTTPException(400, f"Project '{slug}' has no localRepoPath")
          
     project_root = Path(local_path)
+    projection = command_center_service.load_control_plane_summary(project)
+    summary = projection["summary"]
     
     # 1. Objective
+    current_plan = summary.get("currentPlan") or {}
+    goal = summary.get("goal") or {}
+    mission_brief = summary.get("missionBrief") or {}
+    objective = (
+        str(current_plan.get("summary") or "").strip()
+        or str(goal.get("objective") or "").strip()
+        or str(mission_brief.get("current") or "").strip()
+        or "Define and execute the next approved step for this project."
+    )
     plan_path = project_root / "research_plan" / "current_plan.md"
-    objective = "Define and execute the next approved step for this project."
-    if plan_path.exists():
+    if objective == "Define and execute the next approved step for this project." and plan_path.exists():
         try:
             content = plan_path.read_text(encoding="utf-8")
             match = re.search(r"## Objective\n\n(.*?)(?:\n\n##|$)", content, re.DOTALL)
@@ -185,9 +195,14 @@ async def get_project_zen(slug: str):
         ))
         
     # 6. Artifacts
-    artifact_summary = list_project_artifacts(project)
+    artifact_summary = None
+    recent_artifacts = summary.get("recentArtifacts") or []
     artifacts = []
-    for a in artifact_summary.get("artifacts", [])[:8]:
+    artifact_rows = recent_artifacts
+    if not artifact_rows:
+        artifact_summary = list_project_artifacts(project)
+        artifact_rows = artifact_summary.get("artifacts", [])
+    for a in artifact_rows[:8]:
         artifacts.append(ZenArtifact(
             name=a["name"],
             path=a["path"],
@@ -196,8 +211,9 @@ async def get_project_zen(slug: str):
         ))
         
     # 7. Project Metadata (Phase & Health)
+    blocker_summary = summary.get("blockerSummary") or {}
     health = "On track"
-    if blocked_tasks:
+    if summary.get("currentBlocker") or blocker_summary.get("blocked") or blocked_tasks:
         health = "Blocked"
     elif pending_approvals or decision_cards or (active_run and active_run.needsInput):
         health = "Needs input"
@@ -205,16 +221,7 @@ async def get_project_zen(slug: str):
         health = "Stale"
         
     # Rudimentary phase detection
-    phase = "Data Ingestion"
-    done_count = sum(1 for t in tasks if t.get("status") == "done")
-    if done_count > 10:
-        phase = "Writing"
-    elif done_count > 5:
-        phase = "Analysis"
-    elif done_count > 0:
-        phase = "Data Ingestion"
-    else:
-        phase = "Planning"
+    phase = str(summary.get("lifecyclePhase") or "").strip() or "Planning"
         
     return ZenResponse(
         project=ZenProject(
