@@ -1681,9 +1681,8 @@ async def register_artifacts_from_job(
     Defaults to the latest successful job for this project that has outputDbPath.
     Optional JSON body: {"output_db_path": "/abs/path/onto.db", "output_owl_path": "..."} to set paths without job lookup.
     """
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
+    project = await _refresh_project_record(slug)
+    if not project:
         raise HTTPException(404, "Project not found")
 
     job: dict | None = None
@@ -1774,9 +1773,8 @@ async def clear_hydration(slug: str):
     Clear the active ontology artifact paths and reset the project status to 'ready'.
     The artifact files on disk are NOT deleted — only the Convex project record is patched.
     """
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
+    project = await _refresh_project_record(slug)
+    if not project:
         raise HTTPException(404, "Project not found")
 
     project_id = str(project.get("_id") or "")
@@ -1842,9 +1840,8 @@ async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
 async def get_project_context(slug: str):
     """Returns a structured context snapshot for agent initialization."""
     print(f"  [context] resolving for slug={slug}")
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
+    project = await _refresh_project_record(slug)
+    if not project:
         raise HTTPException(404, "Project not found")
 
     project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
@@ -2019,7 +2016,9 @@ async def create_ontology_follow_up_task(slug: str, request: OntologyFollowUpTas
 
 @router.get("/{slug}/skills")
 async def get_project_skills(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     try:
         return command_center_service.list_project_skills(project)
     except Exception:
@@ -2035,7 +2034,9 @@ async def get_project_skills(slug: str):
 
 @router.get("/{slug}/sources")
 async def get_project_sources(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     try:
         return command_center_service.list_project_sources(project)
     except Exception:
@@ -2056,7 +2057,9 @@ async def get_project_sources(slug: str):
 
 @router.get("/{slug}/artifacts")
 async def get_project_artifacts(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     try:
         return command_center_service.list_project_artifacts(project)
     except Exception:
@@ -2075,7 +2078,9 @@ async def get_project_artifacts(slug: str):
 
 @router.get("/{slug}/integrity")
 async def get_project_integrity(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     try:
         return command_center_service.list_project_integrity(project)
     except Exception:
@@ -2116,7 +2121,9 @@ async def get_project_integrity(slug: str):
 
 @router.get("/{slug}/integrity/assumptions")
 async def get_project_integrity_assumptions(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2126,7 +2133,9 @@ async def get_project_integrity_assumptions(slug: str):
 
 @router.patch("/{slug}/integrity/assumptions/{assumption_key}")
 async def patch_project_integrity_assumption(slug: str, assumption_key: str, data: IntegrityAssumptionUpdateRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2156,7 +2165,9 @@ async def patch_project_integrity_assumption(slug: str, assumption_key: str, dat
 
 @router.get("/{slug}/integrity/sources")
 async def get_project_integrity_sources(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2165,7 +2176,9 @@ async def get_project_integrity_sources(slug: str):
 
 @router.get("/{slug}/integrity/sources/{source_key}")
 async def get_project_integrity_source_detail(slug: str, source_key: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2177,7 +2190,9 @@ async def get_project_integrity_source_detail(slug: str, source_key: str):
 
 @router.patch("/{slug}/integrity/sources/{source_key}")
 async def patch_project_integrity_source(slug: str, source_key: str, data: IntegritySourceUpdateRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2220,7 +2235,9 @@ async def patch_project_integrity_source(slug: str, source_key: str, data: Integ
 
 @router.get("/{slug}/integrity/claims")
 async def get_project_integrity_claims(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2229,7 +2246,9 @@ async def get_project_integrity_claims(slug: str):
 
 @router.get("/{slug}/hypotheses")
 async def get_project_hypotheses(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2239,7 +2258,9 @@ async def get_project_hypotheses(slug: str):
 
 @router.post("/{slug}/hypotheses")
 async def upsert_project_hypothesis(slug: str, data: HypothesisUpsertRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2267,7 +2288,9 @@ async def upsert_project_hypothesis(slug: str, data: HypothesisUpsertRequest):
 
 @router.patch("/{slug}/hypotheses/{hypothesis_id}")
 async def patch_project_hypothesis(slug: str, hypothesis_id: str, data: HypothesisPatchRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2300,7 +2323,9 @@ async def patch_project_hypothesis(slug: str, hypothesis_id: str, data: Hypothes
 
 @router.post("/{slug}/critic/review")
 async def run_project_critic_review(slug: str, data: CriticReviewRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     try:
         result = run_critic_review(project, hypothesis_ids=data.hypothesisIds)
     except ValueError as exc:
@@ -2310,7 +2335,9 @@ async def run_project_critic_review(slug: str, data: CriticReviewRequest):
 
 @router.post("/{slug}/research-burst")
 async def run_project_research_burst(slug: str, data: ResearchBurstRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     objective = (data.objective or "").strip()
     if not objective:
         raise HTTPException(status_code=422, detail="objective is required.")
@@ -2329,7 +2356,9 @@ async def run_project_research_burst(slug: str, data: ResearchBurstRequest):
 
 @router.get("/{slug}/integrity/claims/{claim_key}")
 async def get_project_integrity_claim_detail(slug: str, claim_key: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2341,7 +2370,9 @@ async def get_project_integrity_claim_detail(slug: str, claim_key: str):
 
 @router.get("/{slug}/integrity/lineage")
 async def get_project_integrity_lineage(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2356,7 +2387,9 @@ async def get_project_integrity_artifact_lineage(slug: str):
 
 @router.get("/{slug}/integrity/artifacts/{artifact_path:path}")
 async def get_project_integrity_artifact_detail(slug: str, artifact_path: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2368,7 +2401,9 @@ async def get_project_integrity_artifact_detail(slug: str, artifact_path: str):
 
 @router.get("/{slug}/integrity/graph")
 async def get_project_integrity_dependency_graph(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2377,7 +2412,9 @@ async def get_project_integrity_dependency_graph(slug: str):
 
 @router.get("/{slug}/integrity/stale-graph")
 async def get_project_integrity_stale_graph(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2386,7 +2423,9 @@ async def get_project_integrity_stale_graph(slug: str):
 
 @router.get("/{slug}/integrity/verification-runs")
 async def get_project_integrity_verification_runs(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2411,7 +2450,9 @@ async def get_project_integrity_verification_runs(slug: str):
 
 @router.get("/{slug}/integrity/benchmark")
 async def get_project_integrity_benchmark(slug: str, retrieval_limit: int = Query(10, ge=1, le=100, alias="retrievalLimit")):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2431,7 +2472,9 @@ async def get_project_integrity_retrieval(
     include_stale: bool = Query(False, alias="includeStale"),
     include_blocked: bool = Query(False, alias="includeBlocked"),
 ):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2451,7 +2494,9 @@ async def get_project_integrity_retrieval(
 
 @router.post("/{slug}/integrity/rerun-plan")
 async def preview_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPlanRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2464,7 +2509,9 @@ async def preview_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPl
 
 @router.post("/{slug}/integrity/rerun-plan/apply")
 async def apply_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPlanRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2477,7 +2524,9 @@ async def apply_project_integrity_rerun_plan(slug: str, data: IntegrityRerunPlan
 
 @router.post("/{slug}/integrity/batch-rerun-plan/apply")
 async def apply_project_integrity_batch_rerun_plan(slug: str, data: IntegrityBatchRerunPlanRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2487,7 +2536,9 @@ async def apply_project_integrity_batch_rerun_plan(slug: str, data: IntegrityBat
 
 @router.post("/{slug}/integrity/reproducibility-rerun")
 async def apply_project_integrity_reproducibility_rerun(slug: str, data: IntegrityReproducibilityRerunRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2501,7 +2552,9 @@ async def apply_project_integrity_reproducibility_rerun(slug: str, data: Integri
 
 @router.post("/{slug}/integrity/freshness-evaluate")
 async def apply_project_integrity_freshness_evaluation(slug: str, data: IntegrityFreshnessEvaluationRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2510,7 +2563,9 @@ async def apply_project_integrity_freshness_evaluation(slug: str, data: Integrit
 
 @router.post("/{slug}/integrity/artifacts/promote")
 async def apply_project_integrity_artifact_promotion(slug: str, data: IntegrityArtifactPromotionRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2591,7 +2646,9 @@ async def _apply_integrity_plan(project: dict, root: Path, plan: dict):
 
 @router.post("/{slug}/integrity/assumptions")
 async def record_project_integrity_assumption(slug: str, data: IntegrityRecordAssumptionRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2612,7 +2669,9 @@ async def record_project_integrity_assumption(slug: str, data: IntegrityRecordAs
 
 @router.post("/{slug}/integrity/sources")
 async def record_project_integrity_source(slug: str, data: IntegrityRecordSourceRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2647,7 +2706,9 @@ async def record_project_integrity_source(slug: str, data: IntegrityRecordSource
 
 @router.post("/{slug}/integrity/claims")
 async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2694,7 +2755,9 @@ async def record_project_integrity_claim(slug: str, data: IntegrityRecordClaimRe
 
 @router.post("/{slug}/integrity/artifacts")
 async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLineageRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     root = planner_service.project_root_from_record(project)
     if root is None:
         raise HTTPException(status_code=404, detail="Project repo not found")
@@ -2755,19 +2818,25 @@ async def record_project_integrity_lineage(slug: str, data: IntegrityRecordLinea
 
 @router.post("/{slug}/research-launch/preview")
 async def preview_research_launch(slug: str, data: ResearchLaunchRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return command_center_service.build_launch_preview(project, data.model_dump())
 
 
 @router.post("/{slug}/research-launch/approve")
 async def approve_research_launch(slug: str, data: ResearchLaunchRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return await command_center_service.approve_launch_preview(project, data.model_dump())
 
 
 @router.get("/{slug}/planner/thread")
 async def get_planner_thread(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     messages = await planner_service.list_planner_messages(project, thread_id=thread_id)
     return {
@@ -2858,7 +2927,9 @@ async def _build_planner_home_payload(project: dict[str, Any], slug: str) -> dic
 
 @router.get("/{slug}/planner/home")
 async def get_planner_home(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return await _build_planner_home_payload(project, slug)
 
 
@@ -2916,7 +2987,9 @@ async def worker_update_planner(slug: str, data: WorkerUpdateRequest):
 
 @router.get("/{slug}/planner/board")
 async def get_planner_board(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     home = await _build_planner_home_payload(project, slug)
     return {
         "board": home["planner"]["board"],
@@ -3602,13 +3675,17 @@ def _repo_response_for_path(project: dict[str, Any], path: str | None = None) ->
 
 @router.get("/{slug}/repo")
 async def get_project_repo_root(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return _repo_response_for_path(project, None)
 
 
 @router.get("/{slug}/repo/tree")
 async def get_project_repo_tree(slug: str, rootDir: str | None = Query(None), maxDepth: int = Query(3)):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     requested = (rootDir or "").strip("/")
     response = _repo_response_for_path(project, requested or None)
     if response.get("kind") != "directory":
@@ -3621,7 +3698,9 @@ async def get_project_repo_tree(slug: str, rootDir: str | None = Query(None), ma
 
 @router.get("/{slug}/repo/file")
 async def get_project_repo_file_compat(slug: str, path: str = Query(...)):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     response = _repo_response_for_path(project, path)
     if response.get("kind") != "file":
         raise HTTPException(status_code=400, detail="Requested path is not a file")
@@ -3641,7 +3720,9 @@ async def get_project_repo_file(slug: str, path: str):
 
     Raises 404 for missing files and 400 for path-traversal attempts.
     """
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return _repo_response_for_path(project, path)
 
 
@@ -3701,7 +3782,9 @@ async def trigger_project_runner_session_poll(
 @router.get("/{slug}/agents/active")
 async def list_active_agents(slug: str):
     """Return currently active (queued/running/awaiting_*) sessions for this project."""
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     sessions = await running_agent_service.list_project_running_agents(
         project["_id"],
         active_only=True,
@@ -3750,7 +3833,9 @@ async def run_research_agents_direct(slug: str, data: RunResearchAgentsRequest, 
     """Directly trigger Gemini research subagents and commit findings to repo."""
     from app.services.research_subagent import run_research_agents
 
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
 
     async def _run():
         results = await run_research_agents(
@@ -3775,7 +3860,9 @@ async def run_research_agents_direct(slug: str, data: RunResearchAgentsRequest, 
 
 @router.get("/{slug}/goal")
 async def get_project_goal(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     bundle = goal_service.load_goal_bundle(project)
     if not bundle:
         raise HTTPException(status_code=404, detail="Goal mode has not been configured for this project.")
@@ -3788,7 +3875,9 @@ async def configure_project_goal(
     data: GoalContractRequest,
     background_tasks: BackgroundTasks,
 ):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     bundle = goal_service.create_goal_contract(
         project,
         {
@@ -4116,7 +4205,7 @@ async def get_project_phase(slug: str):
     control-plane endpoint: the UI, autopilot, and any operator query should
     use this instead of assembling partial signals.
     """
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 

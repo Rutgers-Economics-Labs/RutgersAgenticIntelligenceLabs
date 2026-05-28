@@ -20,15 +20,13 @@ def test_register_artifacts_rejects_missing_hydration_metadata(monkeypatch, tmp_
     onto_duckdb = ontology_root / "onto.duckdb"
     onto_duckdb.write_bytes(b"duck")
 
-    async def _query(path: str, payload: dict):
-        if path == "projects:getBySlug":
-            return {"_id": "project-1", "slug": payload["slug"], "localRepoPath": str(tmp_path)}
-        raise AssertionError(path)
+    async def _refresh_project_record(slug: str):
+        return {"_id": "project-1", "slug": slug, "localRepoPath": str(tmp_path)}
 
     async def _mutation(path: str, payload: dict):
         raise AssertionError(f"unexpected mutation {path}")
 
-    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
 
     response = client.post(
@@ -49,14 +47,14 @@ def test_project_repo_routes_use_repo_first_lookup(monkeypatch, tmp_path):
     (project_root / "topics").mkdir(parents=True, exist_ok=True)
     (project_root / "topics" / "brief.md").write_text("# Brief\n", encoding="utf-8")
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {
             "_id": "local:demo-project",
             "slug": slug,
             "localRepoPath": str(project_root),
         }
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     root_response = client.get("/api/v1/projects/demo-project/repo")
     tree_response = client.get("/api/v1/projects/demo-project/repo/tree", params={"rootDir": "research_plan"})
@@ -271,7 +269,7 @@ project:
         encoding="utf-8",
     )
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {
             "_id": "project-1",
             "name": "Demo Project",
@@ -281,7 +279,7 @@ project:
             "apiConfigSlugs": [],
         }
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(
         projects_router.command_center_service,
         "load_control_plane_summary",
@@ -801,7 +799,7 @@ def test_planner_control_plane_endpoint_returns_compact_live_snapshot(monkeypatc
 def test_planner_home_endpoint_includes_snapshot_backed_control_plane(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {
             "_id": "project-1",
             "name": "Demo",
@@ -836,7 +834,7 @@ def test_planner_home_endpoint_includes_snapshot_backed_control_plane(monkeypatc
     async def _autopilot_status(slug: str):
         return {"enabled": True, "active": True, "autoApprove": False, "dispatchApprovalRequired": True}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_planner_thread", _ensure_planner_thread)
     monkeypatch.setattr(projects_router.planner_service, "list_planner_messages", _list_planner_messages)
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
@@ -1063,7 +1061,7 @@ def test_register_artifacts_accepts_local_repo_only_project_with_explicit_paths(
 
     promoted: list[dict] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {
             "_id": f"local:{slug}",
             "slug": slug,
@@ -1075,7 +1073,7 @@ def test_register_artifacts_accepts_local_repo_only_project_with_explicit_paths(
         promoted.append(kwargs)
         return None
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(
         projects_router,
         "promote_project_hydration_artifact",
@@ -1110,7 +1108,7 @@ def test_clear_hydration_for_local_repo_only_project_removes_metadata_not_artifa
     onto_duckdb.write_bytes(b"duck")
     hydration_meta.write_text('{"pipeline_slug":"default","hydration_mode":"full"}', encoding="utf-8")
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {
             "_id": f"local:{slug}",
             "slug": slug,
@@ -1121,7 +1119,7 @@ def test_clear_hydration_for_local_repo_only_project_removes_metadata_not_artifa
     async def _mutation(path: str, payload: dict):
         raise AssertionError(f"unexpected mutation {path}")
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
 
     response = client.post("/api/v1/projects/demo-project/clear-hydration")
@@ -1319,7 +1317,7 @@ def test_project_context_endpoint_prefers_local_repo_sources_and_pipelines(monke
     pipelines_dir.mkdir(parents=True, exist_ok=True)
     (pipelines_dir / "baseline.yaml").write_text("name: Baseline pipeline\n", encoding="utf-8")
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {
             "_id": "project-1",
             "name": "Demo",
@@ -1345,7 +1343,7 @@ def test_project_context_endpoint_prefers_local_repo_sources_and_pipelines(monke
     async def _run_with_ensure(slug: str, db_path: str, fn):
         return [{"id": "Observation", "label": "Observation"}]
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.convex, "query", _query)
     monkeypatch.setattr(project_artifacts_service, "resolve", _resolve)
     monkeypatch.setattr(projects_router.ontology_service, "_run_with_ensure", _run_with_ensure)
