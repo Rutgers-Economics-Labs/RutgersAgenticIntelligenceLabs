@@ -7,8 +7,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
-from app.services.convex_client import convex
-from app.services import sql_service
+from app.services import command_center_service, planner_service, sql_service
 from app.services.llm_service import complete
 
 logger = logging.getLogger(__name__)
@@ -58,8 +57,9 @@ Prefer concise SQL — avoid JOINs unless necessary.
 
 @router.get("/{slug}/dashboard")
 async def get_dashboard(slug: str):
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
+    try:
+        project = await planner_service.get_project_by_slug(slug)
+    except ValueError:
         raise HTTPException(404, "Project not found")
 
     panels = _load_curated_panels(project)
@@ -70,13 +70,15 @@ async def get_dashboard(slug: str):
         "panels": panels,
         "projectName": project.get("name", slug),
         "slug": slug,
+        **_dashboard_summary(project),
     }
 
 
 @router.post("/{slug}/dashboard/generate")
 async def generate_dashboard(slug: str):
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
+    try:
+        project = await planner_service.get_project_by_slug(slug)
+    except ValueError:
         raise HTTPException(404, "Project not found")
 
     curated = _load_curated_panels(project)
@@ -85,6 +87,7 @@ async def generate_dashboard(slug: str):
             "panels": curated,
             "projectName": project.get("name", slug),
             "slug": slug,
+            **_dashboard_summary(project),
         }
 
     if not sql_service.is_ready():
@@ -129,6 +132,21 @@ async def generate_dashboard(slug: str):
         "panels": panels,
         "projectName": project.get("name", slug),
         "slug": slug,
+        **_dashboard_summary(project),
+    }
+
+
+def _dashboard_summary(project: dict) -> dict:
+    projection = command_center_service.load_control_plane_summary(project)
+    summary = projection["summary"]
+    return {
+        "controlPlane": {
+            "phase": summary.get("lifecyclePhase"),
+            "nextAction": summary.get("nextAction"),
+            "currentBlocker": summary.get("currentBlocker"),
+            "snapshot": projection["snapshot"],
+        },
+        "repoHealth": summary.get("repoHealth") or {},
     }
 
 
