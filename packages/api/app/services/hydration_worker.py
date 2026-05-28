@@ -70,9 +70,14 @@ async def _resolve_project_from_job_doc(job_doc: dict | None) -> tuple[str | Non
     project_doc = None
     if project_id:
         try:
-            project_doc = await convex.query("projects:getById", {"projectId": project_id})
+            project_doc = await planner_service.resolve_project_reference(project_id)
         except Exception:
             project_doc = None
+        if not project_doc:
+            try:
+                project_doc = await convex.query("projects:getById", {"projectId": project_id})
+            except Exception:
+                project_doc = None
 
     resolved_via_slug = False
     if not project_doc and project_slug:
