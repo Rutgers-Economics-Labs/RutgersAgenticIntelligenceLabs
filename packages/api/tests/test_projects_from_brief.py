@@ -72,6 +72,7 @@ async def test_create_from_brief_writes_project_and_skips_hydration(client, tmp_
         patch("app.routers.projects._git_create_initial_commit", return_value="deadbeef"), \
         patch("app.routers.projects.GitHubService.create_repo", new=AsyncMock(return_value={"full_name": "Rutgers-Economics-Labs/RAIL-grid-costs"})), \
         patch("app.routers.projects.GitHubService.commit_files", new=AsyncMock(return_value={"sha": "deadbeef"})), \
+        patch("app.routers.projects.planner_service.get_project_by_slug", new=AsyncMock(return_value=project_record)), \
         patch("app.routers.projects.planner_service.ensure_planner_thread", new=AsyncMock(return_value="planner")), \
         patch("app.routers.projects.planner_service.ensure_main_board", new=AsyncMock(return_value={"_id": "board-1"})), \
         patch("app.routers.projects.planner_service.append_planner_message", new=AsyncMock()), \
@@ -153,6 +154,7 @@ async def test_create_from_brief_writes_extended_manifest_contract(client, tmp_p
          patch("app.routers.projects._git_create_initial_commit", return_value="deadbeef"), \
          patch("app.routers.projects.GitHubService.create_repo", new=AsyncMock(return_value={"full_name": "Rutgers-Economics-Labs/RAIL-grid-costs"})), \
          patch("app.routers.projects.GitHubService.commit_files", new=AsyncMock(return_value={"sha": "deadbeef"})), \
+         patch("app.routers.projects.planner_service.get_project_by_slug", new=AsyncMock(return_value=project_record)), \
          patch("app.routers.projects.planner_service.ensure_planner_thread", new=AsyncMock(return_value="planner")), \
          patch("app.routers.projects.planner_service.ensure_main_board", new=AsyncMock(return_value={"_id": "board-1"})), \
          patch("app.routers.projects.planner_service.append_planner_message", new=AsyncMock()), \
@@ -190,6 +192,7 @@ async def test_future_bootstrap_auto_creates_and_links_github_repo(client, tmp_p
          patch("app.routers.projects.convex.query", new=query), \
          patch("app.routers.projects.GitHubService.create_repo", new=AsyncMock(return_value={"full_name": "Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs"})), \
          patch("app.routers.projects.GitHubService.commit_files", new=AsyncMock(return_value={"commit_sha": "abc123", "branch": "main", "changed": True, "files": []})), \
+         patch("app.routers.projects.planner_service.get_project_by_slug", new=AsyncMock(return_value=project_record)), \
          patch("app.routers.projects.planner_service.ensure_planner_thread", new=AsyncMock(return_value="planner")), \
          patch("app.routers.projects.planner_service.ensure_main_board", new=AsyncMock(return_value={"_id": "board-1"})), \
          patch("app.routers.projects.planner_service.append_planner_message", new=AsyncMock()), \

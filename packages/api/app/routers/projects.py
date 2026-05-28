@@ -898,7 +898,10 @@ def _local_catalog_projects() -> list[dict]:
 
 
 async def _known_project(slug: str) -> dict | None:
-    return await convex.query("projects:getBySlug", {"slug": slug})
+    try:
+        return await planner_service.get_project_by_slug(slug)
+    except Exception:
+        return None
 
 
 async def _catalog_project_by_slug(slug: str) -> dict | None:
@@ -954,9 +957,15 @@ async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
                 **{key: value for key, value in payload.items() if key != "slug"},
             },
         )
-        return await convex.query("projects:getBySlug", {"slug": slug}) or {**existing, **payload}
+        try:
+            return await planner_service.get_project_by_slug(slug)
+        except Exception:
+            return {**existing, **payload}
     project_id = await convex.mutation("projects:create", {**payload, "approach": "ontology-first"})
-    return await convex.query("projects:getById", {"projectId": project_id}) or {**payload, "_id": project_id}
+    try:
+        return await planner_service.get_project_by_slug(slug)
+    except Exception:
+        return {**payload, "_id": project_id}
 
 
 async def _catalog_row(project: dict) -> dict:
@@ -1460,7 +1469,7 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
             "defaultBranch": data.defaultBranch,
         },
     )
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    project = await planner_service.get_project_by_slug(manifest_slug)
     if not project:
         raise HTTPException(status_code=404, detail="Project could not be loaded after bootstrap")
     await planner_service.ensure_planner_thread(project_id)
@@ -1472,7 +1481,7 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
         message_type="system",
     )
     await planner_service.sync_planner_files(project, board)
-    return await convex.query("projects:getById", {"projectId": project_id})
+    return await planner_service.get_project_by_slug(manifest_slug)
 
 
 @router.post("/from-brief/preview")
@@ -1582,7 +1591,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
         },
     )
 
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    project = await planner_service.get_project_by_slug(slug)
     if not project:
         raise HTTPException(status_code=404, detail="Project could not be loaded after creation")
     rail_path = repo_root / "rail.yaml"
@@ -1638,7 +1647,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
         except Exception as exc:
             await record_publish_failure(project_id, str(exc))
 
-    updated = await convex.query("projects:getById", {"projectId": project_id})
+    updated = await planner_service.get_project_by_slug(slug)
     return {
         "project": updated,
         "preview": preview,
