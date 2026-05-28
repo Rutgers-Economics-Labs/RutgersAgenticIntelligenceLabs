@@ -2367,10 +2367,10 @@ def test_relay_terminal_status_uses_session_file_task_id_for_slug_tasks(tmp_path
     updates: list[dict[str, object]] = []
     syncs: list[str] = []
 
-    async def _fake_query(name: str, payload: dict[str, object]):
-        assert name == "projects:getById"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "project-relay"
         return {
-            "_id": payload["projectId"],
+            "_id": "project-relay",
             "slug": "relay-task-project",
             "localRepoPath": str(tmp_path),
         }
@@ -2382,7 +2382,7 @@ def test_relay_terminal_status_uses_session_file_task_id_for_slug_tasks(tmp_path
     async def _sync(project: dict):
         syncs.append(project["slug"])
 
-    monkeypatch.setattr(session_lifecycle.convex, "query", _fake_query)
+    monkeypatch.setattr(session_lifecycle.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _update_task)
     monkeypatch.setattr(session_lifecycle.planner_service, "sync_planner_files", _sync)
 
@@ -2406,6 +2406,67 @@ def test_relay_terminal_status_uses_session_file_task_id_for_slug_tasks(tmp_path
     assert updates[0]["task_id"] == "repair-verification-automation-for-ontology-ingestion-handoffs"
     assert updates[0]["status"] == "review"
     assert syncs == ["relay-task-project"]
+
+
+def test_relay_approval_requested_uses_repo_first_project_resolution(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    bootstrap_future_project(tmp_path, name="Relay Approval Project")
+
+    approvals_requested: list[dict[str, object]] = []
+
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "project-approval"
+        return {
+            "_id": "project-approval",
+            "slug": "relay-approval-project",
+            "localRepoPath": str(tmp_path),
+        }
+
+    async def _list_approvals(project: dict):
+        assert project["slug"] == "relay-approval-project"
+        return []
+
+    async def _create_approval(*, project: dict, task_id: str, agent_session_id: str, **kwargs):
+        approvals_requested.append(
+            {
+                "project": project["slug"],
+                "task_id": task_id,
+                "agent_session_id": agent_session_id,
+                **kwargs,
+            }
+        )
+        return {"_id": "approval-1"}
+
+    async def _sync(project: dict):
+        approvals_requested.append({"synced": project["slug"]})
+
+    monkeypatch.setattr(session_lifecycle.planner_service, "resolve_project_reference", _resolve_project_reference)
+    monkeypatch.setattr(session_lifecycle.planner_service, "list_approvals", _list_approvals)
+    monkeypatch.setattr(session_lifecycle.planner_service, "create_approval", _create_approval)
+    monkeypatch.setattr(session_lifecycle.planner_service, "sync_planner_files", _sync)
+
+    event = session_lifecycle.RunnerEvent(
+        session_id="sess-approval",
+        event_type=session_lifecycle.RunnerEventType.APPROVAL_REQUESTED,
+        normalized_payload={"prompt": "Need permission", "activity_key": "run_task"},
+    )
+    asyncio.run(
+        session_lifecycle._relay_approval_requested(
+            "sess-approval",
+            {
+                "_id": "sess-approval",
+                "projectId": "project-approval",
+                "projectSlug": "relay-approval-project",
+                "role": "coding",
+                "taskId": "approval-task",
+            },
+            event,
+        )
+    )
+
+    assert approvals_requested[0]["project"] == "relay-approval-project"
+    assert approvals_requested[0]["task_id"] == "approval-task"
+    assert approvals_requested[0]["agent_session_id"] == "sess-approval"
+    assert approvals_requested[1] == {"synced": "relay-approval-project"}
 
 
 def test_finalize_workspace_review_blocks_coding_task_when_lineage_contract_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

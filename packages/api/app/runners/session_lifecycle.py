@@ -3439,7 +3439,7 @@ async def _relay_approval_requested(
     project_id = session_record.get("projectId")
     if not project_id:
         return
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    project = await planner_service.resolve_project_reference(str(project_id))
     if not project:
         return
 
@@ -3468,7 +3468,7 @@ async def _relay_question_asked(
     project_id = session_record.get("projectId")
     if not project_id:
         return
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    project = await planner_service.resolve_project_reference(str(project_id))
     if not project:
         return
     question_text = (
@@ -3504,7 +3504,7 @@ async def _relay_terminal_status(session_record: dict[str, Any], event: RunnerEv
     project_id = session_record.get("projectId")
     if not project_id:
         return
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    project = await planner_service.resolve_project_reference(str(project_id))
     if not project:
         return
     project_root = _project_root(project)
