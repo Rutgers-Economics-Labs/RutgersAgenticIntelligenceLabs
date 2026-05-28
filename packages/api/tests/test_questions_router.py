@@ -116,3 +116,20 @@ async def test_search_context_uses_project_slug_for_local_project(monkeypatch):
 
     assert captured["payload"] == {"projectSlug": "demo-project"}
     assert result["results"][0]["name"] == "Queue Note"
+
+
+async def test_resolve_project_record_prefers_repo_first_local_project(monkeypatch):
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {"_id": "local:demo-project", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError((path, payload))
+
+    monkeypatch.setattr(questions_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(questions_router.convex, "query", _query)
+
+    project = await questions_router._resolve_project_record("local:demo-project")
+
+    assert project["_id"] == "local:demo-project"

@@ -21,28 +21,23 @@ async def _resolve_context_project(project_id: str | None) -> dict[str, Any] | N
     if not project_id:
         return None
 
-    try:
-        project = await convex.query("projects:getById", {"projectId": project_id})
-    except Exception:
-        project = None
-
-    if not project:
+    project = None
+    candidate_slugs = [project_id]
+    if isinstance(project_id, str) and project_id.startswith("local:"):
+        candidate_slugs.append(project_id.removeprefix("local:"))
+    for candidate in candidate_slugs:
         try:
-            project = await convex.query("projects:get", {"slug": project_id})
+            project = await planner_service.get_project_by_slug(candidate)
+            if project:
+                break
         except Exception:
             project = None
 
-    if not project:
-        candidate_slugs = [project_id]
-        if isinstance(project_id, str) and project_id.startswith("local:"):
-            candidate_slugs.append(project_id.removeprefix("local:"))
-        for candidate in candidate_slugs:
-            try:
-                project = await planner_service.get_project_by_slug(candidate)
-                if project:
-                    break
-            except Exception:
-                project = None
+    if not project and not str(project_id).startswith("local:"):
+        try:
+            project = await convex.query("projects:getById", {"projectId": project_id})
+        except Exception:
+            project = None
 
     return project if isinstance(project, dict) else None
 

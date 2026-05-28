@@ -214,6 +214,30 @@ async def test_create_api_accepts_repo_only_local_project_id(client, convex_mock
     assert resp.json()["configId"] == "new-id-123"
 
 
+async def test_get_project_for_save_prefers_repo_first_local_project(monkeypatch):
+    from app.routers import configs as configs_router
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {
+            "_id": "local:demo-project",
+            "slug": "demo-project",
+            "name": "Demo Project",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError((path, payload))
+
+    monkeypatch.setattr(configs_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(configs_router.convex, "query", _query)
+
+    project = await configs_router._get_project_for_save("local:demo-project")
+
+    assert project["_id"] == "local:demo-project"
+
+
 # ── GET /configs/pipelines ────────────────────────────────────────────────────
 
 async def test_list_pipelines(client, convex_mock):

@@ -284,3 +284,20 @@ async def test_list_context_uses_repo_first_project_slug(client, convex_mock, mo
 
     assert resp.status_code == 200
     assert resp.json() == [{"_id": "doc-1", "name": "Repo Note"}]
+
+
+async def test_resolve_context_project_prefers_repo_first_local_project(monkeypatch):
+    async def _get_project_by_slug(slug: str):
+        if slug != "context-project":
+            raise ValueError(slug)
+        return {"_id": "local:context-project", "slug": "context-project", "localRepoPath": "/tmp/context-project"}
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError((path, payload))
+
+    monkeypatch.setattr(context_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(context_router.convex, "query", _query)
+
+    project = await context_router._resolve_context_project("local:context-project")
+
+    assert project["_id"] == "local:context-project"

@@ -194,3 +194,20 @@ async def test_get_recent_jobs_uses_project_slug_for_local_project(monkeypatch):
 
     assert captured["payload"] == {"projectSlug": "demo-project", "limit": 3}
     assert result["jobs"][0]["jobId"] == "job-1"
+
+
+async def test_resolve_project_record_prefers_repo_first_local_project(monkeypatch):
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {"_id": "local:demo-project", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError((path, payload))
+
+    monkeypatch.setattr(project_agent_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(project_agent_router.convex, "query", _query)
+
+    project = await project_agent_router._resolve_project_record("local:demo-project")
+
+    assert project["_id"] == "local:demo-project"
