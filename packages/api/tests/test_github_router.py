@@ -184,3 +184,36 @@ async def test_link_github_persists_repo_only_manifest(client, convex_mock, monk
     assert resp.status_code == 200
     assert resp.json() == {"linked": True, "repo": "Rutgers-Economics-Labs/demo-project"}
     assert manifest.project.git_repo_url == "https://github.com/Rutgers-Economics-Labs/demo-project"
+
+
+async def test_github_sync_uses_repo_first_local_project_link(client, monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "pipelineConfigSlug": None,
+        "localRepoPath": "/tmp/demo-project",
+    }
+
+    monkeypatch.setattr(github_router.github_service, "verify_webhook", lambda body, signature: True)
+    monkeypatch.setattr(github_router.planner_service, "get_project_by_github_repo", AsyncMock(return_value=project))
+    monkeypatch.setattr(github_router, "_sync_repo_changes", AsyncMock())
+
+    resp = await client.post(
+        "/api/v1/github/sync",
+        headers={
+            "X-GitHub-Event": "push",
+            "X-Hub-Signature-256": "sha256=test",
+        },
+        content=json.dumps(
+            {
+                "repository": {"full_name": "Rutgers-Economics-Labs/demo-project"},
+                "before": "oldsha",
+                "after": "newsha",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"synced": True, "project": "demo-project"}

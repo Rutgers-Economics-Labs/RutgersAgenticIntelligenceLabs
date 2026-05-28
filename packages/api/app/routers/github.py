@@ -36,6 +36,13 @@ async def _resolve_project_by_slug(slug: str) -> dict | None:
     return project if isinstance(project, dict) else None
 
 
+async def _resolve_project_by_github_repo(repo: str) -> dict | None:
+    try:
+        return await planner_service.get_project_by_github_repo(repo)
+    except Exception:
+        return None
+
+
 async def _persist_github_project_patch(project: dict, patch: dict) -> dict:
     project_id = str(project.get("_id") or "")
     if project_id.startswith("local:"):
@@ -128,7 +135,7 @@ async def github_sync(request: Request, background_tasks: BackgroundTasks):
     after_sha = payload["after"]
 
     # Find the project linked to this repo
-    project = await convex.query("projects:getByGithubRepo", {"github": repo})
+    project = await _resolve_project_by_github_repo(repo)
     if not project:
         return {"ignored": True, "reason": "no project linked to this repo"}
 

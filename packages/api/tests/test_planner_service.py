@@ -94,3 +94,32 @@ def test_get_project_by_slug_uses_repo_root_generated_projects_by_default(monkey
     project = asyncio.run(planner_service.get_project_by_slug("demo-project"))
 
     assert project["localRepoPath"] == str(project_root.resolve())
+
+
+def test_get_project_by_github_repo_falls_back_to_local_repo_manifest(monkeypatch, tmp_path):
+    import app.services.planner_service as planner_service
+
+    project_root = tmp_path / "generated_projects" / "demo-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "rail.yaml").write_text(
+        """
+project:
+  name: Demo Project
+  slug: demo-project
+  git_repo_url: https://github.com/Rutgers-Economics-Labs/demo-project
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _query(path: str, payload: dict):
+        assert path == "projects:getByGithubRepo"
+        return None
+
+    monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(planner_service.convex, "query", _query)
+
+    project = asyncio.run(planner_service.get_project_by_github_repo("Rutgers-Economics-Labs/demo-project"))
+
+    assert project["slug"] == "demo-project"
+    assert project["github"] == "Rutgers-Economics-Labs/demo-project"

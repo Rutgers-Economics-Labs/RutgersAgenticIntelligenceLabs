@@ -11,6 +11,7 @@ from rail.completion_gate import PlannerCompletionGate
 
 from app.services.convex_client import convex
 from app.services import session_files
+from app.services.repo_contract_service import infer_github_repo
 from app.services.role_runtime_service import ROLE_ALIASES
 
 
@@ -296,6 +297,26 @@ def _candidate_local_project_roots(slug: str) -> list[Path]:
     return unique
 
 
+def _candidate_local_project_bases() -> list[Path]:
+    repo_root = Path(__file__).resolve().parents[4]
+    configured_base = Path(os.environ.get("RAIL_PROJECTS_DIR", str(repo_root))).expanduser().resolve()
+    candidates = [
+        configured_base,
+        configured_base / "generated_projects",
+        repo_root,
+        repo_root / "generated_projects",
+    ]
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen or not resolved.exists() or not resolved.is_dir():
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
 def _local_project_record_from_repo(slug: str) -> dict[str, Any] | None:
     for root in _candidate_local_project_roots(slug):
         manifest_path = root / "rail.yaml"
@@ -308,6 +329,7 @@ def _local_project_record_from_repo(slug: str) -> dict[str, Any] | None:
         project_meta = raw.get("project") if isinstance(raw.get("project"), dict) else {}
         hydration_meta = raw.get("hydration") if isinstance(raw.get("hydration"), dict) else {}
         autonomy_meta = raw.get("autonomy") if isinstance(raw.get("autonomy"), dict) else {}
+        git_repo_url = project_meta.get("git_repo_url") or project_meta.get("gitRepoUrl")
         return {
             "_id": f"local:{slug}",
             "name": project_meta.get("name") or slug,
@@ -317,7 +339,8 @@ def _local_project_record_from_repo(slug: str) -> dict[str, Any] | None:
             "localRepoPath": str(root),
             "manifestPath": "rail.yaml",
             "defaultBranch": project_meta.get("default_branch") or project_meta.get("defaultBranch") or "main",
-            "gitRepoUrl": project_meta.get("git_repo_url") or project_meta.get("gitRepoUrl"),
+            "gitRepoUrl": git_repo_url,
+            "github": infer_github_repo(git_repo_url),
             "agentModel": project_meta.get("agent_model") or project_meta.get("agentModel"),
             "apiConfigSlugs": list(hydration_meta.get("linked_sources") or []),
             "pipelineConfigSlug": hydration_meta.get("default_pipeline") or hydration_meta.get("pipeline"),
@@ -325,6 +348,24 @@ def _local_project_record_from_repo(slug: str) -> dict[str, Any] | None:
             "githubSyncMode": autonomy_meta.get("mode"),
         }
     return None
+
+
+def _iter_local_project_records() -> list[dict[str, Any]]:
+    projects: list[dict[str, Any]] = []
+    seen_slugs: set[str] = set()
+    for base in _candidate_local_project_bases():
+        for root in sorted(base.iterdir()):
+            if not root.is_dir():
+                continue
+            slug = root.name
+            if slug in seen_slugs:
+                continue
+            project = _local_project_record_from_repo(slug)
+            if not project:
+                continue
+            seen_slugs.add(slug)
+            projects.append(project)
+    return projects
 
 
 async def get_project_by_slug(slug: str) -> dict:
@@ -335,6 +376,17 @@ async def get_project_by_slug(slug: str) -> dict:
     if local_project:
         return local_project
     raise ValueError(f"Project '{slug}' not found")
+
+
+async def get_project_by_github_repo(repo: str) -> dict:
+    project = await convex.query("projects:getByGithubRepo", {"github": repo})
+    if project:
+        return project
+    normalized_repo = str(repo or "").strip().lower()
+    for project in _iter_local_project_records():
+        if str(project.get("github") or "").strip().lower() == normalized_repo:
+            return project
+    raise ValueError(f"Project linked to repo '{repo}' not found")
 
 
 def project_root_from_record(project: dict) -> Path | None:
