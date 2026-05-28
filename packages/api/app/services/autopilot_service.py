@@ -174,7 +174,7 @@ async def _persist_autopilot_state(
     dispatch_approval_required: bool | None = None,
 ) -> None:
     try:
-        project = await planner_service.get_project_by_slug(project_slug)
+        project = await planner_service.resolve_project_reference(project_slug)
     except Exception as exc:
         logger.warning("Failed to load project %s while persisting autopilot state: %s", project_slug, exc)
         return
@@ -216,7 +216,7 @@ async def ensure_autopilot_running(project_slug: str) -> dict[str, Any]:
     auto_approve = bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False))
     dispatch_approval_required = bool(_autopilot_configs.get(project_slug, {}).get("dispatch_approval_required", False))
     try:
-        project = await planner_service.get_project_by_slug(project_slug)
+        project = await planner_service.resolve_project_reference(project_slug)
     except Exception as exc:
         logger.warning("Unable to inspect autopilot desired state for %s: %s", project_slug, exc)
         return {
@@ -1894,7 +1894,7 @@ async def start_autopilot(project_slug: str, auto_approve: bool = False, dispatc
             if not _desired_autopilot_enabled(project_slug):
                 break
             try:
-                project = await planner_service.get_project_by_slug(project_slug)
+                project = await planner_service.resolve_project_reference(project_slug)
             except Exception as exc:
                 logger.warning("Failed to reload project %s after autopilot loop exit: %s", project_slug, exc)
                 await asyncio.sleep(5)
@@ -1932,7 +1932,7 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
     if project_slug not in _wake_events:
         _wake_events[project_slug] = asyncio.Event()
 
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await planner_service.resolve_project_reference(project_slug)
     goal_mode = _goal_mode_enabled(project)
     consecutive_idle_turns = 0
     
