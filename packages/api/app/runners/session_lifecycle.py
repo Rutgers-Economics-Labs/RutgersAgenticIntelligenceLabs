@@ -2564,6 +2564,12 @@ def _sync_file_status(root: Path, status: str) -> None:
 
 async def _load_project(project_id: str | None, project_slug: str | None) -> dict[str, Any] | None:
     if project_id:
+        try:
+            project = await planner_service.resolve_project_reference(project_id)
+        except Exception:
+            project = None
+        if project:
+            return project
         return await convex.query("projects:getById", {"projectId": project_id})
     if project_slug:
         try:

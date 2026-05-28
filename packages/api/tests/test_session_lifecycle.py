@@ -4090,6 +4090,28 @@ def test_load_project_prefers_repo_first_slug_resolution(monkeypatch: pytest.Mon
     assert loaded == project
 
 
+def test_load_project_prefers_repo_first_id_resolution(monkeypatch: pytest.MonkeyPatch):
+    project = {
+        "_id": "project-123",
+        "slug": "demo-project",
+        "localRepoPath": "/tmp/demo-project",
+    }
+
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "project-123"
+        return dict(project)
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError(f"_load_project should not query convex when repo-first id resolution succeeds: {path}")
+
+    monkeypatch.setattr(session_lifecycle.planner_service, "resolve_project_reference", _resolve_project_reference)
+    monkeypatch.setattr(session_lifecycle.convex, "query", _query)
+
+    loaded = asyncio.run(session_lifecycle._load_project("project-123", "demo-project"))
+
+    assert loaded == project
+
+
 def test_get_runner_session_falls_back_to_file_backed_session_when_runtime_row_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
