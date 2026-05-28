@@ -337,7 +337,7 @@ project:
 def test_project_phase_prefers_snapshot_without_loading_board(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _list_project_running_agents(project_id: str, active_only: bool = True, limit: int = 50):
@@ -346,7 +346,7 @@ def test_project_phase_prefers_snapshot_without_loading_board(monkeypatch):
     async def _ensure_main_board(project):
         raise AssertionError("ensure_main_board should not run when snapshot is loaded")
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(
         projects_router.command_center_service,
@@ -1142,10 +1142,10 @@ def test_clear_hydration_for_local_repo_only_project_removes_metadata_not_artifa
 def test_create_planner_task_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/planner/tasks",
@@ -1164,7 +1164,7 @@ def test_create_planner_task_rejects_unknown_status(monkeypatch):
 def test_project_phase_endpoint_prefers_repo_snapshot(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _ensure_main_board(project_arg):
@@ -1179,7 +1179,7 @@ def test_project_phase_endpoint_prefers_repo_snapshot(monkeypatch):
     async def _list_project_running_agents(project_id: str, active_only: bool = True, limit: int = 50):
         return [{"_id": "sess-1", "status": "running", "role": "coding"}]
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "project_root_from_record", lambda project: Path("/tmp/demo-project"))
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
@@ -1217,10 +1217,10 @@ def test_project_phase_endpoint_prefers_repo_snapshot(monkeypatch):
 def test_sources_route_falls_back_to_control_plane_summary(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(
         projects_router.command_center_service,
         "list_project_sources",
@@ -1256,10 +1256,10 @@ def test_sources_route_falls_back_to_control_plane_summary(monkeypatch):
 def test_integrity_route_falls_back_to_control_plane_summary(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(
         projects_router.command_center_service,
         "list_project_integrity",
@@ -1394,10 +1394,10 @@ def test_project_context_endpoint_prefers_local_repo_sources_and_pipelines(monke
 def test_update_planner_task_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.patch(
         "/api/v1/projects/demo-project/planner/tasks/task-1",
@@ -1411,10 +1411,10 @@ def test_update_planner_task_rejects_unknown_status(monkeypatch):
 def test_create_planner_task_rejects_unknown_approval_state(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/planner/tasks",
@@ -1434,10 +1434,10 @@ def test_create_planner_task_rejects_unknown_approval_state(monkeypatch):
 def test_update_planner_task_rejects_unknown_approval_state(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.patch(
         "/api/v1/projects/demo-project/planner/tasks/task-1",
@@ -1451,10 +1451,10 @@ def test_update_planner_task_rejects_unknown_approval_state(monkeypatch):
 def test_create_planner_task_rejects_unknown_runner(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/planner/tasks",
@@ -1474,10 +1474,10 @@ def test_create_planner_task_rejects_unknown_runner(monkeypatch):
 def test_update_planner_task_rejects_unknown_runner(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.patch(
         "/api/v1/projects/demo-project/planner/tasks/task-1",
@@ -1491,10 +1491,10 @@ def test_update_planner_task_rejects_unknown_runner(monkeypatch):
 def test_create_planner_task_rejects_unknown_priority(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/planner/tasks",
@@ -1514,10 +1514,10 @@ def test_create_planner_task_rejects_unknown_priority(monkeypatch):
 def test_update_planner_task_rejects_unknown_priority(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.patch(
         "/api/v1/projects/demo-project/planner/tasks/task-1",
@@ -1531,7 +1531,7 @@ def test_update_planner_task_rejects_unknown_priority(monkeypatch):
 def test_update_planner_task_surfaces_planner_completion_gate_block(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _ensure_main_board(project_arg):
@@ -1543,7 +1543,7 @@ def test_update_planner_task_surfaces_planner_completion_gate_block(monkeypatch)
             "research_plan/current_plan.md missing or empty at /tmp/demo-project/research_plan/current_plan.md"
         )
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(projects_router.planner_service, "update_task", _update_task)
 
@@ -1559,7 +1559,7 @@ def test_update_planner_task_surfaces_planner_completion_gate_block(monkeypatch)
 def test_update_planner_task_surfaces_worker_completion_gate_block(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _ensure_main_board(project_arg):
@@ -1570,7 +1570,7 @@ def test_update_planner_task_surfaces_worker_completion_gate_block(monkeypatch):
             "Worker tasks cannot be marked done until a reviewed post-run audit exists for the task."
         )
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(projects_router.planner_service, "update_task", _update_task)
 
@@ -1586,10 +1586,10 @@ def test_update_planner_task_surfaces_worker_completion_gate_block(monkeypatch):
 def test_create_planner_task_rejects_unknown_agent_role(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/planner/tasks",
@@ -1611,7 +1611,7 @@ def test_create_planner_task_normalizes_agent_role_alias(monkeypatch):
     created: list[dict] = []
     synced: list[bool] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _ensure_main_board(project_arg, session_id=None):
@@ -1625,7 +1625,7 @@ def test_create_planner_task_normalizes_agent_role_alias(monkeypatch):
         synced.append(True)
         return None
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(projects_router.planner_service, "create_task", _create_task)
     monkeypatch.setattr(projects_router.planner_service, "sync_planner_files", _sync_planner_files)
@@ -1649,10 +1649,10 @@ def test_create_planner_task_normalizes_agent_role_alias(monkeypatch):
 def test_create_project_approval_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/approvals",
@@ -1671,10 +1671,10 @@ def test_create_project_approval_rejects_unknown_status(monkeypatch):
 def test_create_project_approval_rejects_unknown_type(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/approvals",
@@ -1696,14 +1696,14 @@ def test_create_project_approval_accepts_research_launch_type(monkeypatch):
     created: list[dict] = []
     wakes: list[str] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _create_approval(**kwargs):
         created.append(kwargs)
         return "approval-launch"
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "create_approval", _create_approval)
     monkeypatch.setattr("app.services.autopilot_service.trigger_wake", lambda slug: wakes.append(slug))
 
@@ -1725,10 +1725,10 @@ def test_create_project_approval_accepts_research_launch_type(monkeypatch):
 def test_create_project_approval_rejects_unknown_requested_by_role(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/approvals",
@@ -1750,14 +1750,14 @@ def test_create_project_approval_normalizes_requested_by_role_alias(monkeypatch)
     created: list[dict] = []
     wakes: list[str] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _create_approval(**kwargs):
         created.append(kwargs)
         return "approval-1"
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "create_approval", _create_approval)
     monkeypatch.setattr("app.services.autopilot_service.trigger_wake", lambda slug: wakes.append(slug))
 
@@ -1780,10 +1780,10 @@ def test_create_project_approval_normalizes_requested_by_role_alias(monkeypatch)
 def test_create_runner_session_rejects_unknown_role(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/runner/sessions",
@@ -1804,7 +1804,7 @@ def test_create_runner_session_normalizes_role_aliases(monkeypatch):
     created: list[dict] = []
     polled: list[tuple[str, str]] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo", "defaultBranch": "develop"}
 
     async def _create_runner_session(**kwargs):
@@ -1815,7 +1815,7 @@ def test_create_runner_session_normalizes_role_aliases(monkeypatch):
         polled.append((session_id, str(project_id)))
         return None
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(session_lifecycle, "create_runner_session", _create_runner_session)
     monkeypatch.setattr(session_lifecycle, "poll_session_until_done", _poll_session_until_done)
 
@@ -1843,7 +1843,7 @@ def test_create_runner_session_defaults_to_project_runner_policy(monkeypatch):
     created: list[dict] = []
     polled: list[tuple[str, str]] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo", "defaultBranch": "develop"}
 
     async def _create_runner_session(**kwargs):
@@ -1854,7 +1854,7 @@ def test_create_runner_session_defaults_to_project_runner_policy(monkeypatch):
         polled.append((session_id, str(project_id)))
         return None
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(session_lifecycle, "create_runner_session", _create_runner_session)
     monkeypatch.setattr(session_lifecycle, "poll_session_until_done", _poll_session_until_done)
 
@@ -1879,7 +1879,7 @@ def test_create_runner_session_allows_local_project_without_git_repo_url(monkeyp
     created: list[dict] = []
     polled: list[tuple[str, str]] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "defaultBranch": "develop"}
 
     async def _create_runner_session(**kwargs):
@@ -1890,7 +1890,7 @@ def test_create_runner_session_allows_local_project_without_git_repo_url(monkeyp
         polled.append((session_id, str(project_id)))
         return None
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(session_lifecycle, "create_runner_session", _create_runner_session)
     monkeypatch.setattr(session_lifecycle, "poll_session_until_done", _poll_session_until_done)
 
@@ -1911,10 +1911,10 @@ def test_create_runner_session_allows_local_project_without_git_repo_url(monkeyp
 def test_create_runner_session_rejects_unknown_secret_role(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/runner/sessions",
@@ -1932,10 +1932,10 @@ def test_create_runner_session_rejects_unknown_secret_role(monkeypatch):
 def test_create_runner_session_rejects_unknown_runner(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project", "gitRepoUrl": "https://github.com/example/repo"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/runner/sessions",
@@ -1953,10 +1953,10 @@ def test_create_runner_session_rejects_unknown_runner(monkeypatch):
 def test_append_planner_message_rejects_unknown_role(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/planner/messages",
@@ -1975,7 +1975,7 @@ def test_append_planner_message_normalizes_role_alias(monkeypatch):
 
     appended: list[dict] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _ensure_planner_thread(project_id: str):
@@ -1988,7 +1988,7 @@ def test_append_planner_message_normalizes_role_alias(monkeypatch):
     async def _list_planner_messages(project_arg, thread_id: str = "planner", limit: int = 200):
         return [{"role": "research", "content": "hello", "messageType": "chat"}]
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_planner_thread", _ensure_planner_thread)
     monkeypatch.setattr(projects_router.planner_service, "append_planner_message", _append_planner_message)
     monkeypatch.setattr(projects_router.planner_service, "list_planner_messages", _list_planner_messages)
@@ -2008,10 +2008,10 @@ def test_append_planner_message_normalizes_role_alias(monkeypatch):
 def test_worker_update_planner_rejects_unknown_role(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/planner/worker-update",
@@ -2031,14 +2031,14 @@ def test_worker_update_planner_normalizes_role_alias(monkeypatch):
     appended: list[dict] = []
     wakes: list[str] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _append_planner_message(**kwargs):
         appended.append(kwargs)
         return None
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "append_planner_message", _append_planner_message)
     monkeypatch.setattr("app.services.autopilot_service.trigger_wake", lambda slug: wakes.append(slug))
 

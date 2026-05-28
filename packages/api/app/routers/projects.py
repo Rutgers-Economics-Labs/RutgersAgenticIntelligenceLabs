@@ -2864,7 +2864,9 @@ async def get_planner_home(slug: str):
 
 @router.post("/{slug}/planner/messages")
 async def append_planner_message(slug: str, data: PlannerMessageRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     thread_id = await planner_service.ensure_planner_thread(project["_id"])
     role = _normalize_planner_message_role(data.role, field_name="Planner message role")
     await planner_service.append_planner_message(
@@ -2881,7 +2883,9 @@ async def append_planner_message(slug: str, data: PlannerMessageRequest):
 
 @router.post("/{slug}/planner/chat")
 async def planner_chat(slug: str, data: PlannerChatRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     return await planner_runtime.run_planner_turn(
         project=project,
         user_message=data.message,
@@ -2893,7 +2897,9 @@ async def planner_chat(slug: str, data: PlannerChatRequest):
 
 @router.post("/{slug}/planner/worker-update")
 async def worker_update_planner(slug: str, data: WorkerUpdateRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     role = _normalize_planner_message_role(data.role, field_name="Worker update role")
     # Append to planner history as a system/agent message
     await planner_service.append_planner_message(
@@ -2923,7 +2929,9 @@ async def get_planner_board(slug: str):
 
 @router.post("/{slug}/planner/tasks")
 async def create_planner_task(slug: str, data: PlannerTaskRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     _validate_planner_task_status(data.status)
     _validate_planner_task_approval_state(data.approvalState)
     _validate_planner_task_runner(data.runner)
@@ -2951,7 +2959,9 @@ async def create_planner_task(slug: str, data: PlannerTaskRequest):
 
 @router.patch("/{slug}/planner/tasks/{task_id}")
 async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     _validate_planner_task_status(data.status)
     _validate_planner_task_approval_state(data.approvalState)
     _validate_planner_task_runner(data.runner)
@@ -3249,14 +3259,18 @@ async def resolve_secrets_for_agent(slug: str, agentRole: str = Query(...)):
 
 @router.get("/{slug}/approvals")
 async def list_project_approvals(slug: str, limit: int = Query(100)):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     approvals = await planner_service.list_approvals(project)
     return {"approvals": approvals[:limit]}
 
 
 @router.post("/{slug}/approvals")
 async def create_project_approval(slug: str, data: ApprovalCreateRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     _validate_approval_status(data.status)
     _validate_approval_type(data.approvalType)
     requested_by_role = _normalize_agent_role(data.requestedByRole, field_name="Approval requestedByRole")
@@ -3276,7 +3290,9 @@ async def create_project_approval(slug: str, data: ApprovalCreateRequest):
 
 @router.post("/{slug}/approvals/{approval_id}/resolve")
 async def resolve_project_approval(slug: str, approval_id: str, data: ApprovalResolveRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     _validate_approval_status(data.status)
     approval = await planner_service.resolve_approval(
         project=project,
@@ -3311,7 +3327,9 @@ async def create_project_runner_session(
     data: ProjectRunnerSessionCreateRequest,
     background_tasks: BackgroundTasks,
 ):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     from app.runners import session_lifecycle
     role = _normalize_agent_role(data.role, field_name="Runner session role")
     runner_name = _normalize_runner_name(data.runnerName)
@@ -3404,7 +3422,9 @@ async def create_project_runner_session(
 
 @router.get("/{slug}/runner/sessions")
 async def list_project_runner_sessions(slug: str, limit: int = Query(20)):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     sessions = await running_agent_service.list_project_running_agents(
         project["_id"],
         active_only=False,
@@ -3420,7 +3440,9 @@ async def list_project_runner_sessions(slug: str, limit: int = Query(20)):
 
 @router.get("/{slug}/runner/sessions/{session_id}")
 async def get_project_runner_session(slug: str, session_id: str, sync: bool = Query(True)):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     from app.runners import session_lifecycle
     result = await session_lifecycle.get_runner_session(
         session_id,
@@ -3432,7 +3454,9 @@ async def get_project_runner_session(slug: str, session_id: str, sync: bool = Qu
 
 @router.get("/{slug}/runner/sessions/{session_id}/files")
 async def get_project_runner_session_files(slug: str, session_id: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     session = await running_agent_service.get_running_agent(session_id)
     if not session or session.get("projectId") != project["_id"]:
         raise HTTPException(status_code=404, detail="Runner session not found")
@@ -3475,7 +3499,9 @@ async def get_project_runner_session_detail(slug: str, session_id: str):
     """
     from app.services.session_detail_service import build_session_detail
 
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     session = await running_agent_service.get_running_agent(session_id)
     if not session or session.get("projectId") != project["_id"]:
         raise HTTPException(status_code=404, detail="Runner session not found")
@@ -3599,7 +3625,9 @@ async def get_project_repo_file(slug: str, path: str):
 
 @router.post("/{slug}/runner/sessions/{session_id}/commands")
 async def send_project_runner_session_command(slug: str, session_id: str, data: ProjectRunnerCommandRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     session = await running_agent_service.get_running_agent(session_id)
     if not session or session.get("projectId") != project["_id"]:
         raise HTTPException(status_code=404, detail="Runner session not found")
@@ -3620,7 +3648,9 @@ async def send_project_runner_session_command(slug: str, session_id: str, data: 
 
 @router.post("/{slug}/runner/sessions/{session_id}/cancel")
 async def cancel_project_runner_session(slug: str, session_id: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     from app.runners import session_lifecycle
     return await session_lifecycle.cancel_runner_session(
         session_id,
@@ -3634,7 +3664,9 @@ async def trigger_project_runner_session_poll(
     session_id: str,
     background_tasks: BackgroundTasks,
 ):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     from app.runners import session_lifecycle
     background_tasks.add_task(
         session_lifecycle.poll_session_until_done,
