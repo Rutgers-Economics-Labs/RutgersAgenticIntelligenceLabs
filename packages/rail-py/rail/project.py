@@ -7,7 +7,17 @@ class Project:
 
     def hydrate(self, pipeline_slug: str | None = None) -> dict:
         """Trigger hydration. Uses the project's default pipeline if not specified."""
-        return self._backend.hydrate(pipeline_slug or self.slug)
+        if hasattr(self._backend, "hydrate_project"):
+            return self._backend.hydrate_project(self.slug, pipeline_slug)
+        return self._backend.hydrate(pipeline_slug)
+
+    def reconcile(self) -> dict:
+        """Reconcile repo-backed planner/session/control-plane state."""
+        if hasattr(self._backend, "reconcile_project"):
+            return self._backend.reconcile_project(self.slug)
+        if hasattr(self._backend, "reconcile"):
+            return self._backend.reconcile()
+        raise RuntimeError("This backend does not support reconcile()")
 
     def query(self, sql: str) -> "pd.DataFrame":
         import pandas as pd

@@ -72,6 +72,24 @@ def test_project_reconcile_uses_cloud_backend_method():
     assert backend.calls == ["demo-project"]
 
 
+def test_project_hydrate_uses_cloud_project_pipeline_route():
+    class _Backend:
+        def __init__(self):
+            self.calls: list[tuple[str, str | None]] = []
+
+        def hydrate_project(self, slug: str, pipeline_slug: str | None = None) -> dict:
+            self.calls.append((slug, pipeline_slug))
+            return {"status": "queued", "projectSlug": slug, "pipelineSlug": pipeline_slug}
+
+    backend = _Backend()
+    project = Project("demo-project", backend)
+
+    result = project.hydrate()
+
+    assert result == {"status": "queued", "projectSlug": "demo-project", "pipelineSlug": None}
+    assert backend.calls == [("demo-project", None)]
+
+
 def test_get_project_uses_cloud_connect(monkeypatch):
     seen: dict[str, object] = {}
 
@@ -115,6 +133,31 @@ def test_cloud_client_retains_api_key_and_timeout():
     assert client.api_key == "secret-token"
     assert client.timeout_seconds == 45.0
     assert client.headers == {"Authorization": "Bearer secret-token"}
+
+
+def test_cloud_client_hydrate_project_uses_project_pipeline_endpoint(monkeypatch):
+    captured: dict[str, object] = {}
+
+    client = CloudClient(
+        base_url="http://127.0.0.1:8000/api/v1",
+        api_key="secret-token",
+        timeout_seconds=45.0,
+    )
+
+    def _fake_post(path: str, data: dict) -> dict:
+        captured["path"] = path
+        captured["data"] = data
+        return {"status": "queued"}
+
+    monkeypatch.setattr(client, "post", _fake_post)
+
+    result = client.hydrate_project("demo-project", "demo-pipeline", reconcile=False)
+
+    assert result == {"status": "queued"}
+    assert captured == {
+        "path": "/projects/demo-project/pipeline/run?reconcile=false",
+        "data": {"pipelineSlug": "demo-pipeline"},
+    }
 
 
 def test_cmd_reconcile_prints_json(capsys):

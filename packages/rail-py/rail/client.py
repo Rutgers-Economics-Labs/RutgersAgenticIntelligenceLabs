@@ -25,8 +25,12 @@ class CloudClient:
             r.raise_for_status()
             return r.json()
 
-    def hydrate(self, pipeline_slug: str) -> dict:
-        return self.post("/jobs", {"pipeline_slug": pipeline_slug})
+    def hydrate_project(self, project_slug: str, pipeline_slug: str | None = None, *, reconcile: bool = True) -> dict:
+        query = "" if reconcile else "?reconcile=false"
+        return self.post(
+            f"/projects/{project_slug}/pipeline/run{query}",
+            {"pipelineSlug": pipeline_slug},
+        )
 
     def reconcile_project(self, project_slug: str) -> dict:
         return self.post(f"/projects/{project_slug}/command-center/reconcile", {})

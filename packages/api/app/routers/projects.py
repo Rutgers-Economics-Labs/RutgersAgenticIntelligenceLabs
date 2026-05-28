@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import yaml
@@ -12,6 +13,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, HTTPException, Query, BackgroundTasks, Path as FPath
 from pydantic import BaseModel
 from rail.bootstrap import bootstrap_future_project
+from rail.local import LocalEngine
 from rail.manifest import ManifestValidationError, load_manifest
 
 from app.services.convex_client import convex
@@ -3003,28 +3005,52 @@ async def rerun_project_hydration(
 
     if local_configs:
         pipeline_content, api_configs, onto_configs = local_configs
-        
-        # If no registered ID, we must use a fallback format that the database accepts
-        effective_pipeline_id = pipeline_id or f"local_{pipeline_slug}"
-        
-        mutation_result = await convex.mutation(
-            "jobs:create",
-            {
-                "pipelineConfigId": effective_pipeline_id,
-                "pipelineSlug": pipeline_slug,
-                "projectSlug": slug,
-                "status": "queued",
-                "triggeredBy": "api",
-                "createdAt": int(time.time() * 1000),
-                "stepResults": [],
-                "machine": platform.node(),
-            },
-        )
-        job_id = mutation_result.get("jobId") if isinstance(mutation_result, dict) else None
-        if not job_id:
-            raise HTTPException(500, f"Convex jobs:create did not return a jobId (got {mutation_result!r})")
-        background_tasks.add_task(hydration_worker.run, job_id, pipeline_content, api_configs, onto_configs)
-        result = {"jobId": job_id, "status": "queued", "source": "project_repo"}
+        if not pipeline_id:
+            engine = LocalEngine(project_path=str(project_root))
+            local_result = await asyncio.to_thread(engine.hydrate, pipeline_slug)
+            artifact_db_path = str(local_result.get("artifact_db_path") or "")
+            artifact_duckdb_path = str(local_result.get("artifact_duckdb_path") or "")
+            hydration_mode = engine.manifest.hydration.hydration_mode or "full"
+            artifact_id = await register_hydration_artifact(
+                project=project,
+                pipeline_slug=pipeline_slug,
+                hydration_mode=hydration_mode,
+                ontology_artifact_path=artifact_db_path,
+                duckdb_artifact_path=artifact_duckdb_path,
+                status="valid",
+            )
+            await promote_project_hydration_artifact(
+                project=project,
+                ontology_artifact_path=artifact_db_path,
+                duckdb_artifact_path=artifact_duckdb_path,
+            )
+            result = {
+                "jobId": None,
+                "status": local_result.get("status") or "hydrated",
+                "source": "project_repo_local",
+                "artifactId": artifact_id,
+                "artifactDbPath": artifact_db_path,
+                "artifactDuckdbPath": artifact_duckdb_path,
+            }
+        else:
+            mutation_result = await convex.mutation(
+                "jobs:create",
+                {
+                    "pipelineConfigId": pipeline_id,
+                    "pipelineSlug": pipeline_slug,
+                    "projectSlug": slug,
+                    "status": "queued",
+                    "triggeredBy": "api",
+                    "createdAt": int(time.time() * 1000),
+                    "stepResults": [],
+                    "machine": platform.node(),
+                },
+            )
+            job_id = mutation_result.get("jobId") if isinstance(mutation_result, dict) else None
+            if not job_id:
+                raise HTTPException(500, f"Convex jobs:create did not return a jobId (got {mutation_result!r})")
+            background_tasks.add_task(hydration_worker.run, job_id, pipeline_content, api_configs, onto_configs)
+            result = {"jobId": job_id, "status": "queued", "source": "project_repo"}
     else:
         from app.routers.jobs import TriggerJobRequest, trigger_job
 

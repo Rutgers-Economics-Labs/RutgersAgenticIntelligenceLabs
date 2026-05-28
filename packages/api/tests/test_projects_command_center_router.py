@@ -40,6 +40,92 @@ def test_register_artifacts_rejects_missing_hydration_metadata(monkeypatch, tmp_
     assert response.json()["detail"] == "Hydration metadata must exist before promoting active ontology artifacts."
 
 
+def test_pipeline_run_uses_local_repo_hydration_for_repo_only_project(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    local_project = tmp_path / "demo-project"
+    (local_project / ".ontology" / "pipelines").mkdir(parents=True, exist_ok=True)
+    (local_project / ".ontology" / "ontology.yaml").write_text("classes: []\n", encoding="utf-8")
+    (local_project / ".ontology" / "pipelines" / "demo-pipeline.yaml").write_text(
+        "name: demo-pipeline\nontology: .ontology/ontology.yaml\nsteps: []\n",
+        encoding="utf-8",
+    )
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": "local:demo-project",
+            "slug": slug,
+            "localRepoPath": str(local_project),
+            "manifestPath": "rail.yaml",
+        }
+
+    async def _reconcile_project_reality(project: dict):
+        return {"hasChanges": False}
+
+    class _Engine:
+        def __init__(self, project_path: str):
+            assert project_path == str(local_project)
+            self.manifest = type(
+                "_Manifest",
+                (),
+                {"hydration": type("_Hydration", (), {"hydration_mode": "full"})()},
+            )()
+
+        def hydrate(self, pipeline_slug: str | None = None):
+            assert pipeline_slug == "demo-pipeline"
+            return {
+                "status": "hydrated",
+                "artifact_db_path": str(local_project / ".ontology" / "onto.db"),
+                "artifact_duckdb_path": str(local_project / ".ontology" / "onto.duckdb"),
+            }
+
+    async def _register_hydration_artifact(**kwargs):
+        assert kwargs["pipeline_slug"] == "demo-pipeline"
+        return "local-hydration:demo-project:demo-pipeline:full"
+
+    async def _promote_project_hydration_artifact(**kwargs):
+        assert kwargs["ontology_artifact_path"].endswith(".ontology/onto.db")
+        assert kwargs["duckdb_artifact_path"].endswith(".ontology/onto.duckdb")
+        return None
+
+    async def _query(path: str, payload: dict):
+        if path == "configs:getPipeline":
+            assert payload == {"slug": "demo-pipeline"}
+            return None
+        raise AssertionError(path)
+
+    async def _mutation(path: str, payload: dict):
+        raise AssertionError(f"unexpected mutation {path}")
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.reconciliation_service, "reconcile_project_reality", _reconcile_project_reality)
+    monkeypatch.setattr(projects_router, "LocalEngine", _Engine)
+    monkeypatch.setattr(projects_router, "register_hydration_artifact", _register_hydration_artifact)
+    monkeypatch.setattr(projects_router, "promote_project_hydration_artifact", _promote_project_hydration_artifact)
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
+
+    response = client.post(
+        "/api/v1/projects/demo-project/pipeline/run",
+        json={"pipelineSlug": "demo-pipeline"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["reconciled"] is True
+    assert payload["hydration"] == {
+        "jobId": None,
+        "status": "hydrated",
+        "source": "project_repo_local",
+        "artifactId": "local-hydration:demo-project:demo-pipeline:full",
+        "artifactDbPath": str(local_project / ".ontology" / "onto.db"),
+        "artifactDuckdbPath": str(local_project / ".ontology" / "onto.duckdb"),
+        "pipelineSlug": "demo-pipeline",
+        "projectSlug": "demo-project",
+        "device": payload["hydration"]["device"],
+    }
+
+
 def test_command_center_reconcile_endpoint_returns_repair_summary(monkeypatch):
     import app.routers.projects as projects_router
 
