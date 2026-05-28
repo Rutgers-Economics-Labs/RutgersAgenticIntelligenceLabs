@@ -32,6 +32,7 @@ async def get_project_zen(slug: str):
     project_root = Path(local_path)
     projection = command_center_service.load_control_plane_summary(project)
     summary = projection["summary"]
+    planner_snapshot = summary.get("plannerSnapshot") or {}
     
     # 1. Objective
     current_plan = summary.get("currentPlan") or {}
@@ -99,22 +100,47 @@ async def get_project_zen(slug: str):
         
     # 3. Latest Truth
     latest_truth = []
-    try:
-        indexes = load_integrity_indexes(project_root)
-        for claim in indexes.claims[:5]:
-            latest_truth.append(ZenTruth(
-                claim=claim.statement,
-                confidence=0.95 if claim.status == "verified" else 0.7,
-                evidenceRefs=claim.evidence_paths,
-                verified=(claim.status == "verified")
-            ))
-    except Exception as exc:
-        logger.warning(f"Failed to load integrity indexes for truth section: {exc}")
-        
+    snapshot_truth = summary.get("latestTruth") or []
+    if snapshot_truth:
+        for row in snapshot_truth[:5]:
+            latest_truth.append(
+                ZenTruth(
+                    claim=str(row.get("claim") or ""),
+                    confidence=float(row.get("confidence") or 0.0),
+                    evidenceRefs=list(row.get("evidenceRefs") or []),
+                    verified=bool(row.get("verified")),
+                )
+            )
+    else:
+        try:
+            indexes = load_integrity_indexes(project_root)
+            for claim in indexes.claims[:5]:
+                latest_truth.append(ZenTruth(
+                    claim=claim.statement,
+                    confidence=0.95 if claim.status == "verified" else 0.7,
+                    evidenceRefs=claim.evidence_paths,
+                    verified=(claim.status == "verified")
+                ))
+        except Exception as exc:
+            logger.warning(f"Failed to load integrity indexes for truth section: {exc}")
+
     # 4. Plan
-    board = await planner_service.ensure_main_board(project)
-    tasks = await planner_service.list_tasks(board["_id"], project=project)
-    
+    tasks: list[dict] = []
+    if planner_snapshot:
+        for section in ("now", "next", "later", "done", "blocked"):
+            for row in planner_snapshot.get(section) or []:
+                if not isinstance(row, dict):
+                    continue
+                task = dict(row)
+                task.setdefault("_id", row.get("id") or "")
+                task.setdefault("title", row.get("title") or "")
+                task.setdefault("status", row.get("status") or "")
+                task.setdefault("description", row.get("description") or "")
+                tasks.append(task)
+    else:
+        board = await planner_service.ensure_main_board(project)
+        tasks = await planner_service.list_tasks(board["_id"], project=project)
+
     plan = ZenPlan(
         now=[t["title"] for t in tasks if t.get("status") in {"running", "ready"}],
         next=[t["title"] for t in tasks if t.get("status") == "awaiting_approval"][:3],

@@ -3,14 +3,15 @@ from __future__ import annotations
 import csv
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from app.services.audit_service import list_recent_audits, read_latest_audit
+from app.services.audit_service import _session_roots, list_recent_audits, read_latest_audit
 from app.services.auditor_service import build_auditor_statuses
-from app.services import goal_service
+from app.services import goal_service, session_files
 from app.services.integrity_service import load_integrity_indexes, summarize_agent_workflow_health
 from app.services.reconciliation_service import project_reality_status
 from rail.integrity import build_artifact_trust_summary, build_source_state
@@ -18,6 +19,8 @@ from rail.integrity import build_artifact_trust_summary, build_source_state
 
 TEXT_PREVIEW_LIMIT = 80_000
 TABLE_PREVIEW_ROWS = 25
+CONTROL_PLANE_SNAPSHOT_VERSION = 1
+CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH = "research_plan/state/control_plane_snapshot.json"
 
 
 WORKFLOW_PRESETS: dict[str, dict[str, Any]] = {
@@ -119,6 +122,189 @@ def _rel(path: Path, root: Path) -> str:
         return str(path)
 
 
+def control_plane_snapshot_path(root: Path) -> Path:
+    return root / CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH
+
+
+def _command_center_snapshot_fields(center: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "currentPlan": center.get("currentPlan"),
+        "missionBrief": center.get("missionBrief"),
+        "goal": center.get("goal"),
+        "nextAction": center.get("nextAction"),
+        "taskCounts": center.get("taskCounts"),
+        "plannerSnapshot": center.get("plannerSnapshot"),
+        "latestTruth": center.get("latestTruth"),
+        "recentArtifacts": center.get("recentArtifacts"),
+        "sourceSummary": center.get("sourceSummary"),
+        "skillSummary": center.get("skillSummary"),
+        "integritySummary": center.get("integritySummary"),
+        "hypothesisTaskLinks": center.get("hypothesisTaskLinks"),
+        "ontologyFollowUps": center.get("ontologyFollowUps"),
+        "auditedTruth": center.get("auditedTruth"),
+        "recentAudits": center.get("recentAudits"),
+        "lifecyclePhase": center.get("lifecyclePhase"),
+        "closeoutCertificate": center.get("closeoutCertificate"),
+        "currentBlocker": center.get("currentBlocker"),
+        "blockerSummary": center.get("blockerSummary"),
+        "repairQueue": center.get("repairQueue"),
+        "recommendedRepairTask": center.get("recommendedRepairTask"),
+        "projectReality": center.get("projectReality"),
+        "auditors": center.get("auditors"),
+        "repoHealth": center.get("repoHealth"),
+    }
+
+
+def read_control_plane_snapshot(project: dict[str, Any]) -> dict[str, Any] | None:
+    try:
+        root = project_root(project)
+    except Exception:
+        return None
+
+    path = control_plane_snapshot_path(root)
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if int(payload.get("snapshotVersion") or 0) != CONTROL_PLANE_SNAPSHOT_VERSION:
+        return None
+    command_center = payload.get("commandCenter")
+    if not isinstance(command_center, dict):
+        return None
+    return {
+        "snapshotVersion": CONTROL_PLANE_SNAPSHOT_VERSION,
+        "generatedAt": int(payload.get("generatedAt") or 0),
+        "commandCenter": command_center,
+        "path": CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH,
+    }
+
+
+def control_plane_snapshot_meta(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "loaded": bool(snapshot),
+        "path": (snapshot or {}).get("path") or CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH,
+        "generatedAt": (snapshot or {}).get("generatedAt"),
+        "version": (snapshot or {}).get("snapshotVersion") or CONTROL_PLANE_SNAPSHOT_VERSION,
+    }
+
+
+def load_control_plane_summary(project: dict[str, Any]) -> dict[str, Any]:
+    snapshot = read_control_plane_snapshot(project)
+    return {
+        "summary": (snapshot or {}).get("commandCenter") or {},
+        "snapshot": control_plane_snapshot_meta(snapshot),
+    }
+
+
+async def persist_control_plane_snapshot(project: dict[str, Any]) -> dict[str, Any]:
+    root = project_root(project)
+    center = await _build_live_command_center(project)
+    payload = {
+        "snapshotVersion": CONTROL_PLANE_SNAPSHOT_VERSION,
+        "generatedAt": int(time.time()),
+        "commandCenter": _command_center_snapshot_fields(center),
+    }
+    path = control_plane_snapshot_path(root)
+    _write(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    return {
+        "path": CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH,
+        "generatedAt": payload["generatedAt"],
+    }
+
+
+def _derive_next_action(
+    *,
+    pending_approvals: list[dict[str, Any]],
+    active_sessions: list[dict[str, Any]],
+    task_counts: dict[str, Any] | None,
+) -> str:
+    total_tasks = int((task_counts or {}).get("total") or 0)
+    if pending_approvals:
+        return "Review pending approvals"
+    if active_sessions:
+        return "Monitor active agent sessions"
+    if total_tasks:
+        return "Select the next ready task or launch a research workflow"
+    return "Start a research workflow"
+
+
+def _planner_snapshot(tasks: list[dict[str, Any]]) -> dict[str, list[dict[str, str]]]:
+    def _rows(*statuses: str, limit: int | None = None) -> list[dict[str, str]]:
+        items: list[dict[str, str]] = []
+        for task in tasks:
+            if str(task.get("status") or "") not in statuses:
+                continue
+            items.append(
+                {
+                    "id": str(task.get("_id") or ""),
+                    "title": str(task.get("title") or ""),
+                    "status": str(task.get("status") or ""),
+                    "description": str(task.get("description") or ""),
+                }
+            )
+            if limit is not None and len(items) >= limit:
+                break
+        return items
+
+    return {
+        "now": _rows("running", "ready"),
+        "next": _rows("awaiting_approval", limit=3),
+        "later": _rows("backlog", limit=3),
+        "done": _rows("done", limit=3),
+        "blocked": _rows("blocked"),
+    }
+
+
+def _latest_truth_snapshot(integrity_indexes: Any, *, limit: int = 5) -> list[dict[str, Any]]:
+    claims = list(getattr(integrity_indexes, "claims", []) or [])
+    rows: list[dict[str, Any]] = []
+    for claim in claims[:limit]:
+        statement = str(getattr(claim, "statement", "") or "").strip()
+        status = str(getattr(claim, "status", "") or "")
+        evidence_paths = list(getattr(claim, "evidence_paths", []) or [])
+        rows.append(
+            {
+                "claim": statement,
+                "confidence": 0.95 if status == "verified" else 0.7,
+                "evidenceRefs": evidence_paths,
+                "verified": status == "verified",
+            }
+        )
+    return rows
+
+
+def _command_center_from_snapshot(
+    project: dict[str, Any],
+    snapshot: dict[str, Any],
+    *,
+    active_sessions: list[dict[str, Any]],
+    pending_approvals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    center = dict(snapshot.get("commandCenter") or {})
+    task_counts = center.get("taskCounts") or {"total": 0, "byStatus": {}}
+    center["project"] = {
+        "id": project.get("_id") or project.get("slug") or "",
+        "name": project.get("name"),
+        "slug": project.get("slug"),
+        "status": project.get("status"),
+        "localRepoPath": project.get("localRepoPath"),
+        "defaultBranch": project.get("defaultBranch") or "main",
+    }
+    center["activeSessions"] = active_sessions
+    center["pendingApprovals"] = pending_approvals
+    center["nextAction"] = _derive_next_action(
+        pending_approvals=pending_approvals,
+        active_sessions=active_sessions,
+        task_counts=task_counts,
+    )
+    center["snapshot"] = control_plane_snapshot_meta(snapshot)
+    return center
+
+
 def _title_from_markdown(content: str, fallback: str) -> str:
     for line in content.splitlines():
         stripped = line.strip()
@@ -205,10 +391,10 @@ def _source_row_from_candidate(item: dict[str, Any], path: str) -> dict[str, Any
     }
 
 
-def list_project_sources(project: dict) -> dict[str, Any]:
-    root = project_root(project)
+def list_project_sources(project: dict, *, root: Path | None = None, indexes: Any | None = None) -> dict[str, Any]:
+    root = root or project_root(project)
     rows: dict[str, dict[str, Any]] = {}
-    indexes = _project_integrity_indexes(project)
+    indexes = indexes if indexes is not None else _project_integrity_indexes(project)
     repo_sources = {row.source_key: row for row in (indexes.sources if indexes is not None else [])}
 
     graph_sources = root / "research_plan" / "graph" / "sources.yaml"
@@ -577,8 +763,8 @@ def _artifact_trust_state(lineage: Any, verification_status: str) -> dict[str, A
     )
 
 
-def rank_hypotheses(project: dict) -> list[dict[str, Any]]:
-    indexes = _project_integrity_indexes(project)
+def rank_hypotheses(project: dict, *, indexes: Any | None = None) -> list[dict[str, Any]]:
+    indexes = indexes if indexes is not None else _project_integrity_indexes(project)
     if indexes is None:
         return []
     source_by_key = {item.source_key: item for item in indexes.sources}
@@ -642,9 +828,9 @@ def _write_hypothesis_ranking_decisions(project: dict, rankings: list[dict[str, 
         handle.write("\n".join(lines))
 
 
-def list_project_integrity(project: dict) -> dict[str, Any]:
-    root = project_root(project)
-    indexes = _project_integrity_indexes(project)
+def list_project_integrity(project: dict, *, root: Path | None = None, indexes: Any | None = None) -> dict[str, Any]:
+    root = root or project_root(project)
+    indexes = indexes if indexes is not None else _project_integrity_indexes(project)
     if indexes is None:
         empty = {
             "assumptions": [],
@@ -736,14 +922,20 @@ def list_project_integrity(project: dict) -> dict[str, Any]:
         },
         "agentWorkflow": agent_workflow,
         "staleOutputs": stale_outputs,
-        "hypothesisRanking": rank_hypotheses(project),
+        "hypothesisRanking": rank_hypotheses(project, indexes=indexes),
     }
 
 
-def list_project_artifacts(project: dict) -> dict[str, Any]:
-    root = project_root(project)
+def list_project_artifacts(
+    project: dict,
+    *,
+    root: Path | None = None,
+    indexes: Any | None = None,
+    include_previews: bool = True,
+) -> dict[str, Any]:
+    root = root or project_root(project)
     artifact_root = root / "artifacts"
-    indexes = _project_integrity_indexes(project)
+    indexes = indexes if indexes is not None else _project_integrity_indexes(project)
     lineage_by_path = {
         row.artifact_path: row for row in (indexes.artifact_lineage if indexes is not None else [])
     }
@@ -776,6 +968,7 @@ def list_project_artifacts(project: dict) -> dict[str, Any]:
                 "blockingVerificationRuns": [],
                 "recommendedNextAction": "Attach claims or sources so the artifact has explicit lineage.",
             }
+            previewable = _artifact_type(path) in {"markdown", "table", "structured", "image", "html"}
             artifacts.append(
                 {
                     "name": path.name,
@@ -783,8 +976,8 @@ def list_project_artifacts(project: dict) -> dict[str, Any]:
                     "type": _artifact_type(path),
                     "sizeBytes": stat.st_size,
                     "modifiedAt": int(stat.st_mtime * 1000),
-                    "previewable": _artifact_type(path) in {"markdown", "table", "structured", "image", "html"},
-                    "preview": _preview_artifact(path),
+                    "previewable": previewable,
+                    "preview": _preview_artifact(path) if include_previews and previewable else None,
                     "promotionState": promotion_state,
                     "verificationStatus": verification_status,
                     "trustState": trust_state,
@@ -833,6 +1026,148 @@ def _summarize_current_plan(project: dict) -> dict[str, Any]:
         return {"path": None, "summary": ""}
     content = _read(path, 20_000)
     return {"path": _rel(path, root), "summary": _summary_from_markdown(content), "content": content}
+
+
+def _count_phrase(value: int, noun: str) -> str:
+    return f"{value} {noun}" if value == 1 else f"{value} {noun}s"
+
+
+def _ensure_sentence(value: str | None) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return ""
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _session_snapshot(root: Path) -> dict[str, Any]:
+    state = session_files.read_state(root)
+    summary = session_files.normalize_completion_summary(
+        state.get("completion_summary"),
+        status=str(state.get("status") or "initialized"),
+    )
+    return {
+        "sessionId": str(state.get("session_id") or root.name),
+        "role": str(state.get("role") or root.parent.name or "agent"),
+        "status": str(state.get("status") or "unknown"),
+        "updatedAt": str(state.get("updated_at") or ""),
+        "reviewStatus": str(state.get("review_status") or ""),
+        "completionSummary": summary,
+    }
+
+
+def _session_sort_key(root: Path) -> tuple[int, int, int, str, float]:
+    state_path = root / "state.json"
+    snapshot = _session_snapshot(root)
+    completion = snapshot.get("completionSummary") or {}
+    populated_fields = sum(
+        1
+        for key in ("artifacts_created", "sources_used", "blockers", "recommended_next_tasks", "verification_results")
+        if completion.get(key)
+    )
+    status = str(snapshot.get("status") or "")
+    role = str(snapshot.get("role") or "")
+    meaningful_status = 0 if status == "initialized" else 1
+    non_planner = 0 if role == "planner" else 1
+    updated_at = str(snapshot.get("updatedAt") or "")
+    try:
+        mtime = state_path.stat().st_mtime
+    except FileNotFoundError:
+        mtime = 0.0
+    return (populated_fields, meaningful_status, non_planner, updated_at, mtime)
+
+
+def _latest_session_snapshot(root: Path) -> dict[str, Any] | None:
+    session_roots = _session_roots(root)
+    if not session_roots:
+        return None
+    session_root = max(session_roots, key=_session_sort_key)
+    snapshot = _session_snapshot(session_root)
+    if not snapshot:
+        return None
+    return snapshot
+
+
+def _compact_task_title(value: str | None) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    if not text:
+        return "review the board"
+    return text[:-1] if text.endswith(".") else text
+
+
+def _build_mission_brief(
+    *,
+    root: Path,
+    current_plan: dict[str, Any],
+    next_action: str,
+    lifecycle_phase: str,
+    status_counts: dict[str, int],
+    active_sessions: list[dict[str, Any]],
+    pending_approvals: list[dict[str, Any]],
+    recent_artifacts: list[dict[str, Any]],
+    source_summary: dict[str, Any],
+    blocker_summary: dict[str, Any] | None,
+    recommended_repair_task: dict[str, Any] | None,
+    auditors: dict[str, Any],
+) -> dict[str, Any]:
+    latest_session = _latest_session_snapshot(root)
+    open_queue = sum(
+        count for status, count in status_counts.items() if status not in {"done", "cancelled", "backlog"}
+    )
+    ready_count = int(status_counts.get("ready") or 0)
+    waiting_count = int(status_counts.get("awaiting_approval") or 0)
+    running_count = int(status_counts.get("running") or 0)
+    artifact_count = len(recent_artifacts)
+    source_count = int(source_summary.get("count") or 0)
+    current_bits = [
+        f"This project is in {lifecycle_phase.replace('_', ' ')}.",
+        f"It currently has {_count_phrase(open_queue, 'open task')} across {_count_phrase(running_count, 'running task')}, {_count_phrase(waiting_count, 'approval gate')}, and {_count_phrase(ready_count, 'ready task')}.",
+    ]
+    if latest_session:
+        role = str(latest_session.get("role") or "agent").replace("_", " ")
+        status = str(latest_session.get("status") or "unknown").replace("_", " ")
+        current_bits.append(f"The latest {role} session is {status}.")
+    elif active_sessions:
+        current_bits.append("Agent work is active now.")
+    elif current_plan.get("summary"):
+        current_bits.append(str(current_plan["summary"]).strip())
+    if blocker_summary and blocker_summary.get("blocked") and blocker_summary.get("headline"):
+        current_bits.append(_ensure_sentence(blocker_summary["headline"]))
+    current_bits.append(
+        f"The repo currently surfaces {_count_phrase(artifact_count, 'recent artifact')} and {_count_phrase(source_count, 'tracked source')}."
+    )
+
+    next_bits: list[str] = []
+    session_next_tasks = []
+    session_blockers = []
+    if latest_session:
+        completion = latest_session.get("completionSummary") or {}
+        session_next_tasks = [str(item).strip() for item in (completion.get("recommended_next_tasks") or []) if str(item).strip()]
+        session_blockers = [str(item).strip() for item in (completion.get("blockers") or []) if str(item).strip()]
+    if pending_approvals:
+        next_bits.append(f"First, clear {_count_phrase(len(pending_approvals), 'pending approval')} so the planner can resume dispatch.")
+    elif session_next_tasks:
+        next_bits.append(f"Next, {_compact_task_title(session_next_tasks[0]).lower()}.")
+    elif next_action:
+        next_bits.append(f"Next, {_compact_task_title(next_action).lower()}.")
+    if auditors.get("ontology", {}).get("state") in {"stale_on_this_device", "not_hydrated"}:
+        next_bits.append("Hydrate ontology data on this device before relying on graph and dashboard views.")
+    if recommended_repair_task:
+        next_bits.append(f"Repair priority remains {_compact_task_title(str(recommended_repair_task.get('title') or 'the repair queue')).lower()}.")
+    elif session_blockers:
+        next_bits.append(f"Watch the active blocker: {_compact_task_title(session_blockers[0]).lower()}.")
+    elif ready_count:
+        next_bits.append(f"After that, move {_count_phrase(ready_count, 'ready task')} into execution.")
+    if not next_bits:
+        next_bits.append("Open Planner to review the next ready task and dispatch the next work package.")
+
+    return {
+        "current": " ".join(current_bits),
+        "next": " ".join(next_bits),
+        "sourceSessionId": latest_session.get("sessionId") if latest_session else None,
+        "sourceRole": latest_session.get("role") if latest_session else None,
+        "sourceStatus": latest_session.get("status") if latest_session else None,
+        "sourceUpdatedAt": latest_session.get("updatedAt") if latest_session else None,
+    }
 
 
 def _ontology_follow_up_summary(project: dict, tasks: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -1330,8 +1665,9 @@ def _select_recommended_repair_task(
     }
 
 
-async def build_command_center(project: dict) -> dict[str, Any]:
+async def _build_live_command_center(project: dict) -> dict[str, Any]:
     planner_service, running_agent_service = _runtime_services()
+    project_id = project.get("_id")
     if planner_service is None or running_agent_service is None:
         tasks = []
         approvals = []
@@ -1339,17 +1675,22 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     else:
         board = await planner_service.ensure_main_board(project)
         tasks = await planner_service.list_tasks(board["_id"], project=project)
-        approvals = await planner_service.list_approvals(project)
-        sessions = await running_agent_service.list_project_running_agents(project["_id"], active_only=False, limit=20)
+        approvals = await planner_service.list_approvals(project) if project_id else []
+        sessions = (
+            await running_agent_service.list_project_running_agents(str(project_id), active_only=False, limit=20)
+            if project_id
+            else []
+        )
     active_sessions = [s for s in sessions if s.get("status") in {"running", "awaiting_approval", "awaiting_input"}]
     pending_approvals = [a for a in approvals if a.get("status") == "pending"]
-    sources = list_project_sources(project)
+    root = project_root(project)
+    integrity_indexes = _project_integrity_indexes(project)
+    sources = list_project_sources(project, root=root, indexes=integrity_indexes)
     skills = list_project_skills(project)
-    artifacts = list_project_artifacts(project)
-    integrity = list_project_integrity(project)
+    artifacts = list_project_artifacts(project, root=root, indexes=integrity_indexes, include_previews=False)
+    integrity = list_project_integrity(project, root=root, indexes=integrity_indexes)
     ranking = integrity.get("hypothesisRanking") or []
     _write_hypothesis_ranking_decisions(project, ranking)
-    root = project_root(project)
     ontology_follow_ups = _ontology_follow_up_summary(project, tasks=tasks)
     latest_audit = read_latest_audit(root)
     recent_audits = list_recent_audits(root)
@@ -1403,14 +1744,11 @@ async def build_command_center(project: dict) -> dict[str, Any]:
         status = str(task.get("status") or "backlog")
         status_counts[status] = status_counts.get(status, 0) + 1
 
-    if pending_approvals:
-        next_action = "Review pending approvals"
-    elif active_sessions:
-        next_action = "Monitor active agent sessions"
-    elif tasks:
-        next_action = "Select the next ready task or launch a research workflow"
-    else:
-        next_action = "Start a research workflow"
+    next_action = _derive_next_action(
+        pending_approvals=pending_approvals,
+        active_sessions=active_sessions,
+        task_counts={"total": len(tasks), "byStatus": status_counts},
+    )
 
     goal_bundle = goal_service.load_goal_bundle(project)
     goal_summary = None
@@ -1425,20 +1763,38 @@ async def build_command_center(project: dict) -> dict[str, Any]:
             "dashboard": goal_state.get("dashboard"),
             "tracks": goal_state.get("tracks"),
         }
+    current_plan = _summarize_current_plan(project)
+    mission_brief = _build_mission_brief(
+        root=root,
+        current_plan=current_plan,
+        next_action=next_action,
+        lifecycle_phase=lifecycle_phase,
+        status_counts=status_counts,
+        active_sessions=active_sessions,
+        pending_approvals=pending_approvals,
+        recent_artifacts=artifacts["artifacts"][:6],
+        source_summary=sources["summary"],
+        blocker_summary=blocker_summary,
+        recommended_repair_task=recommended_repair_task,
+        auditors=auditors,
+    )
 
     return {
         "project": {
-            "id": project["_id"],
+            "id": project.get("_id") or project.get("slug") or "",
             "name": project.get("name"),
             "slug": project.get("slug"),
             "status": project.get("status"),
             "localRepoPath": project.get("localRepoPath"),
             "defaultBranch": project.get("defaultBranch") or "main",
         },
-        "currentPlan": _summarize_current_plan(project),
+        "currentPlan": current_plan,
+        "missionBrief": mission_brief,
         "nextAction": next_action,
         "goal": goal_summary,
         "taskCounts": {"total": len(tasks), "byStatus": status_counts},
+        "plannerSnapshot": _planner_snapshot(tasks),
+        "latestTruth": _latest_truth_snapshot(integrity_indexes),
         "activeSessions": active_sessions,
         "pendingApprovals": pending_approvals,
         "recentArtifacts": artifacts["artifacts"][:6],
@@ -1468,7 +1824,45 @@ async def build_command_center(project: dict) -> dict[str, Any]:
             "hasRailYaml": bool(project.get("localRepoPath") and (Path(project["localRepoPath"]) / "rail.yaml").exists()),
             "hasResearchPlan": bool(project.get("localRepoPath") and (Path(project["localRepoPath"]) / "research_plan").exists()),
         },
+        "snapshot": {
+            "loaded": False,
+            "path": CONTROL_PLANE_SNAPSHOT_RELATIVE_PATH,
+            "generatedAt": None,
+            "version": CONTROL_PLANE_SNAPSHOT_VERSION,
+        },
     }
+
+
+async def build_command_center(project: dict, *, prefer_snapshot: bool = True) -> dict[str, Any]:
+    planner_service, running_agent_service = _runtime_services()
+    project_id = project.get("_id")
+    if planner_service is None or running_agent_service is None:
+        pending_approvals: list[dict[str, Any]] = []
+        active_sessions: list[dict[str, Any]] = []
+    else:
+        pending_approvals = (
+            [a for a in await planner_service.list_approvals(project) if a.get("status") == "pending"]
+            if project_id
+            else []
+        )
+        sessions = (
+            await running_agent_service.list_project_running_agents(str(project_id), active_only=False, limit=20)
+            if project_id
+            else []
+        )
+        active_sessions = [s for s in sessions if s.get("status") in {"running", "awaiting_approval", "awaiting_input"}]
+
+    if prefer_snapshot:
+        snapshot = read_control_plane_snapshot(project)
+        if snapshot is not None:
+            return _command_center_from_snapshot(
+                project,
+                snapshot,
+                active_sessions=active_sessions,
+                pending_approvals=pending_approvals,
+            )
+
+    return await _build_live_command_center(project)
 
 
 def build_launch_preview(project: dict, payload: dict[str, Any]) -> dict[str, Any]:

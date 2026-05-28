@@ -25,14 +25,10 @@ async def test_zen_route_prefers_repo_backed_control_plane_summary(client, monke
         return None
 
     async def _ensure_main_board(project: dict):
-        return {"_id": "main"}
+        raise AssertionError("zen should not load the live board when plannerSnapshot is present")
 
     async def _list_tasks(board_id: str, *, project=None):
-        return [
-            {"_id": "task-1", "title": "Hydrate source graph", "status": "ready"},
-            {"_id": "task-2", "title": "Publish report", "status": "awaiting_approval"},
-            {"_id": "task-3", "title": "Archive notes", "status": "done"},
-        ]
+        raise AssertionError("zen should not load live tasks when plannerSnapshot is present")
 
     async def _list_approvals(project: dict):
         return [{"_id": "approval-1", "status": "pending", "approvalType": "task execution"}]
@@ -52,6 +48,27 @@ async def test_zen_route_prefers_repo_backed_control_plane_summary(client, monke
         lambda project: {
             "summary": {
                 "currentPlan": {"summary": "Finish the repo-first closeout path."},
+                "plannerSnapshot": {
+                    "now": [
+                        {"id": "task-1", "title": "Hydrate source graph", "status": "ready", "description": ""}
+                    ],
+                    "next": [
+                        {"id": "task-2", "title": "Publish report", "status": "awaiting_approval", "description": ""}
+                    ],
+                    "later": [],
+                    "done": [
+                        {"id": "task-3", "title": "Archive notes", "status": "done", "description": ""}
+                    ],
+                    "blocked": [],
+                },
+                "latestTruth": [
+                    {
+                        "claim": "Verified snapshot claim",
+                        "confidence": 0.95,
+                        "evidenceRefs": ["topics/grid/outputs/evidence.csv"],
+                        "verified": True,
+                    }
+                ],
                 "lifecyclePhase": "research_active",
                 "currentBlocker": "Need artifact verification",
                 "blockerSummary": {"blocked": True},
@@ -85,6 +102,7 @@ async def test_zen_route_prefers_repo_backed_control_plane_summary(client, monke
     assert payload["objective"] == "Finish the repo-first closeout path."
     assert payload["project"]["phase"] == "research_active"
     assert payload["project"]["health"] == "Blocked"
+    assert payload["latestTruth"][0]["claim"] == "Verified snapshot claim"
     assert payload["artifacts"][0]["name"] == "paper.pdf"
     assert payload["nextDecision"]["prompt"] == "Approval needed for task execution"
     assert payload["plan"]["now"] == ["Hydrate source graph"]
