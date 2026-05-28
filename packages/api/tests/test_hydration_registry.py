@@ -461,8 +461,8 @@ def test_attach_local_hydration_to_convex_promotes_repo_only_project_without_con
 
     captured: dict[str, object] = {}
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "local:demo-project",
             "slug": "demo-project",
@@ -478,7 +478,7 @@ def test_attach_local_hydration_to_convex_promotes_repo_only_project_without_con
         captured["promote"] = kwargs
         return None
 
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.services.planner_service.resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr("app.services.hydration_registry_service.resolve_pipeline_slug", lambda project, root: "my_pipeline")
     monkeypatch.setattr("app.services.hydration_registry_service.register_hydration_artifact", _register_hydration_artifact)
     monkeypatch.setattr("app.services.hydration_registry_service.promote_project_hydration_artifact", _promote_project_hydration_artifact)

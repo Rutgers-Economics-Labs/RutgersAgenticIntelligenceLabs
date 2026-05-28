@@ -191,7 +191,7 @@ async def attach_local_hydration_to_convex(
 
     project = None
     try:
-        project = await planner_service.get_project_by_slug(slug)
+        project = await planner_service.resolve_project_reference(slug)
     except Exception:
         project = None
 
