@@ -1979,7 +1979,9 @@ async def create_ontology_follow_up_task(slug: str, request: OntologyFollowUpTas
         normalize_classification,
     )
 
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
 
@@ -4347,10 +4349,10 @@ async def get_next_best_action(
     """Fetch the next best research action for a project (Track B)."""
     from app.services import lifecycle_service, planner_service
     
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-        
+
     board = await planner_service.ensure_main_board(project)
     tasks = await planner_service.list_tasks(board["_id"], project=project)
     

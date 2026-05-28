@@ -662,7 +662,7 @@ def test_create_ontology_follow_up_task_endpoint_creates_expansion_task(monkeypa
     created: list[dict] = []
     synced: list[bool] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _ensure_main_board(project_arg):
@@ -679,7 +679,7 @@ def test_create_ontology_follow_up_task_endpoint_creates_expansion_task(monkeypa
         synced.append(True)
         return None
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
     monkeypatch.setattr(projects_router.planner_service, "create_task", _create_task)
@@ -699,7 +699,7 @@ def test_create_ontology_follow_up_task_endpoint_creates_expansion_task(monkeypa
 def test_create_ontology_follow_up_task_endpoint_returns_existing_task(monkeypatch):
     import app.routers.projects as projects_router
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
 
     async def _ensure_main_board(project_arg):
@@ -714,7 +714,7 @@ def test_create_ontology_follow_up_task_endpoint_returns_existing_task(monkeypat
             }
         ]
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
     monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
 
@@ -2115,3 +2115,32 @@ def test_project_phase_uses_active_only_running_sessions(monkeypatch):
 
     assert response.status_code == 200
     assert called == [{"project_id": "project-1", "active_only": True, "limit": 50}]
+
+
+def test_next_best_action_endpoint_prefers_repo_first_refresh(monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _refresh_project_record(slug: str):
+        assert slug == "demo-project"
+        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/demo-project"}
+
+    async def _ensure_main_board(project_arg):
+        return {"_id": "main"}
+
+    async def _list_tasks(board_id: str, *, project=None):
+        return [{"_id": "task-1", "title": "Hydrate data", "status": "ready"}]
+
+    async def _evaluate_lifecycle(project_arg, tasks):
+        assert project_arg["_id"] == "project-1"
+        assert tasks[0]["_id"] == "task-1"
+        return {"phase": "research_active", "nextAction": "Hydrate data"}
+
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
+    monkeypatch.setattr(projects_router.planner_service, "ensure_main_board", _ensure_main_board)
+    monkeypatch.setattr(projects_router.planner_service, "list_tasks", _list_tasks)
+    monkeypatch.setattr("app.services.lifecycle_service.evaluate_lifecycle", _evaluate_lifecycle)
+
+    response = client.get("/api/v1/projects/demo-project/next-best-action")
+
+    assert response.status_code == 200
+    assert response.json() == {"phase": "research_active", "nextAction": "Hydrate data"}
