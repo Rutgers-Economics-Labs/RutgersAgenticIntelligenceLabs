@@ -834,7 +834,7 @@ def _csv_query_param(value: str | None) -> list[str] | None:
 
 
 def _projects_base_dir() -> Path:
-    default_base = Path(__file__).resolve().parents[5]
+    default_base = Path(__file__).resolve().parents[4]
     return Path(os.environ.get("RAIL_PROJECTS_DIR", str(default_base))).expanduser().resolve()
 
 

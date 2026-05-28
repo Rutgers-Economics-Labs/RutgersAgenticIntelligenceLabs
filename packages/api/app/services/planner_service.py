@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -275,11 +276,63 @@ def get_project_by_slug_path(project_root: Path, slug: str) -> Path:
     return project_root / "research_plan" / "tasks" / f"{slug}.md"
 
 
+def _candidate_local_project_roots(slug: str) -> list[Path]:
+    repo_root = Path(__file__).resolve().parents[4]
+    configured_base = Path(os.environ.get("RAIL_PROJECTS_DIR", str(repo_root))).expanduser().resolve()
+    candidates = [
+        configured_base / slug,
+        configured_base / "generated_projects" / slug,
+        repo_root / slug,
+        repo_root / "generated_projects" / slug,
+    ]
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _local_project_record_from_repo(slug: str) -> dict[str, Any] | None:
+    for root in _candidate_local_project_roots(slug):
+        manifest_path = root / "rail.yaml"
+        if not manifest_path.exists():
+            continue
+        try:
+            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        project_meta = raw.get("project") if isinstance(raw.get("project"), dict) else {}
+        hydration_meta = raw.get("hydration") if isinstance(raw.get("hydration"), dict) else {}
+        autonomy_meta = raw.get("autonomy") if isinstance(raw.get("autonomy"), dict) else {}
+        return {
+            "_id": f"local:{slug}",
+            "name": project_meta.get("name") or slug,
+            "slug": project_meta.get("slug") or slug,
+            "description": project_meta.get("description") or "",
+            "status": "ready",
+            "localRepoPath": str(root),
+            "manifestPath": "rail.yaml",
+            "defaultBranch": project_meta.get("default_branch") or project_meta.get("defaultBranch") or "main",
+            "apiConfigSlugs": list(hydration_meta.get("linked_sources") or []),
+            "pipelineConfigSlug": hydration_meta.get("default_pipeline") or hydration_meta.get("pipeline"),
+            "ontologyConfigSlug": hydration_meta.get("ontology_file"),
+            "githubSyncMode": autonomy_meta.get("mode"),
+        }
+    return None
+
+
 async def get_project_by_slug(slug: str) -> dict:
     project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
-        raise ValueError(f"Project '{slug}' not found")
-    return project
+    if project:
+        return project
+    local_project = _local_project_record_from_repo(slug)
+    if local_project:
+        return local_project
+    raise ValueError(f"Project '{slug}' not found")
 
 
 def project_root_from_record(project: dict) -> Path | None:
