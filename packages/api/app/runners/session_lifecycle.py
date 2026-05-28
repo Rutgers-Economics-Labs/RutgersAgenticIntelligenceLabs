@@ -2572,7 +2572,6 @@ async def _load_project(project_id: str | None, project_slug: str | None) -> dic
             project = None
         if project:
             return project
-        return await convex.query("projects:getBySlug", {"slug": project_slug})
     return None
 
 
