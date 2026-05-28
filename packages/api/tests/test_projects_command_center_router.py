@@ -102,19 +102,19 @@ def test_create_project_returns_repo_first_refreshed_project(monkeypatch):
             raise AssertionError("create_project should prefer planner_service refresh")
         raise AssertionError(path)
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "local:demo-project",
             "name": "Demo Project",
-            "slug": slug,
+            "slug": "demo-project",
             "status": "draft",
             "localRepoPath": "/tmp/demo-project",
         }
 
     monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
     monkeypatch.setattr(projects_router.convex, "query", _query)
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     response = client.post(
         "/api/v1/projects/",
@@ -961,7 +961,7 @@ agents:
         encoding="utf-8",
     )
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
         project_meta = raw.get("project") or {}
         return {
@@ -976,7 +976,7 @@ agents:
             "manifestPath": "rail.yaml",
         }
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
 
     response = client.post(
         "/api/v1/projects/demo-project/sync-metadata",
@@ -1010,7 +1010,7 @@ def test_sync_project_metadata_prefers_repo_first_refresh_for_convex_project(mon
 
     updated_payloads: list[dict] = []
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         assert slug == "demo-project"
         return {
             "_id": "project-1",
@@ -1034,7 +1034,7 @@ def test_sync_project_metadata_prefers_repo_first_refresh_for_convex_project(mon
     async def _should_auto_publish(project: dict):
         return False
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
     monkeypatch.setattr(projects_router.convex, "query", _query)
     monkeypatch.setattr(projects_router, "should_auto_publish", _should_auto_publish)

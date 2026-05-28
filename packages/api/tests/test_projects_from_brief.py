@@ -72,7 +72,7 @@ async def test_create_from_brief_writes_project_and_skips_hydration(client, tmp_
         patch("app.routers.projects._git_create_initial_commit", return_value="deadbeef"), \
         patch("app.routers.projects.GitHubService.create_repo", new=AsyncMock(return_value={"full_name": "Rutgers-Economics-Labs/RAIL-grid-costs"})), \
         patch("app.routers.projects.GitHubService.commit_files", new=AsyncMock(return_value={"sha": "deadbeef"})), \
-        patch("app.routers.projects.planner_service.get_project_by_slug", new=AsyncMock(return_value=project_record)), \
+        patch("app.routers.projects.planner_service.resolve_project_reference", new=AsyncMock(side_effect=[None, project_record, project_record])), \
         patch("app.routers.projects.planner_service.ensure_planner_thread", new=AsyncMock(return_value="planner")), \
         patch("app.routers.projects.planner_service.ensure_main_board", new=AsyncMock(return_value={"_id": "board-1"})), \
         patch("app.routers.projects.planner_service.append_planner_message", new=AsyncMock()), \
@@ -154,7 +154,7 @@ async def test_create_from_brief_writes_extended_manifest_contract(client, tmp_p
          patch("app.routers.projects._git_create_initial_commit", return_value="deadbeef"), \
          patch("app.routers.projects.GitHubService.create_repo", new=AsyncMock(return_value={"full_name": "Rutgers-Economics-Labs/RAIL-grid-costs"})), \
          patch("app.routers.projects.GitHubService.commit_files", new=AsyncMock(return_value={"sha": "deadbeef"})), \
-         patch("app.routers.projects.planner_service.get_project_by_slug", new=AsyncMock(return_value=project_record)), \
+         patch("app.routers.projects.planner_service.resolve_project_reference", new=AsyncMock(side_effect=[None, project_record, project_record])), \
          patch("app.routers.projects.planner_service.ensure_planner_thread", new=AsyncMock(return_value="planner")), \
          patch("app.routers.projects.planner_service.ensure_main_board", new=AsyncMock(return_value={"_id": "board-1"})), \
          patch("app.routers.projects.planner_service.append_planner_message", new=AsyncMock()), \
@@ -192,7 +192,7 @@ async def test_future_bootstrap_auto_creates_and_links_github_repo(client, tmp_p
          patch("app.routers.projects.convex.query", new=query), \
          patch("app.routers.projects.GitHubService.create_repo", new=AsyncMock(return_value={"full_name": "Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs"})), \
          patch("app.routers.projects.GitHubService.commit_files", new=AsyncMock(return_value={"commit_sha": "abc123", "branch": "main", "changed": True, "files": []})), \
-         patch("app.routers.projects.planner_service.get_project_by_slug", new=AsyncMock(return_value=project_record)), \
+         patch("app.routers.projects.planner_service.resolve_project_reference", new=AsyncMock(return_value=project_record)), \
          patch("app.routers.projects.planner_service.ensure_planner_thread", new=AsyncMock(return_value="planner")), \
          patch("app.routers.projects.planner_service.ensure_main_board", new=AsyncMock(return_value={"_id": "board-1"})), \
          patch("app.routers.projects.planner_service.append_planner_message", new=AsyncMock()), \
@@ -210,3 +210,33 @@ async def test_future_bootstrap_auto_creates_and_links_github_repo(client, tmp_p
     payload = mutation.await_args_list[0].args[1]
     assert payload["gitRepoUrl"] == "https://github.com/Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs"
     assert payload["github"] == "Rutgers-Economics-Labs/RAIL-bootstrap-grid-costs"
+
+
+async def test_create_from_brief_rejects_repo_first_duplicate_project(client, tmp_path):
+    preview = {
+        "briefHash": "abc123",
+        "project": {"name": "Grid Costs", "slug": "grid-costs", "description": "Research kickoff", "approach": "ontology-first"},
+        "researchGraph": {"title": "Grid Costs", "objective": "Understand costs", "methods": ["regression"], "deliverables": ["report"]},
+        "sourceCandidates": [],
+        "ontology": {"name": "Grid Costs Ontology", "slug": "grid-costs-ontology", "content": "uri: http://rail.rutgers.edu/ontology/grid-costs\nclasses: []\n", "parsedSpec": {"uri": "http://rail.rutgers.edu/ontology/grid-costs", "classes": []}},
+        "pipeline": {"name": "Grid Costs Pipeline", "slug": "grid-costs-pipeline", "content": "name: grid-costs-pipeline\nsteps: []\n", "parsedSpec": {"name": "grid-costs-pipeline", "steps": []}, "referencedApiSlugs": []},
+        "repoFiles": [],
+        "readiness": {"ready": 0, "draft_for_review": 0, "missing_auth_or_manual": 0},
+    }
+    existing = {
+        "_id": "local:grid-costs",
+        "name": "Grid Costs",
+        "slug": "grid-costs",
+        "localRepoPath": str(tmp_path / "grid-costs"),
+    }
+
+    with patch("app.routers.projects.build_preview", new=AsyncMock(return_value=preview)), \
+         patch("app.routers.projects.planner_service.resolve_project_reference", new=AsyncMock(return_value=existing)), \
+         patch("app.routers.projects.convex.mutation", new=AsyncMock(side_effect=AssertionError("should not create duplicate project"))):
+        response = await client.post("/api/v1/projects/from-brief/create", json={
+            "brief": "Research brief",
+            "targetDir": str(tmp_path / "grid-costs"),
+        })
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Project 'grid-costs' already exists"

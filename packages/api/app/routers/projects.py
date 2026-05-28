@@ -88,6 +88,23 @@ from app.services.autonomy_policy import activity_key_for_role, evaluate_autonom
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+async def _refresh_project_record(slug: str) -> dict | None:
+    try:
+        return await planner_service.resolve_project_reference(slug)
+    except Exception:
+        pass
+    try:
+        project = await convex.query("projects:getBySlug", {"slug": slug})
+        if project:
+            return project
+    except Exception:
+        pass
+    try:
+        return await convex.query("projects:get", {"slug": slug})
+    except Exception:
+        return None
+
+
 async def _ontology_auditor_status(project: dict[str, Any]) -> dict[str, Any]:
     projection = command_center_service.load_control_plane_summary(project)
     cached = (projection.get("summary") or {}).get("auditors") or {}
@@ -898,10 +915,7 @@ def _local_catalog_projects() -> list[dict]:
 
 
 async def _known_project(slug: str) -> dict | None:
-    try:
-        return await planner_service.get_project_by_slug(slug)
-    except Exception:
-        return None
+    return await _refresh_project_record(slug)
 
 
 async def _catalog_project_by_slug(slug: str) -> dict | None:
@@ -957,15 +971,11 @@ async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
                 **{key: value for key, value in payload.items() if key != "slug"},
             },
         )
-        try:
-            return await planner_service.get_project_by_slug(slug)
-        except Exception:
-            return {**existing, **payload}
+        refreshed = await _refresh_project_record(slug)
+        return refreshed or {**existing, **payload}
     project_id = await convex.mutation("projects:create", {**payload, "approach": "ontology-first"})
-    try:
-        return await planner_service.get_project_by_slug(slug)
-    except Exception:
-        return {**payload, "_id": project_id}
+    refreshed = await _refresh_project_record(slug)
+    return refreshed or {**payload, "_id": project_id}
 
 
 async def _catalog_row(project: dict) -> dict:
@@ -1342,10 +1352,8 @@ async def create_project(data: CreateProjectRequest):
             )
 
     project_id = await convex.mutation("projects:create", project_data)
-    try:
-        return await planner_service.get_project_by_slug(data.slug)
-    except Exception:
-        return await convex.query("projects:getBySlug", {"slug": data.slug})
+    refreshed = await _refresh_project_record(data.slug)
+    return refreshed or {"_id": project_id, **project_data}
 
 
 @router.get("")
@@ -1414,7 +1422,7 @@ async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest)
     except ManifestValidationError as exc:
         raise HTTPException(status_code=422, detail=manifest_validation_http_detail(exc)) from exc
     reconcile_result = await reconciliation_service.reconcile_project_reality(project)
-    refreshed_project = await planner_service.get_project_by_slug(project.get("slug") or defn["slug"])
+    refreshed_project = await _refresh_project_record(project.get("slug") or defn["slug"])
     if refreshed_project:
         project = refreshed_project
     row = await _catalog_row(project)
@@ -1472,7 +1480,7 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
             "defaultBranch": data.defaultBranch,
         },
     )
-    project = await planner_service.get_project_by_slug(manifest_slug)
+    project = await _refresh_project_record(manifest_slug)
     if not project:
         raise HTTPException(status_code=404, detail="Project could not be loaded after bootstrap")
     await planner_service.ensure_planner_thread(project_id)
@@ -1484,7 +1492,7 @@ async def bootstrap_future_project_route(data: BootstrapFutureProjectRequest):
         message_type="system",
     )
     await planner_service.sync_planner_files(project, board)
-    return await planner_service.get_project_by_slug(manifest_slug)
+    return await _refresh_project_record(manifest_slug)
 
 
 @router.post("/from-brief/preview")
@@ -1502,7 +1510,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
     preview = await build_preview(data.brief, model=data.model)
     project_meta = preview["project"]
     slug = project_meta["slug"]
-    existing = await convex.query("projects:getBySlug", {"slug": slug})
+    existing = await _refresh_project_record(slug)
     if existing:
         raise HTTPException(409, f"Project '{slug}' already exists")
 
@@ -1594,7 +1602,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
         },
     )
 
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
     if not project:
         raise HTTPException(status_code=404, detail="Project could not be loaded after creation")
     rail_path = repo_root / "rail.yaml"
@@ -1650,7 +1658,7 @@ async def create_project_from_brief(data: CreateProjectFromBriefRequest):
         except Exception as exc:
             await record_publish_failure(project_id, str(exc))
 
-    updated = await planner_service.get_project_by_slug(slug)
+    updated = await _refresh_project_record(slug)
     return {
         "project": updated,
         "preview": preview,
@@ -1786,9 +1794,8 @@ async def clear_hydration(slug: str):
 
 @router.post("/{slug}/sync-metadata")
 async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
-    try:
-        project = await planner_service.get_project_by_slug(slug)
-    except ValueError:
+    project = await _refresh_project_record(slug)
+    if not project:
         raise HTTPException(404, "Project not found")
 
     patch = {k: v for k, v in data.model_dump().items() if v is not None}
@@ -1807,15 +1814,14 @@ async def sync_project_metadata(slug: str, data: ProjectMetadataSyncRequest):
         updated_project = {**project, **patch}
         manifest_content = render_rail_manifest(updated_project, existing_content)
         manifest_path.write_text(manifest_content, encoding="utf-8")
-        updated = await planner_service.get_project_by_slug(slug)
+        updated = await _refresh_project_record(slug)
     else:
         await convex.mutation("projects:updateById", {
             "projectId": project["_id"],
             **patch,
         })
-        try:
-            updated = await planner_service.get_project_by_slug(slug)
-        except Exception:
+        updated = await _refresh_project_record(slug)
+        if not updated:
             updated = await convex.query("projects:getById", {"projectId": project["_id"]})
 
     publish_result = None
