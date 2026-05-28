@@ -180,6 +180,123 @@ def test_integrity_repo_loads_legacy_verification_run_records(tmp_path):
     assert run.checks[0]["name"] == "deterministic_repo_audit"
 
 
+def test_integrity_repo_normalizes_control_plane_repair_verification_runs(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "verification_runs.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "run_id": "run-control-plane",
+                    "scope": "repo",
+                    "loop_type": "control_plane_repair",
+                    "status": "passed",
+                    "checks": [{"name": "control-plane-audit", "status": "passed"}],
+                    "artifacts_checked": ["research_plan/state/control_plane_audit.json"],
+                    "claims_checked": [],
+                    "artifact_paths": ["research_plan/state/control_plane_audit.json"],
+                    "verified_at": "2026-05-25T00:10:00Z",
+                    "summary": "Legacy repair verification run.",
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    run = ResearchIntegrityRepo(root).load_verification_runs()[0]
+
+    assert run.run_id == "run-control-plane"
+    assert run.loop_type == "analysis_reproducibility"
+
+
+def test_integrity_repo_normalizes_control_plane_reconciliation_verification_runs(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "verification_runs.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "run_id": "run-control-plane-reconcile",
+                    "scope": "repo",
+                    "loop_type": "control_plane_reconciliation",
+                    "status": "passed",
+                    "checks": [{"name": "control-plane-reconcile", "status": "passed"}],
+                    "artifacts_checked": ["research_plan/state/control_plane_audit.json"],
+                    "claims_checked": [],
+                    "artifact_paths": ["research_plan/state/control_plane_audit.json"],
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    run = ResearchIntegrityRepo(root).load_verification_runs()[0]
+
+    assert run.run_id == "run-control-plane-reconcile"
+    assert run.loop_type == "analysis_reproducibility"
+
+
+def test_integrity_repo_normalizes_control_plane_audit_verification_runs(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "verification_runs.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "run_id": "run-control-plane-audit",
+                    "scope": "repo",
+                    "loop_type": "control_plane_audit",
+                    "status": "passed",
+                    "checks": [{"name": "control-plane-audit", "status": "passed"}],
+                    "artifacts_checked": ["research_plan/state/control_plane_audit.json"],
+                    "claims_checked": [],
+                    "artifact_paths": ["research_plan/state/control_plane_audit.json"],
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    run = ResearchIntegrityRepo(root).load_verification_runs()[0]
+
+    assert run.run_id == "run-control-plane-audit"
+    assert run.loop_type == "analysis_reproducibility"
+
+
+def test_integrity_repo_normalizes_run_key_verification_runs(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "verification_runs.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "run_key": "run-control-plane-keyed",
+                    "scope": "repo",
+                    "loop_type": "control_plane_audit",
+                    "status": "passed",
+                    "checks": [{"name": "control-plane-audit", "status": "passed"}],
+                    "artifacts": ["research_plan/state/control_plane_audit.json"],
+                    "summary": "Legacy keyed verification record.",
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    run = ResearchIntegrityRepo(root).load_verification_runs()[0]
+
+    assert run.run_id == "run-control-plane-keyed"
+    assert run.artifact_paths == ["research_plan/state/control_plane_audit.json"]
+
+
 def test_integrity_repo_loads_legacy_dataset_source_records(tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
     path = root / "research_plan" / "state" / "sources.json"
@@ -306,6 +423,97 @@ def test_integrity_repo_write_sources_normalizes_restricted_records(tmp_path):
     assert source.admissibility_status == "missing"
     assert source.quality_status == "blocked"
     assert source.provenance["original_admissibility_status"] == "restricted"
+
+
+def test_integrity_repo_loads_admissible_primary_evidence_source_records_without_crashing(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "sources.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "source_key": "legacy-primary-evidence",
+                    "source_type": "csv",
+                    "title": "Legacy primary evidence source",
+                    "url_or_path": "topics/data/raw/legacy.csv",
+                    "admissibility_status": "admissible",
+                    "impact_level": "primary_evidence",
+                    "provenance": {"path": "topics/data/raw/legacy.csv"},
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    source = ResearchIntegrityRepo(root).load_sources()[0]
+
+    assert source.admissibility_status == "observed"
+    assert source.impact_level == "critical"
+    assert source.provenance["original_admissibility_status"] == "admissible"
+    assert source.provenance["original_impact_level"] == "primary_evidence"
+
+
+def test_integrity_repo_write_sources_normalizes_admissible_primary_evidence_records(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    repo = ResearchIntegrityRepo(root)
+
+    repo.write_sources(
+        [
+            {
+                "source_key": "legacy-primary-evidence",
+                "source_type": "csv",
+                "title": "Legacy primary evidence source",
+                "url_or_path": "topics/data/raw/legacy.csv",
+                "admissibility_status": "admissible",
+                "impact_level": "primary_evidence",
+                "provenance": {"path": "topics/data/raw/legacy.csv"},
+            }
+        ]
+    )
+
+    source = repo.load_sources()[0]
+
+    assert source.admissibility_status == "observed"
+    assert source.impact_level == "critical"
+    assert source.provenance["original_admissibility_status"] == "admissible"
+    assert source.provenance["original_impact_level"] == "primary_evidence"
+
+
+def test_integrity_repo_loads_canonical_claim_records_with_legacy_extra_fields(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    path = root / "research_plan" / "state" / "claims.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "claim_key": "legacy-claim",
+                    "claim_text": "Legacy claim with planner extras.",
+                    "status": "supported",
+                    "evidence_paths": ["topics/data/processed/panel.csv"],
+                    "discovered_in_paths": ["topics/data/processed/finding.json"],
+                    "snippet": "Legacy planner snippet.",
+                    "scope_note": "ISO-NE only.",
+                    "limitations": ["Single region."],
+                }
+            ],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    claim = ResearchIntegrityRepo(root).load_claims()[0]
+
+    assert claim.claim_key == "legacy-claim"
+    assert claim.evidence_paths == [
+        "topics/data/processed/panel.csv",
+        "topics/data/processed/finding.json",
+    ]
+    assert "scope_note:ISO-NE only." in claim.caveats
+    assert "Single region." in claim.caveats
+    assert "legacy_snippet:Legacy planner snippet." in claim.caveats
 
 
 def test_integrity_repo_loads_legacy_planner_claim_candidate_records(tmp_path):
@@ -3277,3 +3485,31 @@ def test_project_exposes_candidate_promotion_and_conflict_resolution_on_backend(
     assert claim_result["artifact_path"] == "artifacts/report.md"
     assert conflict_result["conflict_key"] == "claim-conflict:claim-a::claim-b"
     assert conflict_result["favored_claim_key"] == "claim-a"
+
+
+def test_load_claim_candidates_normalizes_legacy_records(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="Integrity Project", slug="integrity-project")
+    state_root = root / "research_plan" / "state"
+    state_root.mkdir(parents=True, exist_ok=True)
+    (state_root / "claim_candidates.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "legacy-claim-1",
+                    "claim": "Control-plane repairs restored planner truth.",
+                    "status": "candidate",
+                    "evidence": ["research_plan/state/control_plane_audit.json"],
+                    "confidence": "high",
+                    "domain": "control_plane_health",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    repo = ResearchIntegrityRepo(root)
+    claim_candidate = repo.load_claim_candidates()[0]
+
+    assert claim_candidate.candidate_key == "legacy-claim-1"
+    assert claim_candidate.claim_text == "Control-plane repairs restored planner truth."
+    assert claim_candidate.evidence_paths == ["research_plan/state/control_plane_audit.json"]
