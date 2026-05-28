@@ -11,6 +11,22 @@ export type DashboardResponse = {
   panels: DashboardPanel[];
   projectName: string;
   slug: string;
+  controlPlane?: {
+    phase?: string | null;
+    nextAction?: string | null;
+    currentBlocker?: string | null;
+    snapshot?: {
+      loaded?: boolean;
+      path?: string | null;
+      generatedAt?: number | null;
+      version?: number | null;
+    } | null;
+  } | null;
+  repoHealth?: {
+    hasLocalRepo?: boolean;
+    hasRailYaml?: boolean;
+    hasResearchPlan?: boolean;
+  } | null;
 };
 
 export type PlannerMessage = {
