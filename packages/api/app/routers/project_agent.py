@@ -18,6 +18,7 @@ Provides a streaming chat endpoint with tools scoped to a specific project:
 import asyncio
 import json
 import time
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException
@@ -27,6 +28,8 @@ from pydantic import BaseModel
 from app.services.convex_client import convex
 from app.services import llm_service, planner_runtime
 from app.services.agent_service import PROJECT_AGENT_DATA_TOOLS, _execute_tool
+from app.services import planner_service
+from app.services.repo_contract_service import render_rail_manifest
 
 router = APIRouter(prefix="/project-agent", tags=["project-agent"])
 
@@ -429,9 +432,61 @@ PROJECT_TOOLS_MERGED: list[dict] = [*PROJECT_TOOLS, *PROJECT_AGENT_DATA_TOOLS]
 # Tool executor
 # ---------------------------------------------------------------------------
 
+async def _resolve_project_record(project_id: str) -> dict | None:
+    project = None
+    try:
+        project = await convex.query("projects:getById", {"projectId": project_id})
+    except Exception:
+        project = None
+    if not project:
+        try:
+            project = await convex.query("projects:get", {"slug": project_id})
+        except Exception:
+            project = None
+    if not project:
+        candidate_slugs = [project_id]
+        if project_id.startswith("local:"):
+            candidate_slugs.append(project_id.removeprefix("local:"))
+        for candidate in candidate_slugs:
+            try:
+                project = await planner_service.get_project_by_slug(candidate)
+                if project:
+                    break
+            except Exception:
+                project = None
+    return project if isinstance(project, dict) else None
+
+
+async def _persist_project_patch(project: dict, patch: dict) -> dict:
+    project_id = str(project.get("_id") or "")
+    if project_id.startswith("local:"):
+        project_root = planner_service.project_root_from_record(project)
+        if project_root is None:
+            raise RuntimeError("Project has no local repo path configured")
+        manifest_path = project_root / (project.get("manifestPath") or "rail.yaml")
+        existing_content = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+        updated_project = {**project, **patch}
+        manifest_path.write_text(render_rail_manifest(updated_project, existing_content), encoding="utf-8")
+        refreshed = await planner_service.get_project_by_slug(
+            str(project.get("slug") or project_id.removeprefix("local:"))
+        )
+        return refreshed
+
+    await convex.mutation("projects:updateById", {"projectId": project["_id"], **patch})
+    refreshed = await convex.query("projects:getById", {"projectId": project["_id"]})
+    return refreshed or {**project, **patch}
+
+
+async def _resolve_project_slug(project_id: str) -> str:
+    project = await _resolve_project_record(project_id)
+    if project and project.get("slug"):
+        return str(project["slug"])
+    return project_id.removeprefix("local:")
+
+
 async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:
     if name == "get_project_info":
-        project = await convex.query("projects:getById", {"projectId": project_id})
+        project = await _resolve_project_record(project_id)
         if not project:
             return {"error": "Project not found"}
         return {
@@ -458,63 +513,62 @@ async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:
         return result
 
     if name == "link_ontology":
-        await convex.mutation("projects:updateById", {
-            "projectId": project_id,
-            "ontologyConfigSlug": args["slug"],
-        })
+        project = await _resolve_project_record(project_id)
+        if not project:
+            return {"error": "Project not found"}
+        await _persist_project_patch(project, {"ontologyConfigSlug": args["slug"]})
         return {"linked": True, "ontologyConfigSlug": args["slug"]}
 
     if name == "link_pipeline":
-        await convex.mutation("projects:updateById", {
-            "projectId": project_id,
-            "pipelineConfigSlug": args["slug"],
-            "status": "ready",
-        })
+        project = await _resolve_project_record(project_id)
+        if not project:
+            return {"error": "Project not found"}
+        await _persist_project_patch(project, {"pipelineConfigSlug": args["slug"], "status": "ready"})
         return {"linked": True, "pipelineConfigSlug": args["slug"]}
 
     if name == "add_data_source":
-        project = await convex.query("projects:getById", {"projectId": project_id})
+        project = await _resolve_project_record(project_id)
         if not project:
             return {"error": "Project not found"}
         current = project.get("apiConfigSlugs", [])
         slug = args["slug"]
         if slug not in current:
-            await convex.mutation("projects:updateById", {
-                "projectId": project_id,
-                "apiConfigSlugs": [*current, slug],
-            })
+            await _persist_project_patch(project, {"apiConfigSlugs": [*current, slug]})
         return {"added": True, "slug": slug}
 
     if name == "remove_data_source":
-        project = await convex.query("projects:getById", {"projectId": project_id})
+        project = await _resolve_project_record(project_id)
         if not project:
             return {"error": "Project not found"}
         current = project.get("apiConfigSlugs", [])
         slug = args["slug"]
-        await convex.mutation("projects:updateById", {
-            "projectId": project_id,
-            "apiConfigSlugs": [s for s in current if s != slug],
-        })
+        await _persist_project_patch(project, {"apiConfigSlugs": [s for s in current if s != slug]})
         return {"removed": True, "slug": slug}
 
     if name == "run_hydration":
-        project = await convex.query("projects:getById", {"projectId": project_id})
+        project = await _resolve_project_record(project_id)
         if not project:
             return {"error": "Project not found"}
         pipeline_slug = project.get("pipelineConfigSlug")
         if not pipeline_slug:
             return {"error": "No pipeline configured for this project. Link a pipeline first."}
-        from app.routers.jobs import _trigger_job
-        from app.services.pipeline_validate import PipelineValidationFailed
+        from fastapi import BackgroundTasks
+        from app.routers.projects import HydrationRerunRequest, rerun_project_hydration
         try:
-            result = await _trigger_job(pipeline_slug, project_id)
-        except PipelineValidationFailed as e:
-            return {
-                "error": "pipeline_validation_failed",
-                "errors": e.errors,
-                "message": "Fix validation errors before running hydration.",
-            }
-        return {"jobId": result["jobId"], "status": result["status"], "message": "Hydration job started."}
+            result = await rerun_project_hydration(
+                str(project.get("slug") or project_id.removeprefix("local:")),
+                HydrationRerunRequest(pipelineSlug=pipeline_slug),
+                BackgroundTasks(),
+            )
+        except HTTPException as exc:
+            return {"error": exc.detail if isinstance(exc.detail, str) else str(exc.detail)}
+        return {
+            "jobId": result.get("jobId"),
+            "status": result.get("status"),
+            "message": "Hydration job started." if result.get("jobId") else "Hydration completed.",
+            "source": result.get("source"),
+            "artifactId": result.get("artifactId"),
+        }
 
     if name == "get_recent_jobs":
         limit = min(args.get("limit", 5), 20)
@@ -582,16 +636,12 @@ async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:
         return {"results": results}
 
     if name == "save_to_knowledge_base":
-        import time as _time
-        now = int(_time.time() * 1000)
         payload = {
             "name": args["name"],
             "type": "text",
             "content": args["content"],
-            "projectId": project_id,
-            "createdAt": now,
-            "updatedAt": now,
         }
+        payload["projectSlug"] = await _resolve_project_slug(project_id)
         try:
             doc_id = await convex.mutation("context:create", payload)
             return {"saved": True, "id": doc_id, "name": args["name"]}
@@ -676,7 +726,7 @@ async def _run_project_chat(
 async def project_chat(req: ProjectChatRequest):
     async def event_stream():
         try:
-            project = await convex.query("projects:getById", {"projectId": req.project_id})
+            project = await _resolve_project_record(req.project_id)
             if not project:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'Project not found'})}\n\n"
                 return
@@ -733,7 +783,7 @@ async def run_agent_task(req: AgentTaskRequest):
                 "startedAt": int(time.time() * 1000),
             })
 
-            project = await convex.query("projects:getById", {"projectId": req.project_id})
+            project = await _resolve_project_record(req.project_id)
             if not project:
                 raise RuntimeError("Project not found")
             result = await planner_runtime.run_planner_turn(

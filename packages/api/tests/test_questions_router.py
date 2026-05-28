@@ -78,3 +78,5 @@ async def test_save_to_knowledge_base_uses_project_slug_for_local_project(monkey
     assert captured["path"] == "context:create"
     assert captured["payload"]["projectSlug"] == "demo-project"
     assert "projectId" not in captured["payload"]
+    assert "createdAt" not in captured["payload"]
+    assert "updatedAt" not in captured["payload"]

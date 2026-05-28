@@ -296,14 +296,10 @@ async def _execute_tool(name: str, args: dict) -> dict:
         }
 
     if name == "save_to_knowledge_base":
-        import time as _time
-        now = int(_time.time() * 1000)
         payload = {
             "name": args["name"],
             "type": "text",
             "content": args["content"],
-            "createdAt": now,
-            "updatedAt": now,
         }
         pid = args.get("project_id") or project_id
         project_slug = await _resolve_project_slug(pid)
