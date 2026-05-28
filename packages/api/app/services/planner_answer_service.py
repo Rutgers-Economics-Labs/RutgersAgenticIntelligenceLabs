@@ -36,7 +36,7 @@ async def resolve_question(
     import hashlib
     question_id = hashlib.sha256(f"{session_id}:{question}".encode("utf-8")).hexdigest()
 
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await planner_service.resolve_project_reference(project_slug)
     root = planner_service.project_root_from_record(project)
     if not root:
         raise ValueError(f"Project {project_slug} has no local repo path")
