@@ -189,7 +189,11 @@ async def build_auditor_statuses(
     active_sessions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
-    reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
+    cached_reality = project.get("__controlPlaneReality")
+    if isinstance(cached_reality, dict):
+        reality = cached_reality
+    else:
+        reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
 
     session_status = {
         "status": "blocked"

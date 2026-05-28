@@ -1354,7 +1354,14 @@ async def build_command_center(project: dict) -> dict[str, Any]:
     latest_audit = read_latest_audit(root)
     recent_audits = list_recent_audits(root)
     reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
-    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
+    auditors = await build_auditor_statuses(
+        {
+            **project,
+            "__controlPlaneReality": reality,
+        },
+        tasks=tasks,
+        active_sessions=active_sessions,
+    )
     try:
         from rail.manifest import load_manifest as _load_manifest
 

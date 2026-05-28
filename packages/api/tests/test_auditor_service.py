@@ -104,6 +104,90 @@ frontend:
     assert "1 terminal session audit(s) are stale or missing." in result["closeout"]["blockers"]
 
 
+def test_build_auditor_statuses_prefers_cached_project_reality(tmp_path: Path, monkeypatch):
+    from app.services import auditor_service
+
+    project = {
+        "_id": "project-id",
+        "name": "Grid Study",
+        "slug": "grid-study",
+        "status": "ready",
+        "localRepoPath": str(tmp_path),
+        "approach": "ontology-first",
+        "__controlPlaneReality": {
+            "hasDrift": False,
+            "duplicateTaskFileCount": 0,
+            "taskSessionMismatchCount": 0,
+            "staleRuntimeSessionCount": 0,
+            "runningAgentStatusDriftCount": 0,
+            "runningAgentRoleDriftCount": 0,
+            "runningAgentRunnerDriftCount": 0,
+            "staleAuditSessionCount": 0,
+            "terminalSessionCount": 0,
+            "activeRuntimeSessionCount": 0,
+            "roleConfigAliasDriftCount": 0,
+            "details": {
+                "ontologyArtifactDrift": {"hasDrift": False},
+                "artifactRegistryDrift": {"hasDrift": False, "untrackedArtifactPaths": [], "missingArtifactPaths": []},
+            },
+        },
+    }
+    (tmp_path / ".ontology").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "rail.yaml").write_text(
+        """version: 1
+project:
+  name: Grid Study
+  slug: grid-study
+  default_branch: main
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+frontend:
+  topic_index_mode: filesystem
+  artifact_index_mode: filesystem
+""",
+        encoding="utf-8",
+    )
+
+    async def _unexpected_project_reality_status(*args, **kwargs):
+        raise AssertionError("project_reality_status should not run when cached reality is available")
+
+    async def _get_hydration_status(*, project, pipeline_slug=None, hydration_mode="full"):
+        return {"state": "hydrated_on_this_device", "reusableArtifact": {}, "currentDeviceArtifacts": []}
+
+    monkeypatch.setattr(auditor_service, "project_reality_status", _unexpected_project_reality_status)
+    monkeypatch.setattr(auditor_service, "get_hydration_status", _get_hydration_status)
+    monkeypatch.setattr(
+        auditor_service,
+        "evaluate_integrity_gate",
+        lambda root, manifest, action: {"blocked": False, "reasons": []},
+    )
+
+    result = asyncio.run(
+        auditor_service.build_auditor_statuses(
+            project,
+            tasks=[{"_id": "task-1", "status": "ready"}],
+            active_sessions=[],
+        )
+    )
+
+    assert result["session"]["status"] == "ready"
+    assert result["planner"]["status"] == "ready"
+
+
 def test_build_auditor_statuses_blocks_closeout_when_follow_up_expansion_tasks_are_missing(tmp_path: Path, monkeypatch):
     from app.services import auditor_service
 
