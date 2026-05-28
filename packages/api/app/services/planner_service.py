@@ -368,10 +368,26 @@ def _iter_local_project_records() -> list[dict[str, Any]]:
     return projects
 
 
+def _merge_repo_truth(project: dict[str, Any]) -> dict[str, Any]:
+    slug = str(project.get("slug") or "").strip()
+    if not slug:
+        return project
+    local_project = _local_project_record_from_repo(slug)
+    if not local_project:
+        return project
+    # Preserve runtime/backend identity from the existing project record while
+    # letting repo-backed manifest fields win for durable configuration truth.
+    merged = dict(project)
+    merged.update(local_project)
+    if project.get("_id"):
+        merged["_id"] = project["_id"]
+    return merged
+
+
 async def get_project_by_slug(slug: str) -> dict:
     project = await convex.query("projects:getBySlug", {"slug": slug})
     if project:
-        return project
+        return _merge_repo_truth(project)
     local_project = _local_project_record_from_repo(slug)
     if local_project:
         return local_project
@@ -381,7 +397,7 @@ async def get_project_by_slug(slug: str) -> dict:
 async def get_project_by_github_repo(repo: str) -> dict:
     project = await convex.query("projects:getByGithubRepo", {"github": repo})
     if project:
-        return project
+        return _merge_repo_truth(project)
     normalized_repo = str(repo or "").strip().lower()
     for project in _iter_local_project_records():
         if str(project.get("github") or "").strip().lower() == normalized_repo:

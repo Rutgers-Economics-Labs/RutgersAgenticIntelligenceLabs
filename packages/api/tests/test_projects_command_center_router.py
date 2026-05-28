@@ -579,17 +579,15 @@ project:
     assert created_payloads[0]["localRepoPath"] == str(local_project)
     assert "gitRepoUrl" not in created_payloads[0]
     assert "defaultBranch" not in created_payloads[0]
-    assert reconcile_projects == [
-        {
-            "_id": "project-1",
-            "name": "Demo Project",
-            "slug": "demo-project",
-            "description": "Repo-only local project",
-            "localRepoPath": str(local_project),
-            "manifestPath": "rail.yaml",
-            "defaultBranch": "main",
-        }
-    ]
+    assert len(reconcile_projects) == 1
+    reconciled = reconcile_projects[0]
+    assert reconciled["_id"] == "project-1"
+    assert reconciled["slug"] == "demo-project"
+    assert reconciled["name"] == "Demo Project"
+    assert reconciled["description"] == "Repo-only local project"
+    assert reconciled["localRepoPath"] == str(local_project)
+    assert reconciled["manifestPath"] == "rail.yaml"
+    assert reconciled["defaultBranch"] == "main"
     assert catalog_projects[0]["_id"] == "project-1"
 
 
