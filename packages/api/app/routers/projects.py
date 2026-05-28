@@ -889,6 +889,16 @@ async def _known_project(slug: str) -> dict | None:
     return await convex.query("projects:getBySlug", {"slug": slug})
 
 
+async def _catalog_project_by_slug(slug: str) -> dict | None:
+    project = await _known_project(slug)
+    if project:
+        return project
+    for candidate in _local_catalog_projects():
+        if candidate.get("slug") == slug:
+            return candidate
+    return None
+
+
 def _manifest_metadata(root: Path, fallback: dict) -> dict:
     manifest_path = root / "rail.yaml"
     if not manifest_path.exists():
@@ -912,12 +922,13 @@ async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
     metadata = _manifest_metadata(root, defn)
     slug = metadata.get("slug") or defn["slug"]
     existing = await convex.query("projects:getBySlug", {"slug": slug})
+    git_repo_url = defn.get("gitRepoUrl") or defn.get("repoUrl")
     payload = {
         "name": metadata.get("name") or defn["name"],
         "slug": slug,
         "description": metadata.get("description") or defn["description"],
         "approach": "ontology-first",
-        "gitRepoUrl": defn["repoUrl"],
+        "gitRepoUrl": git_repo_url,
         "localRepoPath": str(root),
         "manifestPath": "rail.yaml",
         "defaultBranch": metadata.get("defaultBranch") or "main",
@@ -1334,17 +1345,17 @@ async def list_projects_catalog():
 
 @router.post("/catalog/{slug}/activate")
 async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest):
-    project = await _known_project(slug)
-    if not project:
+    defn = await _catalog_project_by_slug(slug)
+    if not defn:
         raise HTTPException(404, f"Unknown catalog project '{slug}'")
 
-    repo_path = project.get("localRepoPath")
+    repo_path = defn.get("localRepoPath")
     if data.targetDir:
         root = Path(data.targetDir).expanduser().resolve()
     elif repo_path:
         root = Path(repo_path).expanduser().resolve()
     else:
-        root = _projects_base_dir() / project["slug"]
+        root = _projects_base_dir() / defn["slug"]
     if root.exists() and not root.is_dir():
         raise HTTPException(409, f"Target exists but is not a directory: {root}")
     if not root.exists():
@@ -1361,7 +1372,9 @@ async def activate_catalog_project(slug: str, data: CatalogProjectActionRequest)
                 },
             }
         root.parent.mkdir(parents=True, exist_ok=True)
-        clone_url = defn["repoUrl"]
+        clone_url = defn.get("gitRepoUrl") or defn.get("repoUrl")
+        if not clone_url:
+            raise HTTPException(409, f"Catalog project '{slug}' has no repo URL to clone")
         github_repo = infer_github_repo(clone_url)
         if github_repo:
             token = await GitHubService().get_installation_token(github_repo)

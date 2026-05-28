@@ -171,6 +171,64 @@ hydration:
     assert item["controlPlane"]["snapshotLoaded"] is False
 
 
+def test_activate_catalog_project_accepts_local_repo_only_project(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    local_project = tmp_path / "generated_projects" / "demo-project"
+    local_project.mkdir(parents=True, exist_ok=True)
+    (local_project / "rail.yaml").write_text(
+        """
+project:
+  name: Demo Project
+  slug: demo-project
+  description: Repo-only local project
+  default_branch: main
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    created_payloads: list[dict] = []
+
+    async def _query(path: str, payload: dict):
+        if path == "projects:getBySlug":
+            return None
+        if path == "projects:getById":
+            return {
+                "_id": payload["projectId"],
+                "name": "Demo Project",
+                "slug": "demo-project",
+                "description": "Repo-only local project",
+                "localRepoPath": str(local_project),
+                "manifestPath": "rail.yaml",
+                "defaultBranch": "main",
+            }
+        raise AssertionError(f"unexpected query: {path}")
+
+    async def _mutation(path: str, payload: dict):
+        assert path == "projects:create"
+        created_payloads.append(payload)
+        return "project-1"
+
+    async def _catalog_row(project: dict):
+        return {"slug": project["slug"], "localExists": True}
+
+    monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(projects_router.convex, "query", _query)
+    monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
+    monkeypatch.setattr(projects_router, "_catalog_row", _catalog_row)
+    monkeypatch.setattr(projects_router, "ensure_project_boot", lambda root: {"ok": True})
+
+    response = client.post("/api/v1/projects/catalog/demo-project/activate", json={})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ready"
+    assert payload["project"]["_id"] == "project-1"
+    assert payload["catalogProject"]["slug"] == "demo-project"
+    assert created_payloads[0]["localRepoPath"] == str(local_project)
+
+
 def test_create_ontology_follow_up_task_endpoint_creates_expansion_task(monkeypatch):
     import app.routers.projects as projects_router
 
