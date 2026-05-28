@@ -2,11 +2,11 @@ import asyncio
 import time
 import platform
 from typing import Union
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from pydantic import BaseModel
 
 from app.services.convex_client import convex
-from app.services import hydration_worker
+from app.services import hydration_worker, planner_service
 from app.services.execution_manager import execution_manager
 from app.services.pipeline_validate import ensure_pipeline_ready, PipelineValidationFailed
 
@@ -25,6 +25,55 @@ class TriggerJobRequest(BaseModel):
     pipeline_slug: str
     project_id: str | None = None
     env_overrides: dict[str, str] = {}
+
+
+async def _resolve_job_project(project_ref: str | None) -> dict | None:
+    if not project_ref:
+        return None
+
+    project = None
+    candidate_slugs = [project_ref]
+    if isinstance(project_ref, str) and project_ref.startswith("local:"):
+        candidate_slugs.append(project_ref.removeprefix("local:"))
+
+    for candidate in candidate_slugs:
+        try:
+            project = await planner_service.get_project_by_slug(candidate)
+            if project:
+                break
+        except Exception:
+            project = None
+
+    if not project and not str(project_ref).startswith("local:"):
+        try:
+            project = await convex.query("projects:getById", {"projectId": project_ref})
+        except Exception:
+            project = None
+
+    return project if isinstance(project, dict) else None
+
+
+async def _job_project_fields(project_ref: str | None) -> dict[str, str]:
+    project = await _resolve_job_project(project_ref)
+    fields: dict[str, str] = {}
+    if isinstance(project, dict):
+        slug = str(project.get("slug") or "").strip()
+        project_id = str(project.get("_id") or "").strip()
+        if slug:
+            fields["projectSlug"] = slug
+        elif project_ref:
+            fallback_slug = str(project_ref).removeprefix("local:").strip()
+            if fallback_slug:
+                fields["projectSlug"] = fallback_slug
+        if project_id:
+            fields["projectId"] = project_id
+        return fields
+
+    if project_ref:
+        fallback_slug = str(project_ref).removeprefix("local:").strip()
+        if fallback_slug:
+            fields["projectSlug"] = fallback_slug
+    return fields
 
 
 async def _trigger_job(pipeline_slug: str, project_id: str | None = None) -> dict:
@@ -62,8 +111,7 @@ async def _trigger_job(pipeline_slug: str, project_id: str | None = None) -> dic
         "stepResults": [],
         "machine": platform.node(),
     }
-    if project_id:
-        mutation_args["projectSlug"] = project_id
+    mutation_args.update(await _job_project_fields(project_id))
 
     result = await convex.mutation("jobs:create", mutation_args)
     job_id = _job_id_from_mutation_result(result)
@@ -142,16 +190,17 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
             onto_configs[onto_ref] = onto_path.read_text()
 
     # 4. Trigger Job record
-    result = await convex.mutation("jobs:create", {
+    mutation_args = {
         "pipelineConfigId": pipeline["_id"],
         "pipelineSlug": req.pipeline_slug,
-        "projectSlug": req.project_id,
         "status": "queued",
         "triggeredBy": "api",
         "createdAt": int(time.time() * 1000),
         "stepResults": [],
         "machine": platform.node(),
-    })
+    }
+    mutation_args.update(await _job_project_fields(req.project_id))
+    result = await convex.mutation("jobs:create", mutation_args)
     job_id = _job_id_from_mutation_result(result)
     if not job_id:
         raise HTTPException(
@@ -175,14 +224,18 @@ async def trigger_job(req: TriggerJobRequest, background_tasks: BackgroundTasks)
 
 @router.get("")
 async def list_jobs(
-    project_id: Union[str, None] = None, 
+    project_id: Union[str, None] = Query(None, alias="projectId"),
+    project_slug: Union[str, None] = Query(None, alias="projectSlug"),
     status: Union[str, None] = None, 
     limit: int = 50
 ):
     """List jobs, optionally filtered by project or status."""
-    if project_id:
+    project_ref = project_slug or project_id
+    if project_ref:
         # The Convex query expects 'projectSlug'
-        return await convex.query("jobs:listByProject", {"projectSlug": project_id, "limit": limit})
+        fields = await _job_project_fields(project_ref)
+        resolved_slug = fields.get("projectSlug") or str(project_ref).removeprefix("local:").strip()
+        return await convex.query("jobs:listByProject", {"projectSlug": resolved_slug, "limit": limit})
     
     return await convex.query("jobs:list", {"status": status, "limit": limit})
 
