@@ -631,11 +631,12 @@ project:
     async def _reconcile_project_reality(project: dict):
         return {"persistedControlPlaneSnapshot": {"loaded": True}, "hasChanges": False}
 
-    async def _get_project_by_slug(slug: str):
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "project-1",
             "name": "Demo Project",
-            "slug": slug,
+            "slug": "demo-project",
             "description": "Repo-only local project",
             "localRepoPath": str(local_project),
             "manifestPath": "rail.yaml",
@@ -647,7 +648,7 @@ project:
     monkeypatch.setattr(projects_router, "_catalog_row", _catalog_row)
     monkeypatch.setattr(projects_router, "ensure_project_boot", lambda root: {"ok": True})
     monkeypatch.setattr(projects_router.reconciliation_service, "reconcile_project_reality", _reconcile_project_reality)
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     response = client.post("/api/v1/projects/catalog/demo-project/activate", json={})
 

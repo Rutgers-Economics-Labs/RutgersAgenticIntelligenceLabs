@@ -940,7 +940,10 @@ def _manifest_metadata(root: Path, fallback: dict) -> dict:
 async def _upsert_known_project_record(defn: dict, root: Path) -> dict:
     metadata = _manifest_metadata(root, defn)
     slug = metadata.get("slug") or defn["slug"]
-    existing = await convex.query("projects:getBySlug", {"slug": slug})
+    existing = await planner_service.resolve_project_reference(slug)
+    existing_id = str((existing or {}).get("_id") or "")
+    if existing_id.startswith("local:"):
+        existing = None
     git_repo_url = defn.get("gitRepoUrl") or defn.get("repoUrl")
     payload = {
         "name": metadata.get("name") or defn["name"],
