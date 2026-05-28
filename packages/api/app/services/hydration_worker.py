@@ -77,7 +77,7 @@ async def _resolve_project_from_job_doc(job_doc: dict | None) -> tuple[str | Non
     resolved_via_slug = False
     if not project_doc and project_slug:
         try:
-            project_doc = await planner_service.get_project_by_slug(project_slug)
+            project_doc = await planner_service.resolve_project_reference(project_slug)
             resolved_via_slug = project_doc is not None
         except Exception:
             project_doc = None

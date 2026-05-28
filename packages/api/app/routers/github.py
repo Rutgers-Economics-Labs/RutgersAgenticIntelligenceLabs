@@ -20,7 +20,7 @@ router = APIRouter(prefix="/github", tags=["github"])
 async def _resolve_project_by_slug(slug: str) -> dict | None:
     project = None
     try:
-        project = await planner_service.get_project_by_slug(slug)
+        project = await planner_service.resolve_project_reference(slug)
     except Exception:
         project = None
     if not project:
@@ -53,12 +53,12 @@ async def _persist_github_project_patch(project: dict, patch: dict) -> dict:
         existing_content = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
         updated_project = {**project, **patch}
         manifest_path.write_text(render_rail_manifest(updated_project, existing_content), encoding="utf-8")
-        refreshed = await planner_service.get_project_by_slug(str(project.get("slug") or ""))
+        refreshed = await planner_service.resolve_project_reference(str(project.get("slug") or ""))
         return refreshed
 
     await convex.mutation("projects:update", {"slug": project["slug"], **patch})
     try:
-        refreshed = await planner_service.get_project_by_slug(str(project.get("slug") or ""))
+        refreshed = await planner_service.resolve_project_reference(str(project.get("slug") or ""))
     except Exception:
         refreshed = None
     if isinstance(refreshed, dict):

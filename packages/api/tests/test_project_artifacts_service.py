@@ -25,15 +25,16 @@ async def test_resolve_uses_repo_first_local_artifacts_when_convex_project_missi
         convex_called = True
         raise AssertionError((path, payload))
 
-    async def _get_project_by_slug(slug: str):
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "local:demo-project",
-            "slug": slug,
+            "slug": "demo-project",
             "localRepoPath": str(project_root),
         }
 
     monkeypatch.setattr(project_artifacts_service.convex, "query", _query)
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.services.planner_service.resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(project_artifacts_service.ontology_service, "ensure_loaded_async", pytest.fail)
     monkeypatch.setattr(project_artifacts_service.ontology_service, "export_to_duckdb", pytest.fail)
 
@@ -65,26 +66,26 @@ async def test_resolve_accepts_local_prefixed_project_id_for_repo_only_projects(
         convex_called = True
         raise AssertionError((path, payload))
 
-    seen_slugs: list[str] = []
+    seen_refs: list[str | None] = []
 
-    async def _get_project_by_slug(slug: str):
-        seen_slugs.append(slug)
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        seen_refs.append(project_ref)
+        if project_ref != "local:demo-project":
+            raise ValueError(project_ref)
         return {
             "_id": "local:demo-project",
-            "slug": slug,
+            "slug": "demo-project",
             "localRepoPath": str(project_root),
         }
 
     monkeypatch.setattr(project_artifacts_service.convex, "query", _query)
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.services.planner_service.resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(project_artifacts_service.ontology_service, "ensure_loaded_async", pytest.fail)
     monkeypatch.setattr(project_artifacts_service.ontology_service, "export_to_duckdb", pytest.fail)
 
     artifacts = await project_artifacts_service.resolve("local:demo-project")
 
-    assert seen_slugs == ["local:demo-project", "demo-project"]
+    assert seen_refs == ["local:demo-project"]
     assert artifacts.project_id == "local:demo-project"
     assert artifacts.db_path == str(onto_db.resolve())
     assert artifacts.duckdb_path == str(onto_duckdb.resolve())

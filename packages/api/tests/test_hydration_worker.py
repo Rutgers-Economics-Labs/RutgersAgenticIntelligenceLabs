@@ -14,15 +14,15 @@ async def test_resolve_project_from_job_doc_prefers_convex_project_id(monkeypatc
         assert payload == {"projectId": "project-123"}
         return {"_id": "project-123", "slug": "demo-project"}
 
-    get_by_slug_called = False
+    resolve_ref_called = False
 
-    async def _get_project_by_slug(slug: str):
-        nonlocal get_by_slug_called
-        get_by_slug_called = True
-        raise AssertionError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        nonlocal resolve_ref_called
+        resolve_ref_called = True
+        raise AssertionError(project_ref)
 
     monkeypatch.setattr(hydration_worker.convex, "query", _query)
-    monkeypatch.setattr(hydration_worker.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(hydration_worker.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     project_id, project = await hydration_worker._resolve_project_from_job_doc(
         {"projectId": "project-123", "projectSlug": "demo-project"}
@@ -30,7 +30,7 @@ async def test_resolve_project_from_job_doc_prefers_convex_project_id(monkeypatc
 
     assert project_id == "project-123"
     assert project == {"_id": "project-123", "slug": "demo-project"}
-    assert get_by_slug_called is False
+    assert resolve_ref_called is False
 
 
 async def test_resolve_project_from_job_doc_falls_back_to_repo_first_slug(monkeypatch):
@@ -40,8 +40,8 @@ async def test_resolve_project_from_job_doc_falls_back_to_repo_first_slug(monkey
         assert path == "projects:getById"
         return None
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "local:demo-project",
             "slug": "demo-project",
@@ -49,7 +49,7 @@ async def test_resolve_project_from_job_doc_falls_back_to_repo_first_slug(monkey
         }
 
     monkeypatch.setattr(hydration_worker.convex, "query", _query)
-    monkeypatch.setattr(hydration_worker.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(hydration_worker.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     project_id, project = await hydration_worker._resolve_project_from_job_doc(
         {"projectId": "project-123", "projectSlug": "demo-project"}
@@ -70,12 +70,12 @@ async def test_resolve_project_from_job_doc_handles_slug_only_repo_project(monke
         convex_called = True
         raise AssertionError((path, payload))
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {"_id": "local:demo-project", "slug": "demo-project"}
 
     monkeypatch.setattr(hydration_worker.convex, "query", _query)
-    monkeypatch.setattr(hydration_worker.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(hydration_worker.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     project_id, project = await hydration_worker._resolve_project_from_job_doc(
         {"projectSlug": "demo-project"}

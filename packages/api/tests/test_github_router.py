@@ -132,9 +132,9 @@ async def test_github_status_uses_repo_first_local_project(client, convex_mock, 
             return httpx.Response(200, json={"value": None})
         return httpx.Response(200, json={"value": None})
 
-    async def _get_project_by_slug(slug: str):
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref != "demo-project":
+            raise ValueError(project_ref)
         return {
             "_id": "local:demo-project",
             "slug": "demo-project",
@@ -145,7 +145,7 @@ async def test_github_status_uses_repo_first_local_project(client, convex_mock, 
         }
 
     convex_mock.post("/api/query").mock(side_effect=_query)
-    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", _resolve_project_reference)
 
     resp = await client.get("/api/v1/github/status/demo-project")
 
@@ -172,13 +172,13 @@ async def test_link_github_persists_repo_only_manifest(client, convex_mock, monk
             return httpx.Response(200, json={"value": None})
         return httpx.Response(200, json={"value": None})
 
-    async def _get_project_by_slug(slug: str):
-        if slug != "demo-project":
-            raise ValueError(slug)
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref != "demo-project":
+            raise ValueError(project_ref)
         return project
 
     convex_mock.post("/api/query").mock(side_effect=_query)
-    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(github_router.planner_service, "project_root_from_record", lambda record: Path(record["localRepoPath"]))
     monkeypatch.setattr(github_router.github_service, "get_installation_token", AsyncMock(return_value="token"))
 
@@ -216,7 +216,7 @@ async def test_persist_github_project_patch_prefers_repo_first_refresh(monkeypat
 
     monkeypatch.setattr(github_router.convex, "mutation", mutation)
     monkeypatch.setattr(github_router.convex, "query", convex_query)
-    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", repo_first_refresh)
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", repo_first_refresh)
 
     refreshed = await github_router._persist_github_project_patch(project, {"defaultBranch": "main"})
 
