@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { fetchProjectIntegrity } from "@/lib/api";
+import { fetchPlannerHome, fetchProjectIntegrity } from "@/lib/api";
 import { InlineStatus } from "@/components/command-center";
 import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
+import { PageIntro } from "@/components/page-intro";
 import { StatusPill } from "@/components/status-pill";
 import { IntegrityAssumptionsPanel } from "@/components/integrity-assumptions-panel";
 import { HypothesesPanel } from "@/components/hypotheses-panel";
@@ -26,7 +27,46 @@ export default async function IntegrityPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { indexes, summary, staleOutputs, agentWorkflow, hypothesisRanking = [] } = await fetchProjectIntegrity(slug);
+  const home = await fetchPlannerHome(slug);
+  const integrityResult = await fetchProjectIntegrity(slug)
+    .then((value) => ({ ok: true as const, value }))
+    .catch(() => ({ ok: false as const }));
+  const fallbackIntegritySummary = home.controlPlane?.integritySummary;
+  const fallbackSourceSummary = home.controlPlane?.sourceSummary;
+  const indexes = integrityResult.ok
+    ? integrityResult.value.indexes
+    : {
+        assumptions: [],
+        sources: [],
+        claims: [],
+        hypotheses: [],
+        artifact_lineage: [],
+        verification_runs: [],
+      };
+  const summary = integrityResult.ok
+    ? integrityResult.value.summary
+    : {
+        assumptionCount: 0,
+        sourceCount: Number(fallbackSourceSummary?.count ?? 0),
+        claimCount: 0,
+        artifactCount: Number(home.controlPlane?.recentArtifacts?.length ?? 0),
+        verificationRunCount: 0,
+        staleArtifactCount: Number(fallbackIntegritySummary?.staleArtifactCount ?? 0),
+        sourceFreshnessCounts: fallbackIntegritySummary?.sourceFreshnessCounts ?? fallbackSourceSummary?.freshnessCounts ?? {},
+        verificationStatusCounts: {},
+        promotionStateCounts: {},
+      };
+  const staleOutputs = integrityResult.ok ? integrityResult.value.staleOutputs : [];
+  const agentWorkflow = integrityResult.ok
+    ? integrityResult.value.agentWorkflow
+    : (fallbackIntegritySummary?.agentWorkflow ?? {
+        research: { status: "ready", requirements: [] },
+        data: { status: "ready", requirements: [] },
+        coding: { status: "ready", requirements: [] },
+        artifact: { status: "ready", requirements: [] },
+        health: { status: "ready", requirements: [] },
+      });
+  const hypothesisRanking = integrityResult.ok ? (integrityResult.value.hypothesisRanking ?? []) : [];
   const { sourceRows, artifactRows, workflowSections } = buildIntegrityPageModel({ indexes, summary, staleOutputs, agentWorkflow });
   const rankingById = Object.fromEntries(
     hypothesisRanking.map((item) => [item.id, item.computedScore] as const),
@@ -64,6 +104,21 @@ export default async function IntegrityPage({
 
   return (
     <ProjectShell slug={slug} title="Integrity" section="integrity" rightRail={rightRail}>
+      <PageIntro
+        title="Trace claims, assumptions, and outputs back to evidence."
+        detail="Integrity is the trust page. Come here when you need to check whether claims are supported, artifacts are promotable, or workflow blockers are caused by missing provenance or verification."
+        actions={[
+          { label: "Open Review", href: `/projects/${slug}/review` },
+          { label: "Open Artifacts", href: `/projects/${slug}/artifacts` },
+        ]}
+      />
+      {!integrityResult.ok && (
+        <SectionCard eyebrow="Snapshot Fallback">
+          <div className="overview-copy" style={{ marginTop: 0 }}>
+            Detailed integrity indexes are temporarily unavailable. This page is falling back to the repo-backed planner snapshot for workflow and trust summaries while the deeper integrity route recovers.
+          </div>
+        </SectionCard>
+      )}
       <SectionCard eyebrow="Assumptions" noPad>
         <div id="assumptions" className="integrity-section">
           <IntegrityAssumptionsPanel
