@@ -1,6 +1,7 @@
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from pathlib import Path
 
 import httpx
 import pytest
@@ -112,3 +113,74 @@ async def test_sync_repo_changes_skips_binary_watched_paths():
     assert ".ontology/onto.duckdb" not in requested_paths
     assert ".ontology/sources/census_states.yaml" in requested_paths
     assert "rail.yaml" in requested_paths
+
+
+async def test_github_status_uses_repo_first_local_project(client, convex_mock, monkeypatch):
+    from app.routers import github as github_router
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in {"projects:getBySlug", "projects:get"}:
+            return httpx.Response(200, json={"value": None})
+        return httpx.Response(200, json={"value": None})
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {
+            "_id": "local:demo-project",
+            "slug": "demo-project",
+            "github": "Rutgers-Economics-Labs/demo-project",
+            "defaultBranch": "main",
+            "githubSyncMode": "manual",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    resp = await client.get("/api/v1/github/status/demo-project")
+
+    assert resp.status_code == 200
+    assert resp.json()["github"] == "Rutgers-Economics-Labs/demo-project"
+
+
+async def test_link_github_persists_repo_only_manifest(client, convex_mock, monkeypatch, tmp_path):
+    from app.routers import github as github_router
+    from rail.bootstrap import bootstrap_future_project
+    from rail.manifest import load_manifest
+
+    root = bootstrap_future_project(tmp_path, name="Demo Project", slug="demo-project")
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "name": "Demo Project",
+        "localRepoPath": str(root),
+    }
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in {"projects:getBySlug", "projects:get"}:
+            return httpx.Response(200, json={"value": None})
+        return httpx.Response(200, json={"value": None})
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return project
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(github_router.planner_service, "project_root_from_record", lambda record: Path(record["localRepoPath"]))
+    monkeypatch.setattr(github_router.github_service, "get_installation_token", AsyncMock(return_value="token"))
+
+    resp = await client.post(
+        "/api/v1/github/link",
+        json={"project_slug": "demo-project", "github_repo": "Rutgers-Economics-Labs/demo-project"},
+    )
+
+    manifest = load_manifest(root)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"linked": True, "repo": "Rutgers-Economics-Labs/demo-project"}
+    assert manifest.project.git_repo_url == "https://github.com/Rutgers-Economics-Labs/demo-project"
