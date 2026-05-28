@@ -20,17 +20,17 @@ router = APIRouter(prefix="/github", tags=["github"])
 async def _resolve_project_by_slug(slug: str) -> dict | None:
     project = None
     try:
-        project = await convex.query("projects:getBySlug", {"slug": slug})
+        project = await planner_service.get_project_by_slug(slug)
     except Exception:
         project = None
     if not project:
         try:
-            project = await convex.query("projects:get", {"slug": slug})
+            project = await convex.query("projects:getBySlug", {"slug": slug})
         except Exception:
             project = None
     if not project:
         try:
-            project = await planner_service.get_project_by_slug(slug)
+            project = await convex.query("projects:get", {"slug": slug})
         except Exception:
             project = None
     return project if isinstance(project, dict) else None
@@ -57,6 +57,12 @@ async def _persist_github_project_patch(project: dict, patch: dict) -> dict:
         return refreshed
 
     await convex.mutation("projects:update", {"slug": project["slug"], **patch})
+    try:
+        refreshed = await planner_service.get_project_by_slug(str(project.get("slug") or ""))
+    except Exception:
+        refreshed = None
+    if isinstance(refreshed, dict):
+        return refreshed
     refreshed = await convex.query("projects:get", {"slug": project["slug"]})
     return refreshed or {**project, **patch}
 

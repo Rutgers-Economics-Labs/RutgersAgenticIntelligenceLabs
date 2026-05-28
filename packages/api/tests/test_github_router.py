@@ -194,6 +194,37 @@ async def test_link_github_persists_repo_only_manifest(client, convex_mock, monk
     assert manifest.project.git_repo_url == "https://github.com/Rutgers-Economics-Labs/demo-project"
 
 
+async def test_persist_github_project_patch_prefers_repo_first_refresh(monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "project-1",
+        "slug": "demo-project",
+        "github": "Rutgers-Economics-Labs/demo-project",
+    }
+
+    mutation = AsyncMock(return_value={"ok": True})
+    convex_query = AsyncMock(side_effect=AssertionError("convex refresh should not be needed"))
+    repo_first_refresh = AsyncMock(
+        return_value={
+            "_id": "project-1",
+            "slug": "demo-project",
+            "github": "Rutgers-Economics-Labs/demo-project",
+            "defaultBranch": "main",
+        }
+    )
+
+    monkeypatch.setattr(github_router.convex, "mutation", mutation)
+    monkeypatch.setattr(github_router.convex, "query", convex_query)
+    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", repo_first_refresh)
+
+    refreshed = await github_router._persist_github_project_patch(project, {"defaultBranch": "main"})
+
+    mutation.assert_awaited_once_with("projects:update", {"slug": "demo-project", "defaultBranch": "main"})
+    repo_first_refresh.assert_awaited_once_with("demo-project")
+    assert refreshed["defaultBranch"] == "main"
+
+
 async def test_github_sync_uses_repo_first_local_project_link(client, monkeypatch):
     from app.routers import github as github_router
 
