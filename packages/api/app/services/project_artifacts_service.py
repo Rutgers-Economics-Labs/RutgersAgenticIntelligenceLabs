@@ -100,6 +100,29 @@ def _quadstore_fallback_paths(db_key: str | None) -> list[str]:
     return [str(parent / "onto.db")]
 
 
+def _populate_local_active_artifact_paths(project: dict) -> dict:
+    root_value = project.get("localRepoPath")
+    if not root_value:
+        return project
+    root = Path(root_value).resolve()
+    ontology_root = root / ".ontology"
+    db_path = ontology_root / "onto.db"
+    duckdb_path = ontology_root / "onto.duckdb"
+    owl_path = ontology_root / "populated_ontology.owl"
+    embeddings_path = ontology_root / "embeddings.db"
+
+    enriched = dict(project)
+    if db_path.exists() and not enriched.get("activeOntologyDbPath"):
+        enriched["activeOntologyDbPath"] = str(db_path)
+    if duckdb_path.exists() and not enriched.get("activeOntologyDuckdbPath"):
+        enriched["activeOntologyDuckdbPath"] = str(duckdb_path)
+    if owl_path.exists() and not enriched.get("activeOntologyOwlPath"):
+        enriched["activeOntologyOwlPath"] = str(owl_path)
+    if embeddings_path.exists() and not enriched.get("activeOntologyEmbeddingsPath"):
+        enriched["activeOntologyEmbeddingsPath"] = str(embeddings_path)
+    return enriched
+
+
 async def _resolve_active_db_key(project: dict, db_key: str | None) -> str | None:
     if db_key and _is_valid_quadstore_path(db_key):
         return db_key
@@ -172,16 +195,48 @@ async def find_latest_success_job_with_outputs(project: dict) -> dict | None:
     return None
 
 
+_resolution_cache: dict[str, tuple[float, ProjectArtifacts | Exception]] = {}
+CACHE_TTL = 5.0  # 5 seconds is plenty to coalesce concurrent page load requests
+
 async def resolve(project_id: str) -> ProjectArtifacts:
+    import time
+    now = time.time()
+    if project_id in _resolution_cache:
+        ts, val = _resolution_cache[project_id]
+        if now - ts < CACHE_TTL:
+            if isinstance(val, Exception):
+                raise val
+            return val
+    try:
+        res = await _resolve_impl(project_id)
+        _resolution_cache[project_id] = (now, res)
+        return res
+    except Exception as e:
+        # Cache the exception too so concurrent failing requests fail immediately
+        _resolution_cache[project_id] = (now, e)
+        raise e
+
+
+async def _resolve_impl(project_id: str) -> ProjectArtifacts:
     # 1. Try resolving by Internal ID first
     project = await convex.query("projects:getById", {"projectId": project_id})
     
     # 2. If not found, try resolving by Slug
     if not project:
         project = await convex.query("projects:get", {"slug": project_id})
-        
+
+    if not project:
+        from app.services import planner_service
+
+        try:
+            project = await planner_service.get_project_by_slug(project_id)
+        except Exception:
+            project = None
+
     if not project:
         raise RuntimeError(f"Project '{project_id}' not found (tried ID and Slug)")
+
+    project = _populate_local_active_artifact_paths(project)
 
     db_key = project.get("activeOntologyDbPath")
     owl_key = project.get("activeOntologyOwlPath")
@@ -248,4 +303,3 @@ async def resolve(project_id: str) -> ProjectArtifacts:
         duckdb_path=duckdb_path,
         embeddings_path=embeddings_path,
     )
-
