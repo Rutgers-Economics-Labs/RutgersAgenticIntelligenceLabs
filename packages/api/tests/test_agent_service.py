@@ -54,8 +54,8 @@ async def test_build_context_snapshot_uses_repo_first_project_and_artifacts(monk
     duckdb_path = ontology_root / "onto.duckdb"
     duckdb_path.write_bytes(b"duck")
 
-    async def _get_project_by_slug(slug: str):
-        assert slug == "demo-project"
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
         return {
             "_id": "local:demo-project",
             "slug": "demo-project",
@@ -74,7 +74,7 @@ async def test_build_context_snapshot_uses_repo_first_project_and_artifacts(monk
             embeddings_path=str(ontology_root / "embeddings.db"),
         )
 
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.services.planner_service.resolve_project_reference", _resolve_project_reference)
     monkeypatch.setattr(project_artifacts_service, "resolve", _resolve)
     monkeypatch.setattr(sql_service, "get_schema_ddl", lambda duckdb_path=None: "CREATE TABLE demo();")
     monkeypatch.setattr(sql_service, "list_tables", lambda duckdb_path=None: ["demo"])

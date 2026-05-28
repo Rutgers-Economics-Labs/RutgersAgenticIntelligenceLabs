@@ -305,7 +305,7 @@ async def _build_context_snapshot(project_slug: str) -> dict:
     from app.services import sql_service
 
     try:
-        project = await planner_service.get_project_by_slug(project_slug)
+        project = await planner_service.resolve_project_reference(project_slug)
     except Exception:
         project = None
     if not project:
