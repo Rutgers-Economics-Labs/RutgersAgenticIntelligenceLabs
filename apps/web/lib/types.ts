@@ -504,7 +504,7 @@ export type PlannerHome = {
 export type PlannerControlPlaneSnapshot = {
   board: PlannerBoard;
   autopilot: AutopilotStatus;
-  goal: GoalBundle | null;
+  goal: CommandCenter["goal"] | null;
   phase?: string | null;
   nextAction?: string | null;
   currentBlocker?: string | null;

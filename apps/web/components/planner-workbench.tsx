@@ -1,24 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { ApprovalPanel } from "@/components/approval-panel";
 import { GoalModePanel } from "@/components/goal-mode-panel";
+import { PageIntro } from "@/components/page-intro";
 import { ProjectShell } from "@/components/project-shell";
 import { StatusPill } from "@/components/status-pill";
 import { TaskBoard } from "@/components/task-board";
 import {
-  fetchProjectGoal,
   createPlannerTask,
-  fetchAutopilotStatus,
-  fetchPlannerBoard,
-  toggleProjectAutopilot,
   updatePlannerTask,
-  fetchPendingDispatches,
   approvePendingDispatch,
   rejectPendingDispatch,
+  toggleProjectAutopilot,
 } from "@/lib/api";
-import { AutopilotStatus, GoalBundle, PlannerApproval, PlannerBoard, PlannerTask, PlannerTaskDraft } from "@/lib/types";
+import { PlannerApproval, PlannerBoard, PlannerHome, PlannerTask, PlannerTaskDraft, type PendingDispatch } from "@/lib/types";
 import { PlannerDecisionFeed } from "./planner-decision-feed";
+import { useProjectControlPlane } from "./use-project-control-plane";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
 
@@ -187,6 +186,82 @@ function computeDiagnostics(board: PlannerBoard | null) {
   }
 
   return diagnostics;
+}
+
+function summarizeBoard(board: PlannerBoard | null) {
+  const tasks = board?.tasks ?? [];
+  const counts = tasks.reduce<Record<string, number>>((acc, task) => {
+    const key = task.status || "unknown";
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {});
+  return {
+    running: counts.running ?? 0,
+    waiting: counts.awaiting_approval ?? 0,
+    ready: counts.ready ?? 0,
+    blocked: counts.blocked ?? 0,
+    review: counts.review ?? 0,
+    done: counts.done ?? 0,
+  };
+}
+
+function CompactMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string | number;
+  detail?: string;
+}) {
+  return (
+    <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 14, padding: "12px 14px" }}>
+      <div className="rail-label">{label}</div>
+      <div style={{ marginTop: 8, fontSize: 24, fontWeight: 700, color: "var(--fg)" }}>{value}</div>
+      {detail ? <div className="mono-muted" style={{ marginTop: 4 }}>{detail}</div> : null}
+    </div>
+  );
+}
+
+function CollapsiblePanel({
+  label,
+  title,
+  defaultOpen,
+  children,
+  badge,
+}: {
+  label: string;
+  title: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+  badge?: string;
+}) {
+  return (
+    <details
+      open={defaultOpen}
+      style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 14, overflow: "hidden" }}
+    >
+      <summary
+        style={{
+          listStyle: "none",
+          cursor: "pointer",
+          padding: "12px 14px",
+          borderBottom: defaultOpen ? "1px solid var(--border)" : "none",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <div>
+          <div className="rail-label">{label}</div>
+          <div style={{ marginTop: 6, fontSize: 15, fontWeight: 700, color: "var(--fg)" }}>{title}</div>
+        </div>
+        {badge ? <StatusPill value={badge} /> : null}
+      </summary>
+      <div style={{ padding: 14 }}>{children}</div>
+    </details>
+  );
 }
 
 function TaskDraftPanel({
@@ -392,45 +467,26 @@ function TaskDraftPanel({
   );
 }
 
-export function PlannerWorkbench({ slug }: { slug: string }) {
-  const [board, setBoard] = useState<PlannerBoard | null>(null);
-  const [autopilot, setAutopilot] = useState<AutopilotStatus>({ enabled: false, autoApprove: false, dispatchApprovalRequired: false });
-  const [goal, setGoal] = useState<GoalBundle | null>(null);
+export function PlannerWorkbench({
+  slug,
+  initialHome,
+}: {
+  slug: string;
+  initialHome?: PlannerHome | null;
+}) {
   const [draft, setDraft] = useState<PlannerTaskDraft>(blankDraft());
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [composerError, setComposerError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [plannerPrompt, setPlannerPrompt] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [sendingPrompt, setSendingPrompt] = useState(false);
-  const [pendingDispatches, setPendingDispatches] = useState<any[]>([]);
-
-  async function load() {
-    try {
-      setError(null);
-      const [nextBoard, nextAutopilot, nextGoal, nextDispatches] = await Promise.all([
-        fetchPlannerBoard(slug),
-        fetchAutopilotStatus(slug),
-        fetchProjectGoal(slug).catch(() => null),
-        fetchPendingDispatches(slug).catch(() => []),
-      ]);
-      setBoard(nextBoard);
-      setAutopilot(nextAutopilot);
-      setGoal(nextGoal);
-      setPendingDispatches(nextDispatches);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load planner state");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    load();
-    const timer = setInterval(load, 8000);
-    return () => clearInterval(timer);
-  }, [slug]);
+  const { snapshot, loading, error, refresh } = useProjectControlPlane(slug, initialHome);
+  const board = snapshot?.board ?? null;
+  const autopilot = snapshot?.autopilot ?? { enabled: false, autoApprove: false, dispatchApprovalRequired: false };
+  const goal = snapshot?.goal ?? null;
+  const pendingDispatches = snapshot?.pendingDispatches ?? [];
+  const pendingQuestions = snapshot?.pendingQuestions ?? [];
+  const decisions = snapshot?.decisions ?? [];
 
   const metrics = useMemo(() => formatTaskCounts(board?.tasks ?? []), [board]);
   const diagnostics = useMemo(() => computeDiagnostics(board), [board]);
@@ -438,12 +494,14 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
     () => (board?.approvals ?? []).filter((approval) => approval.status === "pending"),
     [board],
   );
+  const boardSummary = useMemo(() => summarizeBoard(board), [board]);
   const lastPrompt = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i -= 1) {
       if (chatMessages[i].role === "user") return chatMessages[i].content;
     }
     return "";
   }, [chatMessages]);
+  const activeTasks = (board?.tasks ?? []).filter((task) => ["running", "review", "awaiting_approval"].includes(task.status ?? ""));
 
   async function handleAutopilot(
     nextEnabled: boolean,
@@ -455,12 +513,7 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
       autoApprove: nextAutoApprove,
       dispatchApprovalRequired: nextDispatchApprovalRequired,
     });
-    setAutopilot({
-      enabled: nextEnabled,
-      autoApprove: nextAutoApprove,
-      dispatchApprovalRequired: nextDispatchApprovalRequired,
-    });
-    await load();
+    await refresh();
   }
 
   async function handlePromptSend(message: string) {
@@ -513,7 +566,6 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
           }
         }
       }
-      await load();
     } catch (err) {
       setChatMessages((prev) => {
         const next = [...prev];
@@ -544,7 +596,7 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
       if (startAutopilot) {
         await handleAutopilot(true, autopilot.autoApprove);
       } else {
-        await load();
+        await refresh();
       }
 
       setDraft(blankDraft());
@@ -557,7 +609,7 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
 
   async function fixTaskState(task: PlannerTask) {
     await updatePlannerTask(slug, task._id, { status: "ready", approvalState: "granted" });
-    await load();
+    await refresh();
   }
 
   return (
@@ -568,19 +620,53 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
       rightRail={board ? <TaskBoard board={board} slug={slug} /> : undefined}
     >
       <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, minmax(0, 1fr))", gap: 10 }}>
-          {metrics.map((metric) => (
-            <div key={metric.label} style={{ border: "1px solid var(--border)", background: "var(--panel)", padding: "12px 14px" }}>
-              <div className="rail-label">{metric.label}</div>
-              <div style={{ marginTop: 8, fontSize: 24, fontWeight: 700, color: "var(--fg)" }}>{metric.value}</div>
+        <PageIntro
+          title="Change the board, dispatch work, and steer the planner directly."
+          detail="Planner is the control room. Use it to run new planning prompts, release approvals, repair queue state, and manage the active work package."
+          actions={[
+            { label: "Open Review", href: `/projects/${slug}/review` },
+            { label: "Back to Overview", href: `/projects/${slug}` },
+          ]}
+        />
+        <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 18, padding: "16px 18px" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.2fr) minmax(280px, 0.8fr)", gap: 18, alignItems: "start" }}>
+            <div>
+              <div className="rail-label">Planner Surface</div>
+              <div style={{ marginTop: 8, fontSize: 24, fontWeight: 700, color: "var(--fg)", lineHeight: 1.1 }}>
+                Run the queue, not the whole project.
+              </div>
+              <div style={{ marginTop: 8, fontSize: 13, color: "var(--muted)", lineHeight: 1.6, maxWidth: 760 }}>
+                Overview is the briefing page. Planner is the control room: it changes task state, releases approvals, drafts work, and dispatches new runs.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, marginTop: 12 }}>
+                <StatusPill value={autopilot.enabled ? "active" : "paused"} />
+                {pendingApprovals.length > 0 ? <StatusPill value={`${pendingApprovals.length} approvals`} /> : null}
+                {pendingDispatches.length > 0 ? <StatusPill value={`${pendingDispatches.length} dispatches`} /> : null}
+                {pendingQuestions.length > 0 ? <StatusPill value={`${pendingQuestions.length} questions`} /> : null}
+                <span style={{ fontSize: 12, color: "var(--fg)" }}>
+                  {activeTasks.length > 0
+                    ? `${activeTasks.length} active task${activeTasks.length === 1 ? "" : "s"} need attention`
+                    : "No active task needs immediate operator input"}
+                </span>
+              </div>
             </div>
-          ))}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <CompactMetric label="Waiting" value={boardSummary.waiting} detail="approvals" />
+              <CompactMetric label="Ready" value={boardSummary.ready} detail="can run" />
+              <CompactMetric label="Running" value={boardSummary.running} detail="live now" />
+              <CompactMetric
+                label="Blocked"
+                value={boardSummary.blocked}
+                detail={snapshot?.refreshedAt ? `live ${new Date(snapshot.refreshedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "live"}
+              />
+            </div>
+          </div>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 16, alignItems: "start" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 16, alignItems: "start" }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             {goal ? (
-              <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+              <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 14 }}>
                 <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
                   <span className="rail-label">Goal Mode</span>
                 </div>
@@ -597,24 +683,18 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
                     sourceSummary: { count: 0, statusCounts: {} },
                     skillSummary: { count: 0, agentRolesWithSkillAccess: [] },
                     repoHealth: { hasLocalRepo: true, hasRailYaml: true, hasResearchPlan: true },
-                    goal: {
-                      objective: goal.contract.objective,
-                      phase: goal.state.phase,
-                      currentBlocker: goal.state.currentBlocker,
-                      retryBudget: goal.state.retryBudget,
-                      success: goal.state.success,
-                      dashboard: goal.state.dashboard,
-                      tracks: goal.state.tracks,
-                    },
+                    goal,
                   }}
-                  goal={goal}
                 />
               </div>
             ) : null}
 
-            <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+            <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 14 }}>
               <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span className="rail-label">Planner Copilot</span>
+                <div>
+                  <span className="rail-label">Run Planner</span>
+                  <div style={{ marginTop: 6, fontSize: 15, fontWeight: 700, color: "var(--fg)" }}>Ask for a board change or research wave</div>
+                </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <StatusPill value={autopilot.enabled ? "active" : "paused"} />
                   <button
@@ -684,10 +764,10 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
                   ))}
                 </div>
 
-                <div style={{ border: "1px solid var(--border)", background: "var(--bg)", minHeight: 180, maxHeight: 320, overflowY: "auto", padding: 12 }}>
+                <div style={{ border: "1px solid var(--border)", background: "var(--bg)", minHeight: 140, maxHeight: 260, overflowY: "auto", padding: 12, borderRadius: 12 }}>
                   {chatMessages.length === 0 ? (
                     <div style={{ color: "var(--muted)", fontSize: 12, lineHeight: 1.7 }}>
-                      Ask the planner to create a research wave, clean up stale tasks, or propose the next validation pass. This uses the same project-aware chat surface that works from Codex, but directly inside the UI.
+                      Ask for one concrete change: create work, clean up the queue, or propose the next validation wave.
                     </div>
                   ) : (
                     chatMessages.map((message, index) => (
@@ -763,19 +843,25 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
                       cursor: plannerPrompt.trim() ? "pointer" : "not-allowed",
                     }}
                   >
-                    Convert to task draft
+                    Save as draft
                   </button>
                 </div>
               </div>
             </div>
 
-            <TaskDraftPanel
-              draft={draft}
-              setDraft={setDraft}
-              onCreate={handleCreate}
-              creating={creating}
-              lastPrompt={lastPrompt}
-            />
+            <CollapsiblePanel
+              label="Task Drafts"
+              title="Create a task manually"
+              badge={creating ? "running" : undefined}
+            >
+              <TaskDraftPanel
+                draft={draft}
+                setDraft={setDraft}
+                onCreate={handleCreate}
+                creating={creating}
+                lastPrompt={lastPrompt}
+              />
+            </CollapsiblePanel>
             {composerError && (
               <div style={{ border: "1px solid var(--s-failed)", background: "var(--s-failed)11", color: "var(--s-failed)", padding: "10px 12px", fontSize: 12 }}>
                 {composerError}
@@ -784,9 +870,12 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+            <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 14 }}>
               <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span className="rail-label">Approvals</span>
+                <div>
+                  <span className="rail-label">Operator Queue</span>
+                  <div style={{ marginTop: 6, fontSize: 15, fontWeight: 700, color: "var(--fg)" }}>Clear what is blocking dispatch</div>
+                </div>
                 <StatusPill value={pendingApprovals.length ? "pending" : "done"} />
               </div>
               <div style={{ padding: 14 }}>
@@ -794,29 +883,52 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
               </div>
             </div>
 
-            <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
+            <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 14 }}>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span className="rail-label">Question Inbox</span>
+                <StatusPill value={pendingQuestions.length ? "pending" : "done"} />
+              </div>
+              <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+                {pendingQuestions.length === 0 ? (
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>No blocked questions. Agents can continue without human input.</div>
+                ) : (
+                  pendingQuestions.slice(0, 4).map((item) => (
+                    <div key={item.question_id ?? item.question} style={{ border: "1px solid var(--border)", background: "var(--bg)", padding: "10px 12px" }}>
+                      <div style={{ fontSize: 12, color: "var(--fg)", lineHeight: 1.5 }}>
+                        {item.question ?? "Pending question"}
+                      </div>
+                      <div style={{ marginTop: 6, fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)" }}>
+                        {item.role ?? "planner"}{item.session_id ? ` · ${item.session_id.slice(0, 8)}` : ""}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <div style={{ border: "1px solid var(--border)", background: "var(--panel)", borderRadius: 14 }}>
               <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
                 <span className="rail-label">Pending Dispatches Queue</span>
               </div>
               <div style={{ padding: 14 }}>
-                <PendingDispatchesQueue slug={slug} dispatches={pendingDispatches} onRefresh={load} />
+                <PendingDispatchesQueue slug={slug} dispatches={pendingDispatches} onRefresh={refresh} />
               </div>
             </div>
 
-            <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
-              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
-                <span className="rail-label">Recent Planner Decisions</span>
-              </div>
-              <div style={{ padding: 14 }}>
-                <PlannerDecisionFeed slug={slug} />
-              </div>
-            </div>
+            <CollapsiblePanel
+              label="Decision Trace"
+              title="Recent planner decisions"
+              badge={decisions.length ? `${Math.min(decisions.length, 9)}+` : "empty"}
+            >
+              <PlannerDecisionFeed decisions={decisions} />
+            </CollapsiblePanel>
 
-            <div style={{ border: "1px solid var(--border)", background: "var(--panel)" }}>
-              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)" }}>
-                <span className="rail-label">Planner Diagnostics</span>
-              </div>
-              <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+            <CollapsiblePanel
+              label="Board Hygiene"
+              title="Diagnostics and quick repairs"
+              badge={diagnostics.some((item) => item.severity === "warn") ? "warn" : "info"}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {diagnostics.map((item, index) => (
                   <div
                     key={`${item.label}-${index}`}
@@ -824,6 +936,7 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
                       border: "1px solid var(--border)",
                       background: item.severity === "warn" ? "var(--s-awaiting)11" : "var(--bg)",
                       padding: "10px 12px",
+                      borderRadius: 12,
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
@@ -848,13 +961,14 @@ export function PlannerWorkbench({ slug }: { slug: string }) {
                         fontSize: 10,
                         textAlign: "left",
                         cursor: "pointer",
+                        borderRadius: 10,
                       }}
                     >
                       Repair state: {task.title}
                     </button>
                   ))}
               </div>
-            </div>
+            </CollapsiblePanel>
           </div>
         </div>
 
@@ -878,8 +992,8 @@ function PendingDispatchesQueue({
   onRefresh,
 }: {
   slug: string;
-  dispatches: any[];
-  onRefresh: () => void;
+  dispatches: PendingDispatch[];
+  onRefresh: () => Promise<void>;
 }) {
   const [editingWoId, setEditingWoId] = useState<string | null>(null);
   const [jsonText, setJsonText] = useState("");
@@ -895,7 +1009,7 @@ function PendingDispatchesQueue({
       }
       await approvePendingDispatch(slug, woId, edits);
       setEditingWoId(null);
-      onRefresh();
+      await onRefresh();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to approve dispatch");
     } finally {
@@ -908,7 +1022,7 @@ function PendingDispatchesQueue({
     setSubmitting(woId);
     try {
       await rejectPendingDispatch(slug, woId, reason);
-      onRefresh();
+      await onRefresh();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to reject dispatch");
     } finally {
@@ -925,7 +1039,7 @@ function PendingDispatchesQueue({
       ) : (
         dispatches.map((disp) => {
           const wo = disp.task_payload;
-          const woId = disp.task_payload?.work_order_id;
+          const woId = disp.task_payload?.work_order_id ?? disp.work_order_id ?? "";
           const isEditing = editingWoId === woId;
 
           return (
