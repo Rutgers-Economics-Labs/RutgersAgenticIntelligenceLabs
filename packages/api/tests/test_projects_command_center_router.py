@@ -875,6 +875,47 @@ def test_register_artifacts_accepts_local_repo_only_project_with_explicit_paths(
     assert promoted[0]["project"]["_id"] == "local:demo-project"
 
 
+def test_clear_hydration_for_local_repo_only_project_removes_metadata_not_artifacts(monkeypatch, tmp_path):
+    import app.routers.projects as projects_router
+
+    ontology_root = tmp_path / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_db = ontology_root / "onto.db"
+    onto_duckdb = ontology_root / "onto.duckdb"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    onto_db.write_bytes(b"db")
+    onto_duckdb.write_bytes(b"duck")
+    hydration_meta.write_text('{"pipeline_slug":"default","hydration_mode":"full"}', encoding="utf-8")
+
+    async def _get_project_by_slug(slug: str):
+        return {
+            "_id": f"local:{slug}",
+            "slug": slug,
+            "localRepoPath": str(tmp_path),
+            "manifestPath": "rail.yaml",
+        }
+
+    async def _mutation(path: str, payload: dict):
+        raise AssertionError(f"unexpected mutation {path}")
+
+    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router.convex, "mutation", _mutation)
+
+    response = client.post("/api/v1/projects/demo-project/clear-hydration")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload == {
+        "ok": True,
+        "slug": "demo-project",
+        "status": "ready",
+        "mode": "local_repo",
+    }
+    assert onto_db.exists() is True
+    assert onto_duckdb.exists() is True
+    assert hydration_meta.exists() is False
+
+
 def test_create_planner_task_rejects_unknown_status(monkeypatch):
     import app.routers.projects as projects_router
 

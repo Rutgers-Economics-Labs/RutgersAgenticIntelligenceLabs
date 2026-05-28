@@ -1752,12 +1752,22 @@ async def clear_hydration(slug: str):
     Clear the active ontology artifact paths and reset the project status to 'ready'.
     The artifact files on disk are NOT deleted — only the Convex project record is patched.
     """
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
+    try:
+        project = await planner_service.get_project_by_slug(slug)
+    except ValueError:
         raise HTTPException(404, "Project not found")
 
+    project_id = str(project.get("_id") or "")
+    if project_id.startswith("local:"):
+        project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
+        if not project_root:
+            raise HTTPException(400, "Project does not have a localRepoPath configured")
+        hydration_meta = project_root / ".ontology" / ".rail_hydration.json"
+        hydration_meta.unlink(missing_ok=True)
+        return {"ok": True, "slug": slug, "status": "ready", "mode": "local_repo"}
+
     await convex.mutation("projects:clearHydration", {"projectId": project["_id"]})
-    return {"ok": True, "slug": slug, "status": "ready"}
+    return {"ok": True, "slug": slug, "status": "ready", "mode": "convex"}
 
 
 @router.post("/{slug}/sync-metadata")
