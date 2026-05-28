@@ -3,6 +3,7 @@ from pydantic import BaseModel
 import requests
 
 from app.services.convex_client import convex
+from app.services import planner_service
 from app.services.document_service import preview_document
 from app.services.scrape_service import preview_table
 from app.services.yaml_service import validate, parse
@@ -52,7 +53,27 @@ class DocumentPreviewRequest(BaseModel):
 async def _get_project_for_save(project_id: str | None) -> dict | None:
     if not project_id:
         return None
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    project = None
+    try:
+        project = await convex.query("projects:getById", {"projectId": project_id})
+    except Exception:
+        project = None
+    if not project:
+        try:
+            project = await convex.query("projects:get", {"slug": project_id})
+        except Exception:
+            project = None
+    if not project:
+        candidate_slugs = [project_id]
+        if isinstance(project_id, str) and project_id.startswith("local:"):
+            candidate_slugs.append(project_id.removeprefix("local:"))
+        for candidate in candidate_slugs:
+            try:
+                project = await planner_service.get_project_by_slug(candidate)
+                if project:
+                    break
+            except Exception:
+                project = None
     if not project:
         raise HTTPException(404, detail="Project not found")
     return project
