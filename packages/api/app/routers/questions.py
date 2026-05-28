@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from app.services.convex_client import convex
 from app.services import llm_service
+from app.services import planner_service
 
 router = APIRouter(prefix="/questions", tags=["questions"])
 
@@ -173,6 +174,44 @@ TOOLS = [
 ]
 
 
+async def _resolve_project_record(project_id: str | None) -> dict | None:
+    if not project_id:
+        return None
+    project = None
+    try:
+        project = await convex.query("projects:get", {"slug": project_id})
+    except Exception:
+        project = None
+    if not project:
+        try:
+            project = await convex.query("projects:getById", {"projectId": project_id})
+        except Exception:
+            project = None
+    if not project:
+        candidate_slugs = [project_id]
+        if isinstance(project_id, str) and project_id.startswith("local:"):
+            candidate_slugs.append(project_id.removeprefix("local:"))
+        for candidate in candidate_slugs:
+            try:
+                project = await planner_service.get_project_by_slug(candidate)
+                if project:
+                    break
+            except Exception:
+                project = None
+    return project if isinstance(project, dict) else None
+
+
+async def _resolve_project_slug(project_id: str | None) -> str | None:
+    project = await _resolve_project_record(project_id)
+    slug = str((project or {}).get("slug") or "").strip()
+    if slug:
+        return slug
+    if project_id:
+        fallback = str(project_id).removeprefix("local:").strip()
+        return fallback or None
+    return None
+
+
 async def _execute_tool(name: str, args: dict) -> dict:
     project_id = args.get("project_id")
 
@@ -181,11 +220,11 @@ async def _execute_tool(name: str, args: dict) -> dict:
         try:
             schema = sql_service.get_schema()
             if project_id:
-                # Try to load the project-specific DuckDB
-                proj = await convex.query("projects:get", {"slug": project_id})
-                if proj and proj.get("activeOntologyDuckdbPath"):
-                    sql_service.set_path(proj["activeOntologyDuckdbPath"])
-                    schema = sql_service.get_schema()
+                from app.services import project_artifacts_service
+
+                artifacts = await project_artifacts_service.resolve(project_id)
+                sql_service.set_path(artifacts.duckdb_path)
+                schema = sql_service.get_schema()
             return schema
         except Exception as e:
             return {"error": str(e), "tables": []}
@@ -208,17 +247,13 @@ async def _execute_tool(name: str, args: dict) -> dict:
         return {"results": results[:5]}
 
     if name == "run_sql":
-        from app.services import sql_service
+        from app.services import sql_service, project_artifacts_service
         if project_id:
-            proj = await convex.query("projects:getBySlug", {"slug": project_id})
-            if not proj:
-                # try by ID
-                try:
-                    proj = await convex.query("projects:getById", {"projectId": project_id})
-                except Exception:
-                    pass
-            if proj and proj.get("activeOntologyDuckdbPath"):
-                sql_service.set_path(proj["activeOntologyDuckdbPath"])
+            try:
+                artifacts = await project_artifacts_service.resolve(project_id)
+                sql_service.set_path(artifacts.duckdb_path)
+            except Exception:
+                pass
         try:
             return sql_service.run_query(args["query"])
         except Exception as e:
@@ -230,13 +265,11 @@ async def _execute_tool(name: str, args: dict) -> dict:
         if not settings.execute_python_enabled:
             return {"error": "Python execution is disabled"}
         if project_id:
-            from app.services import sql_service
+            from app.services import sql_service, project_artifacts_service
             try:
-                proj = await convex.query("projects:getBySlug", {"slug": project_id})
-                if not proj:
-                    proj = await convex.query("projects:getById", {"projectId": project_id})
-                if proj and proj.get("activeOntologyDuckdbPath"):
-                    sql_service.set_path(proj["activeOntologyDuckdbPath"])
+                artifacts = await project_artifacts_service.resolve(project_id)
+                sql_service.set_path(artifacts.duckdb_path)
+                schema = sql_service.get_schema()
             except Exception:
                 pass
         try:
@@ -273,8 +306,9 @@ async def _execute_tool(name: str, args: dict) -> dict:
             "updatedAt": now,
         }
         pid = args.get("project_id") or project_id
-        if pid:
-            payload["projectId"] = pid
+        project_slug = await _resolve_project_slug(pid)
+        if project_slug:
+            payload["projectSlug"] = project_slug
         try:
             doc_id = await convex.mutation("context:create", payload)
             return {"saved": True, "id": doc_id, "name": args["name"]}
