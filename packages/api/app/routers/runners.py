@@ -78,6 +78,15 @@ def _get_runner(runner_name: str):
         raise HTTPException(status_code=503, detail=str(e))
 
 
+async def _resolve_project(project_ref: str) -> dict | None:
+    from app.services import planner_service
+
+    try:
+        return await planner_service.resolve_project_reference(project_ref)
+    except Exception:
+        return None
+
+
 async def _launch_blocker_for_project_session(
     *,
     project_slug: str,
@@ -85,10 +94,10 @@ async def _launch_blocker_for_project_session(
     task_description: str,
 ) -> str | None:
     from app.runners import session_lifecycle
-    from app.services import planner_service, running_agent_service
+    from app.services import running_agent_service
     from app.services.auditor_service import build_auditor_statuses
 
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await _resolve_project(project_slug)
     if not project:
         return None
     active_sessions = await running_agent_service.list_project_running_agents(
@@ -417,7 +426,7 @@ async def get_work_order(
     project_slug: str = Query(...),
 ) -> dict[str, Any]:
     """Fetch the typed WorkOrder for a session."""
-    from app.services import running_agent_service, planner_service
+    from app.services import running_agent_service
     from pathlib import Path
     import json
 
@@ -426,7 +435,7 @@ async def get_work_order(
     # In Phase 2, we wrote work orders to research_plan/work_orders/<wo_id>.json
     # and recorded work_order_id in the session state on disk.
     
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await _resolve_project(project_slug)
     if not project or not project.get("localRepoPath"):
         raise HTTPException(status_code=404, detail="Project or local path not found")
     
@@ -461,7 +470,7 @@ async def get_dispatch_decision(
     project_slug: str = Query(...),
 ) -> dict[str, Any]:
     """Fetch the dispatch decision log for a session."""
-    from app.services import running_agent_service, planner_service, session_files
+    from app.services import running_agent_service, session_files
     from pathlib import Path
     import json
 
@@ -470,7 +479,7 @@ async def get_dispatch_decision(
     except Exception:
         agent_session = None
 
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await _resolve_project(project_slug)
     if not project or not project.get("localRepoPath"):
         raise HTTPException(status_code=404, detail="Project or local path not found")
     
@@ -514,7 +523,7 @@ async def get_session_result(
     project_slug: str = Query(...),
 ) -> dict[str, Any]:
     """Fetch the session result for a finished session."""
-    from app.services import running_agent_service, planner_service, session_files
+    from app.services import running_agent_service, session_files
     from app.runners.contracts.session_result import SessionResult
     from pathlib import Path
     import json
@@ -524,7 +533,7 @@ async def get_session_result(
     except Exception:
         agent_session = None
 
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await _resolve_project(project_slug)
     if not project or not project.get("localRepoPath"):
         raise HTTPException(status_code=404, detail="Project or local path not found")
     
@@ -554,7 +563,9 @@ async def get_session_result(
         raise HTTPException(status_code=500, detail=f"Failed to read session result JSON: {e}")
         
     try:
-        SessionResult.model_validate(data)
+        from app.runners.contracts import parse_session_result
+
+        parse_session_result(data, session_id=session_id, role=role)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Session result file does not match SessionResult schema: {e}")
         
@@ -568,12 +579,12 @@ async def submit_session_result(
     result: dict = Body(...),
 ) -> dict[str, Any]:
     """Submit the final session result."""
-    from app.services import running_agent_service, session_files, planner_service
+    from app.services import running_agent_service, session_files
     from pathlib import Path
     import json
 
     agent_session = await running_agent_service.get_running_agent(session_id)
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await _resolve_project(project_slug)
     if not project or not project.get("localRepoPath"):
         raise HTTPException(status_code=404, detail="Project or local path not found")
     
