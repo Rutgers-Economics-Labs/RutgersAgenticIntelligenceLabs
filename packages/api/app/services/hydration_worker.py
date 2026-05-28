@@ -18,7 +18,7 @@ from app.core.config import settings
 from app.services.convex_client import convex
 from app.services.storage_service import storage
 from app.services.yaml_service import parse as parse_config_yaml, validate_pipeline_runnable
-from app.services import connector_service
+from app.services import connector_service, planner_service
 
 logger = logging.getLogger("rail.hydration")
 
@@ -52,6 +52,41 @@ _STEP_DONE  = re.compile(r"-> (\d+) (\w+) individuals processed")
 _CACHE_LINE = re.compile(r"\[cache\]")
 _FETCH_LINE = re.compile(r"\[fetch\]")
 _SKIP_LINE  = re.compile(r"\[skip\]")
+
+
+async def _resolve_project_from_job_doc(job_doc: dict | None) -> tuple[str | None, dict | None]:
+    """Resolve the owning project for a hydration job via id or slug.
+
+    Returns a tuple of `(project_id, project_record)`. For repo-only projects, the
+    id may be a synthetic `local:` id while the project record still carries the
+    local repo path and slug needed by follow-on registry and export logic.
+    """
+    if not isinstance(job_doc, dict):
+        return None, None
+
+    project_id = str(job_doc.get("projectId") or "").strip() or None
+    project_slug = str(job_doc.get("projectSlug") or "").strip() or None
+
+    project_doc = None
+    if project_id:
+        try:
+            project_doc = await convex.query("projects:getById", {"projectId": project_id})
+        except Exception:
+            project_doc = None
+
+    resolved_via_slug = False
+    if not project_doc and project_slug:
+        try:
+            project_doc = await planner_service.get_project_by_slug(project_slug)
+            resolved_via_slug = project_doc is not None
+        except Exception:
+            project_doc = None
+
+    if isinstance(project_doc, dict) and (not project_id or resolved_via_slug):
+        resolved_id = str(project_doc.get("_id") or "").strip()
+        project_id = resolved_id or None
+
+    return project_id, project_doc if isinstance(project_doc, dict) else None
 
 
 async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], onto_configs: dict[str, str] = None):
@@ -275,19 +310,17 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             hydration_mode = pipeline_spec.get("hydration_mode", "full")
             if hydration_mode == "incremental":
                 project_id = None
+                project_doc = None
                 try:
                     job_doc = await convex.query("jobs:get", {"jobId": job_id})
-                    if job_doc:
-                        project_id = job_doc.get("projectId")
+                    project_id, project_doc = await _resolve_project_from_job_doc(job_doc)
                 except Exception as e:
                     logger.warning("[%s] Error checking job info for incremental mode: %s", job_id, e)
 
                 existing_db_path = None
-                if project_id:
+                if project_doc:
                     try:
-                        project_doc = await convex.query("projects:get", {"projectId": project_id})
-                        if project_doc:
-                            existing_db_path = project_doc.get("activeOntologyDbPath")
+                        existing_db_path = project_doc.get("activeOntologyDbPath")
                     except Exception as e:
                         logger.warning("[%s] Error fetching project %s for incremental mode: %s", job_id, project_id, e)
 
@@ -400,21 +433,11 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             try:
                 job_doc = await convex.query("jobs:get", {"jobId": job_id})
                 job_doc_for_registry = job_doc
-                project_id = job_doc.get("projectId") if job_doc else None
-                if not project_id and job_doc:
-                    slug = job_doc.get("projectSlug")
-                    if slug:
-                        try:
-                            proj = await convex.query("projects:get", {"slug": slug})
-                            if proj:
-                                project_id = proj["_id"]
-                                project_doc_for_registry = proj
-                        except Exception:
-                            project_id = None
+                project_id, project_doc_for_registry = await _resolve_project_from_job_doc(job_doc)
             except Exception:
                 project_id = None
 
-            if project_id:
+            if project_id and not str(project_id).startswith("local:"):
                 duckdb_path = str(Path(db_key).parent / "onto.duckdb") if "/" in db_key else str(
                     settings.engine_root / "ontology" / "onto.duckdb"
                 )
@@ -455,10 +478,8 @@ async def run(job_id: str, pipeline_content: str, api_configs: dict[str, str], o
             except Exception as e:
                 await emit("warn", f"[job] DuckDB export failed (non-fatal): {e}")
 
-            if project_id:
+            if project_doc_for_registry:
                 try:
-                    if project_doc_for_registry is None:
-                        project_doc_for_registry = await convex.query("projects:getById", {"projectId": project_id})
                     if project_doc_for_registry and project_doc_for_registry.get("localRepoPath"):
                         from app.services.hydration_registry_service import register_hydration_artifact
 
