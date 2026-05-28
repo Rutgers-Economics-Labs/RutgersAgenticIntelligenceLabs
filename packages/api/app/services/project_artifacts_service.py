@@ -231,9 +231,6 @@ async def _resolve_impl(project_id: str) -> ProjectArtifacts:
         project = await convex.query("projects:getById", {"projectId": project_id})
 
     if not project:
-        project = await convex.query("projects:get", {"slug": project_id})
-
-    if not project:
         raise RuntimeError(f"Project '{project_id}' not found (tried ID and Slug)")
 
     project = _populate_local_active_artifact_paths(project)
