@@ -260,3 +260,27 @@ async def test_add_text_syncs_source_for_local_repo_only_project_id(
     assert source.title == "Repo Only Note"
     assert source.source_type == "text"
     assert source.provenance["context_doc_id"] == "doc-local"
+
+
+async def test_list_context_uses_repo_first_project_slug(client, convex_mock, monkeypatch):
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") == "context:list":
+            assert payload["args"] == {"projectSlug": "context-project"}
+            return httpx.Response(200, json={"value": [{"_id": "doc-1", "name": "Repo Note"}]})
+        if payload.get("path") in {"projects:getById", "projects:get"}:
+            return httpx.Response(200, json={"value": None})
+        return httpx.Response(200, json={"value": None})
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "context-project":
+            raise ValueError(slug)
+        return {"_id": "local:context-project", "slug": "context-project", "localRepoPath": "/tmp/context-project"}
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr(context_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+
+    resp = await client.get("/api/v1/context/list", params={"project_id": "local:context-project"})
+
+    assert resp.status_code == 200
+    assert resp.json() == [{"_id": "doc-1", "name": "Repo Note"}]

@@ -80,3 +80,39 @@ async def test_save_to_knowledge_base_uses_project_slug_for_local_project(monkey
     assert "projectId" not in captured["payload"]
     assert "createdAt" not in captured["payload"]
     assert "updatedAt" not in captured["payload"]
+
+
+async def test_search_context_uses_project_slug_for_local_project(monkeypatch):
+    captured: dict[str, object] = {}
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {
+            "_id": "local:demo-project",
+            "slug": "demo-project",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    async def _query(path: str, payload: dict):
+        if path == "projects:get":
+            return None
+        if path == "projects:getById":
+            return None
+        if path == "context:list":
+            captured["payload"] = payload
+            return [
+                {"name": "Queue Note", "type": "text", "content": "Queue backlogs increased in 2024."},
+            ]
+        raise AssertionError(path)
+
+    monkeypatch.setattr(questions_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(questions_router.convex, "query", _query)
+
+    result = await questions_router._execute_tool(
+        "search_context",
+        {"query": "queue", "project_id": "local:demo-project"},
+    )
+
+    assert captured["payload"] == {"projectSlug": "demo-project"}
+    assert result["results"][0]["name"] == "Queue Note"

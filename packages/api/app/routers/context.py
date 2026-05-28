@@ -311,7 +311,8 @@ async def add_text(req: AddTextRequest):
 
 @router.get("/list")
 async def list_context(project_id: str | None = None):
-    return await convex.query("context:list", {"projectId": project_id} if project_id else {})
+    payload = await _context_create_payload_project_fields(project_id)
+    return await convex.query("context:list", payload if payload.get("projectSlug") else {})
 
 
 @router.delete("/{doc_id}")

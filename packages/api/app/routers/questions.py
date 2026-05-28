@@ -230,7 +230,8 @@ async def _execute_tool(name: str, args: dict) -> dict:
             return {"error": str(e), "tables": []}
 
     if name == "search_context":
-        docs = await convex.query("context:list", {"projectId": project_id} if project_id else {})
+        project_slug = await _resolve_project_slug(project_id) if project_id else None
+        docs = await convex.query("context:list", {"projectSlug": project_slug} if project_slug else {})
         if not docs:
             return {"results": [], "message": "No context documents uploaded yet"}
         query = args.get("query", "").lower()
