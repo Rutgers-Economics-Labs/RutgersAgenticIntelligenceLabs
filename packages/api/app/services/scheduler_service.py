@@ -3,6 +3,7 @@ from croniter import croniter  # pip install croniter
 from datetime import datetime
 import time
 from app.services.convex_client import convex
+from app.services import planner_service
 
 FREQUENCY_TO_CRON = {
     "1m": "* * * * *",
@@ -83,11 +84,17 @@ class SchedulerService:
 
             # Trigger the pipeline
             try:
-                project = await convex.query("projects:getBySlug", {"slug": sched["projectSlug"]})
+                project = None
+                project_slug = str(sched.get("projectSlug") or "").strip()
+                if project_slug:
+                    try:
+                        project = await planner_service.get_project_by_slug(project_slug)
+                    except Exception:
+                        project = None
                 job_id = None
                 if project:
                     from app.routers.jobs import _trigger_job
-                    job_result = await _trigger_job(sched["pipelineSlug"], project["_id"])
+                    job_result = await _trigger_job(sched["pipelineSlug"], project_slug or str(project.get("slug") or ""))
                     job_id = job_result.get("jobId")
 
                 # Compute next run time
