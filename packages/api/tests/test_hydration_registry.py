@@ -35,6 +35,7 @@ os.environ.setdefault("CONVEX_URL", "https://colorless-elephant-150.convex.cloud
 os.environ.setdefault("CONVEX_DEPLOY_KEY", "test-key")
 
 from app.services.hydration_registry_service import (  # noqa: E402
+    attach_local_hydration_to_convex,
     get_hydration_status,
     promote_project_hydration_artifact,
     register_hydration_artifact,
@@ -448,3 +449,55 @@ def test_get_hydration_status_treats_unknown_commit_as_current_when_repo_has_no_
     assert payload["state"] == "hydrated_on_this_device"
     assert payload["reusableArtifact"]["isCurrentCommit"] is True
     assert payload["reusableArtifact"]["isReusable"] is True
+
+
+def test_attach_local_hydration_to_convex_promotes_repo_only_project_without_convex(project_root, monkeypatch):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_duckdb = ontology_root / "onto.duckdb"
+    onto_duckdb.write_bytes(b"duck")
+    ontology_yaml = ontology_root / "ontology.yaml"
+    ontology_yaml.write_text("classes: []\n", encoding="utf-8")
+
+    captured: dict[str, object] = {}
+
+    async def _get_project_by_slug(slug: str):
+        assert slug == "demo-project"
+        return {
+            "_id": "local:demo-project",
+            "slug": "demo-project",
+            "localRepoPath": str(project_root),
+            "manifestPath": "rail.yaml",
+        }
+
+    async def _register_hydration_artifact(**kwargs):
+        captured["register"] = kwargs
+        return "local-hydration:demo-project:my_pipeline:full"
+
+    async def _promote_project_hydration_artifact(**kwargs):
+        captured["promote"] = kwargs
+        return None
+
+    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr("app.services.hydration_registry_service.resolve_pipeline_slug", lambda project, root: "my_pipeline")
+    monkeypatch.setattr("app.services.hydration_registry_service.register_hydration_artifact", _register_hydration_artifact)
+    monkeypatch.setattr("app.services.hydration_registry_service.promote_project_hydration_artifact", _promote_project_hydration_artifact)
+    monkeypatch.setattr(
+        "app.services.hydration_registry_service.convex._require_backend_convex",
+        lambda: (_ for _ in ()).throw(AssertionError("convex backend should not be required for local repo projects")),
+    )
+
+    result = asyncio.run(
+        attach_local_hydration_to_convex(
+            slug="demo-project",
+            duckdb_artifact_path=str(onto_duckdb),
+        )
+    )
+
+    assert result["status"] == "promoted"
+    assert result["mode"] == "local_repo"
+    assert result["projectId"] == "local:demo-project"
+    assert captured["register"]["pipeline_slug"] == "my_pipeline"
+    assert captured["promote"]["project"]["_id"] == "local:demo-project"
+    assert captured["promote"]["duckdb_artifact_path"] == str(onto_duckdb)
+    assert captured["promote"]["ontology_artifact_path"] == str(ontology_yaml)

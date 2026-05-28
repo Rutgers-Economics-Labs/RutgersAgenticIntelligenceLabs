@@ -187,15 +187,33 @@ async def attach_local_hydration_to_convex(
     of raising. Use this after a local hydrate (e.g., the live agent loop) to
     unblock the ontology auditor for autopilot ticks against that project.
     """
-    try:
-        convex._require_backend_convex()
-    except ConvexBackendConfigurationError as exc:
-        return {"status": "skipped", "reason": f"convex_not_configured: {exc}"}
+    from app.services import planner_service
 
+    project = None
     try:
-        project = await convex.query("projects:getBySlug", {"slug": slug})
-    except Exception as exc:
-        return {"status": "skipped", "reason": f"convex_query_failed: {exc}"}
+        project = await planner_service.get_project_by_slug(slug)
+    except Exception:
+        project = None
+
+    if not project:
+        try:
+            local_project_resolver = getattr(planner_service, "_local_project_record_from_repo", None)
+            if callable(local_project_resolver):
+                project = local_project_resolver(slug)
+        except Exception:
+            project = None
+
+    if not project:
+        try:
+            convex._require_backend_convex()
+        except ConvexBackendConfigurationError as exc:
+            return {"status": "skipped", "reason": f"convex_not_configured: {exc}"}
+
+        try:
+            project = await convex.query("projects:getBySlug", {"slug": slug})
+        except Exception as exc:
+            return {"status": "skipped", "reason": f"convex_query_failed: {exc}"}
+
     if not project or not project.get("_id"):
         return {"status": "skipped", "reason": "project_not_registered"}
 
@@ -230,6 +248,7 @@ async def attach_local_hydration_to_convex(
     )
     return {
         "status": "promoted",
+        "mode": "local_repo" if _is_local_project_id(project.get("_id")) else "convex",
         "projectId": project["_id"],
         "artifactId": artifact_id,
         "pipelineSlug": pipeline_slug,
