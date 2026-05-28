@@ -957,13 +957,14 @@ async def _catalog_row(project: dict) -> dict:
         root = _projects_base_dir() / project["slug"]
         
     metadata = _manifest_metadata(root, project) if root.exists() else {}
-    snapshot = command_center_service.read_control_plane_snapshot(
+    projection = command_center_service.load_control_plane_summary(
         {
             **project,
             "localRepoPath": str(root),
         }
     )
-    summary = (snapshot or {}).get("commandCenter") or {}
+    summary = projection["summary"]
+    snapshot = projection["snapshot"]
     task_counts = summary.get("taskCounts") or {}
     by_status = task_counts.get("byStatus") or {}
     closed_count = sum(
@@ -988,7 +989,7 @@ async def _catalog_row(project: dict) -> dict:
         "controlPlane": {
             "phase": summary.get("lifecyclePhase"),
             "nextAction": summary.get("nextAction"),
-            "snapshotLoaded": bool(snapshot),
+            "snapshotLoaded": bool(snapshot.get("loaded")),
         },
     }
 

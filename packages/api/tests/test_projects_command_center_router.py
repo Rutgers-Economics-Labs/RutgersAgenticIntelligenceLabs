@@ -96,18 +96,21 @@ def test_list_projects_catalog_includes_snapshot_progress(monkeypatch):
     monkeypatch.setattr(projects_router, "_local_catalog_projects", lambda: [])
     monkeypatch.setattr(
         projects_router.command_center_service,
-        "read_control_plane_snapshot",
+        "load_control_plane_summary",
         lambda project: {
-            "snapshotVersion": 1,
-            "generatedAt": 1234567890,
-            "path": "research_plan/state/control_plane_snapshot.json",
-            "commandCenter": {
+            "summary": {
                 "lifecyclePhase": "research_active",
                 "nextAction": "Review pending approvals",
                 "taskCounts": {
                     "total": 5,
                     "byStatus": {"ready": 2, "running": 1, "done": 1, "cancelled": 1},
                 },
+            },
+            "snapshot": {
+                "loaded": True,
+                "generatedAt": 1234567890,
+                "path": "research_plan/state/control_plane_snapshot.json",
+                "version": 1,
             },
         },
     )
