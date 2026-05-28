@@ -2981,7 +2981,9 @@ async def update_planner_task(slug: str, task_id: str, data: PlannerTaskUpdateRe
 
 @router.post("/{slug}/devices/heartbeat")
 async def heartbeat_project_device(slug: str, data: DeviceHeartbeatRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     metadata = get_device_metadata()
     payload = {
         "deviceId": metadata["deviceId"],
@@ -2995,7 +2997,9 @@ async def heartbeat_project_device(slug: str, data: DeviceHeartbeatRequest):
 
 @router.get("/{slug}/hydration/status")
 async def get_hydration_status(slug: str, pipelineSlug: str | None = Query(None), hydrationMode: str = Query("full")):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     if not project.get("localRepoPath"):
         raise HTTPException(400, "Project does not have a localRepoPath configured")
     return await get_project_hydration_status(
@@ -3007,7 +3011,9 @@ async def get_hydration_status(slug: str, pipelineSlug: str | None = Query(None)
 
 @router.post("/{slug}/hydration/artifacts/register")
 async def register_project_hydration_artifact(slug: str, data: RegisterHydrationArtifactRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     if not project.get("localRepoPath"):
         raise HTTPException(400, "Project does not have a localRepoPath configured")
     artifact_id = await register_hydration_artifact(
@@ -3027,7 +3033,9 @@ async def rerun_project_hydration(
     data: HydrationRerunRequest,
     background_tasks: BackgroundTasks,
 ):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     project_root = Path(project["localRepoPath"]).resolve() if project.get("localRepoPath") else None
     
     if project_root is None:
@@ -3118,7 +3126,7 @@ async def run_project_data_pipeline(
     reconcile: bool = True,
 ):
     """One-shot: reconcile control-plane drift, then queue fetch + hydrate for the project."""
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
 
@@ -3141,7 +3149,9 @@ async def run_project_data_pipeline(
 
 @router.get("/{slug}/settings/secrets")
 async def list_project_secrets(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     secrets = await convex.query("projectSecrets:listByProject", {"projectId": project["_id"]}) or []
     policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
     normalized_policies = [
@@ -3176,7 +3186,9 @@ async def list_project_secrets(slug: str):
 
 @router.post("/{slug}/settings/secrets")
 async def upsert_project_secret(slug: str, data: ProjectSecretUpsertRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     encrypted = encrypt_secret_value(data.plaintextValue)
     secret_id = await convex.mutation(
         "projectSecrets:upsert",
@@ -3191,7 +3203,9 @@ async def upsert_project_secret(slug: str, data: ProjectSecretUpsertRequest):
 
 @router.get("/{slug}/settings/agent-secret-policies")
 async def list_agent_secret_policies(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
     normalized_policies = [
         dict(policy)
@@ -3208,7 +3222,9 @@ async def list_agent_secret_policies(slug: str):
 
 @router.post("/{slug}/settings/agent-secret-policies")
 async def upsert_agent_secret_policy(slug: str, data: AgentSecretPolicyUpsertRequest):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     agent_role = _normalize_agent_role(data.agentRole, field_name="Agent secret policy role")
     policy_id = await convex.mutation(
         "agentSecretPolicies:upsert",
@@ -3223,7 +3239,9 @@ async def upsert_agent_secret_policy(slug: str, data: AgentSecretPolicyUpsertReq
 
 @router.delete("/{slug}/settings/secrets/{key_name}")
 async def delete_project_secret(slug: str, key_name: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     await convex.mutation(
         "projectSecrets:deleteByKey",
         {"projectId": project["_id"], "keyName": key_name},
@@ -3233,7 +3251,9 @@ async def delete_project_secret(slug: str, key_name: str):
 
 @router.delete("/{slug}/settings/agent-secret-policies/{agent_role}")
 async def delete_agent_secret_policy(slug: str, agent_role: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     normalized_role = _normalize_agent_role(agent_role, field_name="Agent secret policy role")
     await convex.mutation(
         "agentSecretPolicies:deleteByRole",
@@ -3250,7 +3270,9 @@ async def resolve_secrets_for_agent(slug: str, agentRole: str = Query(...)):
     It enforces the agent secret policy — only secrets in the role's allowlist
     are returned, and only if they exist in the project's secret store.
     """
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     from app.services.secret_service import resolve_secrets_for_role
     normalized_role = _normalize_agent_role(agentRole, field_name="Secrets resolve agentRole")
     secrets = await resolve_secrets_for_role(project["_id"], normalized_role)

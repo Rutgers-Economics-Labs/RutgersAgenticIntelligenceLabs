@@ -146,7 +146,7 @@ def test_pipeline_run_uses_local_repo_hydration_for_repo_only_project(monkeypatc
         encoding="utf-8",
     )
 
-    async def _get_project_by_slug(slug: str):
+    async def _refresh_project_record(slug: str):
         return {
             "_id": "local:demo-project",
             "slug": slug,
@@ -192,7 +192,7 @@ def test_pipeline_run_uses_local_repo_hydration_for_repo_only_project(monkeypatc
     async def _mutation(path: str, payload: dict):
         raise AssertionError(f"unexpected mutation {path}")
 
-    monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
     monkeypatch.setattr(projects_router.reconciliation_service, "reconcile_project_reality", _reconcile_project_reality)
     monkeypatch.setattr(projects_router, "LocalEngine", _Engine)
     monkeypatch.setattr(projects_router, "register_hydration_artifact", _register_hydration_artifact)
