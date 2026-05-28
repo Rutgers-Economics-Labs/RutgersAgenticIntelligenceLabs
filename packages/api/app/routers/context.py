@@ -18,37 +18,11 @@ from app.services import planner_service
 
 
 async def _resolve_context_project(project_id: str | None) -> dict[str, Any] | None:
-    if not project_id:
-        return None
-
-    project = None
-    candidate_slugs = [project_id]
-    if isinstance(project_id, str) and project_id.startswith("local:"):
-        candidate_slugs.append(project_id.removeprefix("local:"))
-    for candidate in candidate_slugs:
-        try:
-            project = await planner_service.get_project_by_slug(candidate)
-            if project:
-                break
-        except Exception:
-            project = None
-
-    if not project and not str(project_id).startswith("local:"):
-        try:
-            project = await convex.query("projects:getById", {"projectId": project_id})
-        except Exception:
-            project = None
-
-    return project if isinstance(project, dict) else None
+    return await planner_service.resolve_project_reference(project_id)
 
 
 async def _context_create_payload_project_fields(project_id: str | None) -> dict[str, str | None]:
-    project = await _resolve_context_project(project_id)
-    slug = ""
-    if isinstance(project, dict):
-        slug = str(project.get("slug") or "").strip()
-    if not slug and project_id:
-        slug = str(project_id).removeprefix("local:").strip()
+    slug = await planner_service.resolve_project_slug(project_id)
     return {"projectSlug": slug or None}
 
 

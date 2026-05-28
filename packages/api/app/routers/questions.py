@@ -175,36 +175,11 @@ TOOLS = [
 
 
 async def _resolve_project_record(project_id: str | None) -> dict | None:
-    if not project_id:
-        return None
-    project = None
-    candidate_slugs = [project_id]
-    if isinstance(project_id, str) and project_id.startswith("local:"):
-        candidate_slugs.append(project_id.removeprefix("local:"))
-    for candidate in candidate_slugs:
-        try:
-            project = await planner_service.get_project_by_slug(candidate)
-            if project:
-                break
-        except Exception:
-            project = None
-    if not project and not str(project_id).startswith("local:"):
-        try:
-            project = await convex.query("projects:getById", {"projectId": project_id})
-        except Exception:
-            project = None
-    return project if isinstance(project, dict) else None
+    return await planner_service.resolve_project_reference(project_id)
 
 
 async def _resolve_project_slug(project_id: str | None) -> str | None:
-    project = await _resolve_project_record(project_id)
-    slug = str((project or {}).get("slug") or "").strip()
-    if slug:
-        return slug
-    if project_id:
-        fallback = str(project_id).removeprefix("local:").strip()
-        return fallback or None
-    return None
+    return await planner_service.resolve_project_slug(project_id)
 
 
 async def _execute_tool(name: str, args: dict) -> dict:

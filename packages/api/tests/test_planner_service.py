@@ -217,3 +217,87 @@ project:
     assert project["name"] == "Repo Truth Name"
     assert project["defaultBranch"] == "trunk"
     assert project["localRepoPath"] == str(project_root.resolve())
+
+
+def test_resolve_project_reference_prefers_repo_first_local_project(monkeypatch):
+    import app.services.planner_service as planner_service
+
+    async def _get_project_by_slug(slug: str):
+        if slug == "local:demo-project":
+            raise ValueError(slug)
+        if slug == "demo-project":
+            return {"_id": "local:demo-project", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+        raise ValueError(slug)
+
+    convex_called = False
+
+    async def _query(path: str, payload: dict):
+        nonlocal convex_called
+        convex_called = True
+        raise AssertionError((path, payload))
+
+    monkeypatch.setattr(planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(planner_service.convex, "query", _query)
+
+    project = asyncio.run(planner_service.resolve_project_reference("local:demo-project"))
+
+    assert project["_id"] == "local:demo-project"
+    assert project["slug"] == "demo-project"
+    assert convex_called is False
+
+
+def test_resolve_project_reference_falls_back_to_convex_id_and_merges_repo_truth(monkeypatch, tmp_path):
+    import app.services.planner_service as planner_service
+
+    project_root = tmp_path / "generated_projects" / "demo-project"
+    project_root.mkdir(parents=True, exist_ok=True)
+    (project_root / "rail.yaml").write_text(
+        """
+project:
+  name: Repo Truth Name
+  slug: demo-project
+  default_branch: trunk
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    async def _get_project_by_slug(slug: str):
+        raise ValueError(slug)
+
+    async def _query(path: str, payload: dict):
+        assert path == "projects:getById"
+        assert payload == {"projectId": "project-1"}
+        return {
+            "_id": "project-1",
+            "slug": "demo-project",
+            "name": "Convex Project",
+            "localRepoPath": "/tmp/from-convex",
+            "defaultBranch": "main",
+        }
+
+    monkeypatch.setenv("RAIL_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setattr(planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(planner_service.convex, "query", _query)
+
+    project = asyncio.run(planner_service.resolve_project_reference("project-1"))
+
+    assert project["_id"] == "project-1"
+    assert project["slug"] == "demo-project"
+    assert project["name"] == "Repo Truth Name"
+    assert project["defaultBranch"] == "trunk"
+    assert project["localRepoPath"] == str(project_root.resolve())
+
+
+def test_resolve_project_slug_uses_repo_first_project_slug(monkeypatch):
+    import app.services.planner_service as planner_service
+
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "local:demo-project"
+        return {"_id": "local:demo-project", "slug": "demo-project"}
+
+    monkeypatch.setattr(planner_service, "resolve_project_reference", _resolve_project_reference)
+
+    slug = asyncio.run(planner_service.resolve_project_slug("local:demo-project"))
+
+    assert slug == "demo-project"

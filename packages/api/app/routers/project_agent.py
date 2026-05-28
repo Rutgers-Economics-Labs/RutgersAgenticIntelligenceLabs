@@ -433,23 +433,7 @@ PROJECT_TOOLS_MERGED: list[dict] = [*PROJECT_TOOLS, *PROJECT_AGENT_DATA_TOOLS]
 # ---------------------------------------------------------------------------
 
 async def _resolve_project_record(project_id: str) -> dict | None:
-    project = None
-    candidate_slugs = [project_id]
-    if project_id.startswith("local:"):
-        candidate_slugs.append(project_id.removeprefix("local:"))
-    for candidate in candidate_slugs:
-        try:
-            project = await planner_service.get_project_by_slug(candidate)
-            if project:
-                break
-        except Exception:
-            project = None
-    if not project and not str(project_id).startswith("local:"):
-        try:
-            project = await convex.query("projects:getById", {"projectId": project_id})
-        except Exception:
-            project = None
-    return project if isinstance(project, dict) else None
+    return await planner_service.resolve_project_reference(project_id)
 
 
 async def _persist_project_patch(project: dict, patch: dict) -> dict:
@@ -476,10 +460,7 @@ async def _persist_project_patch(project: dict, patch: dict) -> dict:
 
 
 async def _resolve_project_slug(project_id: str) -> str:
-    project = await _resolve_project_record(project_id)
-    if project and project.get("slug"):
-        return str(project["slug"])
-    return project_id.removeprefix("local:")
+    return (await planner_service.resolve_project_slug(project_id)) or project_id.removeprefix("local:")
 
 
 async def _execute_project_tool(name: str, args: dict, project_id: str) -> dict:

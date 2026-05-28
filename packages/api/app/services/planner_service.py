@@ -405,6 +405,45 @@ async def get_project_by_github_repo(repo: str) -> dict:
     raise ValueError(f"Project linked to repo '{repo}' not found")
 
 
+async def resolve_project_reference(project_ref: str | None) -> dict[str, Any] | None:
+    if not project_ref:
+        return None
+
+    project = None
+    candidate_slugs = [project_ref]
+    if isinstance(project_ref, str) and project_ref.startswith("local:"):
+        candidate_slugs.append(project_ref.removeprefix("local:"))
+
+    for candidate in candidate_slugs:
+        try:
+            project = await get_project_by_slug(candidate)
+            if project:
+                break
+        except Exception:
+            project = None
+
+    if not project and not str(project_ref).startswith("local:"):
+        try:
+            project = await convex.query("projects:getById", {"projectId": project_ref})
+        except Exception:
+            project = None
+        if project:
+            project = _merge_repo_truth(project)
+
+    return project if isinstance(project, dict) else None
+
+
+async def resolve_project_slug(project_ref: str | None) -> str | None:
+    project = await resolve_project_reference(project_ref)
+    slug = str((project or {}).get("slug") or "").strip()
+    if slug:
+        return slug
+    if project_ref:
+        fallback = str(project_ref).removeprefix("local:").strip()
+        return fallback or None
+    return None
+
+
 def project_root_from_record(project: dict) -> Path | None:
     local_repo_path = project.get("localRepoPath")
     if not local_repo_path:
