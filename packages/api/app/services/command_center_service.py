@@ -1523,9 +1523,6 @@ def _build_blocker_summary(
     if closeout.get("status") == "blocked":
         repairs.append("Clear active blockers and rerun closeout once ontology and integrity gates are green.")
 
-    if not reasons and latest_audit and latest_audit.get("currentBlocker"):
-        reasons.append(str(latest_audit["currentBlocker"]))
-
     deduped_reasons = list(dict.fromkeys(reason for reason in reasons if reason))
     deduped_repairs = list(dict.fromkeys(repair for repair in repairs if repair))
     blocked = bool(deduped_reasons)

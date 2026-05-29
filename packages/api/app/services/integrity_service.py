@@ -181,6 +181,21 @@ def _is_promotable_final_artifact_path(artifact: ArtifactLineageRecord, artifact
     return lowered.endswith(".html") or lowered.endswith(".pdf")
 
 
+def _dataset_requires_promotion_provenance(artifact: ArtifactLineageRecord) -> bool:
+    if artifact.artifact_type != "dataset":
+        return False
+    path = artifact.artifact_path.strip()
+    if not path:
+        return False
+    if path.startswith(".ontology/") or path.startswith(".rail/"):
+        return False
+    if path in {".mcp.json"}:
+        return False
+    if path.startswith("research_plan/"):
+        return False
+    return True
+
+
 def get_integrity_repo(project_root: str | Path, plan_root: str = "research_plan") -> ResearchIntegrityRepo:
     repo = ResearchIntegrityRepo(project_root, plan_root=plan_root)
     repo.ensure_files_exist()
@@ -783,26 +798,39 @@ def evaluate_integrity_gate(
         ]
         if unsupported_claims:
             unsupported_claim_keys = {row.claim_key for row in unsupported_claims}
+            referenced_unsupported_claim_keys = {
+                _normalize_reference_key(reference)
+                for artifact in promotable_artifacts
+                for reference in artifact.claims
+                if _normalize_reference_key(reference) in unsupported_claim_keys
+            }
             unsupported_claim_artifacts = [
                 artifact.artifact_path
                 for artifact in promotable_artifacts
                 if {
                     _normalize_reference_key(reference)
                     for reference in artifact.claims
-                }.intersection(unsupported_claim_keys)
+                }.intersection(referenced_unsupported_claim_keys)
             ]
-            blocking_artifacts.extend(unsupported_claim_artifacts)
-            blocking_claims.extend(row.claim_key for row in unsupported_claims)
-            reasons.append("Report claims need evidence before final artifacts can be promoted.")
+            if unsupported_claim_artifacts:
+                blocking_artifacts.extend(unsupported_claim_artifacts)
+                blocking_claims.extend(
+                    row.claim_key
+                    for row in unsupported_claims
+                    if row.claim_key in referenced_unsupported_claim_keys
+                )
+                reasons.append("Report claims need evidence before final artifacts can be promoted.")
 
     if enforce_promotion_rules and integrity.require_source_for_datasets:
         unsourced_datasets = [
-            row for row in indexes.artifact_lineage if row.artifact_type == "dataset" and not row.sources
+            row
+            for row in indexes.artifact_lineage
+            if _dataset_requires_promotion_provenance(row) and not row.sources
         ]
         missing_provenance_datasets = [
             row.artifact_path
             for row in indexes.artifact_lineage
-            if row.artifact_type == "dataset"
+            if _dataset_requires_promotion_provenance(row)
             and row.sources
             and any(not _source_has_provenance(source_index.get(_normalize_reference_key(reference))) for reference in row.sources)
         ]

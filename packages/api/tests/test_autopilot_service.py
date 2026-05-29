@@ -3553,6 +3553,7 @@ def test_reconcile_project_reality_returns_consolidated_summary(tmp_path: Path, 
             "previousDuckdbPath": "/tmp/old.duckdb",
             "nextDuckdbPath": "/tmp/new.duckdb",
         },
+        "registeredArtifactPaths": [],
         "persistedControlPlaneSnapshot": {
             "path": "research_plan/state/control_plane_snapshot.json",
             "generatedAt": 123,
@@ -5944,3 +5945,43 @@ def test_reconcile_ontology_lifecycle_state_advances_tasks_after_successful_hydr
     assert by_id["provenance-task"]["status"] == "done"
     assert by_id["pipeline-task"]["status"] == "done"
     assert sync_calls
+
+
+def test_ensure_autopilot_running_prefers_local_repo_state_over_project_flag(tmp_path, monkeypatch):
+    import json
+
+    project = {
+        "_id": "project-1",
+        "slug": "soccer-project",
+        "localRepoPath": str(tmp_path),
+        "autopilotEnabled": True,
+        "autopilotAutoApprove": True,
+        "autopilotDispatchApprovalRequired": False,
+    }
+    state_path = tmp_path / ".rail" / "autopilot_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps({"enabled": False, "autoApprove": False, "dispatchApprovalRequired": True}),
+        encoding="utf-8",
+    )
+
+    starts: list[tuple[str, bool, bool]] = []
+
+    async def _resolve_project_reference(slug: str):
+        return project
+
+    async def _start_autopilot(slug: str, auto_approve: bool = False, dispatch_approval_required: bool = False):
+        starts.append((slug, auto_approve, dispatch_approval_required))
+        return None
+
+    monkeypatch.setattr(autopilot_service.planner_service, "resolve_project_reference", _resolve_project_reference)
+    monkeypatch.setattr(autopilot_service, "start_autopilot", _start_autopilot)
+    autopilot_service._autopilot_configs.pop("soccer-project", None)
+    autopilot_service._active_autopilots["soccer-project"] = False
+
+    snapshot = asyncio.run(autopilot_service.ensure_autopilot_running("soccer-project"))
+
+    assert snapshot["desired_enabled"] is False
+    assert snapshot["auto_approve"] is False
+    assert snapshot["dispatch_approval_required"] is True
+    assert starts == []

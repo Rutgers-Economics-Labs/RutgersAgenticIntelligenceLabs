@@ -451,6 +451,59 @@ def test_get_hydration_status_treats_unknown_commit_as_current_when_repo_has_no_
     assert payload["reusableArtifact"]["isReusable"] is True
 
 
+def test_get_hydration_status_skips_job_lookup_for_local_repo_only_project(project_root, monkeypatch):
+    ontology_root = project_root / ".ontology"
+    ontology_root.mkdir(parents=True, exist_ok=True)
+    onto_duckdb = ontology_root / "onto.duckdb"
+    onto_db = ontology_root / "onto.db"
+    hydration_meta = ontology_root / ".rail_hydration.json"
+    onto_duckdb.write_bytes(b"duck")
+    onto_db.write_bytes(b"db")
+    hydration_meta.write_text(
+        json.dumps(
+            {
+                "pipeline_slug": "my_pipeline",
+                "hydration_mode": "full",
+                "commit_sha": None,
+                "manifest_fingerprint": "current-fingerprint",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls: list[str] = []
+
+    async def _fake_query(path: str, payload: dict):
+        calls.append(path)
+        if path == "hydrationArtifacts:listByProject":
+            return []
+        if path == "jobs:listByProject":
+            raise AssertionError("local repo-only hydration status should not query jobs:listByProject")
+        return []
+
+    monkeypatch.setattr("app.services.hydration_registry_service.convex.query", _fake_query)
+    monkeypatch.setattr("app.services.hydration_registry_service.get_device_id", lambda: "device-1")
+    monkeypatch.setattr("app.services.hydration_registry_service.get_repo_commit", lambda root: None)
+    monkeypatch.setattr("app.services.hydration_registry_service.get_manifest_fingerprint", lambda root, manifest_path: "current-fingerprint")
+    monkeypatch.setattr("app.services.hydration_registry_service._duckdb_has_populated_rows", lambda path: True)
+
+    payload = asyncio.run(
+        get_hydration_status(
+            project={
+                "_id": "local:test-project",
+                "slug": "test-project",
+                "localRepoPath": str(project_root),
+                "manifestPath": "rail.yaml",
+            },
+            pipeline_slug="my_pipeline",
+            hydration_mode="full",
+        )
+    )
+
+    assert payload["state"] == "hydrated_on_this_device"
+    assert calls == []
+
+
 def test_attach_local_hydration_to_convex_promotes_repo_only_project_without_convex(project_root, monkeypatch):
     ontology_root = project_root / ".ontology"
     ontology_root.mkdir(parents=True, exist_ok=True)

@@ -376,10 +376,14 @@ async def get_hydration_status(
     current_commit = get_repo_commit(root)
     manifest_fingerprint = get_manifest_fingerprint(root, manifest_path)
 
-    artifacts = await convex.query(
-        "hydrationArtifacts:listByProject",
-        {"projectId": project["_id"], "limit": 100},
-    ) or []
+    project_id = project.get("_id")
+    if _is_local_project_id(project_id) or not project_id:
+        artifacts = []
+    else:
+        artifacts = await convex.query(
+            "hydrationArtifacts:listByProject",
+            {"projectId": project_id, "limit": 100},
+        ) or []
 
     current_device_matches: list[dict[str, Any]] = []
     other_device_matches: list[dict[str, Any]] = []
@@ -465,11 +469,17 @@ async def get_hydration_status(
             except Exception:
                 pass
 
-    # Check for active jobs
-    active_jobs = await convex.query(
-        "jobs:listByProject",
-        {"projectId": project["_id"], "limit": 10},
-    ) or []
+    # Check for active jobs. Local repo-only projects do not have a Convex row, so
+    # hydration status should degrade to local artifact truth instead of raising on
+    # a missing `_id`.
+    project_id = project.get("_id")
+    if _is_local_project_id(project_id) or not project_id:
+        active_jobs = []
+    else:
+        active_jobs = await convex.query(
+            "jobs:listByProject",
+            {"projectId": project_id, "limit": 10},
+        ) or []
     
     running_job = next(
         (j for j in active_jobs if j.get("status") in ["queued", "started", "running"] 

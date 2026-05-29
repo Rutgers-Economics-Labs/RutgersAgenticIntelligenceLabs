@@ -737,6 +737,17 @@ def _task_has_explicit_terminal_resolution(task: dict[str, Any], patch: dict[str
     return current_status in {"done", "cancelled", "superseded"} and current_status != next_status
 
 
+def _task_terminal_resolution_is_newer_than_session(task_path: Path, session_root: Path, task: dict[str, Any]) -> bool:
+    current_status = str(task.get("status") or "").strip().lower()
+    if current_status not in {"done", "cancelled", "superseded"}:
+        return False
+    state_path = session_root / "state.json"
+    try:
+        return task_path.stat().st_mtime >= state_path.stat().st_mtime
+    except OSError:
+        return False
+
+
 def _session_requires_worker_audit_hold(task: dict[str, Any], state: dict[str, Any]) -> bool:
     session_role = str(state.get("role") or "").strip().lower()
     if session_role and session_role != "planner":
@@ -762,10 +773,13 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
         task = task_by_id.get(task_id)
         if task is None:
             continue
+        task_path = _task_root(root) / f"{task_id}.md"
         patch = _terminal_task_patch_from_session_state(state, str(state.get("session_id") or session_root.name))
         if patch is None:
             continue
         if _task_explicitly_reopened(task):
+            continue
+        if _task_terminal_resolution_is_newer_than_session(task_path, session_root, task):
             continue
         if _task_has_explicit_terminal_resolution(task, patch):
             continue

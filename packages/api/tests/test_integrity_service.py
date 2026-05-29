@@ -130,6 +130,17 @@ def test_evaluate_integrity_gate_blocks_promotion_when_claims_need_evidence(tmp_
             }
         ]
     )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "draft",
+                "claims": ["research_plan/state/claims.json#claim-1"],
+            }
+        ]
+    )
 
     gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
 
@@ -206,6 +217,66 @@ def test_evaluate_integrity_gate_allows_supported_claim_with_attached_chunk_evid
     gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
 
     assert "claim-1" not in gate["blockingClaims"]
+
+
+def test_evaluate_integrity_gate_ignores_unreferenced_unsupported_claims(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
+    repo = ResearchIntegrityRepo(root)
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-unreferenced",
+                "claim_text": "Unreferenced draft claim",
+                "status": "draft",
+            }
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "draft",
+                "claims": [],
+            }
+        ]
+    )
+
+    gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
+
+    assert "Report claims need evidence before final artifacts can be promoted." not in gate["reasons"]
+    assert "claim-unreferenced" not in gate["blockingClaims"]
+
+
+def test_evaluate_integrity_gate_ignores_operational_datasets_for_promotion_provenance(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
+    repo = ResearchIntegrityRepo(root)
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "research_plan/work_orders/wo_example.json",
+                "artifact_type": "dataset",
+                "title": "Operational work order",
+                "promotion_state": "draft",
+                "sources": [],
+            },
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "draft",
+                "sources": [],
+            },
+        ]
+    )
+
+    gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
+
+    assert "Datasets must record source provenance before promotion." not in gate["reasons"]
+    assert "research_plan/work_orders/wo_example.json" not in gate["blockingArtifacts"]
 
 
 def test_claim_verification_benchmark_evaluates_supported_and_semantic_claims(tmp_path):

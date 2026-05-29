@@ -1196,3 +1196,47 @@ Hydrate the ontology.
     assert result == {"updated": []}
     assert tasks[0]["status"] == "cancelled"
     assert tasks[0]["latestRunSummary"] == "Cancelled after manual closeout cleanup."
+
+
+def test_reconcile_task_session_states_preserves_newer_terminal_task_summary(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    session_root = planner_service.session_files.ensure_session_root(tmp_path, "planner", "sess-old")
+    planner_service.session_files.update_state(
+        session_root,
+        session_id="sess-old",
+        task_id="hydrate-task",
+        status="completed",
+        review_status="review",
+        publish_commit_sha="abc123",
+        updated_at="2026-01-01T00:00:00Z",
+        completion_summary={
+            "status": "completed",
+            "blockers": [],
+            "recommended_next_tasks": [],
+        },
+    )
+
+    _write(
+        tmp_path / "research_plan" / "tasks" / "hydrate-task.md",
+        """---
+task_id: hydrate-task
+title: Hydrate task
+status: done
+assigned_role: planner
+latest_run_summary: Closed manually after reconciliation artifacts were recorded.
+---
+
+## Description
+
+Hydrate the ontology.
+""",
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_session_states(project))
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert result == {"updated": []}
+    assert tasks[0]["status"] == "done"
+    assert tasks[0]["latestRunSummary"] == "Closed manually after reconciliation artifacts were recorded."

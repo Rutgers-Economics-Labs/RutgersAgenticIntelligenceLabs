@@ -240,7 +240,7 @@ def test_integrity_summary_surfaces_role_specific_blockers(tmp_path: Path):
     "claims": ["research_plan/state/claims.json#claim-001"],
     "inputs": [],
     "scripts": [],
-    "verification_runs": [],
+    "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
     "stale_reasons": []
   }
 ]
@@ -495,7 +495,8 @@ def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path
 
     center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
 
-    assert center["currentBlocker"] == "Datasets must record source provenance before promotion."
+    assert center["auditedTruth"]["currentBlocker"] == "Datasets must record source provenance before promotion."
+    assert center["currentBlocker"] == "No sources have been admitted yet."
     assert center["auditedTruth"]["session"]["id"] == "sess-2"
     assert center["auditedTruth"]["path"] == "research_plan/audits/sess-2.json"
     assert center["recentAudits"][0]["session"]["id"] == "sess-2"
@@ -940,6 +941,39 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert center["blockerSummary"]["severity"] == "critical"
     assert center["currentBlocker"] == "1 stale runtime session(s) still marked active."
     assert center["blockerSummary"]["fixHref"] == "/projects/grid-study/runs"
+
+
+def test_blocker_summary_ignores_stale_latest_audit_when_live_gates_are_clear():
+    from app.services.command_center_service import _build_blocker_summary
+
+    summary = _build_blocker_summary(
+        latest_audit={"currentBlocker": "Deterministic verification failed."},
+        reality={
+            "staleRuntimeSessionCount": 0,
+            "runningAgentStatusDriftCount": 0,
+            "runningAgentRoleDriftCount": 0,
+            "runningAgentRunnerDriftCount": 0,
+            "duplicateTaskFileCount": 0,
+            "taskSessionMismatchCount": 0,
+            "staleAuditSessionCount": 0,
+            "secretPolicyRoleDriftCount": 0,
+            "roleConfigAliasDriftCount": 0,
+        },
+        auditors={
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        },
+        pending_approvals=[],
+        integrity_summary={"agentWorkflow": {"health": {"staleSources": [], "inadmissibleSources": [], "failedVerificationRuns": []}}},
+        source_summary={"count": 1, "admittedCount": 1, "missingAuthCount": 0, "blockedCount": 0},
+        project_slug="grid-study",
+    )
+
+    assert summary["blocked"] is False
+    assert summary["headline"] == "No active blocker detected."
 
 
 def test_blocker_category_classification_routes_through_priority_order():

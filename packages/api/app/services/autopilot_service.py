@@ -226,12 +226,13 @@ async def ensure_autopilot_running(project_slug: str) -> dict[str, Any]:
             "active": is_autopilot_active(project_slug),
         }
     local_repo_path = str(project.get("localRepoPath") or "").strip()
+    has_local_state = False
     if local_repo_path:
         try:
-            payload = json.loads(
-                (Path(local_repo_path).resolve() / ".rail" / "autopilot_state.json").read_text(encoding="utf-8")
-            )
+            state_path = Path(local_repo_path).resolve() / ".rail" / "autopilot_state.json"
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
             if isinstance(payload, dict):
+                has_local_state = True
                 desired_enabled = bool(payload.get("enabled", desired_enabled))
                 auto_approve = bool(payload.get("autoApprove", auto_approve))
                 dispatch_approval_required = bool(payload.get("dispatchApprovalRequired", dispatch_approval_required))
@@ -239,9 +240,10 @@ async def ensure_autopilot_running(project_slug: str) -> dict[str, Any]:
             pass
         except Exception as exc:
             logger.warning("Failed to read persisted autopilot state for %s: %s", project_slug, exc)
-    desired_enabled = bool(project.get("autopilotEnabled", desired_enabled))
-    auto_approve = bool(project.get("autopilotAutoApprove", auto_approve))
-    dispatch_approval_required = bool(project.get("autopilotDispatchApprovalRequired", dispatch_approval_required))
+    if not has_local_state:
+        desired_enabled = bool(project.get("autopilotEnabled", desired_enabled))
+        auto_approve = bool(project.get("autopilotAutoApprove", auto_approve))
+        dispatch_approval_required = bool(project.get("autopilotDispatchApprovalRequired", dispatch_approval_required))
     _update_config(
         project_slug,
         desired_enabled=desired_enabled,
