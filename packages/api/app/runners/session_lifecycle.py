@@ -2064,6 +2064,7 @@ def _certify_session_result_if_present(
     _log = _logging.getLogger(__name__)
 
     role = str(session.get("role") or "").strip().lower()
+    runner_name = str(session.get("runner") or "unknown").strip() or "unknown"
     is_promotion_role = role == "artifact"
 
     if terminal_status not in TERMINAL_STATUSES:
@@ -2073,6 +2074,9 @@ def _certify_session_result_if_present(
     # workspace root; we also check the canonical session directory path.
     candidates: list[Path] = []
     if workspace_root is not None:
+        candidates.append(
+            workspace_root / "research_plan" / "sessions" / role / convex_session_id / "session_result.json"
+        )
         candidates.append(
             workspace_root / "research_plan" / "sessions" / convex_session_id / "session_result.json"
         )
@@ -2117,9 +2121,9 @@ def _certify_session_result_if_present(
         # without test deps).  Fall back to a schema-only check via contracts.
         try:
             import json
-            from app.runners.contracts import SessionResult
+            from app.runners.contracts import parse_session_result
             raw = json.loads(result_path.read_text(encoding="utf-8"))
-            SessionResult.model_validate(raw)
+            parse_session_result(raw, session_id=convex_session_id, role=role, runner_name=runner_name)
 
             class _Cert:
                 passed = True
@@ -2137,15 +2141,21 @@ def _certify_session_result_if_present(
     try:
         from app.services import liveness_service
         from app.research import loop_closure
-        from app.runners.contracts import SessionResult
+        from app.runners.contracts import parse_session_result
         import json
         raw = json.loads(result_path.read_text(encoding="utf-8"))
         
         # 1. Update Ledger
-        liveness_service.record_session_result(project_root, convex_session_id, raw)
+        liveness_service.record_session_result(
+            project_root,
+            convex_session_id,
+            raw,
+            role=role,
+            runner_name=runner_name,
+        )
         
         # 2. Update Research State (Claims, Sources, Memo)
-        parsed = SessionResult.model_validate(raw)
+        parsed = parse_session_result(raw, session_id=convex_session_id, role=role, runner_name=runner_name)
         closure_updates = loop_closure.apply_session_results(project_root, parsed)
         _log.info(f"Session {convex_session_id} loop closure updates: {closure_updates}")
         
@@ -2913,7 +2923,9 @@ async def create_runner_session(
         # Update payload so the runner's prompt builder includes work order instructions
         task_payload.work_order_id = work_order.work_order_id
         task_payload.work_order_path = f"research_plan/work_orders/{work_order.work_order_id}.json"
-        task_payload.session_result_path = f"research_plan/sessions/{running_session_id}/session_result.json"
+        task_payload.session_result_path = (
+            f"research_plan/sessions/{role}/{running_session_id}/session_result.json"
+        )
     except Exception as _wo_exc:
         import logging as _logging
         _logging.getLogger(__name__).warning(

@@ -3842,7 +3842,7 @@ def test_finalize_workspace_review_allows_artifact_task_with_evidence_links(tmp_
         encoding="utf-8",
     )
     # Phase 2 protocol: promotion-class sessions must emit session_result.json.
-    session_result_dir = workspace_root / "research_plan" / "sessions" / "sess-artifact-structured"
+    session_result_dir = workspace_root / "research_plan" / "sessions" / "artifact" / "sess-artifact-structured"
     session_result_dir.mkdir(parents=True, exist_ok=True)
     (session_result_dir / "session_result.json").write_text(
         json.dumps(
