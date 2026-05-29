@@ -929,7 +929,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
 
     assert center["blockerSummary"]["blocked"] is True
-    assert center["blockerSummary"]["headline"] == "Autopilot is waiting for audited truth."
+    assert center["blockerSummary"]["headline"] == "1 stale runtime session(s) still marked active."
     assert "Ontology hydration state is `not_hydrated`." in center["blockerSummary"]["reasons"]
     assert "Reconcile running-agent session statuses so live runtime state uses canonical lifecycle values." in center["blockerSummary"]["repairs"]
     assert "Reconcile running-agent session roles so live runtime state uses canonical agent roles." in center["blockerSummary"]["repairs"]
@@ -938,6 +938,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert center["blockerSummary"]["category"] == "stale_session"
     assert center["blockerSummary"]["categoryLabel"] == "Stale session"
     assert center["blockerSummary"]["severity"] == "critical"
+    assert center["currentBlocker"] == "1 stale runtime session(s) still marked active."
     assert center["blockerSummary"]["fixHref"] == "/projects/grid-study/runs"
 
 

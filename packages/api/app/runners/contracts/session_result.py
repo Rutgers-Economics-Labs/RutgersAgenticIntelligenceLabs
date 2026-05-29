@@ -10,8 +10,10 @@ instead of letting RAIL parse free-form stdout.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -239,3 +241,181 @@ class SessionResult(BaseModel):
     duration_seconds: float | None = None
 
     completed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+_LEGACY_ROLE_TO_TASK_TYPE: dict[str, TaskType] = {
+    "data": TaskType.DATA_INGESTION,
+    "research": TaskType.ANALYSIS,
+    "analysis": TaskType.ANALYSIS,
+    "artifact": TaskType.ARTIFACT_WRITING,
+    "health": TaskType.HEALTH_REPAIR,
+    "coding": TaskType.ANALYSIS,
+    "planner": TaskType.ANALYSIS,
+    "verification": TaskType.VERIFICATION,
+    "source_discovery": TaskType.SOURCE_DISCOVERY,
+    "claim": TaskType.CLAIM_EXTRACTION,
+}
+
+
+def _normalize_legacy_blockers(raw_blockers: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_blockers, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for index, blocker in enumerate(raw_blockers):
+        if isinstance(blocker, dict):
+            normalized.append(blocker)
+            continue
+        summary = str(blocker or "").strip()
+        if not summary:
+            continue
+        normalized.append(
+            {
+                "blocker_id": f"legacy-blocker-{index + 1}",
+                "category": "unknown",
+                "summary": summary,
+            }
+        )
+    return normalized
+
+
+def _normalize_legacy_task_type(value: Any, role: str | None) -> str:
+    task_type = str(value or "").strip().lower()
+    valid_values = {item.value for item in TaskType}
+    if task_type in valid_values:
+        return task_type
+    inferred = _LEGACY_ROLE_TO_TASK_TYPE.get(str(role or "").strip().lower())
+    if inferred is not None:
+        return inferred.value
+    return TaskType.ANALYSIS.value
+
+
+def normalize_session_result_payload(
+    raw_result: dict[str, Any],
+    *,
+    session_id: str | None = None,
+    role: str | None = None,
+    runner_name: str | None = None,
+    task_type: str | TaskType | None = None,
+) -> dict[str, Any]:
+    """Coerce older runner outputs into the current SessionResult contract."""
+    normalized = deepcopy(raw_result)
+
+    normalized.setdefault("session_id", normalized.get("agent_session_id") or session_id or "")
+    normalized.setdefault("summary", str(normalized.get("summary") or "").strip() or "Legacy session result")
+    if not normalized.get("runner_name") and normalized.get("runner"):
+        normalized["runner_name"] = normalized.get("runner")
+    if not role and normalized.get("assigned_role"):
+        role = str(normalized.get("assigned_role") or "").strip().lower() or role
+
+    legacy_status = str(normalized.get("status") or "").strip().lower()
+    if legacy_status == "completed_with_blockers":
+        normalized["status"] = (
+            SessionStatus.NEEDS_FOLLOWUP.value
+            if normalized.get("blockers")
+            else SessionStatus.COMPLETED.value
+        )
+
+    task_type_hint = task_type.value if isinstance(task_type, TaskType) else task_type
+    normalized["task_type"] = _normalize_legacy_task_type(
+        normalized.get("task_type") or task_type_hint,
+        role,
+    )
+    normalized["runner_name"] = (
+        str(normalized.get("runner_name") or runner_name or role or "unknown").strip() or "unknown"
+    )
+
+    file_paths: list[str] = []
+    for key in ("files_changed", "updated_paths", "artifacts_updated"):
+        values = normalized.get(key)
+        if isinstance(values, list):
+            file_paths.extend(str(item).strip() for item in values if str(item).strip())
+    artifact_entries = normalized.get("artifacts")
+    if isinstance(artifact_entries, list):
+        for item in artifact_entries:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            if path:
+                file_paths.append(path)
+    outputs = normalized.get("outputs")
+    if isinstance(outputs, dict):
+        for value in outputs.values():
+            if isinstance(value, str) and value.strip():
+                file_paths.append(value.strip())
+            elif isinstance(value, list):
+                file_paths.extend(str(item).strip() for item in value if str(item).strip())
+    evidence = normalized.get("evidence")
+    if isinstance(evidence, list):
+        file_paths.extend(str(item).strip() for item in evidence if str(item).strip())
+    normalized["files_changed"] = sorted(dict.fromkeys(file_paths))
+
+    normalized["blockers"] = _normalize_legacy_blockers(normalized.get("blockers"))
+
+    verification = normalized.get("verification")
+    if isinstance(verification, dict):
+        if "command" not in verification:
+            normalized.pop("verification", None)
+        else:
+            normalized["verification"] = {
+                "command": verification.get("command"),
+                "expected_outputs": verification.get("expected_outputs") or [],
+                "claims_to_verify": verification.get("claims_to_verify") or [],
+            }
+    else:
+        normalized.pop("verification", None)
+
+    if not isinstance(normalized.get("domain_progress"), dict):
+        normalized["domain_progress"] = {}
+    normalized["domain_progress"].pop("produced", None)
+    normalized["domain_progress"].pop("summary", None)
+    if normalized.pop("produced_domain_progress", False) and not any(normalized["domain_progress"].values()):
+        artifact_count = len(normalized["files_changed"]) or 1
+        normalized["domain_progress"]["new_analysis_artifacts"] = max(
+            int(normalized["domain_progress"].get("new_analysis_artifacts") or 0),
+            artifact_count,
+        )
+
+    completed_at = normalized.get("completed_at") or normalized.get("timestamp_utc") or normalized.get("generated_at")
+    if completed_at:
+        normalized["completed_at"] = completed_at
+
+    for key in (
+        "agent_session_id",
+        "artifacts",
+        "artifacts_updated",
+        "checks",
+        "generated_at",
+        "metrics",
+        "produced_domain_progress",
+        "started_at",
+        "task_id",
+        "timestamp_utc",
+        "updated_paths",
+        "assigned_role",
+        "created_at",
+        "evidence",
+        "outputs",
+        "runner",
+        "updated_at",
+    ):
+        normalized.pop(key, None)
+
+    return normalized
+
+
+def parse_session_result(
+    raw_result: dict[str, Any],
+    *,
+    session_id: str | None = None,
+    role: str | None = None,
+    runner_name: str | None = None,
+    task_type: str | TaskType | None = None,
+) -> SessionResult:
+    normalized = normalize_session_result_payload(
+        raw_result,
+        session_id=session_id,
+        role=role,
+        runner_name=runner_name,
+        task_type=task_type,
+    )
+    return SessionResult.model_validate(normalized)

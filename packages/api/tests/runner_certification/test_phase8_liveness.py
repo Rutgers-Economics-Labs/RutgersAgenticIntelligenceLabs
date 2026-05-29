@@ -93,3 +93,24 @@ class TestLivenessGuards:
         # Different hash should be allowed
         check_diff = check_liveness(project_root, "analysis", idempotency_key="ik_1", input_hash="hash_2")
         assert check_diff["allowed"] is True
+
+    def test_legacy_session_result_updates_progress_ledger(self, project_root):
+        raw_result = {
+            "work_order_id": "wo_legacy_health",
+            "agent_session_id": "sess_legacy_health",
+            "status": "completed",
+            "produced_domain_progress": False,
+            "summary": "Reconciled stale control-plane state.",
+            "artifacts_updated": [
+                "research_plan/state/control_plane_audit.json",
+                "research_plan/state/verification_runs.json",
+            ],
+            "blockers": [],
+            "generated_at": "2026-05-24T23:59:00Z",
+        }
+
+        record_session_result(project_root, "sess_legacy_health", raw_result, role="health", runner_name="codex_cli")
+
+        ledger = json.loads((project_root / "research_plan" / "state" / "progress_ledger.json").read_text())
+        assert ledger["consecutive_maintenance_sessions"] == 1
+        assert ledger["consecutive_no_progress_sessions"] == 1

@@ -731,6 +731,12 @@ def _task_explicitly_reopened(task: dict[str, Any]) -> bool:
     return status in {"backlog", "ready", "awaiting_approval", "running"} and summary.startswith("Reopened by Autopilot")
 
 
+def _task_has_explicit_terminal_resolution(task: dict[str, Any], patch: dict[str, Any]) -> bool:
+    current_status = str(task.get("status") or "").strip().lower()
+    next_status = str(patch.get("status") or "").strip().lower()
+    return current_status in {"done", "cancelled", "superseded"} and current_status != next_status
+
+
 def _session_requires_worker_audit_hold(task: dict[str, Any], state: dict[str, Any]) -> bool:
     session_role = str(state.get("role") or "").strip().lower()
     if session_role and session_role != "planner":
@@ -760,6 +766,8 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
         if patch is None:
             continue
         if _task_explicitly_reopened(task):
+            continue
+        if _task_has_explicit_terminal_resolution(task, patch):
             continue
         if (
             patch.get("status") == "done"

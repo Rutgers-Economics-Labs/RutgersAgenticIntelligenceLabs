@@ -19,7 +19,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from app.runners.contracts import SessionResult
+from app.runners.contracts import parse_session_result
 
 
 # ---------------------------------------------------------------------------
@@ -132,7 +132,7 @@ def enforce_session_result(
         )
 
     try:
-        parsed = SessionResult.model_validate(raw)
+        parsed = parse_session_result(raw, session_id=session_id, role=role)
     except ValidationError as exc:
         issues = []
         for err in exc.errors():

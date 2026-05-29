@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -10,6 +11,7 @@ from typing import Any
 import pytest
 
 from app.runners import session_lifecycle
+from app.runners.claude_code import ClaudeCodeRunner
 from app.services import session_files
 from app.services import running_agent_service
 from app.services import project_artifacts_service
@@ -987,6 +989,206 @@ def test_create_runner_session_allows_write_run_after_policy_approval(tmp_path: 
     )
 
     assert result["status"] == "running"
+
+
+def test_local_claude_runner_end_to_end_writes_and_certifies_session_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    bootstrap_future_project(tmp_path, name="Local Claude E2E Project")
+    verify_script = tmp_path / "scripts" / "run-verification.sh"
+    verify_script.write_text("#!/usr/bin/env bash\nset -euo pipefail\necho 'verification ok'\n", encoding="utf-8")
+    _init_repo(tmp_path)
+
+    async def _fake_load_project(project_id: str | None, project_slug: str | None):
+        return {
+            "_id": project_id or "project-1",
+            "slug": project_slug or "local-claude-e2e-project",
+            "localRepoPath": str(tmp_path),
+            "defaultBranch": "main",
+        }
+
+    store: dict[str, dict[str, Any]] = {}
+
+    async def _create_running_agent(**kwargs):
+        session_id = kwargs.get("session_id") or "sess-e2e"
+        store[session_id] = {
+            "_id": session_id,
+            "projectId": kwargs.get("project_id"),
+            "projectSlug": kwargs.get("project_slug"),
+            "role": kwargs.get("role"),
+            "runner": kwargs.get("runner_name") or kwargs.get("runtime_kind"),
+            "status": kwargs.get("status", "queued"),
+            "taskId": kwargs.get("task_id"),
+            "title": kwargs.get("title"),
+            "externalSessionId": None,
+        }
+        return session_id
+
+    async def _update_running_agent(session_id: str, **fields):
+        store[session_id].update(fields)
+        return dict(store[session_id])
+
+    async def _get_running_agent(session_id: str):
+        return dict(store[session_id]) if session_id in store else None
+
+    async def _finalize_running_agent(session_id: str, *, status: str, ended_at=None):
+        if session_id in store:
+            store[session_id]["status"] = status
+            store[session_id]["endedAt"] = ended_at
+        return None
+
+    async def _list_project_running_agents(*args, **kwargs):
+        return []
+
+    async def _passing_auditors(project, *, tasks=None, active_sessions=None):
+        return {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        }
+
+    async def _noop_update_task(task_id: str, *, project: dict, **fields):
+        return {"_id": task_id, **fields}
+
+    monkeypatch.setattr(session_lifecycle, "_load_project", _fake_load_project)
+    monkeypatch.setattr(running_agent_service, "create_running_agent", _create_running_agent)
+    monkeypatch.setattr(running_agent_service, "update_running_agent", _update_running_agent)
+    monkeypatch.setattr(running_agent_service, "get_running_agent", _get_running_agent)
+    monkeypatch.setattr(running_agent_service, "finalize_running_agent", _finalize_running_agent)
+    monkeypatch.setattr(running_agent_service, "list_project_running_agents", _list_project_running_agents)
+    monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _passing_auditors)
+    monkeypatch.setattr(session_lifecycle.planner_service, "update_task", _noop_update_task)
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_run_workspace_setup",
+        lambda **kwargs: asyncio.sleep(0, result={"status": "passed", "stdout": "", "stderr": ""}),
+    )
+
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir(parents=True, exist_ok=True)
+    fake_claude = fake_bin / "claude"
+    fake_claude.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, re, sys\n"
+        "prompt = ' '.join(sys.argv[1:])\n"
+        "work_order_id = os.environ.get('RAIL_WORK_ORDER_ID')\n"
+        "work_order_path = os.environ.get('RAIL_WORK_ORDER_PATH')\n"
+        "task_type = 'analysis'\n"
+        "if work_order_path and os.path.exists(work_order_path):\n"
+        "    with open(work_order_path, 'r', encoding='utf-8') as handle:\n"
+        "        task_type = json.load(handle).get('task_type', task_type)\n"
+        "match = re.search(r'research_plan/sessions/[^\\s]+/session_result\\.json', prompt)\n"
+        "if not match:\n"
+        "    raise SystemExit('missing session_result path in prompt')\n"
+        "relative = match.group(0)\n"
+        "target = os.path.join(os.getcwd(), relative)\n"
+        "os.makedirs(os.path.dirname(target), exist_ok=True)\n"
+        "with open(target, 'w', encoding='utf-8') as handle:\n"
+        "    json.dump({\n"
+        "        'session_id': os.path.basename(os.path.dirname(target)),\n"
+        "        'work_order_id': work_order_id,\n"
+        "        'status': 'completed',\n"
+        "        'summary': 'Verified ontology health and recorded the result.',\n"
+        "        'task_type': task_type,\n"
+        "        'runner_name': 'claude_code',\n"
+        "        'files_changed': [relative, 'research_plan/state/claim_candidates.json'],\n"
+        "        'blockers': [\n"
+        "            {\n"
+        "                'category': 'insufficient_data_declared',\n"
+        "                'summary': 'No new claim candidates were needed for this verification-only smoke test.'\n"
+        "            }\n"
+        "        ]\n"
+        "    }, handle)\n"
+        "state_path = os.path.join(os.getcwd(), 'research_plan', 'state', 'claim_candidates.json')\n"
+        "os.makedirs(os.path.dirname(state_path), exist_ok=True)\n"
+        "with open(state_path, 'w', encoding='utf-8') as handle:\n"
+        "    json.dump([{'claim_id': 'claim-e2e', 'status': 'candidate'}], handle)\n"
+        "print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'completed local smoke test'}]}}))\n",
+        encoding="utf-8",
+    )
+    fake_claude.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake_bin}:{os.environ.get('PATH', '')}")
+    monkeypatch.setattr(
+        session_lifecycle,
+        "resolve_runner_for_project",
+        lambda *args, **kwargs: ClaudeCodeRunner(command=str(fake_claude)),
+    )
+
+    result = asyncio.run(
+        session_lifecycle.create_runner_session(
+            project_id="project-1",
+            project_slug="local-claude-e2e-project",
+            task_id="task-e2e",
+            runner_name="claude_code",
+            role="planner",
+            task_description="Verify ontology health and write the session result.",
+            repo_url="https://github.com/example/repo",
+            branch="main",
+            local_repo_path=str(tmp_path),
+            allowed_paths=["research_plan", "artifacts"],
+            acceptance_criteria=["writes a session_result.json", "updates claim candidates"],
+            policy_approval_granted=True,
+        )
+    )
+
+    terminal = asyncio.run(
+        session_lifecycle.poll_session_until_done(
+            result["convex_session_id"],
+            project_id="project-1",
+            max_polls=30,
+            poll_interval_seconds=1,
+        )
+    )
+
+    state = session_files.read_state(Path(result["sessionPath"]))
+    session_result_path = (
+        Path(state["workspace_path"])
+        / "research_plan"
+        / "sessions"
+        / "planner"
+        / result["convex_session_id"]
+        / "session_result.json"
+    )
+
+    assert terminal["status"] == "completed"
+    assert state["status"] == "completed"
+    assert state["session_result_certified"] is True
+    assert state["review_status"] == "review"
+    assert state["verification_status"] == "passed"
+    assert session_result_path.exists()
+
+
+def test_runner_launch_allows_existing_planner_task_even_when_task_graph_is_saturated():
+    auditors = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {
+            "status": "ready",
+            "blockers": [],
+            "taskSaturationCount": 24,
+        },
+        "ontology": {"status": "ready", "blockers": []},
+        "integrity": {"status": "ready", "blockers": []},
+    }
+
+    assert (
+        session_lifecycle._runner_launch_blocked_by_auditors(
+            "planner",
+            "Verify hydrated ontology health before research",
+            "verify-hydrated-ontology-health-before-research",
+            auditors,
+        )
+        is None
+    )
+    assert "Planner task graph saturated" in str(
+        session_lifecycle._runner_launch_blocked_by_auditors(
+            "planner",
+            "Open-ended planning pass",
+            None,
+            auditors,
+        )
+    )
 
 
 def test_create_runner_session_resolves_default_runner_from_project_policy(tmp_path: Path, monkeypatch):
@@ -4150,6 +4352,48 @@ def test_get_runner_session_falls_back_to_file_backed_session_when_runtime_row_m
     assert result["_id"] == "sess-file-backed"
     assert result["status"] == "completed"
     assert result["fileState"]["review_status"] == "review"
+
+
+def test_finalize_workspace_review_reconciles_repo_truth_for_terminal_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    session_root = session_files.ensure_session_root(tmp_path, "planner", "sess-reconcile")
+    session_files.update_state(
+        session_root,
+        status="completed",
+        role="planner",
+        review_status="pending",
+        workspace_path=None,
+    )
+
+    reconcile_calls: list[str] = []
+
+    async def _write_post_run_audit(**kwargs):
+        return None
+
+    async def _reconcile_project_truth(project):
+        reconcile_calls.append(project["slug"])
+
+    monkeypatch.setattr(session_lifecycle, "write_post_run_audit", _write_post_run_audit)
+    monkeypatch.setattr(
+        session_lifecycle,
+        "_reconcile_project_truth_after_terminal_session",
+        _reconcile_project_truth,
+    )
+
+    asyncio.run(
+        session_lifecycle._finalize_workspace_review(
+            convex_session_id="sess-reconcile",
+            session={"role": "planner", "taskId": "task-reconcile"},
+            project={"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path), "defaultBranch": "main"},
+            project_root=tmp_path,
+            session_root=session_root,
+            base_branch="main",
+        )
+    )
+
+    assert reconcile_calls == ["soccer-project"]
 
 
 def test_get_runner_session_finalizes_file_backed_completed_session_when_review_pending(

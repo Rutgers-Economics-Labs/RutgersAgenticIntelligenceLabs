@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -236,7 +237,7 @@ async def test_ensure_execution_lane_available_repairs_then_allows_lane(tmp_path
 
     async def _fake_list(*args, **kwargs):
         list_calls["n"] += 1
-        if list_calls["n"] == 1:
+        if list_calls["n"] <= 3:
             return [session]
         return []
 
@@ -278,3 +279,83 @@ async def test_ensure_execution_lane_available_blocks_live_session(tmp_path):
 
     assert result["available"] is False
     assert result["activeSessionCount"] == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_execution_lane_available_repairs_orphaned_queued_session_without_root(tmp_path):
+    from app.services.reconciliation_service import ensure_execution_lane_available
+
+    project = {"_id": "proj1", "localRepoPath": str(tmp_path)}
+    session = {
+        "_id": "sess-orphaned",
+        "role": "planner",
+        "status": "queued",
+        "externalSessionId": "",
+        "createdAt": 1,
+        "updatedAt": 1,
+    }
+
+    finalized: list[tuple[str, str]] = []
+    list_calls = {"n": 0}
+
+    async def _fake_list(*args, **kwargs):
+        list_calls["n"] += 1
+        if list_calls["n"] <= 3:
+            return [session]
+        return []
+
+    async def _fake_finalize(session_id: str, *, status: str, ended_at=None):
+        finalized.append((session_id, status))
+
+    with (
+        patch(
+            "app.services.reconciliation_service.running_agent_service.list_project_running_agents",
+            new_callable=AsyncMock,
+            side_effect=_fake_list,
+        ),
+        patch(
+            "app.services.reconciliation_service.running_agent_service.finalize_running_agent",
+            new_callable=AsyncMock,
+            side_effect=_fake_finalize,
+        ),
+    ):
+        result = await ensure_execution_lane_available(project)
+
+    assert result["available"] is True
+    assert result["activeSessionCount"] == 0
+    assert result["repairedSessionIds"] == ["sess-orphaned"]
+    assert finalized == [("sess-orphaned", "cancelled")]
+
+
+def test_artifact_registry_drift_ignores_latex_intermediates_and_bootstraps_lineage(tmp_path):
+    from rail.bootstrap import bootstrap_future_project
+
+    from app.services.reconciliation_service import project_reality_snapshot, repair_artifact_registry_drift
+
+    project_root = bootstrap_future_project(tmp_path, name="Artifact Drift", slug="artifact-drift")
+    artifacts_dir = project_root / "artifacts" / "report_build"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "report.pdf").write_text("pdf", encoding="utf-8")
+    (artifacts_dir / "report.tex").write_text("tex", encoding="utf-8")
+    (artifacts_dir / "report.aux").write_text("aux", encoding="utf-8")
+    (artifacts_dir / "report.log").write_text("log", encoding="utf-8")
+    (artifacts_dir / "build_report.py").write_text("print('ok')\n", encoding="utf-8")
+    (project_root / "scripts").mkdir(parents=True, exist_ok=True)
+    (project_root / "scripts" / "run-verification.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+
+    project = {"_id": "proj1", "slug": "artifact-drift", "localRepoPath": str(project_root)}
+
+    before_snapshot = asyncio.run(project_reality_snapshot(project))
+    assert "artifacts/report_build/report.aux" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+    assert "artifacts/report_build/report.log" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+    assert "artifacts/report_build/report.pdf" in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+
+    repair = asyncio.run(repair_artifact_registry_drift(project))
+    assert "artifacts/report_build/report.pdf" in repair["registeredArtifactPaths"]
+
+    after_snapshot = asyncio.run(project_reality_snapshot(project))
+    assert "artifacts/report_build/report.pdf" not in after_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+    from rail.integrity import ResearchIntegrityRepo
+    repo = ResearchIntegrityRepo(project_root)
+    record = next(item for item in repo.load_artifact_lineage() if item.artifact_path == "artifacts/report_build/report.pdf")
+    assert record.artifact_type == "report"

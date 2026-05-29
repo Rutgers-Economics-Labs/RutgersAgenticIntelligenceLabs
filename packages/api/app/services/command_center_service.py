@@ -1482,8 +1482,6 @@ def _build_blocker_summary(
     integrity = auditors.get("integrity") or {}
     closeout = auditors.get("closeout") or {}
 
-    if latest_audit and latest_audit.get("currentBlocker"):
-        reasons.insert(0, str(latest_audit["currentBlocker"]))
     reasons.extend(str(item) for item in (session.get("blockers") or []) if str(item) not in reasons)
     reasons.extend(str(item) for item in (planner.get("blockers") or []) if str(item) not in reasons)
     reasons.extend(str(item) for item in (ontology.get("blockers") or []) if str(item) not in reasons)
@@ -1524,6 +1522,9 @@ def _build_blocker_summary(
         repairs.append("Resolve unsupported claims, inadmissible sources, or missing provenance before promotion.")
     if closeout.get("status") == "blocked":
         repairs.append("Clear active blockers and rerun closeout once ontology and integrity gates are green.")
+
+    if not reasons and latest_audit and latest_audit.get("currentBlocker"):
+        reasons.append(str(latest_audit["currentBlocker"]))
 
     deduped_reasons = list(dict.fromkeys(reason for reason in reasons if reason))
     deduped_repairs = list(dict.fromkeys(repair for repair in repairs if repair))
@@ -1813,7 +1814,7 @@ async def _build_live_command_center(project: dict) -> dict[str, Any]:
         "recentAudits": recent_audits,
         "lifecyclePhase": lifecycle_phase,
         "closeoutCertificate": closeout_certificate,
-        "currentBlocker": latest_audit.get("currentBlocker") if isinstance(latest_audit, dict) else None,
+        "currentBlocker": blocker_summary["headline"] if blocker_summary.get("blocked") else None,
         "blockerSummary": blocker_summary,
         "repairQueue": repair_queue,
         "recommendedRepairTask": recommended_repair_task,

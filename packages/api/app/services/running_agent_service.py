@@ -120,6 +120,20 @@ def _store_local_running_agent(record: dict[str, Any]) -> str:
     return session_id
 
 
+def _merge_cached_session_record(session_id: str, session: dict[str, Any] | None) -> dict[str, Any] | None:
+    cached = _LOCAL_RUNNING_AGENTS.get(session_id)
+    if not cached and not session:
+        return None
+    if not cached:
+        return _normalize_session_record(session)
+    if not session:
+        return _normalize_session_record(dict(cached))
+    merged = dict(cached)
+    merged.update({k: v for k, v in session.items() if v is not None})
+    _LOCAL_RUNNING_AGENTS[session_id] = merged
+    return _normalize_session_record(merged)
+
+
 async def _safe_list_sessions(project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
     try:
         return await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": limit}) or []
@@ -265,7 +279,22 @@ async def create_running_agent(
         payload["taskId"] = task_id
     try:
         result = await convex.mutation("agent:createSession", payload)
-        return result["sessionId"]
+        session_id = result["sessionId"]
+        _store_local_running_agent(
+            _make_local_running_agent_record(
+                session_id=session_id,
+                project_id=project_id,
+                project_slug=project_slug,
+                task_id=task_id,
+                runtime_kind=runtime_kind,
+                role=role,
+                title=title,
+                external_session_id=external_session_id,
+                session_path=session_path,
+                status=status,
+            )
+        )
+        return session_id
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         logger.warning("running_agent_service: falling back to local running-agent state after Convex failure: %s", exc)
         local_session_id = f"local_runner_{uuid.uuid4().hex[:12]}"
@@ -296,33 +325,46 @@ async def update_running_agent(session_id: str, **fields: Any) -> None:
             current["endedAt"] = fields["endedAt"]
         current["lastHeartbeatAt"] = int(time.time() * 1000)
         _LOCAL_RUNNING_AGENTS[session_id] = current
-        return
+        if session_id.startswith("local_runner_"):
+            return
     # Convex updateSessionState accepts: status, externalSessionId, endedAt,
     # actualCostUsd, estimatedCostUsd. All other fields are silently dropped.
     _allowed = {"status", "externalSessionId", "endedAt", "actualCostUsd", "estimatedCostUsd"}
     patch = {k: v for k, v in fields.items() if k in _allowed and v is not None}
     if "status" in patch:
         patch["status"] = _normalize_session_status(patch.get("status"), strict=True)
-    await convex.mutation("agent:updateSessionState", {"sessionId": session_id, **patch})
+    try:
+        await convex.mutation("agent:updateSessionState", {"sessionId": session_id, **patch})
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        logger.warning("running_agent_service: using cached running-agent state after Convex update failure for %s: %s", session_id, exc)
 
 
 async def get_running_agent(session_id: str) -> dict[str, Any] | None:
     if session_id in _LOCAL_RUNNING_AGENTS:
-        return _normalize_session_record(dict(_LOCAL_RUNNING_AGENTS[session_id]))
-    return _normalize_session_record(await convex.query("agent:getSession", {"sessionId": session_id}))
+        if session_id.startswith("local_runner_"):
+            return _normalize_session_record(dict(_LOCAL_RUNNING_AGENTS[session_id]))
+    try:
+        return _merge_cached_session_record(session_id, await convex.query("agent:getSession", {"sessionId": session_id}))
+    except (httpx.TimeoutException, httpx.TransportError) as exc:
+        logger.warning("running_agent_service: using cached running-agent state after Convex get failure for %s: %s", session_id, exc)
+        return _normalize_session_record(dict(_LOCAL_RUNNING_AGENTS[session_id])) if session_id in _LOCAL_RUNNING_AGENTS else None
 
 
 async def list_project_running_agents(project_id: str, *, active_only: bool = True, limit: int = 50) -> list[dict[str, Any]]:
-    sessions = [
-        _normalize_session_record(item) or item
-        for item in await _safe_list_sessions(project_id, limit=limit)
-    ]
-    local_sessions = [
-        _normalize_session_record(dict(item)) or dict(item)
-        for item in _LOCAL_RUNNING_AGENTS.values()
-        if item.get("projectId") == project_id
-    ]
-    sessions.extend(local_sessions)
+    sessions_by_id: dict[str, dict[str, Any]] = {}
+    for item in await _safe_list_sessions(project_id, limit=limit):
+        session_id = str(item.get("_id") or "")
+        normalized = _merge_cached_session_record(session_id, item) if session_id else (_normalize_session_record(item) or item)
+        if session_id:
+            sessions_by_id[session_id] = normalized or item
+    for item in _LOCAL_RUNNING_AGENTS.values():
+        if item.get("projectId") != project_id:
+            continue
+        session_id = str(item.get("_id") or "")
+        if not session_id:
+            continue
+        sessions_by_id[session_id] = _normalize_session_record(dict(item)) or dict(item)
+    sessions = list(sessions_by_id.values())
     if not active_only:
         return sessions
     return [item for item in sessions if item.get("status") in ACTIVE_STATUSES]

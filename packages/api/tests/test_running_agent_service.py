@@ -84,6 +84,32 @@ def test_create_running_agent_normalizes_runner_name(monkeypatch):
     assert captured[0]["payload"]["model"] == "runtime:codex_cli"
 
 
+def test_create_running_agent_caches_convex_backed_session_for_local_fallback(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _mutation(path: str, payload: dict):
+        return {"sessionId": "sess-cache-1"}
+
+    monkeypatch.setattr(running_agent_service.convex, "mutation", _mutation)
+    monkeypatch.setattr(running_agent_service, "_LOCAL_RUNNING_AGENTS", {})
+
+    session_id = asyncio.run(
+        running_agent_service.create_running_agent(
+            project_id="project-1",
+            project_slug="demo-project",
+            task_id="task-1",
+            runtime_kind="claude_code",
+            role="coding",
+            title="Run coding task",
+        )
+    )
+
+    assert session_id == "sess-cache-1"
+    cached = running_agent_service._LOCAL_RUNNING_AGENTS["sess-cache-1"]
+    assert cached["projectId"] == "project-1"
+    assert cached["runner"] == "claude_code"
+
+
 def test_get_running_agent_normalizes_legacy_role_alias(monkeypatch):
     from app.services import running_agent_service
 
@@ -151,13 +177,14 @@ def test_list_project_running_agents_normalizes_legacy_role_aliases(monkeypatch)
     assert [item["role"] for item in sessions] == ["coding", "planner"]
 
 
-def test_list_project_running_agents_returns_empty_on_convex_timeout(monkeypatch):
+def test_list_project_running_agents_returns_empty_on_convex_timeout_without_cache(monkeypatch):
     from app.services import running_agent_service
 
     async def _query(path: str, payload: dict):
         raise httpx.ConnectTimeout("timed out")
 
     monkeypatch.setattr(running_agent_service.convex, "query", _query)
+    monkeypatch.setattr(running_agent_service, "_LOCAL_RUNNING_AGENTS", {})
 
     sessions = asyncio.run(
         running_agent_service.list_project_running_agents(
@@ -167,6 +194,115 @@ def test_list_project_running_agents_returns_empty_on_convex_timeout(monkeypatch
     )
 
     assert sessions == []
+
+
+def test_get_running_agent_uses_cached_record_on_convex_timeout(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _query(path: str, payload: dict):
+        raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(running_agent_service.convex, "query", _query)
+    monkeypatch.setattr(
+        running_agent_service,
+        "_LOCAL_RUNNING_AGENTS",
+        {
+            "sess-cache-2": {
+                "_id": "sess-cache-2",
+                "projectId": "project-1",
+                "projectSlug": "demo-project",
+                "taskId": "task-1",
+                "runner": "claude_code",
+                "role": "coding",
+                "title": "Run coding task",
+                "externalSessionId": "external-123",
+                "sessionPath": "",
+                "status": "running",
+            }
+        },
+    )
+
+    session = asyncio.run(running_agent_service.get_running_agent("sess-cache-2"))
+
+    assert session is not None
+    assert session["_id"] == "sess-cache-2"
+    assert session["status"] == "running"
+
+
+def test_list_project_running_agents_uses_cached_records_on_convex_timeout(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _query(path: str, payload: dict):
+        raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(running_agent_service.convex, "query", _query)
+    monkeypatch.setattr(
+        running_agent_service,
+        "_LOCAL_RUNNING_AGENTS",
+        {
+            "sess-cache-3": {
+                "_id": "sess-cache-3",
+                "projectId": "project-1",
+                "projectSlug": "demo-project",
+                "taskId": "task-1",
+                "runner": "claude_code",
+                "role": "coding",
+                "title": "Run coding task",
+                "externalSessionId": "",
+                "sessionPath": "",
+                "status": "running",
+            }
+        },
+    )
+
+    sessions = asyncio.run(
+        running_agent_service.list_project_running_agents(
+            "project-1",
+            active_only=False,
+        )
+    )
+
+    assert len(sessions) == 1
+    assert sessions[0]["_id"] == "sess-cache-3"
+
+
+def test_update_running_agent_keeps_cached_state_when_convex_update_times_out(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _mutation(path: str, payload: dict):
+        raise httpx.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(running_agent_service.convex, "mutation", _mutation)
+    monkeypatch.setattr(
+        running_agent_service,
+        "_LOCAL_RUNNING_AGENTS",
+        {
+            "sess-cache-4": {
+                "_id": "sess-cache-4",
+                "projectId": "project-1",
+                "projectSlug": "demo-project",
+                "taskId": "task-1",
+                "runner": "claude_code",
+                "role": "coding",
+                "title": "Run coding task",
+                "externalSessionId": "",
+                "sessionPath": "",
+                "status": "queued",
+            }
+        },
+    )
+
+    asyncio.run(
+        running_agent_service.update_running_agent(
+            "sess-cache-4",
+            status="running",
+            externalSessionId="external-456",
+        )
+    )
+
+    cached = running_agent_service._LOCAL_RUNNING_AGENTS["sess-cache-4"]
+    assert cached["status"] == "running"
+    assert cached["externalSessionId"] == "external-456"
 
 
 def test_create_running_agent_rejects_unknown_runner(monkeypatch):

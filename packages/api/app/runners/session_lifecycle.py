@@ -243,6 +243,7 @@ def _should_retry_false_publish_failure(state: dict[str, Any]) -> bool:
 def _runner_launch_blocked_by_auditors(
     role: str,
     task_description: str,
+    task_id: str | None,
     auditors: dict[str, Any] | None,
 ) -> str | None:
     auditors = auditors or {}
@@ -281,7 +282,7 @@ def _runner_launch_blocked_by_auditors(
     # Planner drift suppression: block the planner role from creating more tasks
     # when the task graph is already saturated with open work.
     saturation_count = int(planner_auditor.get("taskSaturationCount") or 0)
-    if saturation_count > 0 and role_name == "planner":
+    if saturation_count > 0 and role_name == "planner" and not str(task_id or "").strip():
         return (
             f"Planner task graph saturated: {saturation_count} open task(s) already exceed the "
             f"saturation threshold. Resolve or cancel existing work before creating new tasks."
@@ -2227,6 +2228,7 @@ async def _finalize_workspace_review(
                 session=session,
                 changed_files=changed_files,
             )
+            await _reconcile_project_truth_after_terminal_session(project)
         return
     workspace_root = Path(workspace_path)
     workspace_branch = state.get("workspace_branch") or f"{session.get('role') or 'agent'}-{convex_session_id}"
@@ -2563,6 +2565,8 @@ async def _finalize_workspace_review(
             latestRunSummary=latest_summary,
         )
 
+    await _reconcile_project_truth_after_terminal_session(project)
+
 
 
 
@@ -2570,6 +2574,21 @@ async def _finalize_workspace_review(
 def _sync_file_status(root: Path, status: str) -> None:
     session_files.update_state(root, status=status)
     session_files.refresh_summary(root)
+
+
+async def _reconcile_project_truth_after_terminal_session(project: dict[str, Any] | None) -> None:
+    if not project or not project.get("localRepoPath"):
+        return
+    try:
+        from app.services import reconciliation_service
+
+        await reconciliation_service.reconcile_project_reality(project)
+    except Exception as exc:
+        _log.warning(
+            "post-run reconcile_project_reality failed for %s: %s",
+            project.get("slug") or project.get("_id"),
+            exc,
+        )
 
 
 async def _load_project(project_id: str | None, project_slug: str | None) -> dict[str, Any] | None:
@@ -2768,7 +2787,7 @@ async def create_runner_session(
             tasks=tasks,
             active_sessions=active_sessions,
         )
-        auditor_blocker = _runner_launch_blocked_by_auditors(role, task_description, auditors)
+        auditor_blocker = _runner_launch_blocked_by_auditors(role, task_description, task_id, auditors)
         if auditor_blocker:
             raise RuntimeError(auditor_blocker)
 

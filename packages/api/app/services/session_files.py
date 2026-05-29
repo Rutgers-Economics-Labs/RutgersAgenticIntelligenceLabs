@@ -22,6 +22,7 @@ COMPLETION_SUMMARY_FIELDS = (
     "blockers",
     "recommended_next_tasks",
 )
+LOCK_STALE_SECONDS = 30.0
 
 
 def utc_now_iso() -> str:
@@ -138,6 +139,41 @@ def _lock_path(root: Path, name: str) -> Path:
     return root / f".{name}.lock"
 
 
+def _lock_payload() -> str:
+    return json.dumps({"pid": os.getpid(), "created_at": time.time()})
+
+
+def _pid_is_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _lock_is_stale(path: Path, *, stale_after_seconds: float = LOCK_STALE_SECONDS) -> bool:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return False
+    age_seconds = max(0.0, time.time() - stat.st_mtime)
+    pid: int | None = None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8") or "{}")
+        raw_pid = payload.get("pid")
+        if raw_pid is not None:
+            pid = int(raw_pid)
+    except Exception:
+        pid = None
+    if pid is not None and not _pid_is_alive(pid):
+        return True
+    return age_seconds >= stale_after_seconds
+
+
 def _acquire_lock(root: Path, name: str, timeout_seconds: float = 5.0) -> Path:
     path = _lock_path(root, name)
     deadline = time.monotonic() + timeout_seconds
@@ -145,10 +181,14 @@ def _acquire_lock(root: Path, name: str, timeout_seconds: float = 5.0) -> Path:
         try:
             fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
+            if _lock_is_stale(path):
+                _release_lock(path)
+                continue
             if time.monotonic() >= deadline:
                 raise TimeoutError(f"Timed out acquiring lock {path.name}")
             time.sleep(0.02)
             continue
+        os.write(fd, _lock_payload().encode("utf-8"))
         os.close(fd)
         return path
 

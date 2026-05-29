@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from app.runners.contracts import SessionResult, WorkOrder
+from app.runners.contracts import SessionResult, WorkOrder, parse_session_result
 
 
 @dataclass
@@ -61,7 +61,10 @@ def certify_session_result(
         return CertificationResult(passed=False, issues=[f"session_result is not valid JSON: {exc}"])
 
     try:
-        parsed = SessionResult.model_validate(raw)
+        parsed = parse_session_result(
+            raw,
+            task_type=work_order.task_type if work_order is not None else None,
+        )
     except ValidationError as exc:
         # Surface every field-level error, not just the first, so authors
         # can fix them in one pass.

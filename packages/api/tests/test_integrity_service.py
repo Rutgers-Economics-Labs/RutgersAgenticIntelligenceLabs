@@ -1007,6 +1007,156 @@ def test_evaluate_integrity_gate_blocks_artifacts_missing_reproducibility_metada
     assert any("inputs, scripts, verification commands, and verification runs" in reason for reason in gate["reasons"])
 
 
+def test_evaluate_integrity_gate_ignores_failed_run_superseded_by_linked_pass(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
+    repo = ResearchIntegrityRepo(root)
+    repo.write_sources(
+        [
+            {
+                "source_key": "bls-laus",
+                "source_type": "dataset",
+                "title": "BLS LAUS",
+                "url_or_path": "https://example.com/bls.csv",
+                "origin": "BLS",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "api",
+                "freshness_status": "fresh",
+                "quality_status": "validated",
+                "provenance": {"text": "BLS extract."},
+            }
+        ]
+    )
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "Unemployment fell after 2021.",
+                "artifact_path": "artifacts/report.md",
+                "evidence_paths": ["topics/labor/notes.md"],
+                "source_keys": ["bls-laus"],
+                "status": "supported",
+                "evidence_kind": "direct",
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-failed",
+                "status": "failed",
+                "artifact_paths": ["artifacts/report.md"],
+            },
+            {
+                "run_id": "run-passed",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            },
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "sources": ["research_plan/state/sources.json#bls-laus"],
+                "claims": ["research_plan/state/claims.json#claim-001"],
+                "verification_runs": [
+                    "research_plan/state/verification_runs.json#run-failed",
+                    "research_plan/state/verification_runs.json#run-passed",
+                ],
+            }
+        ]
+    )
+
+    gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
+
+    assert gate["blockingVerificationRuns"] == []
+    assert not any("Failed or blocked verification runs" in reason for reason in gate["reasons"])
+
+
+def test_evaluate_integrity_gate_ignores_failed_runs_only_linked_to_operational_files(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
+    repo = ResearchIntegrityRepo(root)
+    repo.write_sources(
+        [
+            {
+                "source_key": "bls-laus",
+                "source_type": "dataset",
+                "title": "BLS LAUS",
+                "url_or_path": "https://example.com/bls.csv",
+                "origin": "BLS",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "api",
+                "freshness_status": "fresh",
+                "quality_status": "validated",
+                "provenance": {"text": "BLS extract."},
+            }
+        ]
+    )
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "Unemployment fell after 2021.",
+                "artifact_path": "artifacts/report.md",
+                "evidence_paths": ["topics/labor/notes.md"],
+                "source_keys": ["bls-laus"],
+                "status": "supported",
+                "evidence_kind": "direct",
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-passed",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            },
+            {
+                "run_id": "run-failed-operational",
+                "status": "failed",
+                "artifact_paths": ["research_plan/work_orders/wo-001.json"],
+            },
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "sources": ["research_plan/state/sources.json#bls-laus"],
+                "claims": ["research_plan/state/claims.json#claim-001"],
+                "verification_runs": ["research_plan/state/verification_runs.json#run-passed"],
+            },
+            {
+                "artifact_path": "research_plan/work_orders/wo-001.json",
+                "artifact_type": "artifact",
+                "title": "Work Order",
+                "promotion_state": "draft",
+                "verification_runs": ["research_plan/state/verification_runs.json#run-failed-operational"],
+            },
+        ]
+    )
+
+    gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
+
+    assert gate["blockingVerificationRuns"] == []
+    assert not any("Failed or blocked verification runs" in reason for reason in gate["reasons"])
+
+
 def test_summarize_agent_workflow_health_flags_missing_verification_commands(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
     _seed_workflow_scaffolding(root)
@@ -1804,6 +1954,81 @@ def test_get_artifact_detail_returns_linked_records_and_trust_state(tmp_path):
     assert detail["trustSummary"]["recommendedNextAction"] == "Trust state is current."
     assert detail["trustSummary"]["hasEvidence"] is True
     assert detail["trustSummary"]["isReproducible"] is True
+
+
+def test_get_artifact_detail_prefers_linked_passed_verification_over_older_failed_run(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
+    repo = ResearchIntegrityRepo(root)
+    repo.write_sources(
+        [
+            {
+                "source_key": "bls-laus",
+                "source_type": "dataset",
+                "title": "BLS LAUS",
+                "url_or_path": "https://example.com/bls.csv",
+                "origin": "BLS",
+                "acquired_at": "2026-05-14T00:00:00Z",
+                "access_method": "api",
+                "freshness_status": "fresh",
+                "quality_status": "validated",
+                "provenance": {"text": "BLS extract."},
+            }
+        ]
+    )
+    repo.write_claims(
+        [
+            {
+                "claim_key": "claim-001",
+                "claim_text": "Unemployment fell after 2021.",
+                "artifact_path": "artifacts/report.md",
+                "evidence_paths": ["topics/labor/notes.md"],
+                "source_keys": ["bls-laus"],
+                "status": "supported",
+                "evidence_kind": "direct",
+            }
+        ]
+    )
+    repo.write_verification_runs(
+        [
+            {
+                "run_id": "run-failed",
+                "status": "failed",
+                "artifact_paths": ["artifacts/report.md"],
+            },
+            {
+                "run_id": "run-passed",
+                "status": "passed",
+                "artifact_paths": ["artifacts/report.md"],
+            },
+        ]
+    )
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "verified",
+                "inputs": ["topics/data.csv"],
+                "scripts": ["topics/analyze.py"],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "sources": ["research_plan/state/sources.json#bls-laus"],
+                "claims": ["research_plan/state/claims.json#claim-001"],
+                "verification_runs": [
+                    "research_plan/state/verification_runs.json#run-failed",
+                    "research_plan/state/verification_runs.json#run-passed",
+                ],
+            }
+        ]
+    )
+
+    detail = get_artifact_detail(root, "artifacts/report.md", manifest=load_manifest(root))
+
+    assert {item["run_id"] for item in detail["verificationRuns"]} == {"run-failed", "run-passed"}
+    assert detail["trustSummary"]["blockingVerificationRuns"] == []
+    assert detail["trustSummary"]["isTrusted"] is True
+    assert detail["trustSummary"]["recommendedNextAction"] == "Trust state is current."
 
 
 def test_get_claim_detail_returns_claim_state_summary(tmp_path):

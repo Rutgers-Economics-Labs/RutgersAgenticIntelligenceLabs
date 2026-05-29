@@ -242,3 +242,36 @@ def test_autopilot_goal_mode_records_audit_drift_failure(monkeypatch, tmp_path):
     asyncio.run(autopilot_service.run_autopilot_loop("demo-project", max_iterations=1))
 
     assert failures and failures[0]["failure_class"] == "audit_drift"
+
+
+def test_sync_goal_runtime_handles_empty_auditor_blocker_lists(tmp_path):
+    (tmp_path / "research_plan" / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".ontology" / "sources").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+    _write_manifest(tmp_path)
+
+    project = {
+        "_id": "project-1",
+        "name": "Demo",
+        "slug": "demo-project",
+        "description": "Demo goal mode project",
+        "localRepoPath": str(tmp_path),
+    }
+    goal_service.create_goal_contract(project, {"objective": "Test goal", "successCriteria": ["closeout audit passes"]})
+
+    payload = goal_service.sync_goal_runtime(
+        project,
+        tasks=[],
+        auditors={
+            "session": {"status": "blocked", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        },
+        reality={"repoRootExists": True, "hasRailYaml": True, "hasResearchPlan": True},
+        active_sessions=[],
+        autopilot_enabled=True,
+    )
+
+    assert payload["state"]["currentBlocker"] in {None, "", "Autonomy is blocked."}

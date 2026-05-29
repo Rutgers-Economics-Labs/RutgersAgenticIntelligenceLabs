@@ -243,6 +243,33 @@ class TestSessionResultEnforcer:
         assert outcome.result.status == SessionStatus.COMPLETED
         assert not outcome.issues
 
+    def test_accepts_legacy_session_result_payload(self, tmp_path: Path):
+        session_id = "sess_legacy_001"
+        role = "health"
+        result_path = tmp_path / "research_plan" / "sessions" / role / session_id / "session_result.json"
+        _write_result(
+            result_path,
+            {
+                "work_order_id": f"wo_{session_id}",
+                "agent_session_id": session_id,
+                "status": "completed",
+                "produced_domain_progress": False,
+                "summary": "Reconciled stale control-plane state.",
+                "artifacts_updated": ["research_plan/state/verification_runs.json"],
+                "blockers": [],
+                "generated_at": "2026-05-24T23:59:00Z",
+            },
+        )
+
+        outcome = enforce_session_result(tmp_path, role=role, session_id=session_id)
+
+        assert outcome.found
+        assert outcome.valid
+        assert outcome.result is not None
+        assert outcome.result.session_id == session_id
+        assert outcome.result.task_type == TaskType.HEALTH_REPAIR
+        assert "research_plan/state/verification_runs.json" in outcome.result.files_changed
+
     def test_returns_not_found_when_file_missing(self, tmp_path: Path):
         outcome = enforce_session_result(tmp_path, role="research", session_id="sess_missing")
 

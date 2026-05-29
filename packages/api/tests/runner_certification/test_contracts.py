@@ -16,6 +16,7 @@ from app.runners.contracts import (
     CapabilityState,
     CertificationStatus,
     ExecutionCapabilities,
+    parse_session_result,
     RunnerProfile,
     SessionResult,
     SessionStatus,
@@ -225,6 +226,114 @@ def test_session_result_rejects_extra_fields_on_claim():
     }
     with pytest.raises(ValidationError):
         SessionResult.model_validate(bad)
+
+
+def test_parse_session_result_normalizes_legacy_completed_with_blockers_payload():
+    legacy = {
+        "work_order_id": "wo_legacy_001",
+        "status": "completed_with_blockers",
+        "produced_domain_progress": True,
+        "summary": "Rebuilt the report PDF and published the named deliverable.",
+        "updated_paths": [
+            "research/report.tex",
+            "research/report.pdf",
+        ],
+        "artifacts": [
+            {"path": "research/report.pdf", "role": "latex_build"},
+        ],
+        "blockers": [
+            "Missing supporting figure image exports.",
+        ],
+        "verification": [
+            "Ran pdflatex twice successfully.",
+        ],
+        "timestamp_utc": "2026-05-24T23:49:21Z",
+    }
+
+    result = parse_session_result(
+        legacy,
+        session_id="sess_legacy_001",
+        role="coding",
+        runner_name="codex_cli",
+    )
+
+    assert result.session_id == "sess_legacy_001"
+    assert result.status == SessionStatus.NEEDS_FOLLOWUP
+    assert result.task_type == TaskType.ANALYSIS
+    assert result.runner_name == "codex_cli"
+    assert "research/report.pdf" in result.files_changed
+    assert result.blockers[0].summary == "Missing supporting figure image exports."
+    assert result.domain_progress.new_analysis_artifacts >= 1
+    assert result.verification is None
+
+
+def test_parse_session_result_normalizes_control_plane_repair_payload():
+    legacy = {
+        "session_id": "sess_control_plane_001",
+        "work_order_id": "wo_sess_control_plane_001",
+        "status": "completed",
+        "summary": "Reconciled stale control-plane metadata to audited truth.",
+        "produced_domain_progress": False,
+        "domain_progress": {
+            "produced": False,
+            "summary": "Control-plane repair only.",
+        },
+        "artifacts_updated": [
+            "research_plan/state/control_plane_audit.json",
+            "research_plan/state/verification_runs.json",
+        ],
+        "verification": {
+            "control_plane_audit_status": "clear",
+            "planner_auditor_status": "clear",
+            "verification_run_id": "sess_control_plane_001-verification",
+        },
+        "checks": {
+            "planner_auditor_blockers_cleared": True,
+        },
+        "created_at": "2026-05-25T02:03:40Z",
+        "updated_at": "2026-05-25T02:05:30Z",
+    }
+
+    result = parse_session_result(
+        legacy,
+        session_id="sess_control_plane_001",
+        role="health",
+        runner_name="codex_cli",
+    )
+
+    assert result.task_type == TaskType.HEALTH_REPAIR
+    assert result.runner_name == "codex_cli"
+    assert result.verification is None
+    assert result.domain_progress.model_dump() == {
+        "new_sources": 0,
+        "new_datasets": 0,
+        "new_claim_candidates": 0,
+        "new_analysis_artifacts": 0,
+        "new_verified_claims": 0,
+    }
+
+
+def test_parse_session_result_normalizes_control_plane_outputs_and_runner_fields():
+    legacy = {
+        "session_id": "sess_control_plane_002",
+        "status": "completed",
+        "summary": "Reconciled live session truth.",
+        "assigned_role": "health",
+        "runner": "codex_cli",
+        "started_at": "2026-05-24T00:00:00Z",
+        "evidence": ["research_plan/state/control_plane_audit.json"],
+        "outputs": {
+            "session_result_json": "research_plan/sessions/health/sess_control_plane_002/session_result.json",
+            "state_files": ["research_plan/state/verification_runs.json"],
+        },
+    }
+
+    result = parse_session_result(legacy, session_id="sess_control_plane_002")
+
+    assert result.task_type == TaskType.HEALTH_REPAIR
+    assert result.runner_name == "codex_cli"
+    assert "research_plan/state/control_plane_audit.json" in result.files_changed
+    assert "research_plan/state/verification_runs.json" in result.files_changed
 
 
 # ---------------------------------------------------------------------------

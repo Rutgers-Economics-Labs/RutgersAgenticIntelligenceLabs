@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from app.runners.contracts import SessionResult
+from app.runners.contracts import parse_session_result
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +75,22 @@ def check_liveness(project_root: Path, task_type: str, idempotency_key: str | No
             
     return {"allowed": True, "reason": "ok"}
     
-def record_session_result(project_root: Path, session_id: str, raw_result: dict[str, Any]) -> None:
+def record_session_result(
+    project_root: Path,
+    session_id: str,
+    raw_result: dict[str, Any],
+    *,
+    role: str | None = None,
+    runner_name: str | None = None,
+) -> None:
     """Update the progress ledger based on a session's structured result."""
     try:
-        result = SessionResult.model_validate(raw_result)
+        result = parse_session_result(
+            raw_result,
+            session_id=session_id,
+            role=role,
+            runner_name=runner_name,
+        )
     except Exception as e:
         logger.warning(f"Failed to validate session_result for liveness tracking: {e}")
         return

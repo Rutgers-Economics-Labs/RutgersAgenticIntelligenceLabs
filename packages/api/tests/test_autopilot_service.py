@@ -3848,6 +3848,77 @@ Task A.
     assert status["details"]["taskSessionMismatchTaskIds"] == []
 
 
+def test_project_reality_status_does_not_report_mismatch_for_explicitly_cancelled_task(tmp_path: Path, monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "localRepoPath": str(tmp_path)}
+    task_dir = tmp_path / "research_plan" / "tasks"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task-a.md").write_text(
+        """---
+task_id: task-a
+title: Review Held Task
+status: cancelled
+assigned_role: planner
+latest_run_summary: Cancelled after manual closeout cleanup.
+---
+
+## Description
+
+Task A.
+""",
+        encoding="utf-8",
+    )
+
+    session_root = autopilot_service.session_lifecycle.session_files.ensure_session_root(tmp_path, "planner", "sess-1")
+    autopilot_service.session_lifecycle.session_files.update_state(
+        session_root,
+        session_id="sess-1",
+        task_id="task-a",
+        role="planner",
+        status="completed",
+        review_status="needs_changes",
+        updated_at="2026-01-01T00:00:00Z",
+        completion_summary={
+            "status": "completed",
+            "assumptions_added": [],
+            "assumptions_changed": [],
+            "sources_used": [],
+            "datasets_created": [],
+            "artifacts_created": [],
+            "claims_created": [],
+            "verification_results": [],
+            "open_questions": [],
+            "blockers": ["Deterministic verification failed."],
+            "recommended_next_tasks": ["Fix verification failures and rerun the worker task."],
+        },
+    )
+
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_project_running_agents",
+        lambda project_id, *, active_only=True, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_status_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_role_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+    monkeypatch.setattr(
+        reconciliation_service.running_agent_service,
+        "list_running_agent_runner_drift",
+        lambda project_id, *, limit=50: asyncio.sleep(0, result=[]),
+    )
+
+    status = asyncio.run(reconciliation_service.project_reality_status(project))
+
+    assert status["taskSessionMismatchCount"] == 0
+    assert status["details"]["taskSessionMismatchTaskIds"] == []
+
+
 def test_launch_ready_task_falls_through_after_blocked_candidate(monkeypatch):
     project = {"slug": "demo-project"}
     ready_tasks = [

@@ -647,6 +647,13 @@ def _confidence_for_state(phase: str, *, current_blocker: str | None, failed_run
     return max(0.0, min(1.0, round(base, 2)))
 
 
+def _first_auditor_blocker(auditor: dict[str, Any] | None) -> str:
+    blockers = (auditor or {}).get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return ""
+    return str(blockers[0] or "")
+
+
 def sync_goal_runtime(
     project: dict[str, Any],
     *,
@@ -694,15 +701,15 @@ def sync_goal_runtime(
     if phase in {"blocked", "needs_human"}:
         current_blocker = preflight.get("currentBlocker")
         if not current_blocker:
-            current_blocker = str((auditors.get("session") or {}).get("blockers", [None])[0] or "")
+            current_blocker = _first_auditor_blocker(auditors.get("session"))
         if not current_blocker:
-            current_blocker = str((auditors.get("planner") or {}).get("blockers", [None])[0] or "")
+            current_blocker = _first_auditor_blocker(auditors.get("planner"))
         if not current_blocker:
-            current_blocker = str((auditors.get("ontology") or {}).get("blockers", [None])[0] or "")
+            current_blocker = _first_auditor_blocker(auditors.get("ontology"))
         if not current_blocker:
-            current_blocker = str((auditors.get("integrity") or {}).get("blockers", [None])[0] or "")
+            current_blocker = _first_auditor_blocker(auditors.get("integrity"))
         if not current_blocker:
-            current_blocker = str((auditors.get("closeout") or {}).get("blockers", [None])[0] or "")
+            current_blocker = _first_auditor_blocker(auditors.get("closeout"))
         current_blocker = current_blocker or "Autonomy is blocked."
     state["currentBlocker"] = current_blocker
     state["tracks"] = {

@@ -38,6 +38,9 @@ def cmd_query(project: rail.Project, args: argparse.Namespace):
 def cmd_hydrate(project: rail.Project, args: argparse.Namespace):
     _print_json(project.hydrate(pipeline_slug=args.pipeline))
 
+def cmd_reconcile(project: rail.Project, args: argparse.Namespace):
+    _print_json(project.reconcile())
+
 def cmd_series(project: rail.Project, args: argparse.Namespace):
     _print_json(project.series(args.series_id).to_dict(orient="records"))
 
@@ -114,6 +117,9 @@ def main():
     h_parser = subparsers.add_parser("hydrate", help="Trigger hydration")
     h_parser.add_argument("--pipeline", help="Pipeline slug")
 
+    # Reconcile
+    subparsers.add_parser("reconcile", help="Reconcile repo-backed planner/session/control-plane state")
+
     # Series
     ts_parser = subparsers.add_parser("series", help="Fetch time-series data")
     ts_parser.add_argument("series_id", help="Series identifier")
@@ -164,6 +170,8 @@ def main():
         cmd_query(project, args)
     elif args.command == "hydrate":
         cmd_hydrate(project, args)
+    elif args.command == "reconcile":
+        cmd_reconcile(project, args)
     elif args.command == "series":
         cmd_series(project, args)
     elif args.command == "secrets":

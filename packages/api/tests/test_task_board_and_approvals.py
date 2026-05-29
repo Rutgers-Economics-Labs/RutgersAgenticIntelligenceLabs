@@ -1153,3 +1153,46 @@ Hydrate the ontology.
     assert result == {"updated": ["hydrate-task"]}
     assert tasks[0]["status"] == "done"
     assert tasks[0]["latestRunSummary"] == "Published commit abc123"
+
+
+def test_reconcile_task_session_states_preserves_explicit_terminal_task_resolution(tmp_path: Path):
+    from app.services import planner_service
+
+    project = _project(tmp_path)
+    _write(
+        tmp_path / "research_plan" / "tasks" / "hydrate-task.md",
+        """---
+task_id: hydrate-task
+title: Hydrate task
+status: cancelled
+assigned_role: planner
+latest_run_summary: Cancelled after manual closeout cleanup.
+---
+
+## Description
+
+Hydrate the ontology.
+""",
+    )
+
+    old_root = planner_service.session_files.ensure_session_root(tmp_path, "planner", "sess-old")
+    planner_service.session_files.update_state(
+        old_root,
+        session_id="sess-old",
+        task_id="hydrate-task",
+        status="completed",
+        review_status="needs_changes",
+        updated_at="2026-01-01T00:00:00Z",
+        completion_summary={
+            "status": "completed",
+            "blockers": ["Deterministic verification failed."],
+            "recommended_next_tasks": ["Fix verification failures and rerun the worker task."],
+        },
+    )
+
+    result = asyncio.run(planner_service.reconcile_task_session_states(project))
+    tasks = asyncio.run(planner_service.list_tasks("main", project=project))
+
+    assert result == {"updated": []}
+    assert tasks[0]["status"] == "cancelled"
+    assert tasks[0]["latestRunSummary"] == "Cancelled after manual closeout cleanup."

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,28 @@ from app.services.integrity_service import load_integrity_indexes
 from app.services import role_runtime_service
 from app.services.role_runtime_service import ROLE_ALIASES
 from rail.manifest import RailManifest, load_manifest
+
+
+ORPHANED_QUEUE_GRACE_MS = 30_000
+IGNORED_ARTIFACT_DRIFT_SUFFIXES = {".aux", ".log", ".out", ".toc"}
+TRACKED_ARTIFACT_DRIFT_SUFFIXES = (
+    set(session_lifecycle.ARTIFACT_SUFFIXES)
+    | set(session_lifecycle.DATASET_SUFFIXES)
+    | {".tex"}
+)
+
+
+def _artifact_path_should_ignore_drift(path: str) -> bool:
+    lower = path.lower()
+    if lower.endswith(".synctex.gz"):
+        return True
+    return Path(path).suffix.lower() in IGNORED_ARTIFACT_DRIFT_SUFFIXES
+
+
+def _artifact_path_is_registry_candidate(path: str) -> bool:
+    if _artifact_path_should_ignore_drift(path):
+        return False
+    return Path(path).suffix.lower() in TRACKED_ARTIFACT_DRIFT_SUFFIXES
 
 
 async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +127,131 @@ async def repair_zombie_sessions(project: dict[str, Any]) -> dict[str, Any]:
     return {"repairedSessionIds": repaired}
 
 
+async def repair_orphaned_queued_sessions(project: dict[str, Any]) -> dict[str, Any]:
+    """Sweep queued sessions that never reached a real runner launch.
+
+    These sessions block single-active-worker lane policy even though they
+    have no external runner session and often no session root on disk. We
+    repair only obviously orphaned cases:
+    - status is ``queued``
+    - ``externalSessionId`` is empty
+    - and either the session root is missing entirely, or the file-backed
+      state is still queued with no runner command and the record is older than
+      a short grace window.
+    """
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    if not project_root or not project_root.exists():
+        return {"repairedSessionIds": []}
+    project_id = project.get("_id")
+    if not project_id:
+        return {"repairedSessionIds": []}
+    active_sessions = await running_agent_service.list_project_running_agents(
+        str(project_id),
+        active_only=True,
+        limit=50,
+    )
+    now_ms = int(time.time() * 1000)
+    repaired: list[str] = []
+    for session in active_sessions:
+        session_id = str(session.get("_id") or "")
+        if not session_id:
+            continue
+        if str(session.get("status") or "").strip().lower() != "queued":
+            continue
+        if str(session.get("externalSessionId") or "").strip():
+            continue
+
+        session_root = session_lifecycle._resolve_session_root_path(session, project_root=project_root)
+        created_at = int(session.get("updatedAt") or session.get("createdAt") or session.get("_creationTime") or 0)
+        age_ms = max(0, now_ms - created_at) if created_at else ORPHANED_QUEUE_GRACE_MS + 1
+
+        if session_root is None or not session_root.exists():
+            if age_ms >= ORPHANED_QUEUE_GRACE_MS:
+                await running_agent_service.finalize_running_agent(session_id, status="cancelled")
+                repaired.append(session_id)
+            continue
+
+        state = session_lifecycle.session_files.read_state(session_root)
+        state_status = str(state.get("status") or "").strip().lower()
+        workspace_path = str(state.get("workspace_path") or "").strip()
+        runtime = runner_runtime_paths(str(session_root))
+        has_runner_command = runtime["command"].exists()
+        if (
+            state_status in {"queued", "initialized"}
+            and not has_runner_command
+            and not workspace_path
+            and age_ms >= ORPHANED_QUEUE_GRACE_MS
+        ):
+            session_lifecycle.session_files.update_state(session_root, status="cancelled")
+            await running_agent_service.finalize_running_agent(session_id, status="cancelled")
+            repaired.append(session_id)
+
+    return {"repairedSessionIds": repaired}
+
+
+async def repair_artifact_registry_drift(project: dict[str, Any]) -> dict[str, Any]:
+    project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
+    if not project_root or not project_root.exists():
+        return {"registeredArtifactPaths": []}
+    try:
+        manifest = load_manifest(project_root)
+    except Exception:
+        return {"registeredArtifactPaths": []}
+
+    repo = session_lifecycle.get_integrity_repo(project_root)
+    indexes = load_integrity_indexes(project_root)
+    artifacts_root = project_root / manifest.paths.artifacts_root
+    if not artifacts_root.exists():
+        return {"registeredArtifactPaths": []}
+
+    tracked = {
+        str(item.artifact_path)
+        for item in indexes.artifact_lineage
+        if item.artifact_type != "dataset"
+        and (
+            str(item.artifact_path) == manifest.paths.artifacts_root
+            or str(item.artifact_path).startswith(f"{manifest.paths.artifacts_root}/")
+        )
+    }
+    verification_command = "scripts/run-verification.sh" if (project_root / "scripts" / "run-verification.sh").exists() else None
+    registered: list[str] = []
+
+    for path in sorted(artifacts_root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_path = str(path.relative_to(project_root)).replace("\\", "/")
+        if any(part.startswith(".") for part in path.relative_to(project_root).parts):
+            continue
+        if rel_path in tracked or not _artifact_path_is_registry_candidate(rel_path):
+            continue
+        suffix = path.suffix.lower()
+        artifact_type = "report" if suffix in {".md", ".pdf", ".html", ".tex"} else "artifact"
+        sibling_scripts = sorted(
+            str(candidate.relative_to(project_root)).replace("\\", "/")
+            for candidate in path.parent.iterdir()
+            if candidate.is_file()
+            and candidate != path
+            and candidate.suffix.lower() in session_lifecycle.SCRIPT_LINEAGE_SUFFIXES
+        )
+        repo.upsert_artifact_lineage(
+            {
+                "artifact_path": rel_path,
+                "artifact_type": artifact_type,
+                "title": path.name,
+                "promotion_state": "draft",
+                "scripts": sibling_scripts,
+                "verification_commands": [verification_command] if verification_command else [],
+                "inputs": [],
+                "sources": [],
+                "assumptions": [],
+                "claims": [],
+                "verification_runs": [],
+            }
+        )
+        registered.append(rel_path)
+    return {"registeredArtifactPaths": registered}
+
+
 async def ensure_execution_lane_available(
     project: dict[str, Any],
     *,
@@ -112,7 +260,8 @@ async def ensure_execution_lane_available(
     """Repair stale/zombie sessions, then report whether a new worker may start."""
     repaired_stale = list((await repair_stale_active_sessions(project)).get("repairedSessionIds") or [])
     repaired_zombie = list((await repair_zombie_sessions(project)).get("repairedSessionIds") or [])
-    repaired_session_ids = list(dict.fromkeys(repaired_stale + repaired_zombie))
+    repaired_orphaned = list((await repair_orphaned_queued_sessions(project)).get("repairedSessionIds") or [])
+    repaired_session_ids = list(dict.fromkeys(repaired_stale + repaired_zombie + repaired_orphaned))
 
     project_id = project.get("_id")
     if project_id:
@@ -448,6 +597,8 @@ async def project_reality_snapshot(
         task = task_by_id[task_id]
         if planner_service._task_explicitly_reopened(task):
             continue
+        if planner_service._task_has_explicit_terminal_resolution(task, patch):
+            continue
         if (
             str(task.get("status") or "") != patch["status"]
             or task.get("blockerCategory") != patch["blockerCategory"]
@@ -583,7 +734,9 @@ async def project_reality_snapshot(
         disk_artifacts = sorted(
             str(path.relative_to(root)).replace("\\", "/")
             for path in artifacts_root.rglob("*")
-            if path.is_file() and not any(part.startswith(".") for part in path.relative_to(root).parts)
+            if path.is_file()
+            and not any(part.startswith(".") for part in path.relative_to(root).parts)
+            and not _artifact_path_should_ignore_drift(str(path.relative_to(root)).replace("\\", "/"))
         ) if artifacts_root.exists() else []
         tracked_artifacts = sorted(
             str(item.artifact_path)
@@ -790,6 +943,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     repaired_running_agent_runner_session_ids: list[str] = []
     repaired_audit_session_ids: list[str] = []
     repaired_ontology_artifact: dict[str, Any] | None = None
+    registered_artifact_paths: list[str] = []
     persisted_control_plane_snapshot: dict[str, Any] | None = None
 
     removed_task_files = list((await planner_service.reconcile_task_files(project)).get("removed") or [])
@@ -827,6 +981,11 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
     ontology_repair = await repair_active_ontology_registry_drift(project)
     if ontology_repair.get("repaired"):
         repaired_ontology_artifact = ontology_repair
+    registered_artifact_paths = [
+        str(item)
+        for item in (await repair_artifact_registry_drift(project)).get("registeredArtifactPaths") or []
+        if item
+    ]
 
     if root is not None and root.exists():
         try:
@@ -848,6 +1007,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
         "repairedSessionIds": repaired_session_ids,
         "repairedAuditSessionIds": repaired_audit_session_ids,
         "repairedOntologyArtifact": repaired_ontology_artifact,
+        "registeredArtifactPaths": registered_artifact_paths,
         "persistedControlPlaneSnapshot": persisted_control_plane_snapshot,
         "hasChanges": bool(
             removed_task_files
@@ -861,6 +1021,7 @@ async def reconcile_project_reality(project: dict[str, Any]) -> dict[str, Any]:
             or repaired_session_ids
             or repaired_audit_session_ids
             or repaired_ontology_artifact
+            or registered_artifact_paths
             or persisted_control_plane_snapshot
         ),
     }
