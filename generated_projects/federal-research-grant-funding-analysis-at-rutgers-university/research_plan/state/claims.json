@@ -23,7 +23,7 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T20:11:21Z"
+    "updated_at": "2026-05-30T23:04:33Z"
   },
   {
     "claim_key": "claim-largest-observed-agency",
@@ -48,7 +48,7 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T20:11:21Z"
+    "updated_at": "2026-05-30T23:04:33Z"
   },
   {
     "claim_key": "claim-department-crosswalk-required",
@@ -73,6 +73,6 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T20:11:21Z"
+    "updated_at": "2026-05-30T23:04:33Z"
   }
 ]

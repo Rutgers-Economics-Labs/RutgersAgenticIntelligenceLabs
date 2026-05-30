@@ -18,6 +18,7 @@ from rail.integrity import ResearchIntegrityRepo  # noqa: E402
 
 REQUIRED_ARTIFACTS = {
     "artifacts/federal_research_grants_report.md",
+    "artifacts/federal_research_grants_report.pdf",
     "artifacts/funding_dashboard.csv",
     "artifacts/departmental_performance_profiles.md",
     "artifacts/source_quality_notes.md",

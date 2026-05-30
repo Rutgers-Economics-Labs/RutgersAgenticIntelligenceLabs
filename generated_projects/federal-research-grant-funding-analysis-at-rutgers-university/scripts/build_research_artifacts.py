@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -286,6 +288,19 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ]
     )
     (ARTIFACTS_DIR / "federal_research_grants_report.md").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    pandoc = shutil.which("pandoc")
+    if not pandoc:
+        raise RuntimeError("pandoc is required to build artifacts/federal_research_grants_report.pdf")
+    subprocess.run(
+        [
+            pandoc,
+            str(ARTIFACTS_DIR / "federal_research_grants_report.md"),
+            "-o",
+            str(ARTIFACTS_DIR / "federal_research_grants_report.pdf"),
+            "--pdf-engine=xelatex",
+        ],
+        check=True,
+    )
 
     profile_lines = [
         "# Departmental Performance Profiles",
@@ -417,6 +432,7 @@ def register_truth(summary: dict[str, Any]) -> None:
     run_id = "federal-grants-local-build-001"
     artifact_paths = [
         "artifacts/federal_research_grants_report.md",
+        "artifacts/federal_research_grants_report.pdf",
         "artifacts/funding_dashboard.csv",
         "artifacts/departmental_performance_profiles.md",
         "artifacts/source_quality_notes.md",
@@ -439,6 +455,19 @@ def register_truth(summary: dict[str, Any]) -> None:
     )
     verification_ref = f"research_plan/state/verification_runs.json#{run_id}"
     lineage = [
+        {
+            "artifact_path": "artifacts/federal_research_grants_report.pdf",
+            "artifact_type": "report",
+            "title": "Federal Research Grants Report PDF",
+            "promotion_state": "partially_verified",
+            "inputs": ["artifacts/federal_research_grants_report.md", "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"],
+            "scripts": ["scripts/build_research_artifacts.py"],
+            "sources": ["research_plan/state/sources.json#usaspending-rutgers-federal-assistance", "research_plan/state/sources.json#nsf-award-search-rutgers"],
+            "claims": ["research_plan/state/claims.json#claim-public-awards-panel-built", "research_plan/state/claims.json#claim-largest-observed-agency", "research_plan/state/claims.json#claim-department-crosswalk-required"],
+            "verification_commands": ["scripts/run-verification.sh"],
+            "verification_runs": [verification_ref],
+            "reproducibility_mode": "deterministic",
+        },
         {
             "artifact_path": "artifacts/federal_research_grants_report.md",
             "artifact_type": "report",
