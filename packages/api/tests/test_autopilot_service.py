@@ -3229,6 +3229,53 @@ def test_autopilot_routes_planner_turn_toward_integrity_repair(monkeypatch):
     assert "Integrity is blocked" in planner_turns[0]
 
 
+def test_planner_turn_message_includes_goal_mode_context(monkeypatch):
+    project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": "/tmp/soccer-project"}
+    auditors = {
+        "session": {"status": "ready", "blockers": []},
+        "planner": {"status": "ready", "blockers": []},
+        "ontology": {"status": "ready", "blockers": []},
+        "integrity": {"status": "ready", "blockers": []},
+        "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+    }
+
+    monkeypatch.setattr(
+        autopilot_service.goal_service,
+        "load_goal_bundle",
+        lambda project_arg: {
+            "contract": {"objective": "Finish the soccer closeout."},
+            "state": {
+                "phase": "building_pipelines",
+                "currentSubgoal": "required data or ontology artifacts are hydrated and available",
+                "currentBlocker": None,
+                "success": {
+                    "criteria": [
+                        {
+                            "criterion": "required data or ontology artifacts are hydrated and available",
+                            "satisfied": False,
+                            "reason": "Ontology readiness has not passed yet.",
+                        },
+                        {
+                            "criterion": "verification and closeout gates pass",
+                            "satisfied": True,
+                            "reason": "Integrity gate is ready.",
+                        },
+                    ]
+                },
+            },
+        },
+    )
+
+    message = autopilot_service._planner_turn_message(project, auditors)
+
+    assert "Closeout is blocked" in message
+    assert "[GOAL MODE CONTEXT]" in message
+    assert "objective: Finish the soccer closeout." in message
+    assert "current_subgoal: required data or ontology artifacts are hydrated and available" in message
+    assert "unmet_success_criteria:" in message
+    assert "Ontology readiness has not passed yet." in message
+
+
 def test_autopilot_blocks_advance_until_audit_is_current(tmp_path: Path, monkeypatch):
     project = {"_id": "project-1", "slug": "soccer-project", "name": "Soccer Project", "localRepoPath": str(tmp_path)}
     planner_turns: list[dict] = []

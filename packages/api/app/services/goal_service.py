@@ -424,6 +424,7 @@ def load_goal_bundle(project: dict[str, Any]) -> dict[str, Any]:
     }
     state["goalId"] = contract.get("goalId")
     state["contract"] = contract
+    state = _apply_derived_runtime_fields(state)
     goal_md = (root / GOAL_MD).read_text(encoding="utf-8") if (root / GOAL_MD).exists() else _render_goal_md(contract, state)
     lessons = _read_json(root / GOAL_LESSONS_JSON, _default_list_payload())
     blockers = _read_json(root / GOAL_BLOCKERS_JSON, _default_list_payload())
@@ -720,6 +721,117 @@ def _derive_current_subgoal(
     return current_blocker or "Goal is active."
 
 
+def _recommended_task_templates(
+    *,
+    current_subgoal: str | None,
+    criteria: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    target = str(current_subgoal or "").strip().lower()
+    unmet = [item for item in criteria if not bool((item or {}).get("satisfied"))]
+    first_unmet = unmet[0] if unmet else {}
+    criterion = str((first_unmet or {}).get("criterion") or "").strip()
+    reason = str((first_unmet or {}).get("reason") or "").strip()
+    templates: list[dict[str, Any]] = []
+
+    def add_template(title: str, *, agent_role: str, runner: str, repo_paths: list[str], acceptance_criteria: list[str]) -> None:
+        templates.append(
+            {
+                "title": title,
+                "agentRole": agent_role,
+                "runner": runner,
+                "repoPaths": repo_paths,
+                "acceptanceCriteria": acceptance_criteria,
+                "goalCriterion": criterion or None,
+                "reason": reason or None,
+            }
+        )
+
+    if any(token in target for token in ("ontology", "hydrate", "hydration", "pipeline")):
+        add_template(
+            "Hydrate project ontology and register active artifacts",
+            agent_role="data",
+            runner="codex_cli",
+            repo_paths=[".ontology", "research_plan", "artifacts"],
+            acceptance_criteria=[
+                "hydration completes against project sources or pipeline configs",
+                "active ontology artifacts are populated and registered",
+                "ontology-backed work can proceed from durable project state",
+            ],
+        )
+        add_template(
+            "Populate ontology pipeline steps for project sources",
+            agent_role="data",
+            runner="codex_cli",
+            repo_paths=[".ontology/sources", ".ontology/pipelines", ".ontology/transforms"],
+            acceptance_criteria=[
+                "project sources map to executable ontology pipeline steps",
+                "pipeline configs are durable and project-scoped",
+                "hydration can run without placeholder steps",
+            ],
+        )
+    elif any(token in target for token in ("source", "admissible", "dataset provenance", "freshness")):
+        add_template(
+            "Repair dataset provenance and freshness metadata",
+            agent_role="data",
+            runner="codex_cli",
+            repo_paths=["research_plan/state", ".ontology/sources", "artifacts"],
+            acceptance_criteria=[
+                "datasets link to explicit source records",
+                "freshness state is recorded or explicitly blocked",
+                "trusted downstream work no longer depends on missing provenance metadata",
+            ],
+        )
+    elif any(token in target for token in ("verification", "integrity", "provenance", "claim", "evidence")):
+        add_template(
+            "Repair unsupported claims and verification evidence",
+            agent_role="health",
+            runner="codex_cli",
+            repo_paths=["research_plan/state", "artifacts", "topics"],
+            acceptance_criteria=[
+                "unsupported claims gain evidence or are downgraded",
+                "dependent artifacts no longer rely on unsupported claims",
+                "verification state is durable and auditable",
+            ],
+        )
+        add_template(
+            "Resolve failed verification runs before trusted promotion",
+            agent_role="health",
+            runner="codex_cli",
+            repo_paths=["research_plan/state", "artifacts", "topics"],
+            acceptance_criteria=[
+                "failed verification runs are repaired or superseded",
+                "underlying reproducibility issues are fixed",
+                "trusted artifacts no longer depend on failed verification runs",
+            ],
+        )
+    elif any(token in target for token in ("closeout", "final artifact", "report", "final artifacts")):
+        add_template(
+            "Resolve closeout blockers",
+            agent_role="health",
+            runner="codex_cli",
+            repo_paths=["research_plan", "research_plan/state", "artifacts", ".ontology"],
+            acceptance_criteria=[
+                "remaining closeout blockers are documented and cleared or rerouted",
+                "final artifacts satisfy ontology and integrity expectations",
+                "closeout auditor can pass from repo truth",
+            ],
+        )
+
+    return templates[:2]
+
+
+def _apply_derived_runtime_fields(state: dict[str, Any]) -> dict[str, Any]:
+    success = state.get("success") or {}
+    criteria = list(success.get("criteria") or [])
+    current_subgoal = state.get("currentSubgoal")
+    if not state.get("recommendedTaskTemplates"):
+        state["recommendedTaskTemplates"] = _recommended_task_templates(
+            current_subgoal=current_subgoal,
+            criteria=criteria,
+        )
+    return state
+
+
 def _first_auditor_blocker(auditor: dict[str, Any] | None) -> str:
     blockers = (auditor or {}).get("blockers")
     if not isinstance(blockers, list) or not blockers:
@@ -833,6 +945,11 @@ def sync_goal_runtime(
     state["autonomyConfidence"] = confidence
     dashboard["autonomyConfidence"] = confidence
     state["dashboard"] = dashboard
+    state["recommendedTaskTemplates"] = _recommended_task_templates(
+        current_subgoal=state.get("currentSubgoal"),
+        criteria=criteria,
+    )
+    state = _apply_derived_runtime_fields(state)
     open_blockers = []
     if current_blocker:
         open_blockers.append(

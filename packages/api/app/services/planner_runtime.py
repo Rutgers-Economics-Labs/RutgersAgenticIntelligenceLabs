@@ -10,6 +10,7 @@ from typing import Any, AsyncGenerator
 from uuid import uuid4
 
 from app.services import llm_service, planner_service
+from app.services import goal_service
 from app.services import running_agent_service
 from app.services.autonomy_policy import activity_key_for_role, evaluate_autonomy_policy, is_write_capable
 from app.core.config import settings
@@ -79,6 +80,65 @@ def _ontology_expansion_guidance(project: dict[str, Any]) -> str:
     )
 
 
+def _goal_mode_guidance(project: dict[str, Any]) -> str:
+    try:
+        bundle = goal_service.load_goal_bundle(project)
+    except Exception:
+        return ""
+    if not bundle:
+        return ""
+    contract = bundle.get("contract") or {}
+    state = bundle.get("state") or {}
+    success = state.get("success") or {}
+    criteria = success.get("criteria") or []
+    recommended_templates = state.get("recommendedTaskTemplates") or []
+    unmet = [item for item in criteria if not bool((item or {}).get("satisfied"))]
+
+    lines = [
+        "\n## Goal Mode Context\n",
+    ]
+    objective = str(contract.get("objective") or "").strip()
+    phase = str(state.get("phase") or "").strip()
+    current_subgoal = str(state.get("currentSubgoal") or "").strip()
+    current_blocker = str(state.get("currentBlocker") or "").strip()
+    if objective:
+        lines.append(f"- objective: {objective}")
+    if phase:
+        lines.append(f"- phase: {phase}")
+    if current_subgoal:
+        lines.append(f"- current_subgoal: {current_subgoal}")
+    if current_blocker:
+        lines.append(f"- current_blocker: {current_blocker}")
+    if unmet:
+        lines.append("- unmet_success_criteria:")
+        for item in unmet[:4]:
+            criterion = str((item or {}).get("criterion") or "").strip()
+            reason = str((item or {}).get("reason") or "").strip()
+            if criterion and reason:
+                lines.append(f"  - {criterion} ({reason})")
+            elif criterion:
+                lines.append(f"  - {criterion}")
+    if recommended_templates:
+        lines.append("- recommended_task_templates:")
+        for item in recommended_templates[:2]:
+            title = str((item or {}).get("title") or "").strip()
+            role = str((item or {}).get("agentRole") or "").strip()
+            runner = str((item or {}).get("runner") or "").strip()
+            repo_paths = [str(path).strip() for path in ((item or {}).get("repoPaths") or []) if str(path).strip()]
+            acceptance = [str(value).strip() for value in ((item or {}).get("acceptanceCriteria") or []) if str(value).strip()]
+            if title:
+                lines.append(f"  - title={title}; role={role or 'unknown'}; runner={runner or 'default'}")
+                if repo_paths:
+                    lines.append(f"    repo_paths={', '.join(repo_paths)}")
+                if acceptance:
+                    lines.append("    acceptance_criteria:")
+                    for check in acceptance[:4]:
+                        lines.append(f"      - {check}")
+    lines.append("- Treat this goal context as durable repo-backed intent, not advisory chat context.")
+    lines.append("- Prefer the smallest durable planner task that directly advances the current_subgoal.")
+    return "\n".join(lines)
+
+
 def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[str, Any]], skills: list[dict[str, str]]) -> str:
     role_lines = "\n".join(
         (
@@ -102,7 +162,7 @@ def _planner_system_prompt(project: dict[str, Any], role_summaries: list[dict[st
             "skill_lines": skill_lines,
         },
     )
-    return rendered + _ontology_expansion_guidance(project)
+    return rendered + _ontology_expansion_guidance(project) + _goal_mode_guidance(project)
 
 
 def _planner_tools() -> list[dict[str, Any]]:
@@ -159,6 +219,14 @@ def _planner_tools() -> list[dict[str, Any]]:
                     },
                     "required": ["command"],
                 },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_goal_mode_context",
+                "description": "Return the durable repo-backed goal contract, current subgoal, unmet criteria, and recommended task templates for the current project.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },
         {
@@ -615,6 +683,24 @@ async def _execute_planner_tool_inner(project: dict[str, Any], name: str, args: 
         if not command:
             return {"error": "command is required"}
         return await _run_shell(command, root)
+
+    if name == "get_goal_mode_context":
+        bundle = goal_service.load_goal_bundle(project)
+        if not bundle:
+            return {"available": False}
+        state = bundle.get("state") or {}
+        success = state.get("success") or {}
+        criteria = list(success.get("criteria") or [])
+        unmet = [item for item in criteria if not bool((item or {}).get("satisfied"))]
+        return {
+            "available": True,
+            "objective": (bundle.get("contract") or {}).get("objective"),
+            "phase": state.get("phase"),
+            "currentSubgoal": state.get("currentSubgoal"),
+            "currentBlocker": state.get("currentBlocker"),
+            "unmetSuccessCriteria": unmet,
+            "recommendedTaskTemplates": state.get("recommendedTaskTemplates") or [],
+        }
 
     board = await planner_service.ensure_main_board(project)
 

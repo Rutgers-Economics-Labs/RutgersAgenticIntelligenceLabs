@@ -1573,7 +1573,45 @@ async def _ensure_closeout_repair_task(
     return True
 
 
-def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
+def _goal_mode_planner_context(project: dict[str, Any]) -> str:
+    try:
+        bundle = goal_service.load_goal_bundle(project)
+    except Exception:
+        return ""
+    if not bundle:
+        return ""
+    state = bundle.get("state") or {}
+    contract = bundle.get("contract") or {}
+    success = state.get("success") or {}
+    criteria = success.get("criteria") or []
+    unmet = [item for item in criteria if not bool((item or {}).get("satisfied"))]
+    lines = ["[GOAL MODE CONTEXT]"]
+    objective = str(contract.get("objective") or "").strip()
+    phase = str(state.get("phase") or "").strip()
+    current_subgoal = str(state.get("currentSubgoal") or "").strip()
+    current_blocker = str(state.get("currentBlocker") or "").strip()
+    if objective:
+        lines.append(f"- objective: {objective}")
+    if phase:
+        lines.append(f"- phase: {phase}")
+    if current_subgoal:
+        lines.append(f"- current_subgoal: {current_subgoal}")
+    if current_blocker:
+        lines.append(f"- current_blocker: {current_blocker}")
+    if unmet:
+        lines.append("- unmet_success_criteria:")
+        for item in unmet[:4]:
+            criterion = str((item or {}).get("criterion") or "").strip()
+            reason = str((item or {}).get("reason") or "").strip()
+            if criterion and reason:
+                lines.append(f"  - {criterion} ({reason})")
+            elif criterion:
+                lines.append(f"  - {criterion}")
+    lines.append("- prefer planner work that directly advances the current_subgoal or the first unmet success criterion.")
+    return "\n".join(lines)
+
+
+def _planner_turn_message(project: dict[str, Any], auditors: dict[str, Any] | None) -> str:
     base = (
         "[AUTOPILOT MODE] Analyze the project state. If any tasks are 'ready', use launch_task_runner to start them. "
         "If tasks recently finished, analyze findings. If everything is done, synthesize the final report. "
@@ -1585,21 +1623,28 @@ def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
     closeout = auditors.get("closeout") or {}
 
     if ontology.get("status") == "blocked":
-        return (
+        message = (
             "[AUTOPILOT MODE] Ontology readiness is blocked. Focus only on hydration, source attachment, pipeline repair, "
             "or ontology health verification tasks. Do not plan or synthesize downstream research until ontology blockers are cleared."
         )
+        context = _goal_mode_planner_context(project)
+        return f"{message}\n\n{context}" if context else message
     if integrity.get("status") == "blocked":
-        return (
+        message = (
             "[AUTOPILOT MODE] Integrity is blocked. Focus only on provenance repair, evidence collection, verification, "
             "claim cleanup, or other trust-repair tasks. Do not plan final synthesis or promote analytical outputs until integrity blockers are cleared."
         )
+        context = _goal_mode_planner_context(project)
+        return f"{message}\n\n{context}" if context else message
     if closeout.get("status") == "blocked":
-        return (
+        message = (
             "[AUTOPILOT MODE] Closeout is blocked. Focus only on clearing remaining closeout blockers such as unfinished tasks, "
             "active sessions, ontology issues, or integrity issues. Do not create new speculative research branches."
         )
-    return base
+        context = _goal_mode_planner_context(project)
+        return f"{message}\n\n{context}" if context else message
+    context = _goal_mode_planner_context(project)
+    return f"{base}\n\n{context}" if context else base
 
 
 async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -2375,7 +2420,7 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
             try:
                 await planner_runtime.run_planner_turn(
                     project=project,
-                    user_message=_planner_turn_message(auditors),
+                    user_message=_planner_turn_message(project, auditors),
                     persist=False # Do not spam the chat thread
                 )
                 tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])

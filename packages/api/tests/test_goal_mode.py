@@ -162,6 +162,68 @@ def test_load_goal_bundle_from_canonical_goal_json_without_runtime_dir(tmp_path)
     assert bundle["files"]["goalJson"].endswith("research_plan/goal.json")
 
 
+def test_load_goal_bundle_derives_recommended_templates_for_older_runtime_state(tmp_path):
+    (tmp_path / "research_plan").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".rail" / "goal").mkdir(parents=True, exist_ok=True)
+    _write_manifest(tmp_path)
+    (tmp_path / "research_plan" / "goal.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "goalId": "goal-test123",
+                "objective": "Hydrate ontology before analysis.",
+                "successCriteria": [
+                    "required data or ontology artifacts are hydrated and available",
+                    "verification and closeout gates pass",
+                ],
+                "requiredEvidence": ["hydration artifact"],
+                "forbiddenShortcuts": ["do not mark complete from activity alone"],
+                "escalationPolicy": ["pause only for scope decisions"],
+                "allowedSpend": {"retries": 2},
+                "createdAt": 1,
+                "updatedAt": 2,
+                "mode": "goal",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".rail" / "goal" / "goal_state.json").write_text(
+        json.dumps(
+            {
+                "goalId": "goal-test123",
+                "phase": "building_pipelines",
+                "currentSubgoal": "required data or ontology artifacts are hydrated and available",
+                "success": {
+                    "criteria": [
+                        {
+                            "criterion": "required data or ontology artifacts are hydrated and available",
+                            "satisfied": False,
+                            "reason": "Ontology readiness has not passed yet.",
+                        }
+                    ]
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = goal_service.load_goal_bundle(
+        {
+            "_id": "local:demo-project",
+            "name": "Demo",
+            "slug": "demo-project",
+            "description": "Demo goal mode project",
+            "localRepoPath": str(tmp_path),
+        }
+    )
+
+    templates = bundle["state"].get("recommendedTaskTemplates") or []
+    assert templates
+    assert templates[0]["title"] == "Hydrate project ontology and register active artifacts"
+
+
 def test_goal_contract_endpoint_reports_preflight_failure(monkeypatch, tmp_path):
     import app.routers.projects as projects_router
 
@@ -325,3 +387,46 @@ def test_sync_goal_runtime_handles_empty_auditor_blocker_lists(tmp_path):
         "Closeout and control-plane truth are ready.",
         "Autonomy is blocked.",
     }
+
+
+def test_sync_goal_runtime_derives_recommended_task_templates(tmp_path):
+    (tmp_path / "research_plan" / "state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".ontology" / "sources").mkdir(parents=True, exist_ok=True)
+    _write_manifest(tmp_path)
+
+    project = {
+        "_id": "project-1",
+        "name": "Demo",
+        "slug": "demo-project",
+        "description": "Demo goal mode project",
+        "localRepoPath": str(tmp_path),
+    }
+    goal_service.create_goal_contract(
+        project,
+        {
+            "objective": "Hydrate the ontology and complete closeout.",
+            "successCriteria": [
+                "required data or ontology artifacts are hydrated and available",
+                "verification and closeout gates pass",
+            ],
+        },
+    )
+
+    payload = goal_service.sync_goal_runtime(
+        project,
+        tasks=[],
+        auditors={
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "blocked", "blockers": ["Ontology readiness has not passed yet."]},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "blocked", "blockers": ["1 non-terminal task(s) remain."]},
+        },
+        reality={"repoRootExists": True, "hasRailYaml": True, "hasResearchPlan": True},
+        active_sessions=[],
+        autopilot_enabled=False,
+    )
+
+    templates = payload["state"].get("recommendedTaskTemplates") or []
+    assert templates
+    assert templates[0]["title"] == "Hydrate project ontology and register active artifacts"
