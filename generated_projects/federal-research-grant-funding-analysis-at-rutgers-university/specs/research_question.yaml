@@ -1,0 +1,36 @@
+title: Federal Research Grant Funding Analysis at Rutgers University
+objective: To quantify and compare federal funding levels across departments to identify
+  institutional strengths and resource allocation patterns.
+audience: University administrators, department heads, research policy makers
+causal_questions:
+- What factors influence the variance in federal funding levels between academic departments?
+- How do changes in federal agency priorities impact departmental research revenue?
+outcomes:
+- Total federal funding amount
+- Grant award frequency
+- Funding growth rates
+- Departmental funding rankings
+units_of_analysis:
+- Academic departments
+- Research centers
+- Individual grants
+geographies:
+- Rutgers University campuses
+- United States
+time_windows:
+- Fiscal years
+- Multi-year longitudinal periods
+methods:
+- Descriptive statistics
+- Trend analysis
+- Comparative benchmarking
+- Data aggregation
+deliverables:
+- Funding dashboard
+- Analytical report
+- Departmental performance profiles
+controls:
+- Department size
+- Disciplinary field
+- Faculty headcount
+- Historical funding baseline

@@ -1,0 +1,16 @@
+name: federal-research-grant-funding-analysis-at-rutgers-university-usaspending-gov
+type: api
+url: https://api.usaspending.gov/api/v2/search/spending_by_award/
+response_format: json
+description: |
+  Public USAspending.gov award search endpoint used for Rutgers-matching federal
+  assistance records in the local verification pipeline.
+fields:
+  - source: Award ID
+    alias: award_id
+  - source: Recipient Name
+    alias: recipient
+  - source: Award Amount
+    alias: amount
+  - source: Awarding Agency
+    alias: agency

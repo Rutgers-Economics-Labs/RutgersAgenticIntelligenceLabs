@@ -1,0 +1,15 @@
+name: federal-research-grant-funding-analysis-at-rutgers-university-nih-reporter
+type: api
+url: https://api.reporter.nih.gov/v2/projects/search
+response_format: json
+description: |
+  Candidate NIH RePORTER endpoint for a later NIH-specific Rutgers slice. The
+  current local project records it as a candidate because the verified build uses
+  USAspending and NSF records for numeric claims.
+fields:
+  - source: project_num
+    alias: award_id
+  - source: award_amount
+    alias: amount
+  - source: fiscal_year
+    alias: fiscal_year

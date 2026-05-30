@@ -1,0 +1,40 @@
+[
+  {
+    "run_id": "federal-grants-local-build-001",
+    "scope": "local_research_build",
+    "loop_type": "analysis_reproducibility",
+    "task_id": null,
+    "agent_session_id": null,
+    "status": "passed",
+    "checks": [
+      {
+        "name": "build_research_artifacts",
+        "status": "passed",
+        "command": "python scripts/build_research_artifacts.py"
+      }
+    ],
+    "artifacts_checked": [
+      "artifacts/federal_research_grants_report.md",
+      "artifacts/funding_dashboard.csv",
+      "artifacts/departmental_performance_profiles.md",
+      "artifacts/source_quality_notes.md",
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"
+    ],
+    "claims_checked": [
+      "claim-public-awards-panel-built",
+      "claim-largest-observed-agency",
+      "claim-department-crosswalk-required"
+    ],
+    "artifact_paths": [
+      "artifacts/federal_research_grants_report.md",
+      "artifacts/funding_dashboard.csv",
+      "artifacts/departmental_performance_profiles.md",
+      "artifacts/source_quality_notes.md",
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"
+    ],
+    "blockers": [],
+    "source_path": "research_plan/state/verification_runs.json",
+    "created_at": "2026-05-30T20:06:59Z",
+    "updated_at": "2026-05-30T20:11:21Z"
+  }
+]

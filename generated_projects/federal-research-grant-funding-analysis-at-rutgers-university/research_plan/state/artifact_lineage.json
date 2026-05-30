@@ -1,0 +1,167 @@
+[
+  {
+    "artifact_path": "artifacts/federal_research_grants_report.md",
+    "artifact_type": "report",
+    "title": "Federal Research Grants Report",
+    "promotion_state": "partially_verified",
+    "reproducibility_mode": "deterministic",
+    "inputs": [
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"
+    ],
+    "scripts": [
+      "scripts/build_research_artifacts.py"
+    ],
+    "verification_commands": [
+      "scripts/run-verification.sh"
+    ],
+    "sources": [
+      "research_plan/state/sources.json#usaspending-rutgers-federal-assistance",
+      "research_plan/state/sources.json#nsf-award-search-rutgers"
+    ],
+    "assumptions": [],
+    "claims": [
+      "research_plan/state/claims.json#claim-public-awards-panel-built",
+      "research_plan/state/claims.json#claim-largest-observed-agency",
+      "research_plan/state/claims.json#claim-department-crosswalk-required"
+    ],
+    "verification_runs": [
+      "research_plan/state/verification_runs.json#federal-grants-local-build-001"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-30T20:07:31Z",
+    "updated_at": "2026-05-30T20:11:21Z"
+  },
+  {
+    "artifact_path": "artifacts/funding_dashboard.csv",
+    "artifact_type": "table",
+    "title": "Funding Dashboard Table",
+    "promotion_state": "partially_verified",
+    "reproducibility_mode": "deterministic",
+    "inputs": [
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"
+    ],
+    "scripts": [
+      "scripts/build_research_artifacts.py"
+    ],
+    "verification_commands": [
+      "scripts/run-verification.sh"
+    ],
+    "sources": [
+      "research_plan/state/sources.json#usaspending-rutgers-federal-assistance",
+      "research_plan/state/sources.json#nsf-award-search-rutgers"
+    ],
+    "assumptions": [],
+    "claims": [
+      "research_plan/state/claims.json#claim-public-awards-panel-built",
+      "research_plan/state/claims.json#claim-largest-observed-agency"
+    ],
+    "verification_runs": [
+      "research_plan/state/verification_runs.json#federal-grants-local-build-001"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-30T20:07:31Z",
+    "updated_at": "2026-05-30T20:11:21Z"
+  },
+  {
+    "artifact_path": "artifacts/departmental_performance_profiles.md",
+    "artifact_type": "report",
+    "title": "Departmental Performance Profiles",
+    "promotion_state": "partially_verified",
+    "reproducibility_mode": "deterministic",
+    "inputs": [
+      "artifacts/funding_dashboard.csv"
+    ],
+    "scripts": [
+      "scripts/build_research_artifacts.py"
+    ],
+    "verification_commands": [
+      "scripts/run-verification.sh"
+    ],
+    "sources": [
+      "research_plan/state/sources.json#usaspending-rutgers-federal-assistance",
+      "research_plan/state/sources.json#nsf-award-search-rutgers"
+    ],
+    "assumptions": [],
+    "claims": [
+      "research_plan/state/claims.json#claim-department-crosswalk-required"
+    ],
+    "verification_runs": [
+      "research_plan/state/verification_runs.json#federal-grants-local-build-001"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-30T20:07:31Z",
+    "updated_at": "2026-05-30T20:11:21Z"
+  },
+  {
+    "artifact_path": "artifacts/source_quality_notes.md",
+    "artifact_type": "report",
+    "title": "Source Quality Notes",
+    "promotion_state": "partially_verified",
+    "reproducibility_mode": "deterministic",
+    "inputs": [
+      "topics/data/raw/usaspending_rutgers_assistance.json",
+      "topics/data/raw/nsf_awards_rutgers.json"
+    ],
+    "scripts": [
+      "scripts/build_research_artifacts.py"
+    ],
+    "verification_commands": [
+      "scripts/run-verification.sh"
+    ],
+    "sources": [
+      "research_plan/state/sources.json#usaspending-rutgers-federal-assistance",
+      "research_plan/state/sources.json#nsf-award-search-rutgers"
+    ],
+    "assumptions": [],
+    "claims": [
+      "research_plan/state/claims.json#claim-department-crosswalk-required"
+    ],
+    "verification_runs": [
+      "research_plan/state/verification_runs.json#federal-grants-local-build-001"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-30T20:07:31Z",
+    "updated_at": "2026-05-30T20:11:21Z"
+  },
+  {
+    "artifact_path": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "artifact_type": "dataset",
+    "title": "Processed Rutgers Federal Awards Panel",
+    "promotion_state": "partially_verified",
+    "reproducibility_mode": "deterministic",
+    "inputs": [
+      "topics/data/raw/usaspending_rutgers_assistance.json",
+      "topics/data/raw/nsf_awards_rutgers.json"
+    ],
+    "scripts": [
+      "scripts/build_research_artifacts.py"
+    ],
+    "verification_commands": [
+      "scripts/run-verification.sh"
+    ],
+    "sources": [
+      "research_plan/state/sources.json#usaspending-rutgers-federal-assistance",
+      "research_plan/state/sources.json#nsf-award-search-rutgers"
+    ],
+    "assumptions": [],
+    "claims": [
+      "research_plan/state/claims.json#claim-public-awards-panel-built"
+    ],
+    "verification_runs": [
+      "research_plan/state/verification_runs.json#federal-grants-local-build-001"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-30T20:07:31Z",
+    "updated_at": "2026-05-30T20:11:21Z"
+  }
+]

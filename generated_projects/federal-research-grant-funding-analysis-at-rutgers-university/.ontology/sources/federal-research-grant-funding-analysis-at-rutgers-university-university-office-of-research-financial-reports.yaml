@@ -1,0 +1,12 @@
+name: federal-research-grant-funding-analysis-at-rutgers-university-university-office-of-research-financial-reports
+type: web
+url: https://research.rutgers.edu/
+response_format: json
+description: |
+  Rutgers Office for Research public entry point and candidate authority for an
+  audited internal department/account crosswalk.
+fields:
+  - source: department
+    alias: department
+  - source: sponsored_research_total
+    alias: sponsored_research_total

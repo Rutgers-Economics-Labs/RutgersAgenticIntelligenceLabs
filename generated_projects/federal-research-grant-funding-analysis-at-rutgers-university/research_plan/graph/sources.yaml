@@ -1,0 +1,54 @@
+sources:
+- slug: federal-research-grant-funding-analysis-at-rutgers-university-usaspending-gov
+  name: USAspending.gov
+  provider: manual
+  externalId: null
+  description: 'Derived from the brief: USAspending.gov'
+  readiness: missing_auth_or_manual
+  reason: No exact runnable registry match was found; review is required.
+  configKind: api
+  content: "name: federal-research-grant-funding-analysis-at-rutgers-university-usaspending-gov\n\
+    type: api\nurl: https://example.com/review-required\nresponse_format: json\ndescription:\
+    \ |\n  Draft source for review: USAspending.gov\n  Readiness: missing_auth_or_manual\n\
+    fields:\n  - source: id\n    alias: id\n  - source: value\n    alias: value"
+- slug: federal-research-grant-funding-analysis-at-rutgers-university-nih-reporter
+  name: NIH RePORTER
+  provider: manual
+  externalId: null
+  description: 'Derived from the brief: NIH RePORTER'
+  readiness: missing_auth_or_manual
+  reason: No exact runnable registry match was found; review is required.
+  configKind: api
+  content: "name: federal-research-grant-funding-analysis-at-rutgers-university-nih-reporter\n\
+    type: api\nurl: https://example.com/review-required\nresponse_format: json\ndescription:\
+    \ |\n  Draft source for review: NIH RePORTER\n  Readiness: missing_auth_or_manual\n\
+    fields:\n  - source: id\n    alias: id\n  - source: value\n    alias: value"
+- slug: federal-research-grant-funding-analysis-at-rutgers-university-nsf-award-search
+  name: NSF Award Search
+  provider: manual
+  externalId: null
+  description: 'Derived from the brief: NSF Award Search'
+  readiness: missing_auth_or_manual
+  reason: No exact runnable registry match was found; review is required.
+  configKind: api
+  content: "name: federal-research-grant-funding-analysis-at-rutgers-university-nsf-award-search\n\
+    type: api\nurl: https://example.com/review-required\nresponse_format: json\ndescription:\
+    \ |\n  Draft source for review: NSF Award Search\n  Readiness: missing_auth_or_manual\n\
+    fields:\n  - source: id\n    alias: id\n  - source: value\n    alias: value"
+- slug: federal-research-grant-funding-analysis-at-rutgers-university-university-office-of-research-financial-reports
+  name: University Office of Research financial reports
+  provider: manual
+  externalId: null
+  description: 'Derived from the brief: University Office of Research financial reports'
+  readiness: missing_auth_or_manual
+  reason: No exact runnable registry match was found; review is required.
+  configKind: api
+  content: "name: federal-research-grant-funding-analysis-at-rutgers-university-university-office-of-research-financial-reports\n\
+    type: api\nurl: https://example.com/review-required\nresponse_format: json\ndescription:\
+    \ |\n  Draft source for review: University Office of Research financial reports\n\
+    \  Readiness: missing_auth_or_manual\nfields:\n  - source: id\n    alias: id\n\
+    \  - source: value\n    alias: value"
+summary:
+  ready: 0
+  draft_for_review: 0
+  missing_auth_or_manual: 4
