@@ -21,6 +21,7 @@ class NlSqlRequest(BaseModel):
 async def run_sql(
     req: SqlRequest, 
     project_id: str | None = Query(None, alias="projectId"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
     workspace_id: str | None = Query(None, alias="workspaceId"),
     cell_id: str | None = Query(None, alias="cellId"),
     hydration_id: str | None = Query(None, alias="hydrationId"),
@@ -29,15 +30,21 @@ async def run_sql(
     job_id = None
     try:
         # 1. Create Job record
-        result = await convex.mutation("executions:create", {
-            "projectId": project_id,
-            "workspaceId": workspace_id,
-            "cellId": cell_id,
-            "hydrationId": hydration_id,
+        create_args = {
             "type": "sql",
             "input": req.query,
-            "createdAt": int(time.time() * 1000)
-        })
+            "createdAt": int(time.time() * 1000),
+        }
+        if project_id:
+            create_args["projectId"] = project_id
+        if workspace_id:
+            create_args["workspaceId"] = workspace_id
+        if cell_id:
+            create_args["cellId"] = cell_id
+        if hydration_id:
+            create_args["hydrationId"] = hydration_id
+
+        result = await convex.mutation("executions:create", create_args)
         job_id = result["jobId"]
 
         # 2. Resolve hydration path
@@ -47,8 +54,9 @@ async def run_sql(
             # For now fallback to current active if not found
             pass
             
-        if not duck and project_id:
-            art = await project_artifacts_service.resolve(project_id)
+        project_ref = project_id or project_slug
+        if not duck and project_ref:
+            art = await project_artifacts_service.resolve(project_ref)
             duck = art.duckdb_path
             
         # 3. Execute
@@ -84,12 +92,17 @@ async def run_sql(
 
 
 @router.post("/translate")
-async def translate_sql(req: NlSqlRequest, project_id: str | None = Query(None, alias="projectId")):
+async def translate_sql(
+    req: NlSqlRequest,
+    project_id: str | None = Query(None, alias="projectId"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
+):
     """Translate a natural-language question to SQL, then execute it."""
     try:
         duck = None
-        if project_id:
-            art = await project_artifacts_service.resolve(project_id)
+        project_ref = project_id or project_slug
+        if project_ref:
+            art = await project_artifacts_service.resolve(project_ref)
             duck = art.duckdb_path
         translated = await sql_service.translate_to_sql(req.question, model=req.model, duckdb_path=duck)
         result = sql_service.run_query(translated["sql"], duckdb_path=duck)
@@ -101,20 +114,28 @@ async def translate_sql(req: NlSqlRequest, project_id: str | None = Query(None, 
 
 
 @router.get("/schema")
-async def get_schema(project_id: str | None = Query(None, alias="projectId")):
+async def get_schema(
+    project_id: str | None = Query(None, alias="projectId"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
+):
     """Return DuckDB schema: {table: [{name, type}]}."""
     duck = None
-    if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+    project_ref = project_id or project_slug
+    if project_ref:
+        art = await project_artifacts_service.resolve(project_ref)
         duck = art.duckdb_path
     return sql_service.get_schema(duckdb_path=duck)
 
 
 @router.get("/tables")
-async def list_tables(project_id: str | None = Query(None, alias="projectId")):
+async def list_tables(
+    project_id: str | None = Query(None, alias="projectId"),
+    project_slug: str | None = Query(None, alias="projectSlug"),
+):
     """List available DuckDB table names."""
     duck = None
-    if project_id:
-        art = await project_artifacts_service.resolve(project_id)
+    project_ref = project_id or project_slug
+    if project_ref:
+        art = await project_artifacts_service.resolve(project_ref)
         duck = art.duckdb_path
     return sql_service.list_tables(duckdb_path=duck)

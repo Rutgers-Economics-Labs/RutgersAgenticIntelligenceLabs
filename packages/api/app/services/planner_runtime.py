@@ -517,7 +517,67 @@ async def _run_shell(command: str, cwd: Path) -> dict[str, Any]:
     }
 
 
+def _log_planner_decision(project: dict[str, Any], tool: str, args: dict[str, Any], result: Any):
+    local_path = project.get("localRepoPath")
+    if not local_path:
+        return
+    
+    rationale = args.get("rationale") or args.get("reason") or args.get("note") or ""
+    
+    result_summary = ""
+    if isinstance(result, dict):
+        if "error" in result:
+            result_summary = f"Error: {result['error']}"
+        elif "status" in result:
+            result_summary = f"Status: {result['status']}"
+            if "reason" in result:
+                result_summary += f" ({result['reason']})"
+        elif "task" in result and isinstance(result["task"], dict):
+            task_title = result["task"].get("title", "")
+            task_status = result["task"].get("status", "")
+            result_summary = f"Task '{task_title}' is {task_status}"
+        elif "sessions" in result:
+            result_summary = f"Listed {len(result['sessions'])} sessions"
+        elif "skills" in result:
+            result_summary = f"Listed {len(result['skills'])} skills"
+        elif "content" in result:
+            result_summary = f"Read skill content ({len(result['content'])} bytes)"
+        elif "returncode" in result:
+            result_summary = f"Exit code {result['returncode']}"
+        else:
+            result_summary = json.dumps(result)[:100]
+    else:
+        result_summary = str(result)[:100]
+
+    record = {
+        "tool": tool,
+        "args": args,
+        "result_summary": result_summary,
+        "rationale": rationale,
+        "timestamp": time.time(),
+    }
+    
+    try:
+        p = Path(local_path) / "research_plan"
+        p.mkdir(parents=True, exist_ok=True)
+        with open(p / "planner_decisions.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Failed to log planner decision: %s", e)
+
+
 async def _execute_planner_tool(project: dict[str, Any], name: str, args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        result = await _execute_planner_tool_inner(project, name, args)
+        _log_planner_decision(project, name, args, result)
+        return result
+    except Exception as exc:
+        _log_planner_decision(project, name, args, {"error": str(exc)})
+        raise
+
+
+async def _execute_planner_tool_inner(project: dict[str, Any], name: str, args: dict[str, Any]) -> dict[str, Any]:
     from app.routers.project_agent import _execute_project_tool, PROJECT_TOOLS_MERGED
     from app.runners import session_lifecycle
 

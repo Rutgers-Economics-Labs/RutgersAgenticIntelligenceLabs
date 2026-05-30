@@ -14,6 +14,28 @@ from app.services.role_runtime_service import ROLE_ALIASES
 from rail.manifest import RailManifest, load_manifest
 
 
+ORPHANED_QUEUE_GRACE_MS = 30_000
+IGNORED_ARTIFACT_DRIFT_SUFFIXES = {".aux", ".log", ".out", ".toc"}
+TRACKED_ARTIFACT_DRIFT_SUFFIXES = (
+    set(session_lifecycle.ARTIFACT_SUFFIXES)
+    | set(session_lifecycle.DATASET_SUFFIXES)
+    | {".tex"}
+)
+
+
+def _artifact_path_should_ignore_drift(path: str) -> bool:
+    lower = path.lower()
+    if lower.endswith(".synctex.gz"):
+        return True
+    return Path(path).suffix.lower() in IGNORED_ARTIFACT_DRIFT_SUFFIXES
+
+
+def _artifact_path_is_registry_candidate(path: str) -> bool:
+    if _artifact_path_should_ignore_drift(path):
+        return False
+    return Path(path).suffix.lower() in TRACKED_ARTIFACT_DRIFT_SUFFIXES
+
+
 async def repair_stale_active_sessions(project: dict[str, Any]) -> dict[str, Any]:
     project_root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
     if not project_root or not project_root.exists():
@@ -308,11 +330,16 @@ async def project_reality_snapshot(
     active_sessions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = planner_service.project_root_from_record(project)
+    project_id = project.get("_id")
     if root is None or not root.exists():
         runtime_active_sessions = (
             active_sessions
             if active_sessions is not None
-            else await running_agent_service.list_project_running_agents(project["_id"], active_only=True, limit=50)
+            else (
+                await running_agent_service.list_project_running_agents(project_id, active_only=True, limit=50)
+                if project_id
+                else []
+            )
         )
         running_agent_status_drift: dict[str, Any] = {
             "hasDrift": False,
@@ -346,7 +373,7 @@ async def project_reality_snapshot(
             "configs": [],
         }
         try:
-            status_drift = await running_agent_service.list_running_agent_status_drift(project["_id"], limit=50)
+            status_drift = await running_agent_service.list_running_agent_status_drift(project_id, limit=50) if project_id else []
             running_agent_status_drift = {
                 "hasDrift": bool(status_drift),
                 "sessions": status_drift,
@@ -354,7 +381,7 @@ async def project_reality_snapshot(
         except Exception:
             pass
         try:
-            role_drift = await running_agent_service.list_running_agent_role_drift(project["_id"], limit=50)
+            role_drift = await running_agent_service.list_running_agent_role_drift(project_id, limit=50) if project_id else []
             running_agent_role_drift = {
                 "hasDrift": bool(role_drift),
                 "sessions": role_drift,
@@ -362,7 +389,7 @@ async def project_reality_snapshot(
         except Exception:
             pass
         try:
-            runner_drift = await running_agent_service.list_running_agent_runner_drift(project["_id"], limit=50)
+            runner_drift = await running_agent_service.list_running_agent_runner_drift(project_id, limit=50) if project_id else []
             running_agent_runner_drift = {
                 "hasDrift": bool(runner_drift),
                 "sessions": runner_drift,
@@ -370,7 +397,7 @@ async def project_reality_snapshot(
         except Exception:
             pass
         try:
-            policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
+            policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project_id}) or [] if project_id else []
             drifted = []
             for policy in policies:
                 raw_role = str(policy.get("agentRole") or "").strip().lower()
@@ -441,6 +468,8 @@ async def project_reality_snapshot(
             }
         task = task_by_id[task_id]
         if planner_service._task_explicitly_reopened(task):
+            continue
+        if planner_service._task_has_explicit_terminal_resolution(task, patch):
             continue
         if (
             str(task.get("status") or "") != patch["status"]
@@ -604,7 +633,7 @@ async def project_reality_snapshot(
         "policies": [],
     }
     try:
-        policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project["_id"]}) or []
+        policies = await convex.query("agentSecretPolicies:listByProject", {"projectId": project_id}) or [] if project_id else []
         drifted = []
         for policy in policies:
             raw_role = str(policy.get("agentRole") or "").strip().lower()

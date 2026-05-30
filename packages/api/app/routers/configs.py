@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 import requests
 
+from app.services import planner_service
 from app.services.convex_client import convex
 from app.services.document_service import preview_document
 from app.services.scrape_service import preview_table
@@ -52,7 +53,7 @@ class DocumentPreviewRequest(BaseModel):
 async def _get_project_for_save(project_id: str | None) -> dict | None:
     if not project_id:
         return None
-    project = await convex.query("projects:getById", {"projectId": project_id})
+    project = await planner_service.resolve_project_reference(project_id)
     if not project:
         raise HTTPException(404, detail="Project not found")
     return project

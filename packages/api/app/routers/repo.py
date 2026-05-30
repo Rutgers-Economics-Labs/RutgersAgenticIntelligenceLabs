@@ -5,12 +5,20 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from app.services import planner_service
 from app.services.convex_client import convex
 from app.services.repo_contract_service import ensure_project_boot, manifest_validation_http_detail
 from rail.bootstrap import bootstrap_future_project
 from rail.manifest import ManifestValidationError
 
 router = APIRouter(prefix="/projects", tags=["repo"])
+
+
+async def _resolve_project(slug: str) -> dict:
+    project = await planner_service.resolve_project_reference(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
 
 class RepoNode(BaseModel):
     name: str
@@ -58,9 +66,7 @@ class RepoInitRequest(BaseModel):
 @router.post("/{slug}/repo/init")
 async def init_repo(slug: str, data: RepoInitRequest):
     """Initialize a RAIL repo scaffold for an existing project that has no localRepoPath."""
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await _resolve_project(slug)
 
     target = Path(data.targetDir).expanduser().resolve()
     target.mkdir(parents=True, exist_ok=True)
@@ -82,10 +88,12 @@ async def init_repo(slug: str, data: RepoInitRequest):
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"git init failed: {result.stderr}")
 
-    await convex.mutation("projects:updateById", {
-        "projectId": project["_id"],
-        "localRepoPath": str(target),
-    })
+    project_id = str(project.get("_id") or "")
+    if project_id and not project_id.startswith("local:"):
+        await convex.mutation("projects:updateById", {
+            "projectId": project_id,
+            "localRepoPath": str(target),
+        })
 
     return {"localRepoPath": str(target), "message": "Repository initialized successfully"}
 
@@ -97,9 +105,7 @@ async def get_repo_tree(
     max_depth: int = Query(3, alias="maxDepth")
 ) -> RepoNode:
     """List the project's repository structure."""
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await _resolve_project(slug)
     
     local_path = project.get("localRepoPath")
     if not local_path:
@@ -122,9 +128,7 @@ async def get_repo_tree(
 @router.get("/{slug}/repo/file")
 async def get_repo_file(slug: str, path: str = Query(...)) -> FileContentResponse:
     """Read a specific file from the project's repository."""
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
+    project = await _resolve_project(slug)
     
     local_path = project.get("localRepoPath")
     if not local_path:

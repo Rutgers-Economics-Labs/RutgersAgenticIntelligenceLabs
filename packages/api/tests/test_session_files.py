@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 import threading
+import time
 
 from app.services import session_files
 
@@ -110,3 +113,22 @@ def test_append_command_idempotency_is_atomic(tmp_path: Path):
 
     assert len(commands) == 1
     assert len({item["id"] for item in results}) == 1
+
+
+def test_append_event_recovers_stale_session_lock(tmp_path: Path):
+    root = session_files.ensure_session_root(tmp_path, "coding", "sess-stale-lock")
+    lock_path = root / ".session.lock"
+    lock_path.write_text(json.dumps({"pid": 999999, "created_at": time.time() - 60}), encoding="utf-8")
+    stale_time = time.time() - 60
+    os.utime(lock_path, (stale_time, stale_time))
+
+    event = session_files.append_event(
+        root,
+        "assistant_message",
+        role="assistant",
+        content="Recovered stale lock.",
+        status="running",
+    )
+
+    assert event["id"] == 1
+    assert not lock_path.exists()

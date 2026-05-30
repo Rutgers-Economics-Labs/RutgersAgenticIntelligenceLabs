@@ -173,6 +173,79 @@ def test_gemini_cli_derives_progress_and_file_change_from_stream_json():
     assert file_events[0].normalized_payload["path"] == "GEMINI_NOTES.md"
 
 
+def test_local_cli_get_session_observes_file_backed_exit_code(tmp_path):
+    """Regression: ClaudeCodeRunner.get_session previously returned
+    status="queued" forever when the runner was invoked outside the normal
+    session_lifecycle path, because the subprocess was Popen-detached and
+    session.status was never updated when it exited.
+
+    After the fix, get_session reconciles from runtime_paths['exit_code']
+    on every read, so a 0 exit code lands status="completed" and a non-zero
+    exit code lands status="failed" — regardless of who started the runner.
+    """
+    import asyncio
+    from app.runners.cli_base import LocalCliSession, runner_runtime_paths
+
+    root = session_files.ensure_session_root(tmp_path, "coding", "sess-exit-0")
+    runtime = runner_runtime_paths(str(root))
+    runtime["root"].mkdir(parents=True, exist_ok=True)
+    runtime["command"].write_text(
+        '{"session_id":"sess-exit-0","runner":"claude_code","command":["claude","-p","hello"],"cwd":"/tmp"}\n',
+        encoding="utf-8",
+    )
+    runtime["exit_code"].write_text("0\n", encoding="utf-8")
+
+    runner = ClaudeCodeRunner(command="claude")
+    session = LocalCliSession(
+        session_id="sess-exit-0",
+        command=["claude", "-p", "hello"],
+        cwd=str(tmp_path),
+        prompt="hello",
+        session_root=str(root),
+        env={},
+    )
+    session.status = "running"
+    runner._sessions["sess-exit-0"] = session
+
+    result = asyncio.run(runner.get_session("sess-exit-0"))
+
+    assert result["status"] == "completed"
+    assert result["normalized_status"] == RunnerEventType.COMPLETED.value
+    assert session.returncode == 0
+
+
+def test_local_cli_get_session_observes_failure_exit_code(tmp_path):
+    import asyncio
+    from app.runners.cli_base import LocalCliSession, runner_runtime_paths
+
+    root = session_files.ensure_session_root(tmp_path, "coding", "sess-exit-1")
+    runtime = runner_runtime_paths(str(root))
+    runtime["root"].mkdir(parents=True, exist_ok=True)
+    runtime["command"].write_text(
+        '{"session_id":"sess-exit-1","runner":"claude_code","command":["claude"],"cwd":"/tmp"}\n',
+        encoding="utf-8",
+    )
+    runtime["exit_code"].write_text("1\n", encoding="utf-8")
+
+    runner = ClaudeCodeRunner(command="claude")
+    session = LocalCliSession(
+        session_id="sess-exit-1",
+        command=["claude"],
+        cwd=str(tmp_path),
+        prompt="",
+        session_root=str(root),
+        env={},
+    )
+    session.status = "running"
+    runner._sessions["sess-exit-1"] = session
+
+    result = asyncio.run(runner.get_session("sess-exit-1"))
+
+    assert result["status"] == "failed"
+    assert result["normalized_status"] == RunnerEventType.FAILED.value
+    assert session.returncode == 1
+
+
 def test_local_cli_persisted_events_use_ui_aliases(tmp_path):
     root = session_files.ensure_session_root(tmp_path, "coding", "alias-test")
     runner = CursorCliRunner(command="agent")

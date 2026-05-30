@@ -76,3 +76,52 @@ async def test_run_code_async_subprocess_mode(tmp_path, monkeypatch):
 
     out = await code_runner.run_code_async('df = sql("SELECT * FROM u")', timeout_seconds=60)
     assert out.get("error") is None
+
+
+@pytest.mark.asyncio
+async def test_analysis_run_code_accepts_project_slug_repo_first(client, monkeypatch):
+    from app.routers import analysis as analysis_router
+
+    captured: dict[str, object] = {}
+
+    async def _resolve(project_ref: str):
+        captured["project_ref"] = project_ref
+        return type(
+            "Artifacts",
+            (),
+            {"duckdb_path": "/tmp/demo/onto.duckdb"},
+        )()
+
+    async def _mutation(path: str, payload: dict):
+        if path == "executions:create":
+            captured["create_args"] = payload
+            return {"jobId": "job-123"}
+        if path == "executions:updateStatus":
+            return {"ok": True}
+        raise AssertionError(path)
+
+    async def _run_user_code(*args, **kwargs):
+        return {"stdout": "ok"}
+
+    monkeypatch.setattr(analysis_router.project_artifacts_service, "resolve", _resolve)
+    monkeypatch.setattr(analysis_router.convex, "mutation", _mutation)
+    monkeypatch.setattr(analysis_router.sql_service, "is_ready", lambda duck=None: True)
+    monkeypatch.setattr(
+        analysis_router.execution_manager,
+        "register_job",
+        lambda job_id, task: captured.setdefault("registered_job", job_id),
+    )
+    monkeypatch.setattr(
+        "app.services.subprocess_code_runner.run_user_code",
+        _run_user_code,
+    )
+
+    resp = await client.post(
+        "/api/v1/analysis/run-code?projectSlug=demo-project",
+        json={"code": "print(1)", "upload_artifacts": False},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"jobId": "job-123", "status": "queued"}
+    assert captured["project_ref"] == "demo-project"
+    assert "projectId" not in captured["create_args"]

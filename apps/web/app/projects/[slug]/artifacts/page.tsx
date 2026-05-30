@@ -1,6 +1,7 @@
-import { fetchProjectArtifacts } from "@/lib/api";
+import { fetchPlannerHome, fetchProjectArtifacts } from "@/lib/api";
 import { ProjectShell } from "@/components/project-shell";
 import { SectionCard } from "@/components/section-card";
+import { PageIntro } from "@/components/page-intro";
 import { ArtifactPreview, InlineStatus } from "@/components/command-center";
 
 export default async function ArtifactsPage({
@@ -9,7 +10,19 @@ export default async function ArtifactsPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { artifacts, summary } = await fetchProjectArtifacts(slug);
+  const home = await fetchPlannerHome(slug);
+  const artifactResult = await fetchProjectArtifacts(slug)
+    .then((value) => ({ ok: true as const, value }))
+    .catch(() => ({ ok: false as const }));
+  const artifacts = artifactResult.ok ? artifactResult.value.artifacts : home.controlPlane?.recentArtifacts ?? [];
+  const summary = artifactResult.ok
+    ? artifactResult.value.summary
+    : {
+        typeCounts: {},
+        promotionStateCounts: {},
+        verificationStatusCounts: {},
+        staleCount: Number(home.controlPlane?.integritySummary?.staleArtifactCount ?? 0),
+      };
   const typeCounts = (summary.typeCounts ?? {}) as Record<string, number>;
   const promotionCounts = (summary.promotionStateCounts ?? {}) as Record<string, number>;
   const verificationCounts = (summary.verificationStatusCounts ?? {}) as Record<string, number>;
@@ -46,7 +59,20 @@ export default async function ArtifactsPage({
 
   return (
     <ProjectShell slug={slug} title="Artifacts" section="artifacts" rightRail={rightRail}>
+      <PageIntro
+        title="Browse the outputs this project has produced."
+        detail="Artifacts are the things the research system created: reports, dashboards, tables, charts, and supporting files. Use Integrity when you want to check trust, lineage, or verification."
+        actions={[
+          { label: "Check Integrity", href: `/projects/${slug}/integrity` },
+          { label: "Open Review", href: `/projects/${slug}/review` },
+        ]}
+      />
       <SectionCard eyebrow="Artifact Previews" noPad>
+        {!artifactResult.ok && (
+          <div className="empty-state" style={{ padding: "12px 16px", borderBottom: artifacts.length ? "1px solid var(--border-subtle)" : "none" }}>
+            Detailed artifact inventory is temporarily unavailable. Showing repo-backed recent artifacts from the control-plane snapshot.
+          </div>
+        )}
         {artifacts.length ? (
           artifacts.map((artifact) => <ArtifactPreview key={artifact.path} slug={slug} artifact={artifact} />)
         ) : (

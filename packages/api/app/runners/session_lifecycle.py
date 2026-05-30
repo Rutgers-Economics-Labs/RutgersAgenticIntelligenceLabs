@@ -2064,6 +2064,7 @@ def _certify_session_result_if_present(
     _log = _logging.getLogger(__name__)
 
     role = str(session.get("role") or "").strip().lower()
+    runner_name = str(session.get("runner") or "unknown").strip() or "unknown"
     is_promotion_role = role == "artifact"
 
     if terminal_status not in TERMINAL_STATUSES:
@@ -2073,6 +2074,9 @@ def _certify_session_result_if_present(
     # workspace root; we also check the canonical session directory path.
     candidates: list[Path] = []
     if workspace_root is not None:
+        candidates.append(
+            workspace_root / "research_plan" / "sessions" / role / convex_session_id / "session_result.json"
+        )
         candidates.append(
             workspace_root / "research_plan" / "sessions" / convex_session_id / "session_result.json"
         )
@@ -2142,7 +2146,13 @@ def _certify_session_result_if_present(
         raw = json.loads(result_path.read_text(encoding="utf-8"))
         
         # 1. Update Ledger
-        liveness_service.record_session_result(project_root, convex_session_id, raw)
+        liveness_service.record_session_result(
+            project_root,
+            convex_session_id,
+            raw,
+            role=role,
+            runner_name=runner_name,
+        )
         
         # 2. Update Research State (Claims, Sources, Memo)
         parsed = SessionResult.model_validate(raw)
@@ -2520,9 +2530,8 @@ async def _finalize_workspace_review(
         )
     elif resolved_task_id:
         role_name = str(session.get("role") or "").strip().lower()
-        audit_allows_done = planner_service._audit_allows_worker_done(project_root, resolved_task_id)
         if review_status == "review":
-            if role_name in {"", "planner"} or audit_allows_done:
+            if role_name in {"", "planner"}:
                 task_status = "done"
             else:
                 task_status = "review"
@@ -2902,12 +2911,67 @@ async def create_runner_session(
         # Update payload so the runner's prompt builder includes work order instructions
         task_payload.work_order_id = work_order.work_order_id
         task_payload.work_order_path = f"research_plan/work_orders/{work_order.work_order_id}.json"
-        task_payload.session_result_path = f"research_plan/sessions/{running_session_id}/session_result.json"
+        task_payload.session_result_path = (
+            f"research_plan/sessions/{role}/{running_session_id}/session_result.json"
+        )
     except Exception as _wo_exc:
         import logging as _logging
         _logging.getLogger(__name__).warning(
             "WorkOrder derivation failed for session %s: %s", running_session_id, _wo_exc
         )
+
+    dispatch_approval_required = False
+    try:
+        state_file = project_root / ".rail" / "autopilot_state.json"
+        if state_file.exists():
+            state_data = json.loads(state_file.read_text(encoding="utf-8"))
+            dispatch_approval_required = bool(state_data.get("dispatchApprovalRequired", False))
+    except Exception as exc:
+        _logging.getLogger(__name__).warning("Failed to check dispatchApprovalRequired: %s", exc)
+
+    if dispatch_approval_required:
+        pending_data = {
+            "runner_name": runner_name,
+            "project_id": project_id,
+            "running_session_id": running_session_id,
+            "task_payload": {
+                "project_slug": task_payload.project_slug,
+                "role": task_payload.role,
+                "task_id": task_payload.task_id,
+                "repo_url": task_payload.repo_url,
+                "branch": task_payload.branch,
+                "local_repo_path": task_payload.local_repo_path,
+                "task_description": task_payload.task_description,
+                "allowed_paths": task_payload.allowed_paths,
+                "allowed_secrets": task_payload.allowed_secrets,
+                "acceptance_criteria": task_payload.acceptance_criteria,
+                "project_context": task_payload.project_context,
+                "session_root": task_payload.session_root,
+                "work_order_id": task_payload.work_order_id,
+                "work_order_path": task_payload.work_order_path,
+                "session_result_path": task_payload.session_result_path,
+            },
+        }
+        pending_dir = project_root / "research_plan" / "pending_dispatch"
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        pending_file = pending_dir / f"{work_order.work_order_id}.json"
+        pending_file.write_text(json.dumps(pending_data, indent=2), encoding="utf-8")
+
+        session_files.append_event(
+            session_root,
+            "status_changed",
+            content="Dispatch held awaiting operator approval",
+            status="queued",
+        )
+
+        return {
+            "convex_session_id": running_session_id,
+            "external_session_id": None,
+            "status": "pending_dispatch",
+            "url": None,
+            "runner": runner_name,
+            "sessionPath": str(session_root),
+        }
 
     try:
         result = await runner.create_session(task_payload)

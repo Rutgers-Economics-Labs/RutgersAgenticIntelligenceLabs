@@ -6,7 +6,10 @@ from typing import Any
 from app.services.hydration_registry_service import get_hydration_status
 from app.services.integrity_service import evaluate_integrity_gate, load_integrity_indexes
 from app.services.question_expansion_service import missing_expansion_task_blockers, parse_follow_up_questions
-from app.services.reconciliation_service import project_reality_status
+from app.services.reconciliation_service import (
+    _artifact_path_should_ignore_drift,
+    project_reality_status,
+)
 from rail.manifest import load_manifest
 
 ONTOLOGY_READY_STATES = {"hydrated_on_this_device", "hydrated_on_another_device", "hydrating"}
@@ -116,9 +119,13 @@ def _list_final_artifact_files(project_root: Path, artifacts_root: str) -> list[
     for path in root.rglob("*"):
         if not path.is_file():
             continue
-        if any(part.startswith(".") for part in path.relative_to(project_root).parts):
+        relative_path = path.relative_to(project_root)
+        if any(part.startswith(".") for part in relative_path.parts):
             continue
-        files.append(str(path.relative_to(project_root)).replace("\\", "/"))
+        relative = str(relative_path).replace("\\", "/")
+        if _artifact_path_should_ignore_drift(relative):
+            continue
+        files.append(relative)
     return sorted(files)
 
 
@@ -189,7 +196,11 @@ async def build_auditor_statuses(
     active_sessions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     root = Path(str(project.get("localRepoPath") or "")).resolve() if project.get("localRepoPath") else None
-    reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
+    cached_reality = project.get("__controlPlaneReality")
+    if isinstance(cached_reality, dict):
+        reality = cached_reality
+    else:
+        reality = await project_reality_status(project, tasks=tasks, active_sessions=active_sessions)
 
     session_status = {
         "status": "blocked"

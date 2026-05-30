@@ -143,6 +143,59 @@ def _order_artifacts_by_dependencies(artifacts: list[ArtifactLineageRecord]) -> 
     return ordered
 
 
+def _blocking_verification_runs_for_records(
+    verification_runs: list[VerificationRunRecord],
+) -> list[VerificationRunRecord]:
+    if any(run.status == "passed" for run in verification_runs):
+        return []
+    return [run for run in verification_runs if run.status in {"failed", "blocked"}]
+
+
+def _verification_status_from_records(
+    verification_runs: list[VerificationRunRecord],
+    *,
+    promotion_state: str,
+) -> str:
+    if promotion_state == "stale":
+        return "stale"
+    if any(run.status == "passed" for run in verification_runs):
+        return "passed"
+    statuses = [run.status for run in verification_runs]
+    if "failed" in statuses:
+        return "failed"
+    if "blocked" in statuses:
+        return "blocked"
+    if "pending" in statuses:
+        return "pending"
+    return "unverified"
+
+
+def _is_promotable_final_artifact_path(artifact: ArtifactLineageRecord, artifacts_root: str) -> bool:
+    if artifact.artifact_type == "dataset":
+        return False
+    if not (artifact.artifact_path == artifacts_root or artifact.artifact_path.startswith(f"{artifacts_root}/")):
+        return False
+    if artifact.artifact_type == "report":
+        return True
+    lowered = artifact.artifact_path.lower()
+    return lowered.endswith(".html") or lowered.endswith(".pdf")
+
+
+def _dataset_requires_promotion_provenance(artifact: ArtifactLineageRecord) -> bool:
+    if artifact.artifact_type != "dataset":
+        return False
+    path = artifact.artifact_path.strip()
+    if not path:
+        return False
+    if path.startswith(".ontology/") or path.startswith(".rail/"):
+        return False
+    if path in {".mcp.json"}:
+        return False
+    if path.startswith("research_plan/"):
+        return False
+    return True
+
+
 def get_integrity_repo(project_root: str | Path, plan_root: str = "research_plan") -> ResearchIntegrityRepo:
     repo = ResearchIntegrityRepo(project_root, plan_root=plan_root)
     repo.ensure_files_exist()
@@ -457,6 +510,12 @@ def summarize_agent_workflow_health(
     *,
     plan_root: str = "research_plan",
 ) -> dict[str, Any]:
+    try:
+        manifest = load_manifest(project_root)
+        artifacts_root = str(manifest.paths.artifacts_root)
+    except Exception:
+        manifest = None
+        artifacts_root = "artifacts"
     indexes = load_integrity_indexes(project_root, plan_root=plan_root)
     source_by_key = {str(item.source_key): item for item in indexes.sources}
 
@@ -533,11 +592,24 @@ def summarize_agent_workflow_health(
         and not (row.inputs and row.scripts)
     ]
     missing_evidence_claims = sorted(unsupported_claim_keys)
-    verification_failures = [
-        row.run_id
-        for row in indexes.verification_runs
-        if row.status in {"failed", "blocked"}
-    ]
+    verification_index = {row.run_id: row for row in indexes.verification_runs}
+    verification_failures = sorted(
+        {
+            run.run_id
+            for artifact in indexes.artifact_lineage
+            if _is_promotable_final_artifact_path(artifact, artifacts_root)
+            for run in _blocking_verification_runs_for_records(
+                [
+                    verification_index[run_id]
+                    for run_id in {
+                        _normalize_reference_key(reference)
+                        for reference in artifact.verification_runs
+                    }
+                    if run_id in verification_index
+                ]
+            )
+        }
+    )
 
     def _status(blockers: list[str]) -> str:
         return "blocked" if blockers else "ready"
@@ -637,27 +709,36 @@ def evaluate_integrity_gate(
     blocking_verification_runs: list[str] = []
     repo = get_integrity_repo(project_root, plan_root=plan_root)
     source_index = {row.source_key: row for row in indexes.sources}
+    artifacts_root = str(manifest.paths.artifacts_root)
+    promotable_artifacts = [
+        row
+        for row in indexes.artifact_lineage
+        if _is_promotable_final_artifact_path(row, artifacts_root)
+    ]
 
     stale_outputs = [
-        row for row in indexes.artifact_lineage if row.promotion_state == "stale" or row.stale_reasons
+        row for row in promotable_artifacts if row.promotion_state == "stale" or row.stale_reasons
     ]
     stale_source_artifacts = [
         artifact.artifact_path
         for source_key, source in source_index.items()
         if source.freshness_status == "stale"
         for artifact in repo.artifacts_for_source(source_key)
+        if _is_promotable_final_artifact_path(artifact, artifacts_root)
     ]
     blocked_source_artifacts = [
         artifact.artifact_path
         for source_key, source in source_index.items()
         if source.quality_status in {"blocked", "rejected"}
         for artifact in repo.artifacts_for_source(source_key)
+        if _is_promotable_final_artifact_path(artifact, artifacts_root)
     ]
     inadmissible_source_artifacts = [
         artifact.artifact_path
         for source_key, source in source_index.items()
         if _source_admissibility_state(source) in {"estimated", "synthetic", "missing"}
         for artifact in repo.artifacts_for_source(source_key)
+        if _is_promotable_final_artifact_path(artifact, artifacts_root)
     ]
     if enforce_promotion_rules and integrity.stale_outputs_block_promotion and stale_outputs:
         blocking_artifacts.extend(row.artifact_path for row in stale_outputs)
@@ -672,15 +753,31 @@ def evaluate_integrity_gate(
         blocking_artifacts.extend(inadmissible_source_artifacts)
         reasons.append("Artifacts that depend on estimated, synthetic, or missing sources cannot be promoted as trusted outputs.")
 
-    verification_failures = [run for run in indexes.verification_runs if run.status in {"failed", "blocked"}]
+    verification_index = {run.run_id: run for run in indexes.verification_runs}
+    verification_failures = sorted(
+        {
+            run.run_id
+            for artifact in promotable_artifacts
+            for run in _blocking_verification_runs_for_records(
+                [
+                    verification_index[run_id]
+                    for run_id in {
+                        _normalize_reference_key(reference)
+                        for reference in artifact.verification_runs
+                    }
+                    if run_id in verification_index
+                ]
+            )
+        }
+    )
     if enforce_promotion_rules and verification_failures:
-        blocking_verification_runs.extend(run.run_id for run in verification_failures)
+        blocking_verification_runs.extend(verification_failures)
         reasons.append("Failed or blocked verification runs must be resolved before promotion.")
 
     conflicted_claims = [row for row in indexes.claims if row.status == "conflicted"]
     conflicted_claim_artifacts = [
         artifact.artifact_path
-        for artifact in indexes.artifact_lineage
+        for artifact in promotable_artifacts
         if {
             _normalize_reference_key(reference)
             for reference in artifact.claims
@@ -701,26 +798,39 @@ def evaluate_integrity_gate(
         ]
         if unsupported_claims:
             unsupported_claim_keys = {row.claim_key for row in unsupported_claims}
+            referenced_unsupported_claim_keys = {
+                _normalize_reference_key(reference)
+                for artifact in promotable_artifacts
+                for reference in artifact.claims
+                if _normalize_reference_key(reference) in unsupported_claim_keys
+            }
             unsupported_claim_artifacts = [
                 artifact.artifact_path
-                for artifact in indexes.artifact_lineage
+                for artifact in promotable_artifacts
                 if {
                     _normalize_reference_key(reference)
                     for reference in artifact.claims
-                }.intersection(unsupported_claim_keys)
+                }.intersection(referenced_unsupported_claim_keys)
             ]
-            blocking_artifacts.extend(unsupported_claim_artifacts)
-            blocking_claims.extend(row.claim_key for row in unsupported_claims)
-            reasons.append("Report claims need evidence before final artifacts can be promoted.")
+            if unsupported_claim_artifacts:
+                blocking_artifacts.extend(unsupported_claim_artifacts)
+                blocking_claims.extend(
+                    row.claim_key
+                    for row in unsupported_claims
+                    if row.claim_key in referenced_unsupported_claim_keys
+                )
+                reasons.append("Report claims need evidence before final artifacts can be promoted.")
 
     if enforce_promotion_rules and integrity.require_source_for_datasets:
         unsourced_datasets = [
-            row for row in indexes.artifact_lineage if row.artifact_type == "dataset" and not row.sources
+            row
+            for row in indexes.artifact_lineage
+            if _dataset_requires_promotion_provenance(row) and not row.sources
         ]
         missing_provenance_datasets = [
             row.artifact_path
             for row in indexes.artifact_lineage
-            if row.artifact_type == "dataset"
+            if _dataset_requires_promotion_provenance(row)
             and row.sources
             and any(not _source_has_provenance(source_index.get(_normalize_reference_key(reference))) for reference in row.sources)
         ]
@@ -734,22 +844,19 @@ def evaluate_integrity_gate(
     if enforce_promotion_rules and integrity.require_lineage_for_final_artifacts:
         lineage_gaps = [
             row
-            for row in indexes.artifact_lineage
-            if row.artifact_type != "dataset"
-            and not (row.inputs or row.sources or row.assumptions or row.claims or row.scripts)
+            for row in promotable_artifacts
+            if not (row.inputs or row.sources or row.assumptions or row.claims or row.scripts)
         ]
         final_artifact_provenance_gaps = [
             row.artifact_path
-            for row in indexes.artifact_lineage
-            if row.artifact_type != "dataset"
-            and row.sources
+            for row in promotable_artifacts
+            if row.sources
             and any(not _source_has_provenance(source_index.get(_normalize_reference_key(reference))) for reference in row.sources)
         ]
         reproducibility_gaps = [
             row
-            for row in indexes.artifact_lineage
-            if row.artifact_type != "dataset"
-            and row.reproducibility_mode not in {"manual", "non_reproducible"}
+            for row in promotable_artifacts
+            if row.reproducibility_mode not in {"manual", "non_reproducible"}
             and (
                 not row.inputs
                 or not row.scripts
@@ -759,9 +866,8 @@ def evaluate_integrity_gate(
         ]
         unlabeled_manual_artifacts = [
             row.artifact_path
-            for row in indexes.artifact_lineage
-            if row.artifact_type != "dataset"
-            and row.reproducibility_mode is None
+            for row in promotable_artifacts
+            if row.reproducibility_mode is None
             and not row.inputs
             and not row.scripts
             and not row.verification_commands
@@ -1082,19 +1188,11 @@ def get_artifact_detail(
     artifact_blocked = artifact.artifact_path in gate_blocking_artifacts or artifact.promotion_state == "blocked"
     eligible_transitions = sorted(ALLOWED_PROMOTION_TRANSITIONS.get(artifact.promotion_state, set()))
     promotable_targets = [] if artifact_blocked else eligible_transitions
-    verification_status = "unverified"
-    verification_statuses = [run.status for run in verification_runs]
-    if artifact.promotion_state == "stale":
-        verification_status = "stale"
-    elif verification_statuses:
-        if "failed" in verification_statuses:
-            verification_status = "failed"
-        elif "blocked" in verification_statuses:
-            verification_status = "blocked"
-        elif "pending" in verification_statuses:
-            verification_status = "pending"
-        elif all(status == "passed" for status in verification_statuses):
-            verification_status = "passed"
+    verification_status = _verification_status_from_records(
+        verification_runs,
+        promotion_state=artifact.promotion_state,
+    )
+    blocking_verification_runs = _blocking_verification_runs_for_records(verification_runs)
     trust_state = build_artifact_trust_summary(
         artifact,
         verification_status=verification_status,
@@ -1105,7 +1203,9 @@ def get_artifact_detail(
         blocking_claims=[claim_key for claim_key in claim_keys if claim_key in gate_blocking_claims],
         blocking_sources=[source_key for source_key in source_keys if source_key in gate_blocking_sources],
         blocking_artifacts=[artifact.artifact_path] if artifact.artifact_path in gate_blocking_artifacts else [],
-        blocking_verification_runs=[run_id for run_id in verification_run_ids if run_id in gate_blocking_runs],
+        blocking_verification_runs=[
+            run.run_id for run in blocking_verification_runs if run.run_id in gate_blocking_runs
+        ],
     )
 
     return {

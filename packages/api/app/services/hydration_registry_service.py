@@ -15,6 +15,10 @@ from app.services.convex_client import convex, ConvexBackendConfigurationError
 from app.services.device_service import get_device_id
 
 
+def _is_local_project_id(project_id: Any) -> bool:
+    return str(project_id or "").startswith("local:")
+
+
 def _safe_relpath(path: Path, root: Path) -> str:
     try:
         return str(path.resolve().relative_to(root.resolve()))
@@ -39,6 +43,14 @@ def get_manifest_fingerprint(project_root: Path, manifest_path: str = "rail.yaml
     manifest_file = (project_root / manifest_path).resolve()
     content = manifest_file.read_bytes()
     return hashlib.sha256(content).hexdigest()
+
+
+def _artifact_matches_current_commit(artifact_commit: Any, current_commit: str | None) -> bool:
+    normalized_artifact = str(artifact_commit or "").strip().lower()
+    normalized_current = str(current_commit or "").strip().lower()
+    if not normalized_current:
+        return normalized_artifact in {"", "unknown", "none", "null"}
+    return normalized_artifact == normalized_current
 
 
 def resolve_pipeline_slug(project: dict, project_root: Path) -> str:
@@ -141,6 +153,9 @@ async def register_hydration_artifact(
         pipeline_slug=pipeline_slug,
         duckdb_artifact_path=duckdb_artifact_path,
     )
+    if _is_local_project_id(project.get("_id")):
+        project_slug = str(project.get("slug") or Path(project["localRepoPath"]).name)
+        return f"local-hydration:{project_slug}:{pipeline_slug}:{hydration_mode}"
     return await convex.mutation(
         "hydrationArtifacts:register",
         {
@@ -172,15 +187,14 @@ async def attach_local_hydration_to_convex(
     of raising. Use this after a local hydrate (e.g., the live agent loop) to
     unblock the ontology auditor for autopilot ticks against that project.
     """
-    try:
-        convex._require_backend_convex()
-    except ConvexBackendConfigurationError as exc:
-        return {"status": "skipped", "reason": f"convex_not_configured: {exc}"}
+    from app.services import planner_service
 
+    project = None
     try:
-        project = await convex.query("projects:getBySlug", {"slug": slug})
-    except Exception as exc:
-        return {"status": "skipped", "reason": f"convex_query_failed: {exc}"}
+        project = await planner_service.resolve_project_reference(slug)
+    except Exception:
+        project = None
+
     if not project or not project.get("_id"):
         return {"status": "skipped", "reason": "project_not_registered"}
 
@@ -215,6 +229,7 @@ async def attach_local_hydration_to_convex(
     )
     return {
         "status": "promoted",
+        "mode": "local_repo" if _is_local_project_id(project.get("_id")) else "convex",
         "projectId": project["_id"],
         "artifactId": artifact_id,
         "pipelineSlug": pipeline_slug,
@@ -272,6 +287,8 @@ async def promote_project_hydration_artifact(
         patch["activeOntologyDuckdbPath"] = duckdb_path
     if embeddings_path:
         patch["activeOntologyEmbeddingsPath"] = str(embeddings_path)
+    if _is_local_project_id(project_id):
+        return
     await convex.mutation("projects:updateById", patch)
 
 
@@ -359,10 +376,14 @@ async def get_hydration_status(
     current_commit = get_repo_commit(root)
     manifest_fingerprint = get_manifest_fingerprint(root, manifest_path)
 
-    artifacts = await convex.query(
-        "hydrationArtifacts:listByProject",
-        {"projectId": project["_id"], "limit": 100},
-    ) or []
+    project_id = project.get("_id")
+    if _is_local_project_id(project_id) or not project_id:
+        artifacts = []
+    else:
+        artifacts = await convex.query(
+            "hydrationArtifacts:listByProject",
+            {"projectId": project_id, "limit": 100},
+        ) or []
 
     current_device_matches: list[dict[str, Any]] = []
     other_device_matches: list[dict[str, Any]] = []
@@ -372,7 +393,7 @@ async def get_hydration_status(
             continue
 
         artifact["filesExist"] = artifact_files_exist(artifact)
-        artifact["isCurrentCommit"] = artifact.get("commitSha") == current_commit
+        artifact["isCurrentCommit"] = _artifact_matches_current_commit(artifact.get("commitSha"), current_commit)
         artifact["isCurrentManifest"] = artifact.get("manifestFingerprint") == manifest_fingerprint
         artifact["isReusable"] = (
             artifact.get("status") == "valid"
@@ -400,7 +421,7 @@ async def get_hydration_status(
     # The fallback also makes the auditor robust to Convex outages and
     # offline operation, and lets integration tests work without
     # elaborate hydrationArtifacts mocking.
-    if reusable_local is None and not stale_local and not hydrated_elsewhere:
+    if reusable_local is None:
         local_duckdb = root / ".ontology" / "onto.duckdb"
         local_meta = root / ".ontology" / ".rail_hydration.json"
         if local_duckdb.exists() and local_meta.exists():
@@ -413,30 +434,52 @@ async def get_hydration_status(
                 except Exception:
                     local_meta_payload = {}
                 if _duckdb_has_populated_rows(str(local_duckdb)):
-                    synthesized = {
-                        "deviceId": current_device_id,
-                        "pipelineSlug": pipeline_slug,
-                        "hydrationMode": local_meta_payload.get("hydrationMode") or hydration_mode,
-                        "status": "valid",
-                        "commitSha": current_commit,
-                        "manifestFingerprint": manifest_fingerprint,
-                        "duckdbArtifactPath": str(local_duckdb),
-                        "filesExist": True,
-                        "isCurrentCommit": True,
-                        "isCurrentManifest": True,
-                        "isReusable": True,
-                        "synthesizedFromLocalDisk": True,
-                    }
-                    current_device_matches.append(synthesized)
-                    reusable_local = synthesized
+                    same_device_local = next(
+                        (
+                            item for item in current_device_matches
+                            if Path(str(item.get("duckdbArtifactPath") or "")).resolve() == local_duckdb.resolve()
+                        ),
+                        None,
+                    )
+                    can_trust_local_disk = (
+                        same_device_local is not None
+                        or (not stale_local and not hydrated_elsewhere)
+                    )
+                    if can_trust_local_disk:
+                        synthesized = {
+                            "deviceId": current_device_id,
+                            "pipelineSlug": pipeline_slug,
+                            "hydrationMode": local_meta_payload.get("hydrationMode") or hydration_mode,
+                            "status": "valid",
+                            "commitSha": current_commit,
+                            "manifestFingerprint": manifest_fingerprint,
+                            "duckdbArtifactPath": str(local_duckdb),
+                            "ontologyArtifactPath": str(root / ".ontology" / "onto.db"),
+                            "filesExist": True,
+                            "isCurrentCommit": True,
+                            "isCurrentManifest": True,
+                            "isReusable": True,
+                            "synthesizedFromLocalDisk": True,
+                        }
+                        if same_device_local is not None:
+                            current_device_matches = [item for item in current_device_matches if item is not same_device_local]
+                        current_device_matches.append(synthesized)
+                        reusable_local = synthesized
+                        stale_local = False
             except Exception:
                 pass
 
-    # Check for active jobs
-    active_jobs = await convex.query(
-        "jobs:listByProject",
-        {"projectId": project["_id"], "limit": 10},
-    ) or []
+    # Check for active jobs. Local repo-only projects do not have a Convex row, so
+    # hydration status should degrade to local artifact truth instead of raising on
+    # a missing `_id`.
+    project_id = project.get("_id")
+    if _is_local_project_id(project_id) or not project_id:
+        active_jobs = []
+    else:
+        active_jobs = await convex.query(
+            "jobs:listByProject",
+            {"projectId": project_id, "limit": 10},
+        ) or []
     
     running_job = next(
         (j for j in active_jobs if j.get("status") in ["queued", "started", "running"] 

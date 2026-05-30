@@ -38,6 +38,10 @@ def cmd_query(project: rail.Project, args: argparse.Namespace):
 def cmd_hydrate(project: rail.Project, args: argparse.Namespace):
     _print_json(project.hydrate(pipeline_slug=args.pipeline))
 
+
+def cmd_reconcile(project: rail.Project, args: argparse.Namespace):
+    _print_json(project.reconcile())
+
 def cmd_series(project: rail.Project, args: argparse.Namespace):
     _print_json(project.series(args.series_id).to_dict(orient="records"))
 
@@ -48,15 +52,42 @@ def cmd_secrets(project: rail.Project, args: argparse.Namespace):
         _print_json(project.set_secret(args.key, args.value))
 
 def cmd_integrity(project: rail.Project, args: argparse.Namespace):
-    if args.command == "status":
+    command = getattr(args, "integrity_command", None) or getattr(args, "command", None)
+    if command == "status":
         _print_json(project.integrity_status())
-    elif args.command == "assumptions":
+    elif command == "assumptions":
         _print_json(project.integrity_assumptions())
-    elif args.command == "sources":
+    elif command == "sources":
         _print_json(project.integrity_sources())
-    elif args.command == "claims":
+    elif command == "claims":
         _print_json(project.integrity_claims())
-    elif args.command == "rerun":
+    elif command == "source":
+        _print_json(project.integrity_source_detail(args.source_key))
+    elif command == "claim":
+        _print_json(project.integrity_claim_detail(args.claim_key))
+    elif command == "verification-runs":
+        _print_json(project.integrity_verification_runs())
+    elif command == "stale-graph":
+        _print_json(project.integrity_stale_graph())
+    elif command == "graph":
+        _print_json(project.integrity_dependency_graph())
+    elif command == "retrieve":
+        _print_json(
+            project.integrity_retrieve(
+                args.query_text,
+                limit=args.limit,
+                artifact_types=args.artifact_types,
+                claim_statuses=args.claim_statuses,
+                source_freshness=args.source_freshness,
+                date_from=args.date_from,
+                date_to=args.date_to,
+                include_stale=args.include_stale,
+                include_blocked=args.include_blocked,
+            )
+        )
+    elif command == "promote":
+        _print_json(project.apply_integrity_artifact_promotion(args.artifact_path, target_state=args.target_state))
+    elif command == "rerun":
         if args.apply:
             _print_json(project.apply_integrity_rerun_plan(args.assumption_key))
         else:
@@ -113,6 +144,9 @@ def main():
     # Hydrate
     h_parser = subparsers.add_parser("hydrate", help="Trigger hydration")
     h_parser.add_argument("--pipeline", help="Pipeline slug")
+
+    # Reconcile
+    subparsers.add_parser("reconcile", help="Reconcile repo-backed planner/session/control-plane state")
 
     # Series
     ts_parser = subparsers.add_parser("series", help="Fetch time-series data")

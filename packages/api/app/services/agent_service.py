@@ -284,16 +284,16 @@ async def _resolve_duckdb_path(
     project_id: str | None = None,
 ) -> str | None:
     """Return absolute path to the project's DuckDB file, or None if missing/not hydrated."""
-    from app.services.convex_client import convex
+    from app.services import project_artifacts_service
 
-    project = None
-    if project_slug:
-        project = await convex.query("projects:getBySlug", {"slug": project_slug})
-    elif project_id:
-        project = await convex.query("projects:getById", {"projectId": project_id})
-    if not project:
+    identifier = project_slug or project_id
+    if not identifier:
         return None
-    raw = project.get("activeOntologyDuckdbPath")
+    try:
+        artifacts = await project_artifacts_service.resolve(identifier)
+    except Exception:
+        return None
+    raw = artifacts.duckdb_path
     if not raw:
         return None
     p = Path(raw).expanduser().resolve()
@@ -301,10 +301,13 @@ async def _resolve_duckdb_path(
 
 
 async def _build_context_snapshot(project_slug: str) -> dict:
-    from app.services.convex_client import convex
+    from app.services import planner_service
     from app.services import sql_service
 
-    project = await convex.query("projects:getBySlug", {"slug": project_slug})
+    try:
+        project = await planner_service.resolve_project_reference(project_slug)
+    except Exception:
+        project = None
     if not project:
         return {}
 

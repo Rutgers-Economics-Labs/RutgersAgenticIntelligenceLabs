@@ -240,7 +240,7 @@ def test_integrity_summary_surfaces_role_specific_blockers(tmp_path: Path):
     "claims": ["research_plan/state/claims.json#claim-001"],
     "inputs": [],
     "scripts": [],
-    "verification_runs": [],
+    "verification_runs": ["research_plan/state/verification_runs.json#run-001"],
     "stale_reasons": []
   }
 ]
@@ -276,6 +276,194 @@ def test_integrity_summary_surfaces_role_specific_blockers(tmp_path: Path):
     assert "run-001" in integrity["agentWorkflow"]["health"]["failedVerificationRuns"]
 
 
+def test_persist_control_plane_snapshot_writes_repo_backed_snapshot(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    async def _build_live_command_center(project_arg):
+        return {
+            "project": {
+                "id": project_arg["_id"],
+                "name": project_arg["name"],
+                "slug": project_arg["slug"],
+                "status": project_arg["status"],
+                "localRepoPath": project_arg["localRepoPath"],
+                "defaultBranch": project_arg["defaultBranch"],
+            },
+            "currentPlan": {"summary": "Current plan"},
+            "missionBrief": {"now": "Now", "next": "Next"},
+            "goal": {"objective": "Finish report"},
+            "nextAction": "Review pending approvals",
+            "taskCounts": {"total": 3, "byStatus": {"ready": 2, "running": 1}},
+            "plannerSnapshot": {
+                "now": [{"id": "task-1", "title": "Run hydration", "status": "ready", "description": ""}],
+                "next": [],
+                "later": [],
+                "done": [],
+                "blocked": [],
+            },
+            "latestTruth": [
+                {
+                    "claim": "Forecast error widened in summer peaks.",
+                    "confidence": 0.95,
+                    "evidenceRefs": ["topics/grid/outputs/error.csv"],
+                    "verified": True,
+                }
+            ],
+            "recentArtifacts": [{"path": "artifacts/report.md"}],
+            "sourceSummary": {"count": 2},
+            "skillSummary": {"count": 1},
+            "integritySummary": {"staleArtifactCount": 0},
+            "hypothesisTaskLinks": [],
+            "ontologyFollowUps": {"questions": []},
+            "auditedTruth": {"currentBlocker": None},
+            "recentAudits": [],
+            "lifecyclePhase": "research_active",
+            "closeoutCertificate": {"status": "pending"},
+            "currentBlocker": None,
+            "blockerSummary": {"blocked": False},
+            "repairQueue": {"count": 0, "tasks": []},
+            "recommendedRepairTask": None,
+            "projectReality": {"hasDrift": False},
+            "auditors": {"session": {"status": "ready"}},
+            "repoHealth": {"hasLocalRepo": True, "hasRailYaml": True, "hasResearchPlan": True},
+            "activeSessions": [],
+            "pendingApprovals": [],
+            "snapshot": {"loaded": False},
+        }
+
+    monkeypatch.setattr(command_center_service, "_build_live_command_center", _build_live_command_center)
+
+    result = asyncio.run(command_center_service.persist_control_plane_snapshot(_project(tmp_path)))
+
+    assert result["path"] == "research_plan/state/control_plane_snapshot.json"
+    snapshot_path = tmp_path / "research_plan" / "state" / "control_plane_snapshot.json"
+    assert snapshot_path.exists()
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert payload["snapshotVersion"] == command_center_service.CONTROL_PLANE_SNAPSHOT_VERSION
+    assert payload["commandCenter"]["goal"]["objective"] == "Finish report"
+    assert payload["commandCenter"]["plannerSnapshot"]["now"][0]["title"] == "Run hydration"
+    assert payload["commandCenter"]["latestTruth"][0]["verified"] is True
+    assert payload["commandCenter"]["projectReality"]["hasDrift"] is False
+
+
+def test_build_command_center_prefers_repo_snapshot_when_available(tmp_path: Path, monkeypatch):
+    from app.services import command_center_service
+
+    snapshot_payload = {
+        "snapshotVersion": command_center_service.CONTROL_PLANE_SNAPSHOT_VERSION,
+        "generatedAt": 1234567890,
+        "commandCenter": {
+            "currentPlan": {"summary": "Snapshot plan"},
+            "missionBrief": {"now": "Snapshot now", "next": "Snapshot next"},
+            "goal": {"objective": "Snapshot goal"},
+            "nextAction": "Stale snapshot action",
+            "taskCounts": {"total": 2, "byStatus": {"ready": 2}},
+            "plannerSnapshot": {
+                "now": [{"id": "task-1", "title": "Snapshot plan", "status": "ready", "description": ""}],
+                "next": [],
+                "later": [],
+                "done": [],
+                "blocked": [],
+            },
+            "latestTruth": [
+                {
+                    "claim": "Snapshot truth",
+                    "confidence": 0.95,
+                    "evidenceRefs": ["topics/analysis/output.csv"],
+                    "verified": True,
+                }
+            ],
+            "recentArtifacts": [{"path": "artifacts/snapshot-report.md"}],
+            "sourceSummary": {"count": 5},
+            "skillSummary": {"count": 4},
+            "integritySummary": {"staleArtifactCount": 1},
+            "hypothesisTaskLinks": [],
+            "ontologyFollowUps": {"questions": []},
+            "auditedTruth": {"currentBlocker": "Snapshot blocker"},
+            "recentAudits": [],
+            "lifecyclePhase": "closeout",
+            "closeoutCertificate": {"status": "pending"},
+            "currentBlocker": "Snapshot blocker",
+            "blockerSummary": {"blocked": True, "headline": "Snapshot blocker"},
+            "repairQueue": {"count": 1, "tasks": [{"id": "repair-1", "title": "Repair snapshot"}]},
+            "recommendedRepairTask": {"id": "repair-1", "title": "Repair snapshot"},
+            "projectReality": {"hasDrift": True},
+            "auditors": {"session": {"status": "blocked"}},
+            "repoHealth": {"hasLocalRepo": True, "hasRailYaml": True, "hasResearchPlan": True},
+        },
+    }
+    _write(
+        tmp_path / "research_plan" / "state" / "control_plane_snapshot.json",
+        json.dumps(snapshot_payload, indent=2),
+    )
+
+    async def _list_approvals(project_arg):
+        return [{"_id": "approval-1", "status": "pending"}]
+
+    async def _list_project_running_agents(project_id: str, active_only: bool = False, limit: int = 20):
+        return [{"_id": "sess-1", "status": "running", "role": "coding"}]
+
+    class _PlannerService:
+        async def list_approvals(self, project_arg):
+            return await _list_approvals(project_arg)
+
+        def project_root_from_record(self, project_arg):
+            return Path(str(project_arg["localRepoPath"]))
+
+    class _RunningAgentService:
+        async def list_project_running_agents(self, project_id: str, active_only: bool = False, limit: int = 20):
+            return await _list_project_running_agents(project_id, active_only=active_only, limit=limit)
+
+    async def _build_live_command_center(project_arg):
+        raise AssertionError("live command-center build should not run when snapshot is present")
+
+    monkeypatch.setattr(command_center_service, "_runtime_services", lambda: (_PlannerService(), _RunningAgentService()))
+    monkeypatch.setattr(command_center_service, "_build_live_command_center", _build_live_command_center)
+
+    center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
+
+    assert center["goal"]["objective"] == "Snapshot goal"
+    assert center["plannerSnapshot"]["now"][0]["title"] == "Snapshot plan"
+    assert center["latestTruth"][0]["claim"] == "Snapshot truth"
+    assert center["projectReality"]["hasDrift"] is True
+    assert center["activeSessions"][0]["_id"] == "sess-1"
+    assert center["pendingApprovals"][0]["_id"] == "approval-1"
+    assert center["nextAction"] == "Review pending approvals"
+    assert center["snapshot"]["loaded"] is True
+    assert center["snapshot"]["path"] == "research_plan/state/control_plane_snapshot.json"
+
+
+def test_load_control_plane_summary_returns_shared_summary_and_meta(tmp_path: Path):
+    from app.services import command_center_service
+
+    _write(
+        tmp_path / "research_plan" / "state" / "control_plane_snapshot.json",
+        json.dumps(
+            {
+                "snapshotVersion": command_center_service.CONTROL_PLANE_SNAPSHOT_VERSION,
+                "generatedAt": 1234567890,
+                "commandCenter": {
+                    "lifecyclePhase": "research_active",
+                    "currentBlocker": "Snapshot blocker",
+                    "projectReality": {"hasDrift": True},
+                },
+            },
+            indent=2,
+        ),
+    )
+
+    projection = command_center_service.load_control_plane_summary(_project(tmp_path))
+
+    assert projection["summary"]["lifecyclePhase"] == "research_active"
+    assert projection["summary"]["currentBlocker"] == "Snapshot blocker"
+    assert projection["snapshot"] == {
+        "loaded": True,
+        "path": "research_plan/state/control_plane_snapshot.json",
+        "generatedAt": 1234567890,
+        "version": command_center_service.CONTROL_PLANE_SNAPSHOT_VERSION,
+    }
+
+
 def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path: Path, monkeypatch):
     from app.services import command_center_service
 
@@ -307,7 +495,8 @@ def test_build_command_center_surfaces_latest_audit_and_current_blocker(tmp_path
 
     center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
 
-    assert center["currentBlocker"] == "Datasets must record source provenance before promotion."
+    assert center["auditedTruth"]["currentBlocker"] == "Datasets must record source provenance before promotion."
+    assert center["currentBlocker"] == "No sources have been admitted yet."
     assert center["auditedTruth"]["session"]["id"] == "sess-2"
     assert center["auditedTruth"]["path"] == "research_plan/audits/sess-2.json"
     assert center["recentAudits"][0]["session"]["id"] == "sess-2"
@@ -741,7 +930,7 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
 
     assert center["blockerSummary"]["blocked"] is True
-    assert center["blockerSummary"]["headline"] == "Autopilot is waiting for audited truth."
+    assert center["blockerSummary"]["headline"] == "1 stale runtime session(s) still marked active."
     assert "Ontology hydration state is `not_hydrated`." in center["blockerSummary"]["reasons"]
     assert "Reconcile running-agent session statuses so live runtime state uses canonical lifecycle values." in center["blockerSummary"]["repairs"]
     assert "Reconcile running-agent session roles so live runtime state uses canonical agent roles." in center["blockerSummary"]["repairs"]
@@ -750,7 +939,41 @@ def test_build_command_center_surfaces_blocker_summary(tmp_path: Path, monkeypat
     assert center["blockerSummary"]["category"] == "stale_session"
     assert center["blockerSummary"]["categoryLabel"] == "Stale session"
     assert center["blockerSummary"]["severity"] == "critical"
+    assert center["currentBlocker"] == "1 stale runtime session(s) still marked active."
     assert center["blockerSummary"]["fixHref"] == "/projects/grid-study/runs"
+
+
+def test_blocker_summary_ignores_stale_latest_audit_when_live_gates_are_clear():
+    from app.services.command_center_service import _build_blocker_summary
+
+    summary = _build_blocker_summary(
+        latest_audit={"currentBlocker": "Deterministic verification failed."},
+        reality={
+            "staleRuntimeSessionCount": 0,
+            "runningAgentStatusDriftCount": 0,
+            "runningAgentRoleDriftCount": 0,
+            "runningAgentRunnerDriftCount": 0,
+            "duplicateTaskFileCount": 0,
+            "taskSessionMismatchCount": 0,
+            "staleAuditSessionCount": 0,
+            "secretPolicyRoleDriftCount": 0,
+            "roleConfigAliasDriftCount": 0,
+        },
+        auditors={
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        },
+        pending_approvals=[],
+        integrity_summary={"agentWorkflow": {"health": {"staleSources": [], "inadmissibleSources": [], "failedVerificationRuns": []}}},
+        source_summary={"count": 1, "admittedCount": 1, "missingAuthCount": 0, "blockedCount": 0},
+        project_slug="grid-study",
+    )
+
+    assert summary["blocked"] is False
+    assert summary["headline"] == "No active blocker detected."
 
 
 def test_blocker_category_classification_routes_through_priority_order():

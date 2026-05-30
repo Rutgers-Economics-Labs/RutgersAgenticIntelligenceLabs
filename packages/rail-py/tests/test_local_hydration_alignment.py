@@ -85,6 +85,8 @@ def project_root(tmp_path: Path) -> Path:
     )
     (tmp_path / ".ontology" / "sources").mkdir()
     (tmp_path / ".ontology" / "pipelines").mkdir()
+    for rel in ("topics", "specs", "research_plan", "agents", "skills", "artifacts"):
+        (tmp_path / rel).mkdir(parents=True, exist_ok=True)
     return tmp_path
 
 
@@ -151,6 +153,8 @@ class TestDefaultPipelineResolution:
         (tmp_path / ".ontology").mkdir()
         (tmp_path / ".ontology" / "sources").mkdir()
         (tmp_path / ".ontology" / "pipelines").mkdir()
+        for rel in ("topics", "specs", "research_plan", "agents", "skills", "artifacts"):
+            (tmp_path / rel).mkdir(parents=True, exist_ok=True)
 
         from rail.local import LocalEngine
         eng = LocalEngine(project_path=str(tmp_path), engine_path=None)
@@ -175,6 +179,34 @@ class TestDefaultPipelineResolution:
         result = engine.hydrate("explicit_pipeline")
         assert result["pipeline_slug"] == "explicit_pipeline"
         assert result["status"] == "reused"
+
+    def test_hydrate_resolves_project_local_ontology_slug(self, engine, project_root):
+        pipeline_file = project_root / ".ontology" / "pipelines" / "test_pipeline.yaml"
+        pipeline_file.write_text(
+            "ontology: test-project-ontology\nsteps: []\n",
+            encoding="utf-8",
+        )
+        ontology_file = project_root / ".ontology" / "ontologies" / "test-project-ontology.yaml"
+        ontology_file.parent.mkdir(parents=True, exist_ok=True)
+        ontology_file.write_text("uri: http://test.org/project\nclasses: []\n", encoding="utf-8")
+
+        from unittest.mock import patch, MagicMock
+        seen: dict[str, str] = {}
+
+        def _capture_pipeline(path: str):
+            seen["pipeline"] = Path(path).read_text(encoding="utf-8")
+
+        mock_run = MagicMock(side_effect=_capture_pipeline)
+        with patch("engine.pipeline_runner.run_pipeline", mock_run, create=True):
+            import types
+            mock_engine_mod = types.ModuleType("engine.pipeline_runner")
+            mock_engine_mod.run_pipeline = mock_run
+            sys.modules.setdefault("engine", types.ModuleType("engine"))
+            sys.modules["engine.pipeline_runner"] = mock_engine_mod
+
+            engine.hydrate(force=True)
+
+        assert str(ontology_file.resolve()) in seen["pipeline"]
 
 
 # ── Reuse-aware hydration ─────────────────────────────────────────────────────

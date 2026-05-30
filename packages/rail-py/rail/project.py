@@ -7,7 +7,17 @@ class Project:
 
     def hydrate(self, pipeline_slug: str | None = None) -> dict:
         """Trigger hydration. Uses the project's default pipeline if not specified."""
-        return self._backend.hydrate(pipeline_slug or self.slug)
+        if hasattr(self._backend, "hydrate_project"):
+            return self._backend.hydrate_project(self.slug, pipeline_slug)
+        return self._backend.hydrate(pipeline_slug)
+
+    def reconcile(self) -> dict:
+        """Reconcile repo-backed planner/session/control-plane state."""
+        if hasattr(self._backend, "reconcile_project"):
+            return self._backend.reconcile_project(self.slug)
+        if hasattr(self._backend, "reconcile"):
+            return self._backend.reconcile()
+        raise RuntimeError("This backend does not support reconcile()")
 
     def query(self, sql: str) -> "pd.DataFrame":
         import pandas as pd
@@ -91,6 +101,21 @@ class Project:
         """Fetch recorded empirical claims."""
         return self._backend.get_integrity_claims(self.slug)
 
+    def integrity_source_detail(self, source_key: str) -> dict:
+        return self._backend.get_integrity_source_detail(self.slug, source_key)
+
+    def integrity_claim_detail(self, claim_key: str) -> dict:
+        return self._backend.get_integrity_claim_detail(self.slug, claim_key)
+
+    def integrity_dependency_graph(self) -> dict:
+        return self._backend.get_integrity_dependency_graph(self.slug)
+
+    def integrity_stale_graph(self) -> dict:
+        return self._backend.get_integrity_stale_graph(self.slug)
+
+    def integrity_verification_runs(self) -> dict:
+        return self._backend.get_integrity_verification_runs(self.slug)
+
     def integrity_rerun_plan(self, assumption_key: str) -> dict:
         """Preview the rerun plan for a given assumption change."""
         return self._backend.get_integrity_rerun_plan(self.slug, assumption_key)
@@ -98,6 +123,50 @@ class Project:
     def apply_integrity_rerun_plan(self, assumption_key: str) -> dict:
         """Create rerun tasks based on the current rerun plan for an assumption change."""
         return self._backend.apply_integrity_rerun_plan(self.slug, assumption_key)
+
+    def apply_integrity_reproducibility_rerun(self, artifact_path: str) -> dict:
+        return self._backend.apply_integrity_reproducibility_rerun(self.slug, artifact_path)
+
+    def apply_integrity_freshness_evaluation(self, *, as_of: str | None = None) -> dict:
+        return self._backend.apply_integrity_freshness_evaluation(self.slug, as_of=as_of)
+
+    def apply_integrity_artifact_promotion(self, artifact_path: str, *, target_state: str) -> dict:
+        return self._backend.apply_integrity_artifact_promotion(self.slug, artifact_path, target_state=target_state)
+
+    def apply_integrity_source_candidate_promotion(self, candidate_key: str, *, source_type: str = "dataset") -> dict:
+        return self._backend.apply_integrity_source_candidate_promotion(self.slug, candidate_key, source_type=source_type)
+
+    def apply_integrity_claim_candidate_promotion(self, candidate_key: str, *, status: str) -> dict:
+        return self._backend.apply_integrity_claim_candidate_promotion(self.slug, candidate_key, status=status)
+
+    def apply_integrity_conflict_resolution(self, conflict_key: str, *, resolution: str) -> dict:
+        return self._backend.apply_integrity_conflict_resolution(self.slug, conflict_key, resolution=resolution)
+
+    def integrity_retrieve(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        artifact_types: list[str] | None = None,
+        claim_statuses: list[str] | None = None,
+        source_freshness: list[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        include_stale: bool = False,
+        include_blocked: bool = False,
+    ) -> dict:
+        return self._backend.integrity_retrieve(
+            self.slug,
+            query,
+            limit=limit,
+            artifact_types=artifact_types,
+            claim_statuses=claim_statuses,
+            source_freshness=source_freshness,
+            date_from=date_from,
+            date_to=date_to,
+            include_stale=include_stale,
+            include_blocked=include_blocked,
+        )
 
     def get_state(self) -> dict:
         """Fetch a structured context snapshot (classes, schema, sources, pipelines)."""

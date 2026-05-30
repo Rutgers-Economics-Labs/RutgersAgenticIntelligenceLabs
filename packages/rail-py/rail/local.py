@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import asyncio
 import json
 import os
 import subprocess
@@ -13,7 +14,7 @@ from pathlib import Path
 import yaml
 
 from rail.integrity import ResearchIntegrityRepo, sync_sources_from_configs
-from rail.manifest import RailManifest, boot_validate_project
+from rail.manifest import RailManifest, boot_validate_project, load_manifest
 
 
 class LocalEngine:
@@ -39,6 +40,14 @@ class LocalEngine:
             sys.path.remove(api_root_str)
         sys.path.insert(0, api_root_str)
         return importlib.import_module("app.services.integrity_service")
+
+    def _reconciliation_service_module(self):
+        api_root = Path(__file__).parent.parent.parent / "api"
+        api_root_str = str(api_root.resolve())
+        if api_root_str in sys.path:
+            sys.path.remove(api_root_str)
+        sys.path.insert(0, api_root_str)
+        return importlib.import_module("app.services.reconciliation_service")
 
     def read_rail_yaml(self) -> RailManifest:
         self._manifest = boot_validate_project(self.project_path)
@@ -109,6 +118,33 @@ class LocalEngine:
         self._hydration_meta_path.parent.mkdir(parents=True, exist_ok=True)
         self._hydration_meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
+    def _resolve_project_ontology_path(self, ontology_ref: str | None) -> str | None:
+        if not ontology_ref:
+            return None
+        candidate_refs = [ontology_ref]
+        ref_path = Path(ontology_ref)
+        if ref_path.suffix.lower() not in {".yaml", ".yml"}:
+            candidate_refs.append(f"{ontology_ref}.yaml")
+        candidate_paths = []
+        for ref in candidate_refs:
+            rel = Path(ref)
+            candidate_paths.append((self.project_path / rel).resolve())
+            candidate_paths.append((self.ontology_root / rel).resolve())
+            candidate_paths.append((self.ontology_root / "ontologies" / rel.name).resolve())
+        manifest_ontology = (self.project_path / self.manifest.hydration.ontology_file).resolve()
+        if manifest_ontology.exists():
+            candidate_paths.append(manifest_ontology)
+            if manifest_ontology.stem == ref_path.stem:
+                candidate_paths.insert(0, manifest_ontology)
+        seen: set[Path] = set()
+        for path in candidate_paths:
+            if path in seen:
+                continue
+            seen.add(path)
+            if path.exists():
+                return str(path)
+        return None
+
     def _is_reusable(self, pipeline_slug: str, hydration_mode: str) -> bool:
         """Return True when an existing local artifact is valid and can be reused."""
         if not self.artifact_db_path.exists():
@@ -177,9 +213,9 @@ class LocalEngine:
         # Resolve ontology reference relative to project root
         onto_ref = pipeline_spec.get("ontology")
         if onto_ref and not Path(onto_ref).is_absolute():
-            candidate = (self.project_path / onto_ref).resolve()
-            if candidate.exists():
-                pipeline_spec["ontology"] = str(candidate)
+            resolved_ontology = self._resolve_project_ontology_path(str(onto_ref))
+            if resolved_ontology:
+                pipeline_spec["ontology"] = resolved_ontology
 
         # Write a temporary pipeline YAML with the overridden paths
         with tempfile.NamedTemporaryFile(
@@ -217,6 +253,19 @@ class LocalEngine:
             "artifact_db_path": str(self.artifact_db_path),
             "artifact_duckdb_path": str(self.artifact_duckdb_path),
         }
+
+    def reconcile(self) -> dict:
+        """Reconcile repo-backed planner/session/control-plane state locally."""
+        reconciliation_service = self._reconciliation_service_module()
+        manifest = self.manifest
+        project_record = {
+            "slug": manifest.project.slug,
+            "name": manifest.project.name,
+            "status": "local",
+            "localRepoPath": str(self.project_path),
+            "manifestPath": "rail.yaml",
+        }
+        return asyncio.run(reconciliation_service.reconcile_project_reality(project_record))
 
     def _record_hydration_lineage(self, pipeline_slug: str, *, pipeline_spec: dict | None = None) -> None:
         manifest = self.manifest

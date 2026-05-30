@@ -1152,6 +1152,124 @@ async def test_artifact_lineage_write_rejects_trusted_state_when_ontology_audito
     assert "Artifact lineage write blocked by auditor state: ontology:" in payload["detail"]
 
 
+async def test_artifact_promotion_prefers_snapshot_ontology_auditor(client, convex_mock, tmp_path, monkeypatch):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
+    repo = ResearchIntegrityRepo(root)
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "artifacts/report.md",
+                "artifact_type": "report",
+                "title": "Report",
+                "promotion_state": "draft",
+            }
+        ]
+    )
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    async def _unexpected_build_auditor_statuses(*args, **kwargs):
+        raise AssertionError("build_auditor_statuses should not run when snapshot auditors are available")
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr("app.routers.projects.build_auditor_statuses", _unexpected_build_auditor_statuses)
+    monkeypatch.setattr(
+        "app.routers.projects.command_center_service.load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "auditors": {
+                    "ontology": {
+                        "status": "blocked",
+                        "blockers": ["Ontology hydration state is `not_hydrated`."],
+                    }
+                }
+            },
+            "snapshot": {"loaded": True},
+        },
+    )
+
+    promote_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts/promote",
+        json={"artifactPath": "artifacts/report.md", "targetState": "partially_verified"},
+    )
+
+    assert promote_resp.status_code == 409
+    assert "Artifact promotion blocked by auditor state: ontology:" in promote_resp.json()["detail"]
+
+
+async def test_artifact_lineage_write_prefers_snapshot_ontology_auditor(client, convex_mock, tmp_path, monkeypatch):
+    root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
+    _seed_workflow_scaffolding(root)
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in ("projects:get", "projects:getBySlug"):
+            return httpx.Response(
+                200,
+                json={
+                    "value": {
+                        "_id": "project-id",
+                        "name": "Integrity Router Project",
+                        "slug": "integrity-router-project",
+                        "status": "ready",
+                        "localRepoPath": str(root),
+                    }
+                },
+            )
+        return httpx.Response(200, json={"value": None})
+
+    async def _unexpected_build_auditor_statuses(*args, **kwargs):
+        raise AssertionError("build_auditor_statuses should not run when snapshot auditors are available")
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr("app.routers.projects.build_auditor_statuses", _unexpected_build_auditor_statuses)
+    monkeypatch.setattr(
+        "app.routers.projects.command_center_service.load_control_plane_summary",
+        lambda project: {
+            "summary": {
+                "auditors": {
+                    "ontology": {
+                        "status": "blocked",
+                        "blockers": ["Ontology hydration state is `not_hydrated`."],
+                    }
+                }
+            },
+            "snapshot": {"loaded": True},
+        },
+    )
+
+    artifact_resp = await client.post(
+        "/api/v1/projects/integrity-router-project/integrity/artifacts",
+        json={
+            "artifactPath": "artifacts/report.md",
+            "artifactType": "report",
+            "title": "Report",
+            "promotionState": "verified",
+            "inputs": [".ontology/onto.duckdb"],
+            "sources": ["research_plan/state/sources.json#context-doc-234"],
+        },
+    )
+
+    assert artifact_resp.status_code == 409
+    assert "Artifact lineage write blocked by auditor state: ontology:" in artifact_resp.json()["detail"]
+
+
 async def test_artifact_promotion_rejects_unknown_target_state(client, convex_mock, tmp_path):
     root = bootstrap_future_project(tmp_path, name="Integrity Router Project", slug="integrity-router-project")
     _seed_workflow_scaffolding(root)

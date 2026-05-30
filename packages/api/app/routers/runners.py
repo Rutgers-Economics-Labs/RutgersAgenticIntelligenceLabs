@@ -417,7 +417,7 @@ async def get_work_order(
     project_slug: str = Query(...),
 ) -> dict[str, Any]:
     """Fetch the typed WorkOrder for a session."""
-    from app.services import running_agent_service, planner_service
+    from app.services import running_agent_service
     from pathlib import Path
     import json
 
@@ -426,7 +426,7 @@ async def get_work_order(
     # In Phase 2, we wrote work orders to research_plan/work_orders/<wo_id>.json
     # and recorded work_order_id in the session state on disk.
     
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await _resolve_project(project_slug)
     if not project or not project.get("localRepoPath"):
         raise HTTPException(status_code=404, detail="Project or local path not found")
     
@@ -455,6 +455,108 @@ async def get_work_order(
     return json.loads(wo_path.read_text(encoding="utf-8"))
 
 
+@router.get("/sessions/{session_id}/dispatch-decision")
+async def get_dispatch_decision(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+) -> dict[str, Any]:
+    """Fetch the dispatch decision log for a session."""
+    from app.services import running_agent_service, session_files
+    from pathlib import Path
+    import json
+
+    try:
+        agent_session = await running_agent_service.get_running_agent(session_id)
+    except Exception:
+        agent_session = None
+
+    project = await _resolve_project(project_slug)
+    if not project or not project.get("localRepoPath"):
+        raise HTTPException(status_code=404, detail="Project or local path not found")
+
+    project_root = Path(project["localRepoPath"])
+    role = (agent_session or {}).get("role", "research")
+    session_root = session_files.session_root(project_root, role, session_id)
+
+    if not session_root.exists():
+        sessions_root = project_root / "research_plan" / "sessions"
+        if sessions_root.exists():
+            for candidate in sessions_root.glob(f"*/{session_id}"):
+                if candidate.exists():
+                    session_root = candidate
+                    break
+
+    work_order_id = None
+    if session_root.exists():
+        state = session_files.read_state(session_root)
+        work_order_id = state.get("work_order_id")
+    if not work_order_id and agent_session:
+        work_order_id = agent_session.get("work_order_id")
+    if not work_order_id:
+        raise HTTPException(status_code=404, detail="Session has no work order ID associated")
+
+    dispatch_path = project_root / "research_plan" / "dispatch_log" / f"{work_order_id}.json"
+    if not dispatch_path.exists():
+        raise HTTPException(status_code=404, detail=f"Dispatch decision file not found for work order: {work_order_id}")
+
+    try:
+        return json.loads(dispatch_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse dispatch decision: {e}")
+
+
+@router.get("/sessions/{session_id}/result")
+async def get_session_result(
+    session_id: str = FPath(...),
+    project_slug: str = Query(...),
+) -> dict[str, Any]:
+    """Fetch the session result for a finished session."""
+    from app.services import running_agent_service, session_files
+    from pathlib import Path
+    import json
+
+    try:
+        agent_session = await running_agent_service.get_running_agent(session_id)
+    except Exception:
+        agent_session = None
+
+    project = await _resolve_project(project_slug)
+    if not project or not project.get("localRepoPath"):
+        raise HTTPException(status_code=404, detail="Project or local path not found")
+
+    project_root = Path(project["localRepoPath"])
+    role = (agent_session or {}).get("role", "research")
+    session_root = session_files.session_root(project_root, role, session_id)
+
+    if not session_root.exists():
+        sessions_root = project_root / "research_plan" / "sessions"
+        if sessions_root.exists():
+            for candidate in sessions_root.glob(f"*/{session_id}"):
+                if candidate.exists():
+                    session_root = candidate
+                    break
+
+    if not session_root.exists():
+        raise HTTPException(status_code=404, detail="Session directory not found")
+
+    result_path = session_root / "session_result.json"
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="Session result file not found")
+
+    try:
+        data = json.loads(result_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read session result JSON: {e}")
+
+    try:
+        from app.runners.contracts import SessionResult
+        SessionResult.model_validate(data)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Session result file does not match SessionResult schema: {e}")
+
+    return data
+
+
 @router.post("/sessions/{session_id}/result")
 async def submit_session_result(
     session_id: str = FPath(...),
@@ -462,12 +564,12 @@ async def submit_session_result(
     result: dict = Body(...),
 ) -> dict[str, Any]:
     """Submit the final session result."""
-    from app.services import running_agent_service, session_files, planner_service
+    from app.services import running_agent_service, session_files
     from pathlib import Path
     import json
 
     agent_session = await running_agent_service.get_running_agent(session_id)
-    project = await planner_service.get_project_by_slug(project_slug)
+    project = await _resolve_project(project_slug)
     if not project or not project.get("localRepoPath"):
         raise HTTPException(status_code=404, detail="Project or local path not found")
     

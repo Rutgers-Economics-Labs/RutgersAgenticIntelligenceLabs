@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ProjectShell } from "@/components/project-shell";
+import { SectionCard } from "@/components/section-card";
+import { PageIntro } from "@/components/page-intro";
 import { StatusPill } from "@/components/status-pill";
-import { fetchRunnerSessions, fetchPlannerBoard, fetchProjectReality } from "@/lib/api";
-import type { RunnerSession } from "@/lib/types";
+import { fetchRunnerSessions, fetchPlannerHome } from "@/lib/api";
+import type { PlannerHome, RunnerSession } from "@/lib/types";
 import { SessionSteering } from "@/components/session-steering";
 
 function elapsed(ts: number | undefined): string {
@@ -21,46 +23,61 @@ function elapsed(ts: number | undefined): string {
 
 const ACTIVE = new Set(["awaiting_approval", "awaiting_input", "running", "blocked"]);
 
-export function RunsClient() {
-  const { slug } = useParams<{ slug: string }>();
+function realityDetails(home: PlannerHome | null) {
+  return home?.controlPlane?.projectReality?.details ?? null;
+}
+
+type RunsClientProps = {
+  slug: string;
+  initialSessions: RunnerSession[];
+  initialHome: PlannerHome | null;
+};
+
+function seedTaskMap(home: PlannerHome | null): Record<string, string> {
+  const next: Record<string, string> = {};
+  for (const task of home?.planner.tasks ?? []) {
+    next[task._id] = task.title;
+  }
+  return next;
+}
+
+export function RunsClient({ slug, initialSessions, initialHome }: RunsClientProps) {
   const searchParams = useSearchParams();
   const statusFilter = searchParams.get("status");
   const roleFilter = searchParams.get("role");
   const runnerFilter = searchParams.get("runner");
   const reviewFilter = searchParams.get("review");
 
-  const [sessions, setSessions] = useState<RunnerSession[]>([]);
-  const [taskMap, setTaskMap] = useState<Record<string, string>>({});
-  const [staleIds, setStaleIds] = useState<Set<string>>(new Set());
-  const [zombieIds, setZombieIds] = useState<Set<string>>(new Set());
+  const [sessions, setSessions] = useState<RunnerSession[]>(initialSessions);
+  const [taskMap, setTaskMap] = useState<Record<string, string>>(seedTaskMap(initialHome));
+  const [staleIds, setStaleIds] = useState<Set<string>>(
+    new Set([...(realityDetails(initialHome)?.staleRuntimeSessionIds ?? [])]),
+  );
+  const [zombieIds, setZombieIds] = useState<Set<string>>(
+    new Set([...(realityDetails(initialHome)?.zombieSessionIds ?? [])]),
+  );
   const [, setTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
-      const [sessData, boardData, realityData] = await Promise.allSettled([
+      const [sessData, homeData] = await Promise.allSettled([
         fetchRunnerSessions(slug),
-        fetchPlannerBoard(slug),
-        fetchProjectReality(slug),
+        fetchPlannerHome(slug),
       ]);
       if (cancelled) return;
       if (sessData.status === "fulfilled") setSessions(sessData.value.sessions);
-      if (boardData.status === "fulfilled") {
+      if (homeData.status === "fulfilled") {
         const m: Record<string, string> = {};
-        for (const t of boardData.value.tasks ?? []) m[t._id] = t.title;
+        for (const t of homeData.value.planner.tasks ?? []) m[t._id] = t.title;
         setTaskMap(m);
-      }
-      if (realityData.status === "fulfilled") {
-        const r: any = realityData.value;
-        const details = r.details ?? {};
+        const details = realityDetails(homeData.value);
         setStaleIds(new Set([
-          ...(r.staleRuntimeSessionIds ?? []),
-          ...(details.staleRuntimeSessionIds ?? []),
+          ...(details?.staleRuntimeSessionIds ?? []),
         ]));
         setZombieIds(new Set([
-          ...(r.zombieSessionIds ?? []),
-          ...(details.zombieSessionIds ?? []),
+          ...(details?.zombieSessionIds ?? []),
         ]));
       }
     }
@@ -91,6 +108,19 @@ export function RunsClient() {
 
   return (
     <ProjectShell slug={slug} title="Sessions" section="sessions">
+      <PageIntro
+        title="See every agent run, what happened, and where it ended."
+        detail="Use Sessions for run history and detailed workspace review. If you need to change the queue, use Planner. If you need to approve held work, use Review."
+        actions={[
+          { label: "Open Planner", href: `/projects/${slug}/planner` },
+          { label: "Open Review", href: `/projects/${slug}/review` },
+        ]}
+      />
+      <SectionCard eyebrow="Session Ledger" title="Every agent run in one place">
+        <div className="overview-copy" style={{ marginTop: 0 }}>
+          Use Sessions when you want the run history itself: which agent ran, which runner handled it, what review state it ended in, and where to open the detailed workspace review.
+        </div>
+      </SectionCard>
       <div style={{ display: "flex", gap: 6, padding: "8px 12px", borderBottom: "1px solid var(--border)", flexWrap: "wrap" }}>
         <Link href={`/projects/${slug}/runs`} className="choice-button">All</Link>
         {statuses.map((s) => (

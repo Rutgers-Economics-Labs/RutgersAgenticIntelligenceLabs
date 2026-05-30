@@ -42,7 +42,7 @@ async def agent_chat(req: ChatRequest, project: str | None = Query(default=None)
     async def event_stream():
         try:
             if project:
-                project_record = await planner_service.get_project_by_slug(project)
+                project_record = await planner_service.resolve_project_reference(project)
                 assistant_message = ""
                 async for event in planner_runtime.stream_planner_turn(
                     project=project_record,

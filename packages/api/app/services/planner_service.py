@@ -282,6 +282,45 @@ async def get_project_by_slug(slug: str) -> dict:
     return project
 
 
+async def resolve_project_reference(project_ref: str | None) -> dict[str, Any] | None:
+    if not project_ref:
+        return None
+
+    project = None
+    candidate_slugs = [project_ref]
+    if isinstance(project_ref, str) and project_ref.startswith("local:"):
+        candidate_slugs.append(project_ref.removeprefix("local:"))
+
+    for candidate in candidate_slugs:
+        try:
+            project = await get_project_by_slug(candidate)
+            if project:
+                break
+        except Exception:
+            project = None
+
+    if not project and not str(project_ref).startswith("local:"):
+        try:
+            project = await convex.query("projects:getById", {"projectId": project_ref})
+        except Exception:
+            project = None
+        if isinstance(project, dict):
+            project = _merge_repo_truth(project)
+
+    return project if isinstance(project, dict) else None
+
+
+async def resolve_project_slug(project_ref: str | None) -> str | None:
+    project = await resolve_project_reference(project_ref)
+    slug = str((project or {}).get("slug") or "").strip()
+    if slug:
+        return slug
+    if project_ref:
+        fallback = str(project_ref).removeprefix("local:").strip()
+        return fallback or None
+    return None
+
+
 def project_root_from_record(project: dict) -> Path | None:
     local_repo_path = project.get("localRepoPath")
     if not local_repo_path:
@@ -563,6 +602,23 @@ def _task_explicitly_reopened(task: dict[str, Any]) -> bool:
     return status in {"backlog", "ready", "awaiting_approval", "running"} and summary.startswith("Reopened by Autopilot")
 
 
+def _task_has_explicit_terminal_resolution(task: dict[str, Any], patch: dict[str, Any]) -> bool:
+    current_status = str(task.get("status") or "").strip().lower()
+    next_status = str(patch.get("status") or "").strip().lower()
+    return current_status in {"done", "cancelled", "superseded"} and current_status != next_status
+
+
+def _task_terminal_resolution_is_newer_than_session(task_path: Path, session_root: Path, task: dict[str, Any]) -> bool:
+    current_status = str(task.get("status") or "").strip().lower()
+    if current_status not in {"done", "cancelled", "superseded"}:
+        return False
+    state_path = session_root / "state.json"
+    try:
+        return task_path.stat().st_mtime >= state_path.stat().st_mtime
+    except OSError:
+        return False
+
+
 def _session_requires_worker_audit_hold(task: dict[str, Any], state: dict[str, Any]) -> bool:
     session_role = str(state.get("role") or "").strip().lower()
     if session_role and session_role != "planner":
@@ -592,6 +648,11 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
         if patch is None:
             continue
         if _task_explicitly_reopened(task):
+            continue
+        task_path = root / str(task.get("gitSnapshotPath") or f"research_plan/tasks/{task_id}.md")
+        if _task_terminal_resolution_is_newer_than_session(task_path, session_root, task):
+            continue
+        if _task_has_explicit_terminal_resolution(task, patch):
             continue
         if (
             patch.get("status") == "done"

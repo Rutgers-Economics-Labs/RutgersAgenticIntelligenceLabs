@@ -15,8 +15,8 @@ def test_create_runner_session_blocks_research_launch_when_ontology_auditor_is_b
         async def create_session(self, task_payload):
             raise AssertionError("runner should not be called when auditors block launch")
 
-    async def _get_project_by_slug(slug: str):
-        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/project"}
+    async def _resolve_project_reference(project_ref: str | None):
+        return {"_id": "project-1", "slug": project_ref, "localRepoPath": "/tmp/project"}
 
     async def _list_project_running_agents(project_id: str, *, active_only: bool = True, limit: int = 50):
         return []
@@ -35,7 +35,7 @@ def test_create_runner_session_blocks_research_launch_when_ontology_auditor_is_b
         }
 
     monkeypatch.setattr(runners_router, "_get_runner", lambda runner_name: _FakeRunner())
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(runners_router, "_resolve_project", _resolve_project_reference)
     monkeypatch.setattr("app.services.running_agent_service.list_project_running_agents", _list_project_running_agents)
     monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _build_auditor_statuses)
 
@@ -64,8 +64,8 @@ def test_create_runner_session_allows_repair_launch_when_ontology_auditor_is_blo
         async def create_session(self, task_payload):
             return {"session_id": "external-default-1", "status": "running"}
 
-    async def _get_project_by_slug(slug: str):
-        return {"_id": "project-1", "slug": slug, "localRepoPath": "/tmp/project"}
+    async def _resolve_project_reference(project_ref: str | None):
+        return {"_id": "project-1", "slug": project_ref, "localRepoPath": "/tmp/project"}
 
     async def _list_project_running_agents(project_id: str, *, active_only: bool = True, limit: int = 50):
         return []
@@ -84,7 +84,7 @@ def test_create_runner_session_allows_repair_launch_when_ontology_auditor_is_blo
         }
 
     monkeypatch.setattr(runners_router, "_get_runner", lambda runner_name: _FakeRunner())
-    monkeypatch.setattr("app.services.planner_service.get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(runners_router, "_resolve_project", _resolve_project_reference)
     monkeypatch.setattr("app.services.running_agent_service.list_project_running_agents", _list_project_running_agents)
     monkeypatch.setattr("app.services.auditor_service.build_auditor_statuses", _build_auditor_statuses)
 

@@ -7,7 +7,7 @@
         deploy-api \
         clean cache-clear \
         push \
-        install-rail secrets-list
+        install-rail install-mcp secrets-list
 
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 VENV     := $(ROOT_DIR).venv
@@ -91,7 +91,7 @@ help:
 setup: install seed
 	@echo "→ Setup complete. Run 'make run' to start the platform."
 
-install: install-api install-engine install-web install-agent-tools
+install: install-api install-engine install-web install-agent-tools install-rail install-mcp
 
 install-api:
 	@echo "→ Installing FastAPI deps…"
@@ -198,6 +198,10 @@ push:
 install-rail:
 	@echo "→ Installing 'rail' CLI in editable mode…"
 	$(PYTHON) -m pip install -e $(ROOT_DIR)packages/rail-py
+
+install-mcp:
+	@echo "→ Installing 'rail-mcp' server in editable mode…"
+	$(PYTHON) -m pip install -e $(ROOT_DIR)packages/mcp-server
 
 secrets-list:
 	rail secrets list

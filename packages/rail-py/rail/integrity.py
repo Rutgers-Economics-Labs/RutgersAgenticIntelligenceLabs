@@ -135,6 +135,11 @@ def _normalize_legacy_source_record(record: dict[str, Any]) -> dict[str, Any]:
             or normalized.get("admissibilityStatus")
             or ""
         ).strip().lower()
+        if admissibility == "admissible":
+            provenance = dict(normalized.get("provenance") or {})
+            provenance.setdefault("original_admissibility_status", "admissible")
+            normalized["provenance"] = provenance
+            normalized["admissibility_status"] = "observed"
         if admissibility == "restricted":
             provenance = dict(normalized.get("provenance") or {})
             provenance.setdefault("original_admissibility_status", "restricted")
@@ -144,6 +149,12 @@ def _normalize_legacy_source_record(record: dict[str, Any]) -> dict[str, Any]:
             note = str(normalized.get("notes") or "").strip()
             restriction_note = "Source is access-restricted and cannot be treated as directly admissible in the current workspace."
             normalized["notes"] = f"{note} {restriction_note}".strip() if note else restriction_note
+        impact_level = str(normalized.get("impact_level") or normalized.get("impactLevel") or "").strip().lower()
+        if impact_level == "primary_evidence":
+            provenance = dict(normalized.get("provenance") or {})
+            provenance.setdefault("original_impact_level", "primary_evidence")
+            normalized["provenance"] = provenance
+            normalized["impact_level"] = "critical"
         return normalized
     dataset_id = str(record.get("dataset_id") or "").strip()
     source_record_id = str(record.get("source_record_id") or "").strip()
@@ -210,6 +221,33 @@ def _normalize_legacy_source_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_reference_key(reference: str) -> str:
     return reference.split("#", 1)[-1].strip()
+
+
+def _normalize_legacy_claim_candidate_record(record: dict[str, Any]) -> dict[str, Any]:
+    legacy_id = str(record.get("candidate_key") or record.get("claim_id") or record.get("id") or "").strip()
+    legacy_claim = str(record.get("claim_text") or record.get("claim") or "").strip()
+    if not legacy_id and not legacy_claim:
+        return record
+    discovered_in_paths = record.get("discovered_in_paths")
+    if not isinstance(discovered_in_paths, list):
+        discovered_in_paths = []
+    evidence_paths = record.get("evidence_paths")
+    if not isinstance(evidence_paths, list):
+        evidence_paths = record.get("evidence") if isinstance(record.get("evidence"), list) else []
+    legacy_sources = record.get("sources")
+    if isinstance(legacy_sources, list):
+        evidence_paths = [*evidence_paths, *legacy_sources]
+    source_candidate_keys = record.get("source_candidate_keys")
+    if not isinstance(source_candidate_keys, list):
+        source_candidate_keys = []
+    return {
+        "candidate_key": legacy_id or f"claim:{_normalize_reference_key(legacy_claim or 'legacy-claim')}",
+        "claim_text": legacy_claim or "Legacy claim candidate",
+        "status": str(record.get("status") or "candidate").strip().lower() or "candidate",
+        "discovered_in_paths": [str(item).strip() for item in discovered_in_paths if str(item).strip()],
+        "evidence_paths": [str(item).strip() for item in evidence_paths if str(item).strip()],
+        "source_candidate_keys": [str(item).strip() for item in source_candidate_keys if str(item).strip()],
+    }
 
 
 def _tokenize_text(text: str) -> list[str]:
@@ -482,13 +520,19 @@ def _normalize_legacy_artifact_lineage_record(record: dict[str, Any]) -> dict[st
 
 
 def _normalize_legacy_verification_run_record(record: dict[str, Any]) -> dict[str, Any]:
-    if "run_id" in record:
+    if "run_id" in record or "run_key" in record:
         normalized = dict(record)
+        if normalized.get("run_key") and not normalized.get("run_id"):
+            normalized["run_id"] = normalized.get("run_key")
         resolution = normalized.pop("resolution", None)
         if isinstance(resolution, dict):
             normalized.setdefault("resolution_status", resolution.get("status"))
             normalized.setdefault("superseded_by", resolution.get("superseded_by"))
             normalized.setdefault("resolution_notes", resolution.get("reason") or resolution.get("notes"))
+        artifacts = normalized.pop("artifacts", None)
+        if isinstance(artifacts, list):
+            normalized.setdefault("artifact_paths", [str(item).strip() for item in artifacts if str(item).strip()])
+            normalized.setdefault("artifacts_checked", [str(item).strip() for item in artifacts if str(item).strip()])
         for key in (
             "timestamp",
             "agent_role",
@@ -499,6 +543,9 @@ def _normalize_legacy_verification_run_record(record: dict[str, Any]) -> dict[st
             "resolution_status",
             "superseded_by",
             "resolution_notes",
+            "run_key",
+            "summary",
+            "verified_at",
         ):
             normalized.pop(key, None)
         loop_type = str(normalized.get("loop_type") or normalized.get("loopType") or "").strip().lower()
@@ -508,6 +555,8 @@ def _normalize_legacy_verification_run_record(record: dict[str, Any]) -> dict[st
             # Treat ontology-repair verification as a reproducibility-style
             # run so older integrity schemas do not crash when newer repair
             # workflows record this loop type.
+            normalized["loop_type"] = "analysis_reproducibility"
+        elif loop_type in {"control_plane_repair", "control_plane_reconciliation", "control_plane_audit"}:
             normalized["loop_type"] = "analysis_reproducibility"
         return normalized
 
@@ -3906,6 +3955,11 @@ class ResearchIntegrityRepo:
         elif model_cls is ClaimRecord:
             normalized_raw = [
                 _normalize_legacy_claim_record(item) if isinstance(item, dict) else item
+                for item in raw
+            ]
+        elif model_cls is ClaimCandidateRecord:
+            normalized_raw = [
+                _normalize_legacy_claim_candidate_record(item) if isinstance(item, dict) else item
                 for item in raw
             ]
         elif model_cls is ArtifactLineageRecord:

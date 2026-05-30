@@ -1,17 +1,58 @@
 import json
+from pathlib import Path
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from app.services.github_service import github_service
 from app.services.convex_client import convex
+from app.services import planner_service
 from app.services.repo_contract_service import (
     dedupe_changed_paths,
     manifest_updates_from_content,
     parse_config_path,
+    render_rail_manifest,
 )
 from app.services.safe_publish_service import record_publish_success
 from app.services.safe_publish_service import is_repo_publish_path_allowed
 
 router = APIRouter(prefix="/github", tags=["github"])
+
+
+async def _resolve_project_by_slug(slug: str) -> dict | None:
+    try:
+        project = await planner_service.resolve_project_reference(slug)
+    except Exception:
+        project = None
+    return project if isinstance(project, dict) else None
+
+
+async def _resolve_project_by_github_repo(repo: str) -> dict | None:
+    try:
+        return await planner_service.get_project_by_github_repo(repo)
+    except Exception:
+        return None
+
+
+async def _persist_github_project_patch(project: dict, patch: dict) -> dict:
+    project_id = str(project.get("_id") or "")
+    if project_id.startswith("local:"):
+        project_root = planner_service.project_root_from_record(project)
+        if project_root is None:
+            raise HTTPException(400, "Project has no local repo path configured")
+        manifest_path = project_root / (project.get("manifestPath") or "rail.yaml")
+        existing_content = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else None
+        updated_project = {**project, **patch}
+        manifest_path.write_text(render_rail_manifest(updated_project, existing_content), encoding="utf-8")
+        refreshed = await planner_service.resolve_project_reference(str(project.get("slug") or ""))
+        return refreshed
+
+    await convex.mutation("projects:update", {"slug": project["slug"], **patch})
+    try:
+        refreshed = await planner_service.resolve_project_reference(str(project.get("slug") or ""))
+    except Exception:
+        refreshed = None
+    if isinstance(refreshed, dict):
+        return refreshed
+    return {**project, **patch}
 
 class PublishRequest(BaseModel):
     project_slug: str
@@ -21,7 +62,7 @@ class PublishRequest(BaseModel):
 
 @router.post("/publish")
 async def publish_to_github(req: PublishRequest):
-    project = await convex.query("projects:getBySlug", {"slug": req.project_slug})
+    project = await _resolve_project_by_slug(req.project_slug)
     if not project:
         raise HTTPException(404, "Project not found")
 
@@ -51,7 +92,8 @@ async def publish_to_github(req: PublishRequest):
         "changed": result["changed"],
         "files": result["files"],
     }
-    await record_publish_success(project["_id"], response)
+    if not str(project.get("_id") or "").startswith("local:"):
+        await record_publish_success(project["_id"], response)
     return response
 
 # Config files in a project repo that we care about
@@ -87,7 +129,7 @@ async def github_sync(request: Request, background_tasks: BackgroundTasks):
     after_sha = payload["after"]
 
     # Find the project linked to this repo
-    project = await convex.query("projects:getByGithubRepo", {"github": repo})
+    project = await _resolve_project_by_github_repo(repo)
     if not project:
         return {"ignored": True, "reason": "no project linked to this repo"}
 
@@ -108,10 +150,7 @@ async def _sync_repo_changes(repo: str, before_sha: str, after_sha: str, project
             content = await github_service.get_file(repo, path, ref=after_sha)
             updates = manifest_updates_from_content(content)
             if updates:
-                await convex.mutation("projects:update", {
-                    "slug": project["slug"],
-                    **updates,
-                })
+                project = await _persist_github_project_patch(project, updates)
                 synced_count += 1
             continue
 
@@ -141,11 +180,11 @@ async def _sync_repo_changes(repo: str, before_sha: str, after_sha: str, project
     # Trigger hydration if pipeline or ontology changed
     if pipeline_changed and project.get("pipelineConfigSlug"):
         from app.routers.jobs import _trigger_job
-        await _trigger_job(project["pipelineConfigSlug"], project["_id"])
+        await _trigger_job(project["pipelineConfigSlug"], project.get("slug"))
 
 @router.get("/status/{project_slug}")
 async def github_status(project_slug: str):
-    project = await convex.query("projects:get", {"slug": project_slug})
+    project = await _resolve_project_by_slug(project_slug)
     if not project:
         raise HTTPException(404, "Project not found")
     return {
@@ -171,9 +210,13 @@ async def link_github(req: LinkRequest):
     except Exception as e:
         raise HTTPException(422, f"Cannot access {req.github_repo}: {e}")
 
-    await convex.mutation("projects:update", {
-        "slug": req.project_slug,
+    project = await _resolve_project_by_slug(req.project_slug)
+    if not project:
+        raise HTTPException(404, "Project not found")
+
+    await _persist_github_project_patch(project, {
         "github": req.github_repo,
+        "gitRepoUrl": f"https://github.com/{req.github_repo}",
         "defaultBranch": "main",
     })
     return {"linked": True, "repo": req.github_repo}

@@ -72,6 +72,24 @@ def test_planner_harness_tracks_history(monkeypatch):
     ]
 
 
+def test_planner_harness_from_project_slug_uses_repo_first_resolution(monkeypatch):
+    async def _resolve_project_reference(project_ref: str | None):
+        assert project_ref == "demo-project"
+        return {
+            "_id": "local:demo-project",
+            "name": "Demo Project",
+            "slug": "demo-project",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    monkeypatch.setattr("app.services.planner_harness.planner_service.resolve_project_reference", _resolve_project_reference)
+
+    harness = asyncio.run(PlannerHarness.from_project_slug("demo-project", persist=False))
+
+    assert harness.project["slug"] == "demo-project"
+    assert harness.persist is False
+
+
 def test_format_planner_result():
     output = format_planner_result(
         {

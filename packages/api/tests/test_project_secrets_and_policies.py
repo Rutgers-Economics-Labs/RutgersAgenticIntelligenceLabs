@@ -133,6 +133,33 @@ async def test_list_secrets_returns_masked_values(client, convex_mock):
     assert data["policies"][0]["agentRole"] == "data"
 
 
+async def test_list_secrets_prefers_repo_first_project_refresh(client, convex_mock, monkeypatch):
+    import app.routers.projects as projects_router
+
+    async def _refresh_project_record(slug: str):
+        assert slug == PROJECT_SLUG
+        return PROJECT_DOC
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        path = payload.get("path")
+        if path == "projectSecrets:listByProject":
+            return httpx.Response(200, json={"value": [FRED_SECRET]})
+        if path == "agentSecretPolicies:listByProject":
+            return httpx.Response(200, json={"value": [POLICY_DATA_ROLE]})
+        raise AssertionError(f"unexpected query path: {path}")
+
+    monkeypatch.setattr(projects_router, "_refresh_project_record", _refresh_project_record)
+    convex_mock.post("/api/query").mock(side_effect=_query)
+
+    resp = await client.get(f"/api/v1/projects/{PROJECT_SLUG}/settings/secrets")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["secrets"]) == 1
+    assert data["policies"][0]["agentRole"] == "data"
+
+
 async def test_list_agent_secret_policies(client, convex_mock):
     convex_mock.post("/api/query").mock(side_effect=_secrets_query)
 

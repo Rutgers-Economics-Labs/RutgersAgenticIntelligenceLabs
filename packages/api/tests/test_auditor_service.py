@@ -104,6 +104,90 @@ frontend:
     assert "1 terminal session audit(s) are stale or missing." in result["closeout"]["blockers"]
 
 
+def test_build_auditor_statuses_prefers_cached_project_reality(tmp_path: Path, monkeypatch):
+    from app.services import auditor_service
+
+    project = {
+        "_id": "project-id",
+        "name": "Grid Study",
+        "slug": "grid-study",
+        "status": "ready",
+        "localRepoPath": str(tmp_path),
+        "approach": "ontology-first",
+        "__controlPlaneReality": {
+            "hasDrift": False,
+            "duplicateTaskFileCount": 0,
+            "taskSessionMismatchCount": 0,
+            "staleRuntimeSessionCount": 0,
+            "runningAgentStatusDriftCount": 0,
+            "runningAgentRoleDriftCount": 0,
+            "runningAgentRunnerDriftCount": 0,
+            "staleAuditSessionCount": 0,
+            "terminalSessionCount": 0,
+            "activeRuntimeSessionCount": 0,
+            "roleConfigAliasDriftCount": 0,
+            "details": {
+                "ontologyArtifactDrift": {"hasDrift": False},
+                "artifactRegistryDrift": {"hasDrift": False, "untrackedArtifactPaths": [], "missingArtifactPaths": []},
+            },
+        },
+    }
+    (tmp_path / ".ontology").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "rail.yaml").write_text(
+        """version: 1
+project:
+  name: Grid Study
+  slug: grid-study
+  default_branch: main
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+frontend:
+  topic_index_mode: filesystem
+  artifact_index_mode: filesystem
+""",
+        encoding="utf-8",
+    )
+
+    async def _unexpected_project_reality_status(*args, **kwargs):
+        raise AssertionError("project_reality_status should not run when cached reality is available")
+
+    async def _get_hydration_status(*, project, pipeline_slug=None, hydration_mode="full"):
+        return {"state": "hydrated_on_this_device", "reusableArtifact": {}, "currentDeviceArtifacts": []}
+
+    monkeypatch.setattr(auditor_service, "project_reality_status", _unexpected_project_reality_status)
+    monkeypatch.setattr(auditor_service, "get_hydration_status", _get_hydration_status)
+    monkeypatch.setattr(
+        auditor_service,
+        "evaluate_integrity_gate",
+        lambda root, manifest, action: {"blocked": False, "reasons": []},
+    )
+
+    result = asyncio.run(
+        auditor_service.build_auditor_statuses(
+            project,
+            tasks=[{"_id": "task-1", "status": "ready"}],
+            active_sessions=[],
+        )
+    )
+
+    assert result["session"]["status"] == "ready"
+    assert result["planner"]["status"] == "ready"
+
+
 def test_build_auditor_statuses_blocks_closeout_when_follow_up_expansion_tasks_are_missing(tmp_path: Path, monkeypatch):
     from app.services import auditor_service
 
@@ -293,6 +377,102 @@ frontend:
         blocker.startswith("Final artifacts exist on disk without lineage records:")
         for blocker in result_with_untracked_artifact["closeout"]["blockers"]
     )
+
+
+def test_build_auditor_statuses_ignores_latex_intermediates_for_closeout_artifact_lineage(tmp_path: Path, monkeypatch):
+    from app.services import auditor_service
+    from rail.integrity import ResearchIntegrityRepo
+
+    project = {
+        "_id": "project-id",
+        "name": "Grid Study",
+        "slug": "grid-study",
+        "status": "ready",
+        "localRepoPath": str(tmp_path),
+        "approach": "ontology-first",
+    }
+    (tmp_path / ".ontology").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "research_plan").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "rail.yaml").write_text(
+        """version: 1
+project:
+  name: Grid Study
+  slug: grid-study
+  default_branch: main
+paths:
+  ontology_root: .ontology
+  topics_root: topics
+  specs_root: specs
+  plan_root: research_plan
+  agents_root: agents
+  skills_root: skills
+  artifacts_root: artifacts
+hydration:
+  ontology_file: .ontology/ontology.yaml
+  sources_dir: .ontology/sources
+  pipelines_dir: .ontology/pipelines
+agents:
+  roles_dir: agents
+  default_runner: codex_cli
+  sequential_execution: true
+frontend:
+  topic_index_mode: filesystem
+  artifact_index_mode: filesystem
+""",
+        encoding="utf-8",
+    )
+
+    async def _project_reality_status(project_arg, *, tasks=None, active_sessions=None):
+        return {
+            "hasDrift": False,
+            "duplicateTaskFileCount": 0,
+            "taskSessionMismatchCount": 0,
+            "staleRuntimeSessionCount": 0,
+            "staleAuditSessionCount": 0,
+            "terminalSessionCount": 0,
+            "activeRuntimeSessionCount": 0,
+            "details": {
+                "ontologyArtifactDrift": {"hasDrift": False},
+                "artifactRegistryDrift": {"hasDrift": False, "untrackedArtifactPaths": [], "missingArtifactPaths": []},
+            },
+        }
+
+    async def _get_hydration_status(*, project, pipeline_slug=None, hydration_mode="full"):
+        return {"state": "hydrated_on_this_device", "reusableArtifact": {"duckdbArtifactPath": None}, "currentDeviceArtifacts": []}
+
+    monkeypatch.setattr(auditor_service, "project_reality_status", _project_reality_status)
+    monkeypatch.setattr(auditor_service, "get_hydration_status", _get_hydration_status)
+    monkeypatch.setattr(auditor_service, "_duckdb_has_populated_rows", lambda path: True)
+
+    artifact_root = tmp_path / "artifacts"
+    (artifact_root / "report.pdf").write_text("pdf", encoding="utf-8")
+    (artifact_root / "report.aux").write_text("aux", encoding="utf-8")
+    (artifact_root / "report.log").write_text("log", encoding="utf-8")
+    (artifact_root / "report.out").write_text("out", encoding="utf-8")
+
+    repo = ResearchIntegrityRepo(tmp_path)
+    repo.ensure_files_exist()
+
+    result = asyncio.run(
+        auditor_service.build_auditor_statuses(
+            project,
+            tasks=[{"_id": "task-1", "title": "Existing Task", "status": "done"}],
+            active_sessions=[],
+        )
+    )
+
+    assert result["closeout"]["status"] == "blocked"
+    lineage_blockers = [
+        blocker
+        for blocker in result["closeout"]["blockers"]
+        if blocker.startswith("Final artifacts exist on disk without lineage records:")
+    ]
+    assert lineage_blockers
+    assert "artifacts/report.pdf" in lineage_blockers[0]
+    assert "artifacts/report.aux" not in lineage_blockers[0]
+    assert "artifacts/report.log" not in lineage_blockers[0]
+    assert "artifacts/report.out" not in lineage_blockers[0]
 
 
 def test_build_auditor_statuses_blocks_ontology_and_integrity_on_project_reality_drift(tmp_path: Path, monkeypatch):

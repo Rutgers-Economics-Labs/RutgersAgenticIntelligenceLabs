@@ -100,6 +100,29 @@ def _quadstore_fallback_paths(db_key: str | None) -> list[str]:
     return [str(parent / "onto.db")]
 
 
+def _populate_local_active_artifact_paths(project: dict) -> dict:
+    root_value = project.get("localRepoPath")
+    if not root_value:
+        return project
+    root = Path(root_value).resolve()
+    ontology_root = root / ".ontology"
+    db_path = ontology_root / "onto.db"
+    duckdb_path = ontology_root / "onto.duckdb"
+    owl_path = ontology_root / "populated_ontology.owl"
+    embeddings_path = ontology_root / "embeddings.db"
+
+    enriched = dict(project)
+    if db_path.exists() and not enriched.get("activeOntologyDbPath"):
+        enriched["activeOntologyDbPath"] = str(db_path)
+    if duckdb_path.exists() and not enriched.get("activeOntologyDuckdbPath"):
+        enriched["activeOntologyDuckdbPath"] = str(duckdb_path)
+    if owl_path.exists() and not enriched.get("activeOntologyOwlPath"):
+        enriched["activeOntologyOwlPath"] = str(owl_path)
+    if embeddings_path.exists() and not enriched.get("activeOntologyEmbeddingsPath"):
+        enriched["activeOntologyEmbeddingsPath"] = str(embeddings_path)
+    return enriched
+
+
 async def _resolve_active_db_key(project: dict, db_key: str | None) -> str | None:
     if db_key and _is_valid_quadstore_path(db_key):
         return db_key
@@ -248,4 +271,3 @@ async def resolve(project_id: str) -> ProjectArtifacts:
         duckdb_path=duckdb_path,
         embeddings_path=embeddings_path,
     )
-

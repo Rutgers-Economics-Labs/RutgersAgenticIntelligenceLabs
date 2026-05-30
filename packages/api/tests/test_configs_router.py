@@ -169,6 +169,75 @@ async def test_create_api_invalid_yaml_rejected(client):
     assert resp.status_code == 422
 
 
+async def test_create_api_accepts_repo_only_local_project_id(client, convex_mock, monkeypatch):
+    from app.routers import configs as configs_router
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        path = payload.get("path")
+        if path in {"projects:getById", "projects:get"}:
+            return httpx.Response(200, json={"value": None})
+        return httpx.Response(200, json={"value": None})
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {
+            "_id": "local:demo-project",
+            "slug": "demo-project",
+            "name": "Demo Project",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    async def _should_auto_publish(project: dict) -> bool:
+        return False
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    convex_mock.post("/api/mutation").mock(
+        return_value=httpx.Response(200, json={"value": "new-id-123"})
+    )
+    monkeypatch.setattr(configs_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(configs_router, "should_auto_publish", _should_auto_publish)
+
+    resp = await client.post(
+        "/api/v1/configs/apis?projectId=local:demo-project",
+        json={
+            "name": "Test API",
+            "slug": "test-api",
+            "content": VALID_API_YAML,
+            "isPublic": False,
+            "tags": [],
+        },
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["configId"] == "new-id-123"
+
+
+async def test_get_project_for_save_prefers_repo_first_local_project(monkeypatch):
+    from app.routers import configs as configs_router
+
+    async def _get_project_by_slug(slug: str):
+        if slug != "demo-project":
+            raise ValueError(slug)
+        return {
+            "_id": "local:demo-project",
+            "slug": "demo-project",
+            "name": "Demo Project",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError((path, payload))
+
+    monkeypatch.setattr(configs_router.planner_service, "get_project_by_slug", _get_project_by_slug)
+    monkeypatch.setattr(configs_router.convex, "query", _query)
+
+    project = await configs_router._get_project_for_save("local:demo-project")
+
+    assert project["_id"] == "local:demo-project"
+
+
 # ── GET /configs/pipelines ────────────────────────────────────────────────────
 
 async def test_list_pipelines(client, convex_mock):

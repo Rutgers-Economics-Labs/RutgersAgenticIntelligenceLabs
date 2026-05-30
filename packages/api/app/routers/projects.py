@@ -3365,7 +3365,9 @@ async def run_research_agents_direct(slug: str, data: RunResearchAgentsRequest, 
 
 @router.get("/{slug}/goal")
 async def get_project_goal(slug: str):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     bundle = goal_service.load_goal_bundle(project)
     if not bundle:
         raise HTTPException(status_code=404, detail="Goal mode has not been configured for this project.")
@@ -3378,7 +3380,9 @@ async def configure_project_goal(
     data: GoalContractRequest,
     background_tasks: BackgroundTasks,
 ):
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project not found: {slug}")
     bundle = goal_service.create_goal_contract(
         project,
         {
@@ -3421,11 +3425,14 @@ async def toggle_autopilot(
 async def get_autopilot_status(slug: str):
     from app.services import autopilot_service
     snapshot = await autopilot_service.ensure_autopilot_running(slug)
-    return {
+    response = {
         "enabled": snapshot["desired_enabled"],
         "active": snapshot["active"],
         "autoApprove": snapshot["auto_approve"],
     }
+    if "dispatch_approval_required" in snapshot:
+        response["dispatchApprovalRequired"] = snapshot.get("dispatch_approval_required", False)
+    return response
 
 
 @router.get("/{slug}/phase")
@@ -3453,6 +3460,7 @@ async def get_project_phase(slug: str):
         pass
     try:
         from app.services.running_agent_service import list_project_running_agents
+
         active_sessions = await list_project_running_agents(
             str(project.get("_id")),
             active_only=True,
@@ -3460,7 +3468,6 @@ async def get_project_phase(slug: str):
         )
     except Exception:
         pass
-
     auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
 
     # Infer current lifecycle phase from auditor and repo state
@@ -3552,7 +3559,7 @@ async def get_next_best_action(
     """Fetch the next best research action for a project (Track B)."""
     from app.services import lifecycle_service, planner_service
     
-    project = await planner_service.get_project_by_slug(slug)
+    project = await _refresh_project_record(slug)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
         
