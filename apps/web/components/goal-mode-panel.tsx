@@ -56,6 +56,11 @@ export function GoalModePanel({
         <div className="mono-muted" style={{ marginTop: 8 }}>
           {goalSummary?.currentBlocker || center.blockerSummary?.headline || "Autonomy is clear."}
         </div>
+        {goalSummary?.currentSubgoal || goal?.state?.currentSubgoal ? (
+          <div className="mono-muted" style={{ marginTop: 6 }}>
+            Current subgoal: {goalSummary?.currentSubgoal ?? goal?.state?.currentSubgoal}
+          </div>
+        ) : null}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(0, 1fr))", gap: 10 }}>
@@ -105,7 +110,7 @@ export function GoalModePanel({
         </div>
       ) : null}
 
-      {goal?.files?.goalMd ? (
+      {goal?.files?.goalMd || goal?.files?.goalJson ? (
         <Link href={`/projects/${slug}/planner`} style={{ fontSize: 11, color: "var(--muted)" }}>
           Goal files persisted in repo state. Open planner for task-level execution →
         </Link>

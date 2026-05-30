@@ -1756,6 +1756,7 @@ async def _build_live_command_center(project: dict) -> dict[str, Any]:
             "objective": (goal_bundle.get("contract") or {}).get("objective"),
             "phase": goal_state.get("phase"),
             "currentBlocker": goal_state.get("currentBlocker"),
+            "currentSubgoal": goal_state.get("currentSubgoal"),
             "retryBudget": goal_state.get("retryBudget"),
             "success": goal_state.get("success"),
             "dashboard": goal_state.get("dashboard"),

@@ -355,7 +355,10 @@ def test_build_command_center_prefers_repo_snapshot_when_available(tmp_path: Pat
         "commandCenter": {
             "currentPlan": {"summary": "Snapshot plan"},
             "missionBrief": {"now": "Snapshot now", "next": "Snapshot next"},
-            "goal": {"objective": "Snapshot goal"},
+            "goal": {
+                "objective": "Snapshot goal",
+                "currentSubgoal": "Hydrate the ontology before closeout",
+            },
             "nextAction": "Stale snapshot action",
             "taskCounts": {"total": 2, "byStatus": {"ready": 2}},
             "plannerSnapshot": {
@@ -423,6 +426,7 @@ def test_build_command_center_prefers_repo_snapshot_when_available(tmp_path: Pat
     center = asyncio.run(command_center_service.build_command_center(_project(tmp_path)))
 
     assert center["goal"]["objective"] == "Snapshot goal"
+    assert center["goal"]["currentSubgoal"] == "Hydrate the ontology before closeout"
     assert center["plannerSnapshot"]["now"][0]["title"] == "Snapshot plan"
     assert center["latestTruth"][0]["claim"] == "Snapshot truth"
     assert center["projectReality"]["hasDrift"] is True

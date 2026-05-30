@@ -3978,6 +3978,173 @@ def test_launch_ready_task_falls_through_after_blocked_candidate_exception(monke
     assert result == {"ok": True, "session_id": "sess-456"}
 
 
+def test_filter_ready_tasks_boosts_goal_matching_hydration_work(monkeypatch):
+    project = {"_id": "project-1", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+    ready_tasks = [
+        {
+            "_id": "research-1",
+            "title": "Continue downstream research synthesis",
+            "status": "ready",
+            "agentRole": "research",
+            "priority": "high",
+        },
+        {
+            "_id": "hydrate-1",
+            "title": "Hydrate project ontology and register active artifacts",
+            "status": "ready",
+            "agentRole": "data",
+            "priority": "medium",
+        },
+    ]
+
+    monkeypatch.setattr(
+        autopilot_service.goal_service,
+        "load_goal_bundle",
+        lambda project_arg: {"state": {"currentSubgoal": "required data or ontology artifacts are hydrated and available"}},
+    )
+    monkeypatch.setattr(autopilot_service.command_center_service, "rank_hypotheses", lambda project_arg: [])
+
+    filtered = autopilot_service._filter_ready_tasks_for_auditors(
+        project,
+        ready_tasks,
+        {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        },
+    )
+
+    boosts = {task["_id"]: int(task.get("_autopilotPriorityBoost") or 0) for task in filtered}
+    assert boosts["hydrate-1"] < boosts["research-1"]
+
+
+def test_launch_ready_task_prefers_goal_matching_subgoal(monkeypatch):
+    project = {"_id": "project-1", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+    launches: list[str] = []
+
+    monkeypatch.setattr(
+        autopilot_service.goal_service,
+        "load_goal_bundle",
+        lambda project_arg: {"state": {"currentSubgoal": "required data or ontology artifacts are hydrated and available"}},
+    )
+    monkeypatch.setattr(autopilot_service.command_center_service, "rank_hypotheses", lambda project_arg: [])
+
+    async def _fake_execute(project_arg, tool_name, payload):
+        assert project_arg is project
+        assert tool_name == "launch_task_runner"
+        launches.append(str(payload["task_id"]))
+        return {"ok": True, "session_id": "sess-goal"}
+
+    monkeypatch.setattr(
+        autopilot_service.planner_runtime,
+        "_execute_planner_tool",
+        _fake_execute,
+    )
+
+    ready_tasks = autopilot_service._filter_ready_tasks_for_auditors(
+        project,
+        [
+            {
+                "_id": "research-1",
+                "title": "Continue downstream research synthesis",
+                "status": "ready",
+                "agentRole": "research",
+                "priority": "high",
+            },
+            {
+                "_id": "hydrate-1",
+                "title": "Hydrate project ontology and register active artifacts",
+                "status": "ready",
+                "agentRole": "data",
+                "priority": "medium",
+            },
+        ],
+        {
+            "session": {"status": "ready", "blockers": []},
+            "planner": {"status": "ready", "blockers": []},
+            "ontology": {"status": "ready", "blockers": []},
+            "integrity": {"status": "ready", "blockers": []},
+            "closeout": {"status": "ready", "blockers": []},
+        },
+    )
+
+    result = asyncio.run(autopilot_service._launch_ready_task(project, ready_tasks))
+
+    assert result == {"ok": True, "session_id": "sess-goal"}
+    assert launches == ["hydrate-1"]
+
+
+def test_ensure_goal_subgoal_tasks_creates_hydration_work(monkeypatch):
+    project = {"_id": "project-1", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        autopilot_service.goal_service,
+        "load_goal_bundle",
+        lambda project_arg: {"state": {"currentSubgoal": "required data or ontology artifacts are hydrated and available"}},
+    )
+
+    async def _ensure_ontology_lifecycle_tasks(project_arg, tasks):
+        calls.append("lifecycle")
+        return True
+
+    async def _ensure_ontology_repair_task(project_arg, tasks, auditors):
+        calls.append("ontology_repair")
+        return False
+
+    async def _ensure_integrity_repair_tasks(project_arg, tasks):
+        calls.append("integrity")
+        return False
+
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", _ensure_ontology_lifecycle_tasks)
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_repair_task", _ensure_ontology_repair_task)
+    monkeypatch.setattr(autopilot_service, "_ensure_integrity_repair_tasks", _ensure_integrity_repair_tasks)
+
+    changed = asyncio.run(autopilot_service._ensure_goal_subgoal_tasks(project, [], {}))
+
+    assert changed is True
+    assert calls == ["lifecycle"]
+
+
+def test_ensure_goal_subgoal_tasks_creates_integrity_work_when_needed(monkeypatch):
+    project = {"_id": "project-1", "slug": "demo-project", "localRepoPath": "/tmp/demo-project"}
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        autopilot_service.goal_service,
+        "load_goal_bundle",
+        lambda project_arg: {"state": {"currentSubgoal": "verification and closeout gates pass"}},
+    )
+
+    async def _ensure_ontology_lifecycle_tasks(project_arg, tasks):
+        calls.append("lifecycle")
+        return False
+
+    async def _ensure_ontology_repair_task(project_arg, tasks, auditors):
+        calls.append("ontology_repair")
+        return False
+
+    async def _ensure_integrity_repair_tasks(project_arg, tasks):
+        calls.append("integrity")
+        return True
+
+    async def _ensure_closeout_repair_task(project_arg, tasks, auditors):
+        calls.append("closeout")
+        return False
+
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_lifecycle_tasks", _ensure_ontology_lifecycle_tasks)
+    monkeypatch.setattr(autopilot_service, "_ensure_ontology_repair_task", _ensure_ontology_repair_task)
+    monkeypatch.setattr(autopilot_service, "_ensure_integrity_repair_tasks", _ensure_integrity_repair_tasks)
+    monkeypatch.setattr(autopilot_service, "_ensure_closeout_repair_task", _ensure_closeout_repair_task)
+
+    changed = asyncio.run(autopilot_service._ensure_goal_subgoal_tasks(project, [], {}))
+
+    assert changed is True
+    assert calls == ["integrity"]
+
+
 def test_ensure_control_plane_repair_task_reopens_existing_blocked_task(tmp_path: Path, monkeypatch):
     project = {
         "_id": "project-1",

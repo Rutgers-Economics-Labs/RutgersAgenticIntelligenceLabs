@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 from fastapi.testclient import TestClient
 
@@ -99,6 +100,7 @@ def test_goal_contract_endpoint_writes_durable_goal_files(monkeypatch, tmp_path)
     payload = response.json()
     assert payload["state"]["phase"] == "scoped"
     assert payload["preflight"]["passed"] is True
+    assert (tmp_path / "research_plan" / "goal.json").exists()
     assert (tmp_path / ".rail" / "goal" / "goal.md").exists()
     assert (tmp_path / ".rail" / "goal" / "goal_state.json").exists()
     assert (tmp_path / ".rail" / "goal" / "goal_lessons.json").exists()
@@ -116,6 +118,48 @@ def test_goal_contract_endpoint_writes_durable_goal_files(monkeypatch, tmp_path)
     )
     assert bundle["contract"]["objective"] == "Explain how weather shocks affect prices."
     assert bundle["state"]["contract"]["allowedSpend"]["retries"] == 4
+    goal_contract = json.loads((tmp_path / "research_plan" / "goal.json").read_text(encoding="utf-8"))
+    assert goal_contract["objective"] == "Explain how weather shocks affect prices."
+    assert bundle["files"]["goalJson"].endswith("research_plan/goal.json")
+
+
+def test_load_goal_bundle_from_canonical_goal_json_without_runtime_dir(tmp_path):
+    (tmp_path / "research_plan").mkdir(parents=True, exist_ok=True)
+    _write_manifest(tmp_path)
+    (tmp_path / "research_plan" / "goal.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "goalId": "goal-test123",
+                "objective": "Complete the project from repo state.",
+                "successCriteria": ["closeout audit passes"],
+                "requiredEvidence": ["closeout certificate"],
+                "forbiddenShortcuts": ["do not mark complete from activity alone"],
+                "escalationPolicy": ["pause only for scope decisions"],
+                "allowedSpend": {"retries": 2},
+                "createdAt": 1,
+                "updatedAt": 2,
+                "mode": "goal",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    bundle = goal_service.load_goal_bundle(
+        {
+            "_id": "local:demo-project",
+            "name": "Demo",
+            "slug": "demo-project",
+            "description": "Demo goal mode project",
+            "localRepoPath": str(tmp_path),
+        }
+    )
+
+    assert bundle["contract"]["objective"] == "Complete the project from repo state."
+    assert bundle["contract"]["goalJsonPath"].endswith("research_plan/goal.json")
+    assert bundle["state"]["phase"] == "scoped"
+    assert bundle["files"]["goalJson"].endswith("research_plan/goal.json")
 
 
 def test_goal_contract_endpoint_reports_preflight_failure(monkeypatch, tmp_path):
@@ -275,3 +319,9 @@ def test_sync_goal_runtime_handles_empty_auditor_blocker_lists(tmp_path):
     )
 
     assert payload["state"]["currentBlocker"] in {None, "", "Autonomy is blocked."}
+    assert payload["state"]["currentSubgoal"] in {
+        None,
+        "closeout audit passes",
+        "Closeout and control-plane truth are ready.",
+        "Autonomy is blocked.",
+    }

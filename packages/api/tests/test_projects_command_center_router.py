@@ -856,7 +856,11 @@ def test_planner_home_endpoint_includes_snapshot_backed_control_plane(monkeypatc
                 "lifecyclePhase": "research_active",
                 "nextAction": "Review pending approvals",
                 "currentBlocker": "Snapshot blocker",
-                "goal": {"objective": "Ship closeout", "phase": "repair"},
+                "goal": {
+                    "objective": "Ship closeout",
+                    "phase": "repair",
+                    "currentSubgoal": "Repair lineage before closeout",
+                },
                 "taskCounts": {"total": 4, "byStatus": {"ready": 2, "review": 1, "done": 1}},
                 "recentArtifacts": [{"name": "paper.pdf", "path": "artifacts/paper.pdf"}],
                 "sourceSummary": {"count": 3, "statusCounts": {"active": 3}},
@@ -908,6 +912,7 @@ def test_planner_home_endpoint_includes_snapshot_backed_control_plane(monkeypatc
     assert isinstance(payload["refreshedAt"], int)
     assert payload["controlPlane"]["phase"] == "research_active"
     assert payload["controlPlane"]["goal"]["objective"] == "Ship closeout"
+    assert payload["controlPlane"]["goal"]["currentSubgoal"] == "Repair lineage before closeout"
     assert payload["controlPlane"]["taskCounts"]["total"] == 4
     assert payload["controlPlane"]["recentArtifacts"][0]["name"] == "paper.pdf"
     assert payload["controlPlane"]["sourceSummary"]["count"] == 3

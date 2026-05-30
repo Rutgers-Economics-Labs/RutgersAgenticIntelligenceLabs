@@ -1046,6 +1046,78 @@ def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
     return False
 
 
+def _current_goal_subgoal(project: dict[str, Any]) -> str:
+    try:
+        bundle = goal_service.load_goal_bundle(project)
+    except Exception:
+        return ""
+    return str(((bundle.get("state") or {}).get("currentSubgoal")) or "").strip().lower()
+
+
+def _goal_subgoal_needs_hydration_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("ontology", "hydrate", "hydration", "pipeline"))
+
+
+def _goal_subgoal_needs_source_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("source", "admissible", "dataset provenance", "freshness"))
+
+
+def _goal_subgoal_needs_integrity_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("verification", "integrity", "provenance", "claim", "evidence"))
+
+
+def _goal_subgoal_needs_closeout_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("closeout", "final artifact", "report", "final artifacts"))
+
+
+def _has_ready_goal_matching_task(tasks: list[dict[str, Any]], current_subgoal: str) -> bool:
+    ready_tasks = [
+        task
+        for task in tasks
+        if str(task.get("status") or "") == "ready" and task.get("approvalState") != "pending"
+    ]
+    if _goal_subgoal_needs_hydration_work(current_subgoal):
+        return any(_task_matches_ontology_repair_work(task) or _task_matches_bootstrap_data_work(task) for task in ready_tasks)
+    if _goal_subgoal_needs_source_work(current_subgoal):
+        return any(
+            _task_matches_bootstrap_data_work(task)
+            or any(token in str(task.get("title") or "").lower() for token in ("source", "dataset", "provenance", "freshness"))
+            for task in ready_tasks
+        )
+    if _goal_subgoal_needs_integrity_work(current_subgoal):
+        return any(_task_matches_integrity_repair_work(task) for task in ready_tasks)
+    if _goal_subgoal_needs_closeout_work(current_subgoal):
+        return any(str(task.get("title") or "") == "Resolve closeout blockers" for task in ready_tasks)
+    return False
+
+
+async def _ensure_goal_subgoal_tasks(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> bool:
+    current_subgoal = _current_goal_subgoal(project)
+    if not current_subgoal or _has_ready_goal_matching_task(tasks, current_subgoal):
+        return False
+
+    changed = False
+    if _goal_subgoal_needs_hydration_work(current_subgoal) or _goal_subgoal_needs_source_work(current_subgoal):
+        if await _ensure_ontology_lifecycle_tasks(project, tasks):
+            changed = True
+        elif await _ensure_ontology_repair_task(project, tasks, auditors):
+            changed = True
+
+    if not changed and (_goal_subgoal_needs_integrity_work(current_subgoal) or _goal_subgoal_needs_source_work(current_subgoal)):
+        if await _ensure_integrity_repair_tasks(project, tasks):
+            changed = True
+
+    if not changed and _goal_subgoal_needs_closeout_work(current_subgoal):
+        if await _ensure_closeout_repair_task(project, tasks, auditors):
+            changed = True
+
+    return changed
+
+
 def _should_skip_planner_for_ready_repair(
     project: dict[str, Any],
     tasks: list[dict[str, Any]],
@@ -1121,6 +1193,7 @@ def _apply_auditor_priority_boosts(
             boost = min(boost, -5)
         if boost:
             task["_autopilotPriorityBoost"] = boost
+    _apply_goal_subgoal_priority_boosts(project, boosted)
     if not project.get("localRepoPath"):
         return boosted
     ranked_hypotheses = command_center_service.rank_hypotheses(project)
@@ -1157,6 +1230,62 @@ def _apply_auditor_priority_boosts(
             continue
         task["_hypothesisPriorityBoost"] = int(round(float(best.get("computedScore") or 0) * 100))
     return boosted
+
+
+def _goal_subgoal_priority_boost(task: dict[str, Any], current_subgoal: str) -> int:
+    if not current_subgoal:
+        return 0
+    subgoal = current_subgoal.strip().lower()
+    if not subgoal:
+        return 0
+
+    title = str(task.get("title") or "").strip().lower()
+    role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+
+    if title and title in subgoal:
+        return -40
+
+    if any(token in subgoal for token in ("ontology", "hydrate", "hydration", "pipeline")):
+        if _task_matches_ontology_repair_work(task):
+            return -35
+        if _task_matches_bootstrap_data_work(task):
+            return -30
+        if role == "data" and any(token in title for token in ("hydrate", "pipeline", "ontology", "source")):
+            return -20
+
+    if any(token in subgoal for token in ("source", "admissible", "dataset provenance", "freshness")):
+        if _task_matches_bootstrap_data_work(task):
+            return -30
+        if role in {"data", "health"} and any(token in title for token in ("source", "dataset", "provenance", "freshness")):
+            return -20
+
+    if any(token in subgoal for token in ("verification", "integrity", "closeout", "provenance", "claim")):
+        if _task_matches_integrity_repair_work(task):
+            return -30
+        if "closeout" in title or "verification" in title or "reproducibility" in title:
+            return -20
+        if role == "artifact" and any(token in subgoal for token in ("closeout", "final artifact", "report")):
+            return -15
+
+    return 0
+
+
+def _apply_goal_subgoal_priority_boosts(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> None:
+    try:
+        bundle = goal_service.load_goal_bundle(project)
+    except Exception:
+        return
+    if not bundle:
+        return
+    current_subgoal = str(((bundle.get("state") or {}).get("currentSubgoal")) or "").strip()
+    if not current_subgoal:
+        return
+    for task in ready_tasks:
+        goal_boost = _goal_subgoal_priority_boost(task, current_subgoal)
+        if not goal_boost:
+            continue
+        existing = int(task.get("_autopilotPriorityBoost") or 0)
+        task["_autopilotPriorityBoost"] = min(existing, goal_boost)
 
 
 def _task_matches_ontology_repair_work(task: dict[str, Any]) -> bool:
@@ -2062,6 +2191,18 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
                 active_sessions=[active_worker] if active_worker else [],
                 autopilot_enabled=bool(config.get("desired_enabled", True)),
             )
+        if await _ensure_goal_subgoal_tasks(project, tasks, auditors):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+            if goal_mode:
+                goal_service.sync_goal_runtime(
+                    project,
+                    tasks=tasks,
+                    auditors=auditors,
+                    reality=reconciliation,
+                    active_sessions=[active_worker] if active_worker else [],
+                    autopilot_enabled=bool(config.get("desired_enabled", True)),
+                )
+            consecutive_idle_turns = 0
         # Track B: Audit-only commit throttling — only meaningful when we have
         # a local project root to track commit cadence against.
         ledger: dict[str, Any] = {}
