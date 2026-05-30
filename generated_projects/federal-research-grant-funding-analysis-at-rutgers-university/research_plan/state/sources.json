@@ -14,13 +14,13 @@
       "cache_path": "topics/data/raw/usaspending_rutgers_assistance.json"
     },
     "quality_notes": null,
-    "retrieved_at": "2026-05-30T23:04:33Z",
+    "retrieved_at": "2026-05-30T23:12:14Z",
     "license": null,
     "quality_status": "candidate",
     "source_path": "research_plan/state/sources.json",
     "notes": null,
     "created_at": "2026-05-30T20:06:45Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "source_key": "nsf-award-search-rutgers",
@@ -37,13 +37,13 @@
       "cache_path": "topics/data/raw/nsf_awards_rutgers.json"
     },
     "quality_notes": null,
-    "retrieved_at": "2026-05-30T23:04:33Z",
+    "retrieved_at": "2026-05-30T23:12:14Z",
     "license": null,
     "quality_status": "candidate",
     "source_path": "research_plan/state/sources.json",
     "notes": null,
     "created_at": "2026-05-30T20:06:45Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "source_key": "rutgers-office-research-financial-reports",
@@ -58,12 +58,12 @@
     "impact_level": "normal",
     "provenance": {},
     "quality_notes": "Needed for audited department-level joins; not used for numeric claims in this local pass.",
-    "retrieved_at": "2026-05-30T23:04:33Z",
+    "retrieved_at": "2026-05-30T23:12:14Z",
     "license": null,
     "quality_status": "candidate",
     "source_path": "research_plan/state/sources.json",
     "notes": null,
     "created_at": "2026-05-30T20:06:45Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   }
 ]

@@ -480,7 +480,7 @@ async def _run(root: Path) -> int:
     closeout_blockers = [str(item) for item in (closeout.get("blockers") or []) if item]
     trust_ready = all(
         str((statuses.get(key) or {}).get("status") or "") == "ready"
-        for key in ["session", "planner", "ontology", "integrity", "critic"]
+        for key in ["session", "planner", "ontology", "integrity", "critic", "research_quality"]
     )
     if (
         closeout.get("status") == "blocked"
@@ -500,7 +500,7 @@ async def _run(root: Path) -> int:
         # already green, and the only remaining blocker was stale task debt.
         statuses["closeout"] = {"status": "ready", "blockers": []}
     all_ready = True
-    for key in ["session", "planner", "ontology", "integrity", "critic", "closeout"]:
+    for key in ["session", "planner", "ontology", "integrity", "critic", "research_quality", "closeout"]:
         item = statuses.get(key) or {}
         status = item.get("status")
         blockers = item.get("blockers") or []

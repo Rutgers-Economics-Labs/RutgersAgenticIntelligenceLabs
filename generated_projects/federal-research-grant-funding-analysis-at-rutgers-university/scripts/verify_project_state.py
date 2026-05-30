@@ -20,6 +20,7 @@ REQUIRED_ARTIFACTS = {
     "artifacts/federal_research_grants_report.md",
     "artifacts/federal_research_grants_report.pdf",
     "artifacts/funding_dashboard.csv",
+    "artifacts/analysis_summary.csv",
     "artifacts/departmental_performance_profiles.md",
     "artifacts/source_quality_notes.md",
     "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -32,6 +33,8 @@ REQUIRED_SOURCES = {
 REQUIRED_CLAIMS = {
     "claim-public-awards-panel-built",
     "claim-largest-observed-agency",
+    "claim-agency-concentration-material",
+    "claim-award-size-skew-material",
     "claim-department-crosswalk-required",
 }
 PLACEHOLDER_MARKERS = {

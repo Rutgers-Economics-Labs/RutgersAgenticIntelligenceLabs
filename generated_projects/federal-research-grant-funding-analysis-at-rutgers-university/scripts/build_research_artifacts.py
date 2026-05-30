@@ -209,6 +209,10 @@ def money(value: float) -> str:
     return f"${value:,.0f}"
 
 
+def pct(value: float) -> str:
+    return f"{value * 100:.1f}%"
+
+
 def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
     fields = ["source", "award_id", "recipient", "agency", "program_or_title", "amount", "start_date", "end_date", "fiscal_year"]
     processed_path = PROCESSED_DIR / "federal_awards_rutgers_fy2021_fy2025.csv"
@@ -242,27 +246,90 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
     top_agency = dashboard_rows[0] if dashboard_rows else {"agency": "n/a", "total_amount": "0", "award_count": 0}
     year_rows = sorted(by_year.items())
     top_awards = sorted(rows, key=lambda row: number(row["amount"]), reverse=True)[:10]
+    amounts = sorted(number(row["amount"]) for row in rows)
+    median_amount = amounts[len(amounts) // 2] if amounts else 0.0
+    top_10_total = sum(number(row["amount"]) for row in top_awards)
+    top_agency_share = number(top_agency["total_amount"]) / total_amount if total_amount else 0.0
+    top_3_total = sum(number(row["total_amount"]) for row in dashboard_rows[:3])
+    top_3_share = top_3_total / total_amount if total_amount else 0.0
+    hhi = sum((number(row["total_amount"]) / total_amount) ** 2 for row in dashboard_rows) if total_amount else 0.0
+    pre_window = by_year.get("pre-2021 active/continuing", {"award_count": 0, "total_amount": 0.0})
+    new_window_count = len(rows) - int(pre_window["award_count"])
+    new_window_total = total_amount - float(pre_window["total_amount"])
+    source_award_ids: dict[str, set[str]] = defaultdict(set)
+    for row in rows:
+        source_award_ids[row["source"]].add(row["award_id"])
+    overlap_ids = set.intersection(*source_award_ids.values()) if len(source_award_ids) > 1 else set()
+
+    analysis_rows = [
+        {"metric": "observed_award_records", "value": f"{len(rows)}", "interpretation": "Rutgers-matching active public award records in the query window."},
+        {"metric": "observed_amount", "value": f"{total_amount:.2f}", "interpretation": "Total observed amount before cross-source deduplication."},
+        {"metric": "agency_hhi", "value": f"{hhi:.4f}", "interpretation": "Agency concentration index; higher values indicate more concentrated public award exposure."},
+        {"metric": "top_agency_share", "value": f"{top_agency_share:.4f}", "interpretation": "Share of observed amount in the largest agency grouping."},
+        {"metric": "top_three_agency_share", "value": f"{top_3_share:.4f}", "interpretation": "Share of observed amount in the three largest agency groupings."},
+        {"metric": "top_ten_award_share", "value": f"{top_10_total / total_amount if total_amount else 0:.4f}", "interpretation": "Award-size skew captured by the ten largest observed records."},
+        {"metric": "median_award_amount", "value": f"{median_amount:.2f}", "interpretation": "Median award amount, showing the typical record is far smaller than the top awards."},
+        {"metric": "pre_2021_active_amount_share", "value": f"{float(pre_window['total_amount']) / total_amount if total_amount else 0:.4f}", "interpretation": "Share of observed amount tied to awards that began before the FY2021 window but remained active or returned by the query."},
+        {"metric": "new_window_record_count", "value": f"{new_window_count}", "interpretation": "Records with starts inside the FY2021-FY2025 query window."},
+        {"metric": "cross_source_overlap_ids", "value": f"{len(overlap_ids)}", "interpretation": "Award IDs appearing in both USAspending and NSF slices; nonzero values would require deduplication before additive totals."},
+    ]
+    write_csv(ARTIFACTS_DIR / "analysis_summary.csv", analysis_rows, ["metric", "value", "interpretation"])
 
     report_lines = [
         "# Federal Research Grant Funding Analysis at Rutgers University",
         "",
         f"Generated: {utc_now()}",
         "",
+        "## Research Question",
+        "",
+        "How concentrated is Rutgers' publicly observable federal award exposure across agencies and award sizes in the FY2021-FY2025 query window, and what can public federal feeds support before an internal Rutgers department crosswalk is required?",
+        "",
         "## Scope",
         "",
-        "This local RAIL project summarizes public federal award records matching Rutgers over FY2021-FY2025. It uses USAspending.gov for cross-agency federal assistance coverage and the NSF Awards API for additional research-award detail.",
+        "This local RAIL project analyzes public federal award records matching Rutgers over FY2021-FY2025. It uses USAspending.gov for cross-agency federal assistance coverage and the NSF Awards API for additional research-award detail. The study is intentionally scoped as a public-data analysis, not an audited sponsored-research ledger.",
+        "",
+        "## Method",
+        "",
+        "The deterministic pipeline queries USAspending for Rutgers-matching assistance awards and the NSF Awards API for Rutgers-matching research awards, filters records whose active dates intersect the FY2021-FY2025 window, and normalizes them into a shared award panel. The analysis then computes agency totals, award counts, concentration measures, timing cohorts, top-award skew, and source-overlap checks. The concentration model uses a Herfindahl-Hirschman style agency index: each agency's observed dollar share is squared and summed, so values closer to one indicate greater dependence on a small number of agencies. This is a descriptive benchmark, not a causal model.",
         "",
         "## Key Findings",
         "",
         f"- The processed public-data panel contains {len(rows)} Rutgers-matching award records returned for the FY2021-FY2025 query window totaling {money(total_amount)}.",
         f"- The largest observed agency total is {top_agency['agency']} with {money(number(top_agency['total_amount']))} across {top_agency['award_count']} records.",
+        f"- Agency exposure is concentrated: the top agency accounts for {pct(top_agency_share)} of observed amount, the top three agencies account for {pct(top_3_share)}, and the agency HHI is {hhi:.3f}.",
+        f"- Award-size skew is material: the ten largest records account for {pct(top_10_total / total_amount if total_amount else 0)} of observed amount, while the median observed record is {money(median_amount)}.",
+        f"- Timing analysis shows {int(pre_window['award_count'])} continuing/pre-window records account for {pct(float(pre_window['total_amount']) / total_amount if total_amount else 0)} of observed amount; {new_window_count} records started inside the FY2021-FY2025 window and account for {money(new_window_total)}.",
         "- Public federal award feeds do not provide a reliable Rutgers academic department crosswalk, so department-level performance profiles should be treated as a next-step internal-data join rather than inferred from titles alone.",
         "",
-        "## Annual Snapshot",
+        "## Results And Analysis",
         "",
-        "| Fiscal year | Award records | Observed amount |",
-        "| --- | ---: | ---: |",
+        "The agency comparison indicates that public Rutgers award exposure is not evenly distributed across federal sponsors. HHS dominates the observed dollar volume, while NSF contributes a larger share of research-award records than of total dollars. This matters for institutional planning because aggregate federal exposure can look healthy while still being vulnerable to changes in a few sponsor programs or long-running cooperative agreements.",
+        "",
+        "| Analysis metric | Value | Interpretation |",
+        "| --- | ---: | --- |",
     ]
+    for row in analysis_rows:
+        value = row["value"]
+        if row["metric"].endswith("_share") or row["metric"] in {"agency_hhi", "top_ten_award_share", "pre_2021_active_amount_share"}:
+            try:
+                numeric = float(value)
+                value = f"{numeric:.3f}" if row["metric"] == "agency_hhi" else pct(numeric)
+            except ValueError:
+                pass
+        elif row["metric"] in {"observed_amount", "median_award_amount"}:
+            value = money(number(value))
+        report_lines.append(f"| {row['metric']} | {value} | {row['interpretation']} |")
+    report_lines.extend(
+        [
+            "",
+            "The top-award comparison is the clearest substantive finding: Rutgers' public federal award profile in this slice is highly skewed. A small number of large HHS and Education records dominate the dollar total, while NSF adds many smaller research records. A simple top-award share and HHI benchmark are therefore more informative than raw counts alone. The result does not imply that Rutgers research is over-dependent on HHS in the audited internal ledger, but it does show that the public federal award signal is concentrated enough that any department ranking must normalize by sponsor, award type, and continuation status.",
+            "",
+            "## Annual Snapshot",
+            "",
+            "| Fiscal year | Award records | Observed amount |",
+            "| --- | ---: | ---: |",
+        ]
+    )
     for year, stats in year_rows:
         report_lines.append(f"| {year} | {stats['award_count']} | {money(stats['total_amount'])} |")
     report_lines.extend(
@@ -280,11 +347,18 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
     report_lines.extend(
         [
             "",
-            "## Interpretation Notes",
+            "## Robustness And Data Checks",
+            "",
+            f"- Source overlap check found {len(overlap_ids)} award IDs appearing in both the USAspending and NSF slices after active-window filtering.",
+            "- Records that began before FY2021 are reported as `pre-2021 active/continuing` rather than assigned to a current fiscal year, preventing old long-running awards from being misread as new FY2021-FY2025 starts.",
+            "- The analysis reports observed public records and does not add NSF totals to USAspending as audited unique dollars without an award-level reconciliation.",
+            "",
+            "## Limitations",
             "",
             "- USAspending award amounts are obligation-style federal award records and may include non-research assistance; filtering to Rutgers and assistance award types gives a broad federal-funding view, not an audited sponsored-research ledger.",
             "- NSF records are useful for research-award detail but overlap with USAspending, so totals should not be added across sources without deduplication.",
             "- A production departmental dashboard should join these public award IDs to Rutgers internal sponsored-program accounts, principal-investigator appointments, and faculty headcount.",
+            "- The public feeds do not support credible department-level comparisons on their own. The project therefore answers the public-data concentration question and blocks fabricated department rankings until internal crosswalk data is available.",
         ]
     )
     (ARTIFACTS_DIR / "federal_research_grants_report.md").write_text("\n".join(report_lines) + "\n", encoding="utf-8")
@@ -335,6 +409,11 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "total_amount": total_amount,
         "top_agency": str(top_agency["agency"]),
         "top_agency_amount": number(top_agency["total_amount"]),
+        "top_agency_share": top_agency_share,
+        "top_3_share": top_3_share,
+        "hhi": hhi,
+        "top_10_share": top_10_total / total_amount if total_amount else 0.0,
+        "pre_window_share": float(pre_window["total_amount"]) / total_amount if total_amount else 0.0,
         "row_count": len(rows),
     }
 
@@ -405,14 +484,36 @@ def register_truth(summary: dict[str, Any]) -> None:
         },
         {
             "claim_key": "claim-largest-observed-agency",
-            "claim_text": f"{summary['top_agency']} is the largest observed agency grouping in the processed public-data dashboard for this pass.",
+            "claim_text": f"{summary['top_agency']} is the largest observed agency grouping in the processed public-data dashboard and represents {pct(summary['top_agency_share'])} of observed amount.",
             "artifact_path": "artifacts/federal_research_grants_report.md",
-            "evidence_paths": ["artifacts/funding_dashboard.csv", "artifacts/federal_research_grants_report.md"],
+            "evidence_paths": ["artifacts/funding_dashboard.csv", "artifacts/analysis_summary.csv", "artifacts/federal_research_grants_report.md"],
             "source_keys": ["usaspending-rutgers-federal-assistance", "nsf-award-search-rutgers"],
             "evidence_kind": "derived",
             "status": "supported",
             "confidence": 0.72,
             "caveats": ["Agency ranking is based on the current public-query slice and should be reconciled to internal Rutgers sponsored-research ledgers before operational decisions."],
+        },
+        {
+            "claim_key": "claim-agency-concentration-material",
+            "claim_text": f"Rutgers' public federal-award exposure is materially concentrated by agency: the top three agencies account for {pct(summary['top_3_share'])} of observed amount and the agency HHI is {summary['hhi']:.3f}.",
+            "artifact_path": "artifacts/federal_research_grants_report.md",
+            "evidence_paths": ["artifacts/analysis_summary.csv", "artifacts/funding_dashboard.csv", "artifacts/federal_research_grants_report.md"],
+            "source_keys": ["usaspending-rutgers-federal-assistance", "nsf-award-search-rutgers"],
+            "evidence_kind": "derived",
+            "status": "supported",
+            "confidence": 0.78,
+            "caveats": ["Concentration is descriptive and based on public award records, not Rutgers' audited internal research ledger."],
+        },
+        {
+            "claim_key": "claim-award-size-skew-material",
+            "claim_text": f"The observed award profile is skewed toward large records: the ten largest awards account for {pct(summary['top_10_share'])} of observed amount.",
+            "artifact_path": "artifacts/federal_research_grants_report.md",
+            "evidence_paths": ["artifacts/analysis_summary.csv", "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv", "artifacts/federal_research_grants_report.md"],
+            "source_keys": ["usaspending-rutgers-federal-assistance", "nsf-award-search-rutgers"],
+            "evidence_kind": "derived",
+            "status": "supported",
+            "confidence": 0.76,
+            "caveats": ["Large continuing awards can dominate public-query totals and should not be interpreted as new starts without timing normalization."],
         },
         {
             "claim_key": "claim-department-crosswalk-required",
@@ -434,6 +535,7 @@ def register_truth(summary: dict[str, Any]) -> None:
         "artifacts/federal_research_grants_report.md",
         "artifacts/federal_research_grants_report.pdf",
         "artifacts/funding_dashboard.csv",
+        "artifacts/analysis_summary.csv",
         "artifacts/departmental_performance_profiles.md",
         "artifacts/source_quality_notes.md",
         "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -463,7 +565,7 @@ def register_truth(summary: dict[str, Any]) -> None:
             "inputs": ["artifacts/federal_research_grants_report.md", "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"],
             "scripts": ["scripts/build_research_artifacts.py"],
             "sources": ["research_plan/state/sources.json#usaspending-rutgers-federal-assistance", "research_plan/state/sources.json#nsf-award-search-rutgers"],
-            "claims": ["research_plan/state/claims.json#claim-public-awards-panel-built", "research_plan/state/claims.json#claim-largest-observed-agency", "research_plan/state/claims.json#claim-department-crosswalk-required"],
+            "claims": ["research_plan/state/claims.json#claim-public-awards-panel-built", "research_plan/state/claims.json#claim-largest-observed-agency", "research_plan/state/claims.json#claim-agency-concentration-material", "research_plan/state/claims.json#claim-award-size-skew-material", "research_plan/state/claims.json#claim-department-crosswalk-required"],
             "verification_commands": ["scripts/run-verification.sh"],
             "verification_runs": [verification_ref],
             "reproducibility_mode": "deterministic",
@@ -476,7 +578,7 @@ def register_truth(summary: dict[str, Any]) -> None:
             "inputs": ["topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"],
             "scripts": ["scripts/build_research_artifacts.py"],
             "sources": ["research_plan/state/sources.json#usaspending-rutgers-federal-assistance", "research_plan/state/sources.json#nsf-award-search-rutgers"],
-            "claims": ["research_plan/state/claims.json#claim-public-awards-panel-built", "research_plan/state/claims.json#claim-largest-observed-agency", "research_plan/state/claims.json#claim-department-crosswalk-required"],
+            "claims": ["research_plan/state/claims.json#claim-public-awards-panel-built", "research_plan/state/claims.json#claim-largest-observed-agency", "research_plan/state/claims.json#claim-agency-concentration-material", "research_plan/state/claims.json#claim-award-size-skew-material", "research_plan/state/claims.json#claim-department-crosswalk-required"],
             "verification_commands": ["scripts/run-verification.sh"],
             "verification_runs": [verification_ref],
             "reproducibility_mode": "deterministic",
@@ -489,7 +591,20 @@ def register_truth(summary: dict[str, Any]) -> None:
             "inputs": ["topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"],
             "scripts": ["scripts/build_research_artifacts.py"],
             "sources": ["research_plan/state/sources.json#usaspending-rutgers-federal-assistance", "research_plan/state/sources.json#nsf-award-search-rutgers"],
-            "claims": ["research_plan/state/claims.json#claim-public-awards-panel-built", "research_plan/state/claims.json#claim-largest-observed-agency"],
+            "claims": ["research_plan/state/claims.json#claim-public-awards-panel-built", "research_plan/state/claims.json#claim-largest-observed-agency", "research_plan/state/claims.json#claim-agency-concentration-material"],
+            "verification_commands": ["scripts/run-verification.sh"],
+            "verification_runs": [verification_ref],
+            "reproducibility_mode": "deterministic",
+        },
+        {
+            "artifact_path": "artifacts/analysis_summary.csv",
+            "artifact_type": "table",
+            "title": "Research Analysis Summary",
+            "promotion_state": "partially_verified",
+            "inputs": ["topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"],
+            "scripts": ["scripts/build_research_artifacts.py"],
+            "sources": ["research_plan/state/sources.json#usaspending-rutgers-federal-assistance", "research_plan/state/sources.json#nsf-award-search-rutgers"],
+            "claims": ["research_plan/state/claims.json#claim-agency-concentration-material", "research_plan/state/claims.json#claim-award-size-skew-material", "research_plan/state/claims.json#claim-largest-observed-agency"],
             "verification_commands": ["scripts/run-verification.sh"],
             "verification_runs": [verification_ref],
             "reproducibility_mode": "deterministic",

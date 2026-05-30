@@ -23,14 +23,15 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "claim_key": "claim-largest-observed-agency",
-    "claim_text": "Department of Health and Human Services is the largest observed agency grouping in the processed public-data dashboard for this pass.",
+    "claim_text": "Department of Health and Human Services is the largest observed agency grouping in the processed public-data dashboard and represents 68.6% of observed amount.",
     "artifact_path": "artifacts/federal_research_grants_report.md",
     "evidence_paths": [
       "artifacts/funding_dashboard.csv",
+      "artifacts/analysis_summary.csv",
       "artifacts/federal_research_grants_report.md"
     ],
     "evidence_chunk_keys": [],
@@ -48,7 +49,7 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "claim_key": "claim-department-crosswalk-required",
@@ -73,6 +74,58 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
+  },
+  {
+    "claim_key": "claim-agency-concentration-material",
+    "claim_text": "Rutgers' public federal-award exposure is materially concentrated by agency: the top three agencies account for 93.1% of observed amount and the agency HHI is 0.514.",
+    "artifact_path": "artifacts/federal_research_grants_report.md",
+    "evidence_paths": [
+      "artifacts/analysis_summary.csv",
+      "artifacts/funding_dashboard.csv",
+      "artifacts/federal_research_grants_report.md"
+    ],
+    "evidence_chunk_keys": [],
+    "source_keys": [
+      "usaspending-rutgers-federal-assistance",
+      "nsf-award-search-rutgers"
+    ],
+    "contradicts_claim_keys": [],
+    "evidence_kind": "derived",
+    "status": "supported",
+    "confidence": 0.78,
+    "source_path": "research_plan/state/claims.json",
+    "caveats": [
+      "Concentration is descriptive and based on public award records, not Rutgers' audited internal research ledger."
+    ],
+    "open_questions": [],
+    "created_at": "2026-05-30T23:12:14Z",
+    "updated_at": "2026-05-30T23:12:14Z"
+  },
+  {
+    "claim_key": "claim-award-size-skew-material",
+    "claim_text": "The observed award profile is skewed toward large records: the ten largest awards account for 51.2% of observed amount.",
+    "artifact_path": "artifacts/federal_research_grants_report.md",
+    "evidence_paths": [
+      "artifacts/analysis_summary.csv",
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+      "artifacts/federal_research_grants_report.md"
+    ],
+    "evidence_chunk_keys": [],
+    "source_keys": [
+      "usaspending-rutgers-federal-assistance",
+      "nsf-award-search-rutgers"
+    ],
+    "contradicts_claim_keys": [],
+    "evidence_kind": "derived",
+    "status": "supported",
+    "confidence": 0.76,
+    "source_path": "research_plan/state/claims.json",
+    "caveats": [
+      "Large continuing awards can dominate public-query totals and should not be interpreted as new starts without timing normalization."
+    ],
+    "open_questions": [],
+    "created_at": "2026-05-30T23:12:14Z",
+    "updated_at": "2026-05-30T23:12:14Z"
   }
 ]

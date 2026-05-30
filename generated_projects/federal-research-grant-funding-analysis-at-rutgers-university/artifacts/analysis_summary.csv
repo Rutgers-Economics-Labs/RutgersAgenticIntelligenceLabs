@@ -1,0 +1,11 @@
+metric,value,interpretation
+observed_award_records,107,Rutgers-matching active public award records in the query window.
+observed_amount,1448574040.47,Total observed amount before cross-source deduplication.
+agency_hhi,0.5135,Agency concentration index; higher values indicate more concentrated public award exposure.
+top_agency_share,0.6860,Share of observed amount in the largest agency grouping.
+top_three_agency_share,0.9306,Share of observed amount in the three largest agency groupings.
+top_ten_award_share,0.5119,Award-size skew captured by the ten largest observed records.
+median_award_amount,6697549.38,"Median award amount, showing the typical record is far smaller than the top awards."
+pre_2021_active_amount_share,0.8568,Share of observed amount tied to awards that began before the FY2021 window but remained active or returned by the query.
+new_window_record_count,36,Records with starts inside the FY2021-FY2025 query window.
+cross_source_overlap_ids,0,Award IDs appearing in both USAspending and NSF slices; nonzero values would require deduplication before additive totals.

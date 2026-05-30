@@ -22,6 +22,8 @@
     "claims": [
       "research_plan/state/claims.json#claim-public-awards-panel-built",
       "research_plan/state/claims.json#claim-largest-observed-agency",
+      "research_plan/state/claims.json#claim-agency-concentration-material",
+      "research_plan/state/claims.json#claim-award-size-skew-material",
       "research_plan/state/claims.json#claim-department-crosswalk-required"
     ],
     "verification_runs": [
@@ -31,7 +33,7 @@
     "stale_marked_at": null,
     "generated_at": null,
     "created_at": "2026-05-30T20:07:31Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "artifact_path": "artifacts/funding_dashboard.csv",
@@ -55,7 +57,8 @@
     "assumptions": [],
     "claims": [
       "research_plan/state/claims.json#claim-public-awards-panel-built",
-      "research_plan/state/claims.json#claim-largest-observed-agency"
+      "research_plan/state/claims.json#claim-largest-observed-agency",
+      "research_plan/state/claims.json#claim-agency-concentration-material"
     ],
     "verification_runs": [
       "research_plan/state/verification_runs.json#federal-grants-local-build-001"
@@ -64,7 +67,7 @@
     "stale_marked_at": null,
     "generated_at": null,
     "created_at": "2026-05-30T20:07:31Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "artifact_path": "artifacts/departmental_performance_profiles.md",
@@ -96,7 +99,7 @@
     "stale_marked_at": null,
     "generated_at": null,
     "created_at": "2026-05-30T20:07:31Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "artifact_path": "artifacts/source_quality_notes.md",
@@ -129,7 +132,7 @@
     "stale_marked_at": null,
     "generated_at": null,
     "created_at": "2026-05-30T20:07:31Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "artifact_path": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -162,7 +165,7 @@
     "stale_marked_at": null,
     "generated_at": null,
     "created_at": "2026-05-30T20:07:31Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
   },
   {
     "artifact_path": "artifacts/federal_research_grants_report.pdf",
@@ -188,6 +191,8 @@
     "claims": [
       "research_plan/state/claims.json#claim-public-awards-panel-built",
       "research_plan/state/claims.json#claim-largest-observed-agency",
+      "research_plan/state/claims.json#claim-agency-concentration-material",
+      "research_plan/state/claims.json#claim-award-size-skew-material",
       "research_plan/state/claims.json#claim-department-crosswalk-required"
     ],
     "verification_runs": [
@@ -197,6 +202,40 @@
     "stale_marked_at": null,
     "generated_at": null,
     "created_at": "2026-05-30T23:04:33Z",
-    "updated_at": "2026-05-30T23:04:33Z"
+    "updated_at": "2026-05-30T23:12:14Z"
+  },
+  {
+    "artifact_path": "artifacts/analysis_summary.csv",
+    "artifact_type": "table",
+    "title": "Research Analysis Summary",
+    "promotion_state": "partially_verified",
+    "reproducibility_mode": "deterministic",
+    "inputs": [
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"
+    ],
+    "scripts": [
+      "scripts/build_research_artifacts.py"
+    ],
+    "verification_commands": [
+      "scripts/run-verification.sh"
+    ],
+    "sources": [
+      "research_plan/state/sources.json#usaspending-rutgers-federal-assistance",
+      "research_plan/state/sources.json#nsf-award-search-rutgers"
+    ],
+    "assumptions": [],
+    "claims": [
+      "research_plan/state/claims.json#claim-agency-concentration-material",
+      "research_plan/state/claims.json#claim-award-size-skew-material",
+      "research_plan/state/claims.json#claim-largest-observed-agency"
+    ],
+    "verification_runs": [
+      "research_plan/state/verification_runs.json#federal-grants-local-build-001"
+    ],
+    "stale_reasons": [],
+    "stale_marked_at": null,
+    "generated_at": null,
+    "created_at": "2026-05-30T23:12:14Z",
+    "updated_at": "2026-05-30T23:12:14Z"
   }
 ]

@@ -379,6 +379,87 @@ frontend:
     )
 
 
+def test_audit_research_quality_blocks_inventory_only_report(tmp_path: Path):
+    from app.services import auditor_service
+    from rail.integrity import ResearchIntegrityRepo
+
+    (tmp_path / "artifacts").mkdir(parents=True)
+    (tmp_path / "topics" / "data").mkdir(parents=True)
+    (tmp_path / "artifacts" / "final_report.md").write_text(
+        """# Final Report
+
+## Scope
+
+This project summarizes source availability and lists records.
+
+## Key Findings
+
+| Source | Rows |
+| --- | ---: |
+| Public API | 12 |
+
+More data is required before analysis.
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "topics" / "data" / "panel.csv").write_text(
+        "id,source,value,year\n" + "\n".join(f"{idx},api,{idx},2024" for idx in range(25)) + "\n",
+        encoding="utf-8",
+    )
+    repo = ResearchIntegrityRepo(tmp_path)
+    repo.ensure_files_exist()
+    repo.upsert_source(
+        {
+            "source_key": "public-api",
+            "source_type": "api",
+            "title": "Public API",
+            "url_or_path": "https://example.test/api",
+            "freshness_status": "fresh",
+            "admissibility_status": "observed",
+            "quality_status": "validated",
+        }
+    )
+    for idx in range(2):
+        repo.upsert_claim(
+            {
+                "claim_key": f"claim-{idx}",
+                "claim_text": f"Public records contain source inventory count {idx}.",
+                "evidence_paths": ["artifacts/final_report.md", "topics/data/panel.csv"],
+                "source_keys": ["public-api"],
+                "evidence_kind": "direct",
+                "status": "supported",
+                "caveats": ["Inventory only."],
+            }
+        )
+    repo.upsert_artifact_lineage(
+        {
+            "artifact_path": "artifacts/final_report.md",
+            "artifact_type": "report",
+            "title": "Final Report",
+            "promotion_state": "partially_verified",
+            "inputs": ["topics/data/panel.csv"],
+            "sources": ["research_plan/state/sources.json#public-api"],
+            "claims": ["research_plan/state/claims.json#claim-0", "research_plan/state/claims.json#claim-1"],
+            "verification_runs": ["research_plan/state/verification_runs.json#run-1"],
+        }
+    )
+    repo.upsert_artifact_lineage(
+        {
+            "artifact_path": "topics/data/panel.csv",
+            "artifact_type": "dataset",
+            "title": "Panel",
+            "promotion_state": "partially_verified",
+            "verification_runs": ["research_plan/state/verification_runs.json#run-1"],
+        }
+    )
+
+    result = auditor_service.audit_research_quality(tmp_path, "artifacts")
+
+    assert result["status"] == "blocked"
+    assert any("too thin" in blocker for blocker in result["blockers"])
+    assert any("analysis markers" in blocker for blocker in result["blockers"])
+
+
 def test_build_auditor_statuses_ignores_latex_intermediates_for_closeout_artifact_lineage(tmp_path: Path, monkeypatch):
     from app.services import auditor_service
     from rail.integrity import ResearchIntegrityRepo
