@@ -10,8 +10,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:nsf-award-search-rutgers|supports|claim:claim-public-awards-panel-built",
@@ -24,8 +24,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:usaspending-rutgers-federal-assistance|supports|claim:claim-largest-observed-agency",
@@ -38,8 +38,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:nsf-award-search-rutgers|supports|claim:claim-largest-observed-agency",
@@ -52,8 +52,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:usaspending-rutgers-federal-assistance|supports|claim:claim-department-crosswalk-required",
@@ -66,8 +66,8 @@
     "metadata": {
       "evidenceKind": "contextual"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:nsf-award-search-rutgers|supports|claim:claim-department-crosswalk-required",
@@ -80,8 +80,8 @@
     "metadata": {
       "evidenceKind": "contextual"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:usaspending-rutgers-federal-assistance|supports|claim:claim-agency-concentration-material",
@@ -94,8 +94,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:nsf-award-search-rutgers|supports|claim:claim-agency-concentration-material",
@@ -108,8 +108,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:usaspending-rutgers-federal-assistance|supports|claim:claim-award-size-skew-material",
@@ -122,8 +122,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "source:nsf-award-search-rutgers|supports|claim:claim-award-size-skew-material",
@@ -136,8 +136,8 @@
     "metadata": {
       "evidenceKind": "derived"
     },
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.md|derived_from|source:usaspending-rutgers-federal-assistance",
@@ -148,8 +148,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.md",
     "target_record_key": "usaspending-rutgers-federal-assistance",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.md|derived_from|source:nsf-award-search-rutgers",
@@ -160,8 +160,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.md",
     "target_record_key": "nsf-award-search-rutgers",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-public-awards-panel-built|supports|artifact:artifacts/federal_research_grants_report.md",
@@ -172,8 +172,8 @@
     "source_record_key": "claim-public-awards-panel-built",
     "target_record_key": "artifacts/federal_research_grants_report.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-largest-observed-agency|supports|artifact:artifacts/federal_research_grants_report.md",
@@ -184,8 +184,8 @@
     "source_record_key": "claim-largest-observed-agency",
     "target_record_key": "artifacts/federal_research_grants_report.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-agency-concentration-material|supports|artifact:artifacts/federal_research_grants_report.md",
@@ -196,8 +196,8 @@
     "source_record_key": "claim-agency-concentration-material",
     "target_record_key": "artifacts/federal_research_grants_report.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-award-size-skew-material|supports|artifact:artifacts/federal_research_grants_report.md",
@@ -208,8 +208,8 @@
     "source_record_key": "claim-award-size-skew-material",
     "target_record_key": "artifacts/federal_research_grants_report.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-department-crosswalk-required|supports|artifact:artifacts/federal_research_grants_report.md",
@@ -220,8 +220,8 @@
     "source_record_key": "claim-department-crosswalk-required",
     "target_record_key": "artifacts/federal_research_grants_report.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.md|generated_by|method:scripts/build_research_artifacts.py",
@@ -232,8 +232,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.md",
     "target_record_key": "scripts/build_research_artifacts.py",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.md|verified_by|verification_run:federal-grants-local-build-001",
@@ -244,8 +244,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.md",
     "target_record_key": "federal-grants-local-build-001",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.md|depends_on|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -256,8 +256,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.md",
     "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/funding_dashboard.csv|derived_from|source:usaspending-rutgers-federal-assistance",
@@ -268,8 +268,8 @@
     "source_record_key": "artifacts/funding_dashboard.csv",
     "target_record_key": "usaspending-rutgers-federal-assistance",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/funding_dashboard.csv|derived_from|source:nsf-award-search-rutgers",
@@ -280,8 +280,8 @@
     "source_record_key": "artifacts/funding_dashboard.csv",
     "target_record_key": "nsf-award-search-rutgers",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-public-awards-panel-built|supports|artifact:artifacts/funding_dashboard.csv",
@@ -292,8 +292,8 @@
     "source_record_key": "claim-public-awards-panel-built",
     "target_record_key": "artifacts/funding_dashboard.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-largest-observed-agency|supports|artifact:artifacts/funding_dashboard.csv",
@@ -304,8 +304,8 @@
     "source_record_key": "claim-largest-observed-agency",
     "target_record_key": "artifacts/funding_dashboard.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-agency-concentration-material|supports|artifact:artifacts/funding_dashboard.csv",
@@ -316,8 +316,8 @@
     "source_record_key": "claim-agency-concentration-material",
     "target_record_key": "artifacts/funding_dashboard.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/funding_dashboard.csv|generated_by|method:scripts/build_research_artifacts.py",
@@ -328,8 +328,8 @@
     "source_record_key": "artifacts/funding_dashboard.csv",
     "target_record_key": "scripts/build_research_artifacts.py",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/funding_dashboard.csv|verified_by|verification_run:federal-grants-local-build-001",
@@ -340,8 +340,8 @@
     "source_record_key": "artifacts/funding_dashboard.csv",
     "target_record_key": "federal-grants-local-build-001",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/funding_dashboard.csv|depends_on|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -352,8 +352,8 @@
     "source_record_key": "artifacts/funding_dashboard.csv",
     "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/departmental_performance_profiles.md|derived_from|source:usaspending-rutgers-federal-assistance",
@@ -364,8 +364,8 @@
     "source_record_key": "artifacts/departmental_performance_profiles.md",
     "target_record_key": "usaspending-rutgers-federal-assistance",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/departmental_performance_profiles.md|derived_from|source:nsf-award-search-rutgers",
@@ -376,8 +376,8 @@
     "source_record_key": "artifacts/departmental_performance_profiles.md",
     "target_record_key": "nsf-award-search-rutgers",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-department-crosswalk-required|supports|artifact:artifacts/departmental_performance_profiles.md",
@@ -388,8 +388,8 @@
     "source_record_key": "claim-department-crosswalk-required",
     "target_record_key": "artifacts/departmental_performance_profiles.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/departmental_performance_profiles.md|generated_by|method:scripts/build_research_artifacts.py",
@@ -400,8 +400,8 @@
     "source_record_key": "artifacts/departmental_performance_profiles.md",
     "target_record_key": "scripts/build_research_artifacts.py",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/departmental_performance_profiles.md|verified_by|verification_run:federal-grants-local-build-001",
@@ -412,8 +412,8 @@
     "source_record_key": "artifacts/departmental_performance_profiles.md",
     "target_record_key": "federal-grants-local-build-001",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/departmental_performance_profiles.md|depends_on|artifact:artifacts/funding_dashboard.csv",
@@ -424,8 +424,8 @@
     "source_record_key": "artifacts/departmental_performance_profiles.md",
     "target_record_key": "artifacts/funding_dashboard.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/source_quality_notes.md|derived_from|source:usaspending-rutgers-federal-assistance",
@@ -436,8 +436,8 @@
     "source_record_key": "artifacts/source_quality_notes.md",
     "target_record_key": "usaspending-rutgers-federal-assistance",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/source_quality_notes.md|derived_from|source:nsf-award-search-rutgers",
@@ -448,8 +448,8 @@
     "source_record_key": "artifacts/source_quality_notes.md",
     "target_record_key": "nsf-award-search-rutgers",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-department-crosswalk-required|supports|artifact:artifacts/source_quality_notes.md",
@@ -460,8 +460,8 @@
     "source_record_key": "claim-department-crosswalk-required",
     "target_record_key": "artifacts/source_quality_notes.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/source_quality_notes.md|generated_by|method:scripts/build_research_artifacts.py",
@@ -472,8 +472,8 @@
     "source_record_key": "artifacts/source_quality_notes.md",
     "target_record_key": "scripts/build_research_artifacts.py",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/source_quality_notes.md|verified_by|verification_run:federal-grants-local-build-001",
@@ -484,8 +484,8 @@
     "source_record_key": "artifacts/source_quality_notes.md",
     "target_record_key": "federal-grants-local-build-001",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv|derived_from|source:usaspending-rutgers-federal-assistance",
@@ -496,8 +496,8 @@
     "source_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "target_record_key": "usaspending-rutgers-federal-assistance",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv|derived_from|source:nsf-award-search-rutgers",
@@ -508,8 +508,8 @@
     "source_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "target_record_key": "nsf-award-search-rutgers",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-public-awards-panel-built|supports|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -520,8 +520,8 @@
     "source_record_key": "claim-public-awards-panel-built",
     "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv|generated_by|method:scripts/build_research_artifacts.py",
@@ -532,8 +532,8 @@
     "source_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "target_record_key": "scripts/build_research_artifacts.py",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv|verified_by|verification_run:federal-grants-local-build-001",
@@ -544,8 +544,8 @@
     "source_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "target_record_key": "federal-grants-local-build-001",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.pdf|derived_from|source:usaspending-rutgers-federal-assistance",
@@ -556,8 +556,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.pdf",
     "target_record_key": "usaspending-rutgers-federal-assistance",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.pdf|derived_from|source:nsf-award-search-rutgers",
@@ -568,8 +568,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.pdf",
     "target_record_key": "nsf-award-search-rutgers",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-public-awards-panel-built|supports|artifact:artifacts/federal_research_grants_report.pdf",
@@ -580,8 +580,8 @@
     "source_record_key": "claim-public-awards-panel-built",
     "target_record_key": "artifacts/federal_research_grants_report.pdf",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-largest-observed-agency|supports|artifact:artifacts/federal_research_grants_report.pdf",
@@ -592,8 +592,8 @@
     "source_record_key": "claim-largest-observed-agency",
     "target_record_key": "artifacts/federal_research_grants_report.pdf",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-agency-concentration-material|supports|artifact:artifacts/federal_research_grants_report.pdf",
@@ -604,8 +604,8 @@
     "source_record_key": "claim-agency-concentration-material",
     "target_record_key": "artifacts/federal_research_grants_report.pdf",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-award-size-skew-material|supports|artifact:artifacts/federal_research_grants_report.pdf",
@@ -616,8 +616,8 @@
     "source_record_key": "claim-award-size-skew-material",
     "target_record_key": "artifacts/federal_research_grants_report.pdf",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-department-crosswalk-required|supports|artifact:artifacts/federal_research_grants_report.pdf",
@@ -628,8 +628,8 @@
     "source_record_key": "claim-department-crosswalk-required",
     "target_record_key": "artifacts/federal_research_grants_report.pdf",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.pdf|generated_by|method:scripts/build_research_artifacts.py",
@@ -640,8 +640,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.pdf",
     "target_record_key": "scripts/build_research_artifacts.py",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.pdf|verified_by|verification_run:federal-grants-local-build-001",
@@ -652,8 +652,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.pdf",
     "target_record_key": "federal-grants-local-build-001",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.pdf|depends_on|artifact:artifacts/federal_research_grants_report.md",
@@ -664,8 +664,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.pdf",
     "target_record_key": "artifacts/federal_research_grants_report.md",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/federal_research_grants_report.pdf|depends_on|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -676,8 +676,8 @@
     "source_record_key": "artifacts/federal_research_grants_report.pdf",
     "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/analysis_summary.csv|derived_from|source:usaspending-rutgers-federal-assistance",
@@ -688,8 +688,8 @@
     "source_record_key": "artifacts/analysis_summary.csv",
     "target_record_key": "usaspending-rutgers-federal-assistance",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/analysis_summary.csv|derived_from|source:nsf-award-search-rutgers",
@@ -700,8 +700,8 @@
     "source_record_key": "artifacts/analysis_summary.csv",
     "target_record_key": "nsf-award-search-rutgers",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-agency-concentration-material|supports|artifact:artifacts/analysis_summary.csv",
@@ -712,8 +712,8 @@
     "source_record_key": "claim-agency-concentration-material",
     "target_record_key": "artifacts/analysis_summary.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-award-size-skew-material|supports|artifact:artifacts/analysis_summary.csv",
@@ -724,8 +724,8 @@
     "source_record_key": "claim-award-size-skew-material",
     "target_record_key": "artifacts/analysis_summary.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "claim:claim-largest-observed-agency|supports|artifact:artifacts/analysis_summary.csv",
@@ -736,8 +736,8 @@
     "source_record_key": "claim-largest-observed-agency",
     "target_record_key": "artifacts/analysis_summary.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/analysis_summary.csv|generated_by|method:scripts/build_research_artifacts.py",
@@ -748,8 +748,8 @@
     "source_record_key": "artifacts/analysis_summary.csv",
     "target_record_key": "scripts/build_research_artifacts.py",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/analysis_summary.csv|verified_by|verification_run:federal-grants-local-build-001",
@@ -760,8 +760,8 @@
     "source_record_key": "artifacts/analysis_summary.csv",
     "target_record_key": "federal-grants-local-build-001",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "edge_key": "artifact:artifacts/analysis_summary.csv|depends_on|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
@@ -772,7 +772,367 @@
     "source_record_key": "artifacts/analysis_summary.csv",
     "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
     "metadata": {},
-    "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/agency_concentration.png|derived_from|source:usaspending-rutgers-federal-assistance",
+    "from_id": "artifact:artifacts/figures/agency_concentration.png",
+    "to_id": "source:usaspending-rutgers-federal-assistance",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/agency_concentration.png",
+    "target_record_key": "usaspending-rutgers-federal-assistance",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/agency_concentration.png|derived_from|source:nsf-award-search-rutgers",
+    "from_id": "artifact:artifacts/figures/agency_concentration.png",
+    "to_id": "source:nsf-award-search-rutgers",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/agency_concentration.png",
+    "target_record_key": "nsf-award-search-rutgers",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-largest-observed-agency|supports|artifact:artifacts/figures/agency_concentration.png",
+    "from_id": "claim:claim-largest-observed-agency",
+    "to_id": "artifact:artifacts/figures/agency_concentration.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-largest-observed-agency",
+    "target_record_key": "artifacts/figures/agency_concentration.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-agency-concentration-material|supports|artifact:artifacts/figures/agency_concentration.png",
+    "from_id": "claim:claim-agency-concentration-material",
+    "to_id": "artifact:artifacts/figures/agency_concentration.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-agency-concentration-material",
+    "target_record_key": "artifacts/figures/agency_concentration.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-award-size-skew-material|supports|artifact:artifacts/figures/agency_concentration.png",
+    "from_id": "claim:claim-award-size-skew-material",
+    "to_id": "artifact:artifacts/figures/agency_concentration.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-award-size-skew-material",
+    "target_record_key": "artifacts/figures/agency_concentration.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/agency_concentration.png|generated_by|method:scripts/build_research_artifacts.py",
+    "from_id": "artifact:artifacts/figures/agency_concentration.png",
+    "to_id": "method:scripts/build_research_artifacts.py",
+    "relationship": "generated_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/agency_concentration.png",
+    "target_record_key": "scripts/build_research_artifacts.py",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/agency_concentration.png|verified_by|verification_run:federal-grants-local-build-001",
+    "from_id": "artifact:artifacts/figures/agency_concentration.png",
+    "to_id": "verification_run:federal-grants-local-build-001",
+    "relationship": "verified_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/agency_concentration.png",
+    "target_record_key": "federal-grants-local-build-001",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/agency_concentration.png|depends_on|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "from_id": "artifact:artifacts/figures/agency_concentration.png",
+    "to_id": "dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/agency_concentration.png",
+    "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/agency_concentration.png|depends_on|artifact:artifacts/funding_dashboard.csv",
+    "from_id": "artifact:artifacts/figures/agency_concentration.png",
+    "to_id": "artifact:artifacts/funding_dashboard.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/agency_concentration.png",
+    "target_record_key": "artifacts/funding_dashboard.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/agency_concentration.png|depends_on|artifact:artifacts/analysis_summary.csv",
+    "from_id": "artifact:artifacts/figures/agency_concentration.png",
+    "to_id": "artifact:artifacts/analysis_summary.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/agency_concentration.png",
+    "target_record_key": "artifacts/analysis_summary.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_size_pareto.png|derived_from|source:usaspending-rutgers-federal-assistance",
+    "from_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "to_id": "source:usaspending-rutgers-federal-assistance",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_size_pareto.png",
+    "target_record_key": "usaspending-rutgers-federal-assistance",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_size_pareto.png|derived_from|source:nsf-award-search-rutgers",
+    "from_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "to_id": "source:nsf-award-search-rutgers",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_size_pareto.png",
+    "target_record_key": "nsf-award-search-rutgers",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-largest-observed-agency|supports|artifact:artifacts/figures/award_size_pareto.png",
+    "from_id": "claim:claim-largest-observed-agency",
+    "to_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-largest-observed-agency",
+    "target_record_key": "artifacts/figures/award_size_pareto.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-agency-concentration-material|supports|artifact:artifacts/figures/award_size_pareto.png",
+    "from_id": "claim:claim-agency-concentration-material",
+    "to_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-agency-concentration-material",
+    "target_record_key": "artifacts/figures/award_size_pareto.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-award-size-skew-material|supports|artifact:artifacts/figures/award_size_pareto.png",
+    "from_id": "claim:claim-award-size-skew-material",
+    "to_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-award-size-skew-material",
+    "target_record_key": "artifacts/figures/award_size_pareto.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_size_pareto.png|generated_by|method:scripts/build_research_artifacts.py",
+    "from_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "to_id": "method:scripts/build_research_artifacts.py",
+    "relationship": "generated_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_size_pareto.png",
+    "target_record_key": "scripts/build_research_artifacts.py",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_size_pareto.png|verified_by|verification_run:federal-grants-local-build-001",
+    "from_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "to_id": "verification_run:federal-grants-local-build-001",
+    "relationship": "verified_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_size_pareto.png",
+    "target_record_key": "federal-grants-local-build-001",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_size_pareto.png|depends_on|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "from_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "to_id": "dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_size_pareto.png",
+    "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_size_pareto.png|depends_on|artifact:artifacts/funding_dashboard.csv",
+    "from_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "to_id": "artifact:artifacts/funding_dashboard.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_size_pareto.png",
+    "target_record_key": "artifacts/funding_dashboard.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_size_pareto.png|depends_on|artifact:artifacts/analysis_summary.csv",
+    "from_id": "artifact:artifacts/figures/award_size_pareto.png",
+    "to_id": "artifact:artifacts/analysis_summary.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_size_pareto.png",
+    "target_record_key": "artifacts/analysis_summary.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_timing_mix.png|derived_from|source:usaspending-rutgers-federal-assistance",
+    "from_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "to_id": "source:usaspending-rutgers-federal-assistance",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_timing_mix.png",
+    "target_record_key": "usaspending-rutgers-federal-assistance",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_timing_mix.png|derived_from|source:nsf-award-search-rutgers",
+    "from_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "to_id": "source:nsf-award-search-rutgers",
+    "relationship": "derived_from",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_timing_mix.png",
+    "target_record_key": "nsf-award-search-rutgers",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-largest-observed-agency|supports|artifact:artifacts/figures/award_timing_mix.png",
+    "from_id": "claim:claim-largest-observed-agency",
+    "to_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-largest-observed-agency",
+    "target_record_key": "artifacts/figures/award_timing_mix.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-agency-concentration-material|supports|artifact:artifacts/figures/award_timing_mix.png",
+    "from_id": "claim:claim-agency-concentration-material",
+    "to_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-agency-concentration-material",
+    "target_record_key": "artifacts/figures/award_timing_mix.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "claim:claim-award-size-skew-material|supports|artifact:artifacts/figures/award_timing_mix.png",
+    "from_id": "claim:claim-award-size-skew-material",
+    "to_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "relationship": "supports",
+    "edge_class": "explicit",
+    "source_record_key": "claim-award-size-skew-material",
+    "target_record_key": "artifacts/figures/award_timing_mix.png",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_timing_mix.png|generated_by|method:scripts/build_research_artifacts.py",
+    "from_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "to_id": "method:scripts/build_research_artifacts.py",
+    "relationship": "generated_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_timing_mix.png",
+    "target_record_key": "scripts/build_research_artifacts.py",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_timing_mix.png|verified_by|verification_run:federal-grants-local-build-001",
+    "from_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "to_id": "verification_run:federal-grants-local-build-001",
+    "relationship": "verified_by",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_timing_mix.png",
+    "target_record_key": "federal-grants-local-build-001",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_timing_mix.png|depends_on|dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "from_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "to_id": "dataset:topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_timing_mix.png",
+    "target_record_key": "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_timing_mix.png|depends_on|artifact:artifacts/funding_dashboard.csv",
+    "from_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "to_id": "artifact:artifacts/funding_dashboard.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_timing_mix.png",
+    "target_record_key": "artifacts/funding_dashboard.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
+  },
+  {
+    "edge_key": "artifact:artifacts/figures/award_timing_mix.png|depends_on|artifact:artifacts/analysis_summary.csv",
+    "from_id": "artifact:artifacts/figures/award_timing_mix.png",
+    "to_id": "artifact:artifacts/analysis_summary.csv",
+    "relationship": "depends_on",
+    "edge_class": "explicit",
+    "source_record_key": "artifacts/figures/award_timing_mix.png",
+    "target_record_key": "artifacts/analysis_summary.csv",
+    "metadata": {},
+    "created_at": "2026-05-30T23:37:27Z",
+    "updated_at": "2026-05-30T23:37:27Z"
   }
 ]

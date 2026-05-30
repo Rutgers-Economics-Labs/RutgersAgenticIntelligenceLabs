@@ -20,7 +20,10 @@
       "artifacts/analysis_summary.csv",
       "artifacts/departmental_performance_profiles.md",
       "artifacts/source_quality_notes.md",
-      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+      "artifacts/figures/agency_concentration.png",
+      "artifacts/figures/award_size_pareto.png",
+      "artifacts/figures/award_timing_mix.png"
     ],
     "claims_checked": [
       "claim-public-awards-panel-built",
@@ -36,11 +39,14 @@
       "artifacts/analysis_summary.csv",
       "artifacts/departmental_performance_profiles.md",
       "artifacts/source_quality_notes.md",
-      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv"
+      "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+      "artifacts/figures/agency_concentration.png",
+      "artifacts/figures/award_size_pareto.png",
+      "artifacts/figures/award_timing_mix.png"
     ],
     "blockers": [],
     "source_path": "research_plan/state/verification_runs.json",
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "updated_at": "2026-05-30T23:37:27Z"
   }
 ]

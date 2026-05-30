@@ -165,6 +165,8 @@ _ANALYSIS_MARKERS = {
     "estimate",
 }
 
+_FIGURE_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".webp", ".pdf"}
+
 
 def _word_count(text: str) -> int:
     import re
@@ -228,6 +230,28 @@ def _has_substantive_data_artifact(project_root: Path, indexes: Any) -> bool:
     return False
 
 
+def _has_research_figure(project_root: Path, artifacts_root: str, indexes: Any, report_text: str) -> bool:
+    import re
+
+    figure_refs = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", report_text or "")
+    for raw_ref in figure_refs:
+        ref = raw_ref.split("#", 1)[0].split("?", 1)[0].strip().strip("<>")
+        if not ref:
+            continue
+        path = Path(ref)
+        if not path.is_absolute():
+            path = project_root / artifacts_root / path
+        if path.exists() and path.suffix.lower() in _FIGURE_SUFFIXES:
+            return True
+
+    for record in getattr(indexes, "artifact_lineage", []) or []:
+        artifact_path = str(getattr(record, "artifact_path", "") or "")
+        path = project_root / artifact_path
+        if path.exists() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg", ".webp"}:
+            return True
+    return False
+
+
 def audit_research_quality(project_root: Path, artifacts_root: str, indexes: Any | None = None) -> dict[str, Any]:
     """Fail closeout when the final artifact is packaged but not research.
 
@@ -262,6 +286,7 @@ def audit_research_quality(project_root: Path, artifacts_root: str, indexes: Any
     subject_claims = _subject_research_claims(indexes)
     has_data = _has_substantive_data_artifact(project_root, indexes)
     has_table = "|" in combined_text and "---" in combined_text
+    has_figure = _has_research_figure(project_root, artifacts_root, indexes, combined_text)
     analysis_hits = sorted(marker for marker in _ANALYSIS_MARKERS if marker in lowered)
 
     if words < 900:
@@ -283,6 +308,8 @@ def audit_research_quality(project_root: Path, artifacts_root: str, indexes: Any
             blockers.append(f"Final report is missing an explicit {label} section or discussion.")
     if not has_table:
         blockers.append("Final report does not include a results table.")
+    if not has_figure:
+        blockers.append("Final report does not include a rendered figure or visual analytical artifact.")
 
     return {
         "status": "blocked" if blockers else "ready",
@@ -290,6 +317,7 @@ def audit_research_quality(project_root: Path, artifacts_root: str, indexes: Any
         "wordCount": words,
         "subjectClaimCount": len(subject_claims),
         "analysisMarkers": analysis_hits,
+        "hasFigure": has_figure,
     }
 
 

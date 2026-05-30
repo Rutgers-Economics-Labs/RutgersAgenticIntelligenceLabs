@@ -23,7 +23,7 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "claim_key": "claim-largest-observed-agency",
@@ -49,7 +49,7 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "claim_key": "claim-department-crosswalk-required",
@@ -74,7 +74,7 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T20:06:59Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "claim_key": "claim-agency-concentration-material",
@@ -100,7 +100,7 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "updated_at": "2026-05-30T23:37:27Z"
   },
   {
     "claim_key": "claim-award-size-skew-material",
@@ -126,6 +126,6 @@
     ],
     "open_questions": [],
     "created_at": "2026-05-30T23:12:14Z",
-    "updated_at": "2026-05-30T23:12:14Z"
+    "updated_at": "2026-05-30T23:37:27Z"
   }
 ]

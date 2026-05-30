@@ -14,6 +14,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parents[1]
@@ -213,6 +218,78 @@ def pct(value: float) -> str:
     return f"{value * 100:.1f}%"
 
 
+def save_agency_chart(path: Path, dashboard_rows: list[dict[str, Any]], total_amount: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    labels = [row["agency"].replace("Department of ", "Dept. ") for row in dashboard_rows]
+    values = [number(row["total_amount"]) / 1_000_000 for row in dashboard_rows]
+    shares = [number(row["total_amount"]) / total_amount * 100 if total_amount else 0 for row in dashboard_rows]
+    fig, ax = plt.subplots(figsize=(9.5, 5.2))
+    bars = ax.barh(labels[::-1], values[::-1], color="#2563eb")
+    ax.set_title("Observed Rutgers Federal Award Dollars Are Concentrated by Sponsor", fontweight="bold", pad=12)
+    ax.set_xlabel("Observed amount ($ millions)")
+    ax.spines[["top", "right"]].set_visible(False)
+    for bar, share in zip(bars, shares[::-1], strict=True):
+        ax.text(bar.get_width(), bar.get_y() + bar.get_height() / 2, f" {share:.1f}%", va="center", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def save_pareto_chart(path: Path, rows: list[dict[str, Any]], total_amount: float) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    amounts = sorted((number(row["amount"]) for row in rows), reverse=True)
+    cumulative = []
+    running = 0.0
+    for amount in amounts:
+        running += amount
+        cumulative.append(running / total_amount * 100 if total_amount else 0)
+    fig, ax = plt.subplots(figsize=(9.5, 5.2))
+    ax.plot(range(1, len(cumulative) + 1), cumulative, color="#b45309", linewidth=2.4)
+    ax.axhline(50, color="#6b7280", linestyle="--", linewidth=1)
+    ax.axvline(10, color="#6b7280", linestyle="--", linewidth=1)
+    ax.set_title("Award-Size Skew: Cumulative Share of Observed Dollars", fontweight="bold", pad=12)
+    ax.set_xlabel("Awards ranked largest to smallest")
+    ax.set_ylabel("Cumulative observed amount (%)")
+    ax.set_ylim(0, 105)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.annotate("Top 10 awards exceed half of observed dollars", xy=(10, cumulative[9]), xytext=(18, 58), arrowprops={"arrowstyle": "->", "color": "#374151"}, fontsize=9)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def save_timing_chart(path: Path, year_rows: list[tuple[str, dict[str, Any]]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    labels = [year for year, _ in year_rows]
+    amounts = [stats["total_amount"] / 1_000_000 for _, stats in year_rows]
+    counts = [stats["award_count"] for _, stats in year_rows]
+    fig, ax1 = plt.subplots(figsize=(9.5, 5.2))
+    ax1.bar(labels, amounts, color="#0f766e")
+    ax1.set_ylabel("Observed amount ($ millions)")
+    ax1.tick_params(axis="x", rotation=25)
+    ax2 = ax1.twinx()
+    ax2.plot(labels, counts, color="#7c2d12", marker="o", linewidth=2)
+    ax2.set_ylabel("Award records")
+    ax1.set_title("Timing Mix: Continuing Awards Dominate Dollar Exposure", fontweight="bold", pad=12)
+    ax1.spines["top"].set_visible(False)
+    ax2.spines["top"].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def build_figures(rows: list[dict[str, Any]], dashboard_rows: list[dict[str, Any]], year_rows: list[tuple[str, dict[str, Any]]], total_amount: float) -> list[str]:
+    figure_dir = ARTIFACTS_DIR / "figures"
+    save_agency_chart(figure_dir / "agency_concentration.png", dashboard_rows, total_amount)
+    save_pareto_chart(figure_dir / "award_size_pareto.png", rows, total_amount)
+    save_timing_chart(figure_dir / "award_timing_mix.png", year_rows)
+    return [
+        "artifacts/figures/agency_concentration.png",
+        "artifacts/figures/award_size_pareto.png",
+        "artifacts/figures/award_timing_mix.png",
+    ]
+
+
 def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
     fields = ["source", "award_id", "recipient", "agency", "program_or_title", "amount", "start_date", "end_date", "fiscal_year"]
     processed_path = PROCESSED_DIR / "federal_awards_rutgers_fy2021_fy2025.csv"
@@ -260,6 +337,7 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
     for row in rows:
         source_award_ids[row["source"]].add(row["award_id"])
     overlap_ids = set.intersection(*source_award_ids.values()) if len(source_award_ids) > 1 else set()
+    figure_paths = build_figures(rows, dashboard_rows, year_rows, total_amount)
 
     analysis_rows = [
         {"metric": "observed_award_records", "value": f"{len(rows)}", "interpretation": "Rutgers-matching active public award records in the query window."},
@@ -305,6 +383,10 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "",
         "The agency comparison indicates that public Rutgers award exposure is not evenly distributed across federal sponsors. HHS dominates the observed dollar volume, while NSF contributes a larger share of research-award records than of total dollars. This matters for institutional planning because aggregate federal exposure can look healthy while still being vulnerable to changes in a few sponsor programs or long-running cooperative agreements.",
         "",
+        "![Figure 1. Observed award dollars by federal sponsor.](figures/agency_concentration.png)",
+        "",
+        "Figure 1 is the main substantive result. The public award slice is not a broad, evenly diversified sponsor portfolio; it is dominated by a small set of agencies, especially HHS. That does not mean Rutgers' internal sponsored-research ledger has the same composition, because the public query includes continuing awards and assistance-style records, but it does mean any serious department or strategy analysis must normalize by sponsor exposure before drawing conclusions.",
+        "",
         "| Analysis metric | Value | Interpretation |",
         "| --- | ---: | --- |",
     ]
@@ -324,7 +406,15 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "",
             "The top-award comparison is the clearest substantive finding: Rutgers' public federal award profile in this slice is highly skewed. A small number of large HHS and Education records dominate the dollar total, while NSF adds many smaller research records. A simple top-award share and HHI benchmark are therefore more informative than raw counts alone. The result does not imply that Rutgers research is over-dependent on HHS in the audited internal ledger, but it does show that the public federal award signal is concentrated enough that any department ranking must normalize by sponsor, award type, and continuation status.",
             "",
+            "![Figure 2. Cumulative award dollars ranked largest to smallest.](figures/award_size_pareto.png)",
+            "",
+            "Figure 2 shows why counts are a weak analytical unit for this question. The first ten records account for more than half of observed dollars, so an award-count dashboard would overstate the importance of high-volume small-award sponsors and understate the planning risk tied to a few very large continuing records.",
+            "",
             "## Annual Snapshot",
+            "",
+            "![Figure 3. Observed amount and record count by fiscal-year timing bucket.](figures/award_timing_mix.png)",
+            "",
+            "Figure 3 makes the timing caveat visible. Most observed dollars come from awards active in the window but beginning before FY2021, so this report should be read as exposure during FY2021-FY2025 rather than a clean series of new awards initiated during those years.",
             "",
             "| Fiscal year | Award records | Observed amount |",
             "| --- | ---: | ---: |",
@@ -368,12 +458,13 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
     subprocess.run(
         [
             pandoc,
-            str(ARTIFACTS_DIR / "federal_research_grants_report.md"),
+            "federal_research_grants_report.md",
             "-o",
             str(ARTIFACTS_DIR / "federal_research_grants_report.pdf"),
             "--pdf-engine=xelatex",
         ],
         check=True,
+        cwd=ARTIFACTS_DIR,
     )
 
     profile_lines = [
@@ -415,6 +506,7 @@ def build_outputs(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "top_10_share": top_10_total / total_amount if total_amount else 0.0,
         "pre_window_share": float(pre_window["total_amount"]) / total_amount if total_amount else 0.0,
         "row_count": len(rows),
+        "figure_paths": figure_paths,
     }
 
 
@@ -539,6 +631,7 @@ def register_truth(summary: dict[str, Any]) -> None:
         "artifacts/departmental_performance_profiles.md",
         "artifacts/source_quality_notes.md",
         "topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv",
+        *summary["figure_paths"],
     ]
     repo.upsert_verification_run(
         {
@@ -649,6 +742,26 @@ def register_truth(summary: dict[str, Any]) -> None:
             "reproducibility_mode": "deterministic",
         },
     ]
+    for figure_path in summary["figure_paths"]:
+        lineage.append(
+            {
+                "artifact_path": figure_path,
+                "artifact_type": "figure",
+                "title": Path(figure_path).stem.replace("_", " ").title(),
+                "promotion_state": "partially_verified",
+                "inputs": ["topics/data/processed/federal_awards_rutgers_fy2021_fy2025.csv", "artifacts/funding_dashboard.csv", "artifacts/analysis_summary.csv"],
+                "scripts": ["scripts/build_research_artifacts.py"],
+                "sources": ["research_plan/state/sources.json#usaspending-rutgers-federal-assistance", "research_plan/state/sources.json#nsf-award-search-rutgers"],
+                "claims": [
+                    "research_plan/state/claims.json#claim-largest-observed-agency",
+                    "research_plan/state/claims.json#claim-agency-concentration-material",
+                    "research_plan/state/claims.json#claim-award-size-skew-material",
+                ],
+                "verification_commands": ["scripts/run-verification.sh"],
+                "verification_runs": [verification_ref],
+                "reproducibility_mode": "deterministic",
+            }
+        )
     for record in lineage:
         repo.upsert_artifact_lineage(record)
 

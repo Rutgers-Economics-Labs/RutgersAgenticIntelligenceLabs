@@ -1,6 +1,6 @@
 # Federal Research Grant Funding Analysis at Rutgers University
 
-Generated: 2026-05-30T23:12:12Z
+Generated: 2026-05-30T23:37:24Z
 
 ## Research Question
 
@@ -27,6 +27,10 @@ The deterministic pipeline queries USAspending for Rutgers-matching assistance a
 
 The agency comparison indicates that public Rutgers award exposure is not evenly distributed across federal sponsors. HHS dominates the observed dollar volume, while NSF contributes a larger share of research-award records than of total dollars. This matters for institutional planning because aggregate federal exposure can look healthy while still being vulnerable to changes in a few sponsor programs or long-running cooperative agreements.
 
+![Figure 1. Observed award dollars by federal sponsor.](figures/agency_concentration.png)
+
+Figure 1 is the main substantive result. The public award slice is not a broad, evenly diversified sponsor portfolio; it is dominated by a small set of agencies, especially HHS. That does not mean Rutgers' internal sponsored-research ledger has the same composition, because the public query includes continuing awards and assistance-style records, but it does mean any serious department or strategy analysis must normalize by sponsor exposure before drawing conclusions.
+
 | Analysis metric | Value | Interpretation |
 | --- | ---: | --- |
 | observed_award_records | 107 | Rutgers-matching active public award records in the query window. |
@@ -42,7 +46,15 @@ The agency comparison indicates that public Rutgers award exposure is not evenly
 
 The top-award comparison is the clearest substantive finding: Rutgers' public federal award profile in this slice is highly skewed. A small number of large HHS and Education records dominate the dollar total, while NSF adds many smaller research records. A simple top-award share and HHI benchmark are therefore more informative than raw counts alone. The result does not imply that Rutgers research is over-dependent on HHS in the audited internal ledger, but it does show that the public federal award signal is concentrated enough that any department ranking must normalize by sponsor, award type, and continuation status.
 
+![Figure 2. Cumulative award dollars ranked largest to smallest.](figures/award_size_pareto.png)
+
+Figure 2 shows why counts are a weak analytical unit for this question. The first ten records account for more than half of observed dollars, so an award-count dashboard would overstate the importance of high-volume small-award sponsors and understate the planning risk tied to a few very large continuing records.
+
 ## Annual Snapshot
+
+![Figure 3. Observed amount and record count by fiscal-year timing bucket.](figures/award_timing_mix.png)
+
+Figure 3 makes the timing caveat visible. Most observed dollars come from awards active in the window but beginning before FY2021, so this report should be read as exposure during FY2021-FY2025 rather than a clean series of new awards initiated during those years.
 
 | Fiscal year | Award records | Observed amount |
 | --- | ---: | ---: |

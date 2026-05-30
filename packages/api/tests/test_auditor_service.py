@@ -460,6 +460,102 @@ More data is required before analysis.
     assert any("analysis markers" in blocker for blocker in result["blockers"])
 
 
+def test_audit_research_quality_requires_visual_analysis(tmp_path: Path):
+    from app.services import auditor_service
+    from rail.integrity import ResearchIntegrityRepo
+
+    (tmp_path / "artifacts").mkdir(parents=True)
+    (tmp_path / "topics" / "data").mkdir(parents=True)
+    long_analysis = " ".join(
+        [
+            "The analysis compares benchmark rates, concentration, robustness, trend, estimate, model, and share diagnostics across groups."
+            for _ in range(95)
+        ]
+    )
+    (tmp_path / "artifacts" / "final_report.md").write_text(
+        f"""# Final Report
+
+## Research Question
+
+How do observed outcomes vary across groups?
+
+## Method
+
+The method estimates descriptive comparison, concentration, trend, and robustness diagnostics from the panel.
+
+## Findings
+
+{long_analysis}
+
+| Metric | Value | Interpretation |
+| --- | ---: | --- |
+| concentration | 0.42 | Concentrated exposure |
+| comparison_rate | 0.31 | Cross-group rate difference |
+
+## Limitations
+
+The model is descriptive, not causal.
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "topics" / "data" / "panel.csv").write_text(
+        "id,group,value,year\n" + "\n".join(f"{idx},A,{idx},2024" for idx in range(25)) + "\n",
+        encoding="utf-8",
+    )
+    repo = ResearchIntegrityRepo(tmp_path)
+    repo.ensure_files_exist()
+    repo.upsert_source(
+        {
+            "source_key": "public-api",
+            "source_type": "api",
+            "title": "Public API",
+            "url_or_path": "https://example.test/api",
+            "freshness_status": "fresh",
+            "admissibility_status": "observed",
+            "quality_status": "validated",
+        }
+    )
+    for idx in range(2):
+        repo.upsert_claim(
+            {
+                "claim_key": f"claim-visual-{idx}",
+                "claim_text": f"Observed outcomes differ across groups in benchmark analysis {idx}.",
+                "evidence_paths": ["artifacts/final_report.md", "topics/data/panel.csv"],
+                "source_keys": ["public-api"],
+                "evidence_kind": "derived",
+                "status": "supported",
+            }
+        )
+    repo.upsert_artifact_lineage(
+        {
+            "artifact_path": "artifacts/final_report.md",
+            "artifact_type": "report",
+            "title": "Final Report",
+            "promotion_state": "partially_verified",
+            "inputs": ["topics/data/panel.csv"],
+            "sources": ["research_plan/state/sources.json#public-api"],
+            "claims": [
+                "research_plan/state/claims.json#claim-visual-0",
+                "research_plan/state/claims.json#claim-visual-1",
+            ],
+        }
+    )
+    repo.upsert_artifact_lineage(
+        {
+            "artifact_path": "topics/data/panel.csv",
+            "artifact_type": "dataset",
+            "title": "Panel",
+            "promotion_state": "partially_verified",
+        }
+    )
+
+    result = auditor_service.audit_research_quality(tmp_path, "artifacts")
+
+    assert result["status"] == "blocked"
+    assert result["hasFigure"] is False
+    assert any("rendered figure" in blocker for blocker in result["blockers"])
+
+
 def test_build_auditor_statuses_ignores_latex_intermediates_for_closeout_artifact_lineage(tmp_path: Path, monkeypatch):
     from app.services import auditor_service
     from rail.integrity import ResearchIntegrityRepo
