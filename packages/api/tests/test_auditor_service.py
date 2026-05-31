@@ -556,6 +556,100 @@ The model is descriptive, not causal.
     assert any("rendered figure" in blocker for blocker in result["blockers"])
 
 
+def test_audit_research_design_blocks_incomplete_causal_contract(tmp_path: Path):
+    from app.services import auditor_service
+    from rail.integrity import ResearchIntegrityRepo
+
+    (tmp_path / "specs").mkdir(parents=True)
+    (tmp_path / "research_plan").mkdir(parents=True)
+    (tmp_path / "specs" / "research_design.yaml").write_text(
+        """schema_version: 1
+research_type: causal
+causal_claim_allowed: true
+claim_strength_policy:
+  allowed_claim_types: [descriptive, correlational, causal]
+causal_identification:
+  treatment: ""
+  outcome: Award volume
+  unit_of_analysis: University-year
+  comparison_group: ""
+  timing: ""
+  identifying_assumption: ""
+  threats_to_identification: []
+estimation:
+  primary_method: difference-in-differences
+  analysis_scripts: []
+  model_output_artifacts: []
+  requires_standard_errors: true
+robustness:
+  required_checks: [pre_trends, placebo]
+  completed_checks: []
+  artifacts: []
+review:
+  requires_reviewer_critique: true
+  reviewer_critique_path: research_plan/reviewer_2_report.md
+""",
+        encoding="utf-8",
+    )
+    repo = ResearchIntegrityRepo(tmp_path)
+    repo.ensure_files_exist()
+
+    result = auditor_service.audit_research_design(tmp_path, "specs/research_design.yaml")
+
+    assert result["status"] == "blocked"
+    assert result["researchType"] == "causal"
+    assert any("treatment/exposure" in blocker for blocker in result["blockers"])
+    assert any("comparison group" in blocker for blocker in result["blockers"])
+    assert any("estimation scripts" in blocker for blocker in result["blockers"])
+    assert any("reviewer critique" in blocker for blocker in result["blockers"])
+
+
+def test_audit_research_design_allows_descriptive_contract_with_critique(tmp_path: Path):
+    from app.services import auditor_service
+    from rail.integrity import ResearchIntegrityRepo
+
+    (tmp_path / "specs").mkdir(parents=True)
+    (tmp_path / "research_plan").mkdir(parents=True)
+    (tmp_path / "research_plan" / "reviewer_2_report.md").write_text("# Reviewer 2\n\nDescriptive scope is appropriate.\n", encoding="utf-8")
+    (tmp_path / "specs" / "research_design.yaml").write_text(
+        """schema_version: 1
+research_type: descriptive
+causal_claim_allowed: false
+claim_strength_policy:
+  allowed_claim_types: [descriptive, correlational]
+  forbidden_without_identification: [causal, policy_effect, treatment_effect]
+causal_identification:
+  treatment: ""
+  outcome: ""
+  unit_of_analysis: ""
+  comparison_group: ""
+  timing: ""
+  identifying_assumption: ""
+  threats_to_identification: []
+estimation:
+  primary_method: descriptive statistics
+  analysis_scripts: []
+  model_output_artifacts: []
+  requires_standard_errors: false
+robustness:
+  required_checks: []
+  completed_checks: []
+  artifacts: []
+review:
+  requires_reviewer_critique: true
+  reviewer_critique_path: research_plan/reviewer_2_report.md
+""",
+        encoding="utf-8",
+    )
+    repo = ResearchIntegrityRepo(tmp_path)
+    repo.ensure_files_exist()
+
+    result = auditor_service.audit_research_design(tmp_path, "specs/research_design.yaml")
+
+    assert result["status"] == "ready"
+    assert result["causalClaimAllowed"] is False
+
+
 def test_build_auditor_statuses_ignores_latex_intermediates_for_closeout_artifact_lineage(tmp_path: Path, monkeypatch):
     from app.services import auditor_service
     from rail.integrity import ResearchIntegrityRepo

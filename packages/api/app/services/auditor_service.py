@@ -252,6 +252,122 @@ def _has_research_figure(project_root: Path, artifacts_root: str, indexes: Any, 
     return False
 
 
+def _load_research_design(project_root: Path, design_path: str) -> tuple[dict[str, Any] | None, str | None]:
+    path = project_root / design_path
+    if not path.exists():
+        return None, f"Missing research design contract at {design_path}."
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return None, f"Could not parse research design contract at {design_path}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"Research design contract at {design_path} must be a mapping."
+    return data, None
+
+
+def _nonempty(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _artifact_exists(project_root: Path, artifact_path: str) -> bool:
+    return bool(artifact_path and (project_root / artifact_path).exists())
+
+
+def _claims_by_strength(indexes: Any, strengths: set[str]) -> list[Any]:
+    claims = []
+    for claim in getattr(indexes, "claims", []) or []:
+        metadata = getattr(claim, "metadata", None) or {}
+        strength = str(metadata.get("claim_type") or metadata.get("strength") or "").strip().lower()
+        text = str(getattr(claim, "claim_text", "") or "").lower()
+        if strength in strengths or (not strength and "causal" in strengths and any(token in text for token in ("caused", "effect of", "impact of", "increased due to", "reduced due to"))):
+            claims.append(claim)
+    return claims
+
+
+def audit_research_design(project_root: Path, design_path: str, indexes: Any | None = None) -> dict[str, Any]:
+    """Verify the project declares what kind of research it is allowed to close."""
+    indexes = indexes or load_integrity_indexes(project_root)
+    blockers: list[str] = []
+    design, parse_error = _load_research_design(project_root, design_path)
+    if parse_error:
+        return {"status": "blocked", "blockers": [parse_error], "researchType": "unknown"}
+    assert design is not None
+
+    research_type = str(design.get("research_type") or "").strip().lower()
+    allowed_types = {"descriptive", "correlational", "predictive", "causal", "literature_review", "policy"}
+    if research_type not in allowed_types:
+        blockers.append(f"Research design must declare research_type as one of {sorted(allowed_types)}.")
+
+    claim_policy = design.get("claim_strength_policy") or {}
+    causal_claims = _claims_by_strength(indexes, {"causal", "policy_effect", "treatment_effect"})
+    causal_allowed = bool(design.get("causal_claim_allowed"))
+    if causal_claims and not causal_allowed:
+        blockers.append("Causal-strength claims are present but research_design.yaml sets causal_claim_allowed=false.")
+
+    review = design.get("review") or {}
+    if review.get("requires_reviewer_critique", True):
+        critique_path = str(review.get("reviewer_critique_path") or "research_plan/reviewer_2_report.md")
+        if not _artifact_exists(project_root, critique_path):
+            blockers.append(f"Missing reviewer critique required by research design: {critique_path}.")
+
+    if research_type == "causal":
+        identification = design.get("causal_identification") or {}
+        required_identification = {
+            "treatment": "treatment/exposure",
+            "outcome": "outcome",
+            "unit_of_analysis": "unit of analysis",
+            "comparison_group": "comparison group",
+            "timing": "treatment timing",
+            "identifying_assumption": "identifying assumption",
+        }
+        for key, label in required_identification.items():
+            if not _nonempty(identification.get(key)):
+                blockers.append(f"Causal design is missing {label}.")
+        if not _nonempty(identification.get("threats_to_identification")):
+            blockers.append("Causal design must list threats to identification.")
+
+        estimation = design.get("estimation") or {}
+        for path in estimation.get("analysis_scripts") or []:
+            if not _artifact_exists(project_root, str(path)):
+                blockers.append(f"Causal estimation script is missing: {path}.")
+        if not _nonempty(estimation.get("analysis_scripts")):
+            blockers.append("Causal design must list reproducible estimation scripts.")
+        if not _nonempty(estimation.get("model_output_artifacts")):
+            blockers.append("Causal design must list model output artifacts.")
+        for path in estimation.get("model_output_artifacts") or []:
+            if not _artifact_exists(project_root, str(path)):
+                blockers.append(f"Causal model output artifact is missing: {path}.")
+
+        robustness = design.get("robustness") or {}
+        required_checks = {str(item).strip() for item in (robustness.get("required_checks") or []) if str(item).strip()}
+        completed_checks = {str(item).strip() for item in (robustness.get("completed_checks") or []) if str(item).strip()}
+        missing_checks = sorted(required_checks - completed_checks)
+        if missing_checks:
+            blockers.append(f"Causal robustness checks are incomplete: {', '.join(missing_checks)}.")
+        if required_checks and not _nonempty(robustness.get("artifacts")):
+            blockers.append("Causal robustness artifacts are missing.")
+        for path in robustness.get("artifacts") or []:
+            if not _artifact_exists(project_root, str(path)):
+                blockers.append(f"Causal robustness artifact is missing: {path}.")
+
+    return {
+        "status": "blocked" if blockers else "ready",
+        "blockers": blockers,
+        "researchType": research_type or "unknown",
+        "causalClaimAllowed": causal_allowed,
+        "causalClaimCount": len(causal_claims),
+        "allowedClaimTypes": claim_policy.get("allowed_claim_types") or [],
+    }
+
+
 def audit_research_quality(project_root: Path, artifacts_root: str, indexes: Any | None = None) -> dict[str, Any]:
     """Fail closeout when the final artifact is packaged but not research.
 
@@ -469,6 +585,7 @@ async def build_auditor_statuses(
 
     integrity_status: dict[str, Any] = {"status": "ready", "blockers": []}
     critic_status: dict[str, Any] = {"status": "ready", "blockers": []}
+    research_design_status: dict[str, Any] = {"status": "ready", "blockers": []}
     research_quality_status: dict[str, Any] = {"status": "ready", "blockers": []}
     closeout_status: dict[str, Any] = {"status": "ready", "blockers": []}
     if root and root.exists() and (root / "rail.yaml").is_file():
@@ -500,6 +617,7 @@ async def build_auditor_statuses(
             critic_blockers.append(f"{len(weakened_or_rejected)} hypothesis(es) flagged by critic review: {sample}.")
         if critic_blockers:
             critic_status = {"status": "blocked", "blockers": critic_blockers}
+        research_design_status = audit_research_design(root, manifest.research.design_path, indexes)
         research_quality_status = audit_research_quality(root, manifest.paths.artifacts_root, indexes)
         unfinished = [task for task in (tasks or []) if task.get("status") not in {"done", "cancelled"}]
         closeout_blockers: list[str] = []
@@ -541,6 +659,8 @@ async def build_auditor_statuses(
             closeout_blockers.extend([str(item) for item in (closeout_gate.get("reasons") or [])[:3]])
         if research_quality_status.get("status") == "blocked":
             closeout_blockers.extend([str(item) for item in (research_quality_status.get("blockers") or [])[:3]])
+        if research_design_status.get("status") == "blocked":
+            closeout_blockers.extend([str(item) for item in (research_design_status.get("blockers") or [])[:3]])
         if closeout_blockers:
             closeout_status = {"status": "blocked", "blockers": closeout_blockers}
 
@@ -556,7 +676,7 @@ async def build_auditor_statuses(
     # Critic findings (weakened/rejected hypotheses) are advisory for research
     # but blocking for promotion.
     research_blocking = {"session", "planner"}
-    promotion_blocking = {"session", "planner", "ontology", "integrity", "critic", "research_quality", "closeout"}
+    promotion_blocking = {"session", "planner", "ontology", "integrity", "critic", "research_design", "research_quality", "closeout"}
 
     auditors = {
         "session": session_status,
@@ -564,6 +684,7 @@ async def build_auditor_statuses(
         "ontology": ontology_status,
         "integrity": integrity_status,
         "critic": critic_status,
+        "research_design": research_design_status,
         "research_quality": research_quality_status,
         "closeout": closeout_status,
     }
