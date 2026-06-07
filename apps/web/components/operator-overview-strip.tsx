@@ -3,17 +3,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { BlockerCategory, CommandCenter } from "@/lib/types";
-import { StatusPill } from "@/components/status-pill";
 import { FetchDataHydrateButton } from "@/components/fetch-data-hydrate-button";
-
-const AUDITOR_LABELS: Record<string, string> = {
-  session: "Sessions",
-  planner: "Planner",
-  ontology: "Ontology",
-  integrity: "Integrity",
-  critic: "Critic",
-  closeout: "Closeout",
-};
 
 const CATEGORY_COLORS: Record<BlockerCategory, { fg: string; bg: string; border: string }> = {
   approval_required: { fg: "#92400e", bg: "rgba(251, 191, 36, 0.18)", border: "rgba(251, 191, 36, 0.55)" },
@@ -84,128 +74,221 @@ export function OperatorOverviewStrip({
   const goalPhase = center.goal?.phase;
   const goalConfidence = center.goal?.dashboard?.autonomyConfidence;
   const goalBlocker = center.goal?.currentBlocker;
+  const phaseDisplay = compactPhase(goalPhase ?? derivePhase(center));
+  const confidenceDisplay = compactConfidence(goalConfidence);
+  const workerDisplay = compactWorker(center.activeSessions[0]);
+  const ontologyDisplay = compactOntology(hydrationState, classPreviewItem(slug, ontologyClassPreview, hydrationState).detail);
+  const nextActionDisplay = compactNextAction(center.nextAction);
+  const blockerHeadline = compactBlocker(
+    goalBlocker || center.currentBlocker || center.blockerSummary?.headline || "No active blocker.",
+  );
+  const focusItems = [
+    center.pendingApprovals.length
+      ? {
+          title: `${center.pendingApprovals.length} approval${center.pendingApprovals.length === 1 ? "" : "s"} waiting`,
+          detail: "Review these before the planner can dispatch more work.",
+          href: `/projects/${slug}/review`,
+        }
+      : null,
+    center.recommendedRepairTask
+      ? {
+          title: center.recommendedRepairTask.title,
+          detail: center.recommendedRepairTask.reason ?? "Repair work is queued before research should continue.",
+          href: `/projects/${slug}/integrity`,
+        }
+      : null,
+    classPreviewItem(slug, ontologyClassPreview, hydrationState),
+    center.activeSessions.length
+      ? {
+          title: `${center.activeSessions.length} live worker session${center.activeSessions.length === 1 ? "" : "s"}`,
+          detail: "Open Runs to inspect live execution and post-run review state.",
+          href: `/projects/${slug}/runs`,
+        }
+      : {
+          title: "No workers are running",
+          detail: "Use Planner or Launch when the queue is ready to resume execution.",
+          href: `/projects/${slug}/planner`,
+        },
+  ].filter(Boolean) as Array<{ title: string; detail: string; href: string }>;
+
+  const signalItems = [
+    {
+      label: "Plan summary",
+      value: center.currentPlan.summary || center.nextAction || "No durable summary yet.",
+    },
+    {
+      label: "Task queue",
+      value: `${center.taskCounts.byStatus.running ?? 0} running · ${center.taskCounts.byStatus.awaiting_approval ?? 0} waiting · ${center.taskCounts.byStatus.ready ?? 0} ready`,
+    },
+    {
+      label: "Evidence",
+      value: `${center.recentArtifacts.length} recent artifacts · ${center.sourceSummary.count} tracked sources`,
+    },
+  ];
 
   return (
     <div className="operator-overview-root">
+      {center.missionBrief ? (
+        <div className="operator-brief-panel">
+          <div className="operator-brief-header">
+            <div className="rail-label">Planner Brief</div>
+            {(center.missionBrief.sourceRole || center.missionBrief.sourceStatus) ? (
+              <div className="mono-muted">
+                from latest {center.missionBrief.sourceRole ?? "agent"} session
+                {center.missionBrief.sourceStatus ? ` · ${center.missionBrief.sourceStatus.replaceAll("_", " ")}` : ""}
+              </div>
+            ) : null}
+          </div>
+          <div className="operator-brief-grid">
+            <div className="operator-brief-block">
+              <div className="rail-label">What is here now</div>
+              <p className="operator-brief-copy">{center.missionBrief.current}</p>
+            </div>
+            <div className="operator-brief-block">
+              <div className="rail-label">What should happen next</div>
+              <p className="operator-brief-copy">{center.missionBrief.next}</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div className="operator-strip-row">
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 24, flex: 1 }}>
-          <OverviewCell label="Phase" value={goalPhase ?? derivePhase(center)} />
+        <div className="operator-summary-grid">
+          <OverviewCell label="Phase" value={phaseDisplay} />
           <OverviewCell
             label="Confidence"
-            value={typeof goalConfidence === "number" ? `${Math.round(goalConfidence * 100)}%` : "unknown"}
+            value={confidenceDisplay}
           />
           <OverviewCell
             label="Active worker"
-            value={
-              center.activeSessions.length
-                ? `${center.activeSessions[0]?.role ?? "agent"} (${center.activeSessions[0]?.status ?? "unknown"})`
-                : "none"
-            }
+            value={workerDisplay}
           />
-          <div>
+          <OverviewCell label="Ontology" value={ontologyDisplay} />
+          <div className="operator-blocker-card">
             <div className="rail-label">Blocking gate</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 4, maxWidth: 320 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 6, maxWidth: 480 }}>
               <BlockerCategoryChip
                 category={center.blockerSummary?.category ?? "clear"}
                 label={center.blockerSummary?.categoryLabel ?? "Clear"}
                 fixHref={center.blockerSummary?.fixHref}
               />
-              <div
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  color: "var(--fg)",
-                  lineHeight: 1.3,
-                }}
-              >
-                {goalBlocker || center.currentBlocker || center.blockerSummary?.headline || "No active blocker."}
-              </div>
+              <div className="operator-blocker-copy">{blockerHeadline}</div>
               {center.blockerSummary?.fixHref && center.blockerSummary.category !== "clear" ? (
-                <Link
-                  href={center.blockerSummary.fixHref as any}
-                  style={{
-                    fontFamily: "JetBrains Mono, monospace",
-                    fontSize: 10,
-                    letterSpacing: "0.06em",
-                    color: "var(--muted)",
-                  }}
-                >
+                <Link href={center.blockerSummary.fixHref as any} className="operator-blocker-link">
                   Resolve in {center.blockerSummary.fixSection} →
                 </Link>
               ) : null}
             </div>
           </div>
-          <OverviewCell label="Ontology" value={hydrationState} />
-          <OverviewCell label="Next action" value={center.nextAction} muted />
+          <OverviewCell label="Next action" value={nextActionDisplay} muted />
         </div>
         <FetchDataHydrateButton slug={slug} pipelineSlug={pipelineSlug} />
       </div>
 
       <div className="operator-strip-panels">
-        <Panel title="Auditors" slug={slug} section="integrity">
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {Object.entries(auditors).map(([key, auditor]) => (
-              <div key={key} className="auditor-chip">
-                <MonoMuted>{AUDITOR_LABELS[key] ?? key}</MonoMuted>
-                <div style={{ marginTop: 4 }}>
-                  <StatusPill value={auditor.status} />
-                </div>
-              </div>
+        <Panel title="What Needs Action" slug={slug} section="review">
+          <ul className="operator-focus-list">
+            {focusItems.slice(0, 3).map((item) => (
+              <li key={item.title} className="operator-focus-item">
+                <div style={{ fontWeight: 700, color: "var(--fg)", lineHeight: 1.35 }}>{item.title}</div>
+                <MonoMuted>{item.detail}</MonoMuted>
+                <Link href={item.href as any} className="overview-inline-link">
+                  Open →
+                </Link>
+              </li>
             ))}
-          </div>
+          </ul>
         </Panel>
 
-        <Panel title="Created outputs" slug={slug} section="artifacts">
-          {center.recentArtifacts?.length ? (
-            <ul className="operator-list">
-              {center.recentArtifacts.slice(0, 5).map((artifact) => (
-                <li key={artifact.path}>
-                  <span style={{ fontWeight: 600 }}>{artifact.name}</span>
-                  <MonoMuted> · {artifact.path}</MonoMuted>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <MonoMuted>No artifacts yet.</MonoMuted>
-          )}
-        </Panel>
-
-        <Panel title="Ontology snapshot" slug={slug} section="ontology">
-          {ontologyClassPreview?.length ? (
-            <div className="ontology-grid">
-              {ontologyClassPreview.slice(0, 8).map((item) => (
-                <div key={item.name} style={{ fontSize: 11 }}>
-                  <span style={{ fontWeight: 600 }}>{item.name}</span>
-                  <MonoMuted> {item.count}</MonoMuted>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <MonoMuted>
-              Run fetch & hydrate to populate DuckDB, or open Ontology for the full explorer.
-            </MonoMuted>
-          )}
-        </Panel>
-
-        <Panel title="Agents working now" slug={slug} section="runs">
-          {center.activeSessions.length ? (
-            <ul className="operator-list">
-              {center.activeSessions.map((session) => (
-                <li key={session._id ?? session.id}>
-                  <div style={{ fontWeight: 600 }}>
-                    {(session.role ?? "agent").toUpperCase()} · {session.status}
-                  </div>
-                  <MonoMuted>{session.title || session.taskId || session._id}</MonoMuted>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <MonoMuted>No live worker sessions. Start autopilot or launch a task.</MonoMuted>
-          )}
+        <Panel title="Project Signal" slug={slug} section="integrity">
+          <ul className="operator-focus-list">
+            {signalItems.map((item) => (
+              <li key={item.label} className="operator-focus-item">
+                <div className="rail-label">{item.label}</div>
+                <div style={{ fontWeight: 700, color: "var(--fg)", lineHeight: 1.35 }}>{item.value}</div>
+              </li>
+            ))}
+          </ul>
         </Panel>
       </div>
     </div>
   );
+}
+
+function compactPhase(value: string): string {
+  const phase = value.replaceAll("_", " ").toLowerCase();
+  if (phase.includes("source discovery")) return "Discover";
+  if (phase.includes("execut")) return "Running";
+  if (phase.includes("closeout")) return "Closeout";
+  if (phase.includes("review")) return "Review";
+  if (phase.includes("closed")) return "Closed";
+  return titleCaseWords(phase);
+}
+
+function compactConfidence(value?: number | null): string {
+  if (typeof value !== "number") return "Unscored";
+  if (value >= 0.8) return "High";
+  if (value >= 0.55) return "Medium";
+  if (value >= 0.3) return "Low";
+  return "Fragile";
+}
+
+function compactWorker(session?: { role?: string; status?: string } | null): string {
+  if (!session) return "Idle";
+  const role = session.role ? titleCaseWords(session.role.replaceAll("_", " ")) : "Agent";
+  const status = session.status ? compactPhase(session.status) : "Live";
+  return `${role} · ${status}`;
+}
+
+function compactOntology(state: string, detail?: string): string {
+  if (state === "stale_on_this_device" || state === "not_hydrated") return "Needs hydration";
+  if (state === "research-first" || state === "not_applicable") return "Not needed";
+  if (state === "ready" || state === "hydrated") return "Ready";
+  if (detail?.toLowerCase().includes("class data")) return "Ready";
+  return titleCaseWords(state.replaceAll("_", " "));
+}
+
+function compactNextAction(value: string): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (!text) return "Open planner";
+  if (/review pending approvals/i.test(text)) return "Review approvals";
+  if (/hydrate/i.test(text)) return "Hydrate data";
+  return text.length > 42 ? `${text.slice(0, 39)}...` : text;
+}
+
+function compactBlocker(value: string): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+function titleCaseWords(value: string): string {
+  return value
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function classPreviewItem(
+  slug: string,
+  ontologyClassPreview: Array<{ name: string; count: number }> | undefined,
+  hydrationState: string,
+): { title: string; detail: string; href: string } {
+  if (ontologyClassPreview?.length) {
+    const primary = ontologyClassPreview
+      .slice(0, 3)
+      .map((item) => `${item.name} ${item.count}`)
+      .join(" · ");
+    return {
+      title: "Ontology has local class data",
+      detail: primary,
+      href: `/projects/${slug}/ontology`,
+    };
+  }
+  return {
+    title: hydrationState === "stale_on_this_device" ? "Ontology needs local hydration" : "Ontology is still sparse",
+    detail: "Hydrate locally or open Ontology for the explorer and class coverage details.",
+    href: `/projects/${slug}/ontology`,
+  };
 }
 
 function derivePhase(center: CommandCenter): string {
@@ -230,17 +313,9 @@ function OverviewCell({
   muted?: boolean;
 }) {
   return (
-    <div>
+    <div className="operator-stat-card">
       <div className="rail-label">{label}</div>
-      <div
-        style={{
-          fontSize: 13,
-          fontWeight: muted ? 500 : 700,
-          color: muted ? "var(--muted)" : "var(--fg)",
-          marginTop: 4,
-          maxWidth: 280,
-        }}
-      >
+      <div className={`operator-stat-value${muted ? " muted" : ""}`} style={{ maxWidth: 280 }}>
         {value}
       </div>
     </div>

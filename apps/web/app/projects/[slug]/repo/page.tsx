@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { PageIntro } from "@/components/page-intro";
 import { ProjectShell } from "@/components/project-shell";
 import { fetchRepoPath } from "@/lib/api";
 
@@ -172,6 +173,14 @@ export default async function RepoPage({
       section="repo"
       rightRail={<RepoRightRail slug={slug} selectedPath={selectedPath} />}
     >
+      <PageIntro
+        title="Inspect the repo mirror that backs this project."
+        detail="Use Repo when you need to read plans, prompts, scripts, ontology files, or generated artifacts directly. For workflow decisions, stay in Planner or Review."
+        actions={[
+          { label: "Open Planner", href: `/projects/${slug}/planner` },
+          { label: "Back to Overview", href: `/projects/${slug}` },
+        ]}
+      />
       {fetchError && (
         <div style={{
           padding: "8px 16px",

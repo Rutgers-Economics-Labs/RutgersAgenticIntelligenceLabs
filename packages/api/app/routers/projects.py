@@ -86,6 +86,13 @@ from app.services.autonomy_policy import activity_key_for_role, evaluate_autonom
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+async def _refresh_project_record(slug: str) -> dict | None:
+    try:
+        return await planner_service.resolve_project_reference(slug)
+    except Exception:
+        return None
+
+
 def _resolve_session_path(project: dict, session: dict) -> str | None:
     session_path = session.get("sessionPath")
     if session_path:

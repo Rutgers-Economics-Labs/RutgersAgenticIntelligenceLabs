@@ -22,6 +22,7 @@ async def test_build_preview_returns_repo_backed_assets():
     assert any(file["path"] == "research_plan/graph/summary.yaml" for file in preview["repoFiles"])
     assert preview["ontology"]["slug"].endswith("-ontology")
     assert preview["pipeline"]["slug"].endswith("-pipeline")
+    assert any(file["path"] == "specs/research_design.yaml" for file in preview["repoFiles"])
 
 
 def test_render_repo_files_includes_graph_and_topics():
@@ -62,3 +63,6 @@ def test_render_repo_files_includes_graph_and_topics():
     assert "topics/brief.md" in paths
     assert "topics/source_notes.md" in paths
     assert "research_plan/graph/sources.yaml" in paths
+    design = next(file for file in files if file["path"] == "specs/research_design.yaml")
+    assert "research_type: causal" in design["content"]
+    assert "identifying_assumption" in design["content"]

@@ -175,13 +175,19 @@ async def raise_decision_event(
         from app.services import planner_runtime
 
         prompt = await build_planner_decision_prompt(project, event)
-        result = await planner_runtime.run_planner_turn(
-            project=project,
-            user_message=prompt,
-            persist=True,
-        )
+        try:
+            result = await planner_runtime.run_planner_turn(
+                project=project,
+                user_message=prompt,
+                persist=True,
+            )
+        except Exception as exc:
+            result = {"assistantMessage": f"Planner wake failed: {exc}"}
         event.plannerRunAt = session_files.utc_now_iso()
-        event.plannerResponse = str(result.get("assistantMessage") or "Planner turn completed.")
+        if isinstance(result, dict):
+            event.plannerResponse = str(result.get("assistantMessage") or "Planner turn completed.")
+        else:
+            event.plannerResponse = "Planner turn completed."
         event.updatedAt = event.plannerRunAt
         path.write_text(_render_decision(event), encoding="utf-8")
 

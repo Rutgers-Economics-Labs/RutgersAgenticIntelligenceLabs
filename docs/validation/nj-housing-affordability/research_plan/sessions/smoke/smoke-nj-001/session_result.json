@@ -1,9 +1,0 @@
-{
-  "session_id": "smoke-nj-001",
-  "work_order_id": "wo_9264644440f9",
-  "status": "completed",
-  "summary": "Read README.md and wrote a one-line summary identifying the project as the NJ Housing Affordability and Labor Market Study to topics/data/smoke_summary.md.",
-  "task_type": "data_ingestion",
-  "runner_name": "claude_code",
-  "files_changed": ["topics/data/smoke_summary.md"]
-}

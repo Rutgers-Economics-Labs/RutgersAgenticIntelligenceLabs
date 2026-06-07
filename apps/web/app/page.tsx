@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ProjectCatalogAction } from "@/components/project-catalog-actions";
 import { StatusPill } from "@/components/status-pill";
-import { fetchProjectCatalog, fetchCommandCenter } from "@/lib/api";
+import { fetchProjectCatalog } from "@/lib/api";
 import { ProjectCatalogItem } from "@/lib/types";
 
 const FALLBACK_PROJECTS: ProjectCatalogItem[] = [
@@ -28,31 +28,14 @@ async function loadProjects(): Promise<ProjectCatalogItem[]> {
   }
 }
 
-type Progress = { done: number; total: number };
-
-async function loadProgressMap(projects: ProjectCatalogItem[]): Promise<Record<string, Progress>> {
-  const withBackend = projects.filter((p) => p.backendProject?.slug);
-  const results = await Promise.allSettled(withBackend.map((p) => fetchCommandCenter(p.slug)));
-  const map: Record<string, Progress> = {};
-  withBackend.forEach((p, i) => {
-    const r = results[i];
-    if (r.status === "fulfilled") {
-      const counts = r.value.taskCounts;
-      const done = (counts.byStatus["done"] ?? 0) + (counts.byStatus["completed"] ?? 0);
-      map[p.slug] = { done, total: counts.total };
-    }
-  });
-  return map;
-}
-
 function progressColor(pct: number): string {
   if (pct >= 0.8) return "#22c55e";
   if (pct >= 0.4) return "#f59e0b";
   return "var(--muted)";
 }
 
-function ProgressBar({ progress }: { progress: Progress }) {
-  const pct = progress.total > 0 ? progress.done / progress.total : 0;
+function ProgressBar({ progress }: { progress: NonNullable<ProjectCatalogItem["progress"]> }) {
+  const pct = progress.total > 0 ? progress.closed / progress.total : 0;
   return (
     <div style={{ marginTop: 7 }}>
       <div
@@ -81,7 +64,7 @@ function ProgressBar({ progress }: { progress: Progress }) {
           color: "var(--muted)",
         }}
       >
-        {progress.done} / {progress.total} tasks done
+        {progress.closed} / {progress.total} tasks closed
       </div>
     </div>
   );
@@ -89,7 +72,6 @@ function ProgressBar({ progress }: { progress: Progress }) {
 
 export default async function LandingPage() {
   const projects = await loadProjects();
-  const progressMap = await loadProgressMap(projects).catch(() => ({} as Record<string, Progress>));
 
   return (
     <div
@@ -196,7 +178,7 @@ export default async function LandingPage() {
           </div>
           {projects.map((project) => {
             const backendReady = Boolean(project.backendProject?.slug);
-            const progress = progressMap[project.slug];
+            const progress = project.progress;
             return (
               <div
                 key={project.slug}

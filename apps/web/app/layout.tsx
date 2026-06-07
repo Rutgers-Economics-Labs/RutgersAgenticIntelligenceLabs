@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   title: "RAIL Command Center",
   description: "Planner-first command center for RAIL projects",
   icons: {
+    icon: "/favicon.svg",
+    shortcut: "/favicon.svg",
     apple: "/rel-logo.jpeg"
   }
 };

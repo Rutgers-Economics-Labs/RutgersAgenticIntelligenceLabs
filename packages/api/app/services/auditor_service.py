@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import csv
 
 from app.services.hydration_registry_service import get_hydration_status
 from app.services.integrity_service import evaluate_integrity_gate, load_integrity_indexes
 from app.services.question_expansion_service import missing_expansion_task_blockers, parse_follow_up_questions
 from app.services.reconciliation_service import (
+    _artifact_path_is_registry_candidate,
     _artifact_path_should_ignore_drift,
     project_reality_status,
 )
@@ -123,10 +125,316 @@ def _list_final_artifact_files(project_root: Path, artifacts_root: str) -> list[
         if any(part.startswith(".") for part in relative_path.parts):
             continue
         relative = str(relative_path).replace("\\", "/")
-        if _artifact_path_should_ignore_drift(relative):
+        if _artifact_path_should_ignore_drift(relative) or not _artifact_path_is_registry_candidate(relative):
             continue
         files.append(relative)
     return sorted(files)
+
+
+_PLATFORM_CLAIM_MARKERS = {
+    "ontology",
+    "hydration",
+    "rail",
+    "verification",
+    "lineage",
+    "closeout",
+    "artifact",
+    "pipeline",
+    "registry",
+}
+
+_ANALYSIS_MARKERS = {
+    "analysis",
+    "model",
+    "regression",
+    "difference-in-differences",
+    "did",
+    "counterfactual",
+    "benchmark",
+    "trend",
+    "decomposition",
+    "robustness",
+    "statistical",
+    "correlation",
+    "comparison",
+    "concentration",
+    "hhi",
+    "share",
+    "normalized",
+    "rate",
+    "estimate",
+}
+
+_FIGURE_SUFFIXES = {".png", ".jpg", ".jpeg", ".svg", ".webp", ".pdf"}
+
+
+def _word_count(text: str) -> int:
+    import re
+
+    return len(re.findall(r"[A-Za-z0-9][A-Za-z0-9'-]*", text or ""))
+
+
+def _artifact_text(project_root: Path, artifact_path: str) -> str:
+    path = project_root / artifact_path
+    if not path.exists():
+        return ""
+    suffix = path.suffix.lower()
+    if suffix in {".md", ".txt", ".tex", ".csv", ".json"}:
+        try:
+            return path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return ""
+    if suffix == ".pdf":
+        # Prefer the canonical source report beside rendered PDFs. Most local
+        # RAIL PDF artifacts are generated from Markdown or TeX, and relying on
+        # that source keeps this auditor dependency-light.
+        for sibling_suffix in (".md", ".tex", ".txt"):
+            sibling = path.with_suffix(sibling_suffix)
+            if sibling.exists():
+                return sibling.read_text(encoding="utf-8", errors="ignore")
+    return ""
+
+
+def _subject_research_claims(indexes: Any) -> list[Any]:
+    claims = []
+    for claim in getattr(indexes, "claims", []) or []:
+        text = str(getattr(claim, "claim_text", "") or "").strip()
+        if not text or not getattr(claim, "source_keys", []):
+            continue
+        lowered = text.lower()
+        marker_hits = sum(1 for marker in _PLATFORM_CLAIM_MARKERS if marker in lowered)
+        if marker_hits >= 2:
+            continue
+        if str(getattr(claim, "status", "") or "") not in {"supported", "partially_verified"}:
+            continue
+        claims.append(claim)
+    return claims
+
+
+def _has_substantive_data_artifact(project_root: Path, indexes: Any) -> bool:
+    for record in getattr(indexes, "artifact_lineage", []) or []:
+        artifact_path = str(getattr(record, "artifact_path", "") or "")
+        if not artifact_path.endswith(".csv"):
+            continue
+        path = project_root / artifact_path
+        if not path.exists():
+            continue
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle))
+        except Exception:
+            continue
+        fields = rows[0].keys() if rows else []
+        if len(rows) >= 20 and len(list(fields)) >= 4:
+            return True
+    return False
+
+
+def _has_research_figure(project_root: Path, artifacts_root: str, indexes: Any, report_text: str) -> bool:
+    import re
+
+    figure_refs = re.findall(r"!\[[^\]]*\]\(([^)]+)\)", report_text or "")
+    for raw_ref in figure_refs:
+        ref = raw_ref.split("#", 1)[0].split("?", 1)[0].strip().strip("<>")
+        if not ref:
+            continue
+        path = Path(ref)
+        if not path.is_absolute():
+            path = project_root / artifacts_root / path
+        if path.exists() and path.suffix.lower() in _FIGURE_SUFFIXES:
+            return True
+
+    for record in getattr(indexes, "artifact_lineage", []) or []:
+        artifact_path = str(getattr(record, "artifact_path", "") or "")
+        path = project_root / artifact_path
+        if path.exists() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".svg", ".webp"}:
+            return True
+    return False
+
+
+def _load_research_design(project_root: Path, design_path: str) -> tuple[dict[str, Any] | None, str | None]:
+    path = project_root / design_path
+    if not path.exists():
+        return None, f"Missing research design contract at {design_path}."
+    try:
+        import yaml
+
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        return None, f"Could not parse research design contract at {design_path}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"Research design contract at {design_path} must be a mapping."
+    return data, None
+
+
+def _nonempty(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _artifact_exists(project_root: Path, artifact_path: str) -> bool:
+    return bool(artifact_path and (project_root / artifact_path).exists())
+
+
+def _claims_by_strength(indexes: Any, strengths: set[str]) -> list[Any]:
+    claims = []
+    for claim in getattr(indexes, "claims", []) or []:
+        metadata = getattr(claim, "metadata", None) or {}
+        strength = str(metadata.get("claim_type") or metadata.get("strength") or "").strip().lower()
+        text = str(getattr(claim, "claim_text", "") or "").lower()
+        if strength in strengths or (not strength and "causal" in strengths and any(token in text for token in ("caused", "effect of", "impact of", "increased due to", "reduced due to"))):
+            claims.append(claim)
+    return claims
+
+
+def audit_research_design(project_root: Path, design_path: str, indexes: Any | None = None) -> dict[str, Any]:
+    """Verify the project declares what kind of research it is allowed to close."""
+    indexes = indexes or load_integrity_indexes(project_root)
+    blockers: list[str] = []
+    design, parse_error = _load_research_design(project_root, design_path)
+    if parse_error:
+        return {"status": "blocked", "blockers": [parse_error], "researchType": "unknown"}
+    assert design is not None
+
+    research_type = str(design.get("research_type") or "").strip().lower()
+    allowed_types = {"descriptive", "correlational", "predictive", "causal", "literature_review", "policy"}
+    if research_type not in allowed_types:
+        blockers.append(f"Research design must declare research_type as one of {sorted(allowed_types)}.")
+
+    claim_policy = design.get("claim_strength_policy") or {}
+    causal_claims = _claims_by_strength(indexes, {"causal", "policy_effect", "treatment_effect"})
+    causal_allowed = bool(design.get("causal_claim_allowed"))
+    if causal_claims and not causal_allowed:
+        blockers.append("Causal-strength claims are present but research_design.yaml sets causal_claim_allowed=false.")
+
+    review = design.get("review") or {}
+    if review.get("requires_reviewer_critique", True):
+        critique_path = str(review.get("reviewer_critique_path") or "research_plan/reviewer_2_report.md")
+        if not _artifact_exists(project_root, critique_path):
+            blockers.append(f"Missing reviewer critique required by research design: {critique_path}.")
+
+    if research_type == "causal":
+        identification = design.get("causal_identification") or {}
+        required_identification = {
+            "treatment": "treatment/exposure",
+            "outcome": "outcome",
+            "unit_of_analysis": "unit of analysis",
+            "comparison_group": "comparison group",
+            "timing": "treatment timing",
+            "identifying_assumption": "identifying assumption",
+        }
+        for key, label in required_identification.items():
+            if not _nonempty(identification.get(key)):
+                blockers.append(f"Causal design is missing {label}.")
+        if not _nonempty(identification.get("threats_to_identification")):
+            blockers.append("Causal design must list threats to identification.")
+
+        estimation = design.get("estimation") or {}
+        for path in estimation.get("analysis_scripts") or []:
+            if not _artifact_exists(project_root, str(path)):
+                blockers.append(f"Causal estimation script is missing: {path}.")
+        if not _nonempty(estimation.get("analysis_scripts")):
+            blockers.append("Causal design must list reproducible estimation scripts.")
+        if not _nonempty(estimation.get("model_output_artifacts")):
+            blockers.append("Causal design must list model output artifacts.")
+        for path in estimation.get("model_output_artifacts") or []:
+            if not _artifact_exists(project_root, str(path)):
+                blockers.append(f"Causal model output artifact is missing: {path}.")
+
+        robustness = design.get("robustness") or {}
+        required_checks = {str(item).strip() for item in (robustness.get("required_checks") or []) if str(item).strip()}
+        completed_checks = {str(item).strip() for item in (robustness.get("completed_checks") or []) if str(item).strip()}
+        missing_checks = sorted(required_checks - completed_checks)
+        if missing_checks:
+            blockers.append(f"Causal robustness checks are incomplete: {', '.join(missing_checks)}.")
+        if required_checks and not _nonempty(robustness.get("artifacts")):
+            blockers.append("Causal robustness artifacts are missing.")
+        for path in robustness.get("artifacts") or []:
+            if not _artifact_exists(project_root, str(path)):
+                blockers.append(f"Causal robustness artifact is missing: {path}.")
+
+    return {
+        "status": "blocked" if blockers else "ready",
+        "blockers": blockers,
+        "researchType": research_type or "unknown",
+        "causalClaimAllowed": causal_allowed,
+        "causalClaimCount": len(causal_claims),
+        "allowedClaimTypes": claim_policy.get("allowed_claim_types") or [],
+    }
+
+
+def audit_research_quality(project_root: Path, artifacts_root: str, indexes: Any | None = None) -> dict[str, Any]:
+    """Fail closeout when the final artifact is packaged but not research.
+
+    This is intentionally heuristic and conservative: it does not grade taste or
+    novelty, but it does require a final report to contain enough question,
+    method, evidence, analysis, and subject-matter claims to avoid passing source
+    inventories or platform-status memos as research papers.
+    """
+    indexes = indexes or load_integrity_indexes(project_root)
+    blockers: list[str] = []
+    report_records = [
+        record
+        for record in getattr(indexes, "artifact_lineage", []) or []
+        if str(getattr(record, "artifact_path", "") or "").startswith(f"{artifacts_root}/")
+        and str(getattr(record, "artifact_type", "") or "") == "report"
+        and str(getattr(record, "promotion_state", "") or "") in {"partially_verified", "verified"}
+        and (project_root / str(getattr(record, "artifact_path", "") or "")).exists()
+    ]
+    finalish = [
+        record
+        for record in report_records
+        if any(token in str(getattr(record, "artifact_path", "") or "").lower() for token in ("final", "paper", "report"))
+        or any(token in str(getattr(record, "title", "") or "").lower() for token in ("final", "paper", "report"))
+    ]
+    candidates = finalish or report_records
+    if not candidates:
+        return {"status": "blocked", "blockers": ["No promoted final research report is registered in artifact lineage."]}
+
+    combined_text = "\n\n".join(_artifact_text(project_root, str(getattr(record, "artifact_path", "") or "")) for record in candidates)
+    lowered = combined_text.lower()
+    words = _word_count(combined_text)
+    subject_claims = _subject_research_claims(indexes)
+    has_data = _has_substantive_data_artifact(project_root, indexes)
+    has_table = "|" in combined_text and "---" in combined_text
+    has_figure = _has_research_figure(project_root, artifacts_root, indexes, combined_text)
+    analysis_hits = sorted(marker for marker in _ANALYSIS_MARKERS if marker in lowered)
+
+    if words < 900:
+        blockers.append(f"Final report is too thin for research closeout ({words} words; expected at least 900).")
+    if len(subject_claims) < 2:
+        blockers.append("Fewer than two supported subject-matter research claims have source-backed evidence.")
+    if not has_data:
+        blockers.append("No substantive analysis dataset/table artifact is registered for the final report.")
+    if len(analysis_hits) < 3:
+        blockers.append("Final report lacks enough analysis markers such as model, trend, benchmark, robustness, comparison, or concentration.")
+    required_sections = {
+        "research question": ("research question", "question"),
+        "method": ("method", "methodology", "design"),
+        "findings": ("finding", "result"),
+        "limitations": ("limitation", "caveat"),
+    }
+    for label, options in required_sections.items():
+        if not any(option in lowered for option in options):
+            blockers.append(f"Final report is missing an explicit {label} section or discussion.")
+    if not has_table:
+        blockers.append("Final report does not include a results table.")
+    if not has_figure:
+        blockers.append("Final report does not include a rendered figure or visual analytical artifact.")
+
+    return {
+        "status": "blocked" if blockers else "ready",
+        "blockers": blockers,
+        "wordCount": words,
+        "subjectClaimCount": len(subject_claims),
+        "analysisMarkers": analysis_hits,
+        "hasFigure": has_figure,
+    }
 
 
 async def audit_ontology_health(
@@ -277,6 +585,8 @@ async def build_auditor_statuses(
 
     integrity_status: dict[str, Any] = {"status": "ready", "blockers": []}
     critic_status: dict[str, Any] = {"status": "ready", "blockers": []}
+    research_design_status: dict[str, Any] = {"status": "ready", "blockers": []}
+    research_quality_status: dict[str, Any] = {"status": "ready", "blockers": []}
     closeout_status: dict[str, Any] = {"status": "ready", "blockers": []}
     if root and root.exists() and (root / "rail.yaml").is_file():
         manifest = load_manifest(root)
@@ -307,6 +617,8 @@ async def build_auditor_statuses(
             critic_blockers.append(f"{len(weakened_or_rejected)} hypothesis(es) flagged by critic review: {sample}.")
         if critic_blockers:
             critic_status = {"status": "blocked", "blockers": critic_blockers}
+        research_design_status = audit_research_design(root, manifest.research.design_path, indexes)
+        research_quality_status = audit_research_quality(root, manifest.paths.artifacts_root, indexes)
         unfinished = [task for task in (tasks or []) if task.get("status") not in {"done", "cancelled"}]
         closeout_blockers: list[str] = []
         if (active_sessions or []):
@@ -345,6 +657,10 @@ async def build_auditor_statuses(
         closeout_gate = evaluate_integrity_gate(root, manifest, action="closeout")
         if closeout_gate.get("blocked"):
             closeout_blockers.extend([str(item) for item in (closeout_gate.get("reasons") or [])[:3]])
+        if research_quality_status.get("status") == "blocked":
+            closeout_blockers.extend([str(item) for item in (research_quality_status.get("blockers") or [])[:3]])
+        if research_design_status.get("status") == "blocked":
+            closeout_blockers.extend([str(item) for item in (research_design_status.get("blockers") or [])[:3]])
         if closeout_blockers:
             closeout_status = {"status": "blocked", "blockers": closeout_blockers}
 
@@ -360,7 +676,7 @@ async def build_auditor_statuses(
     # Critic findings (weakened/rejected hypotheses) are advisory for research
     # but blocking for promotion.
     research_blocking = {"session", "planner"}
-    promotion_blocking = {"session", "planner", "ontology", "integrity", "critic", "closeout"}
+    promotion_blocking = {"session", "planner", "ontology", "integrity", "critic", "research_design", "research_quality", "closeout"}
 
     auditors = {
         "session": session_status,
@@ -368,6 +684,8 @@ async def build_auditor_statuses(
         "ontology": ontology_status,
         "integrity": integrity_status,
         "critic": critic_status,
+        "research_design": research_design_status,
+        "research_quality": research_quality_status,
         "closeout": closeout_status,
     }
 

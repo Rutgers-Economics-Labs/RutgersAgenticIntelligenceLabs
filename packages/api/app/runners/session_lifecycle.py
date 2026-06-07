@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runners.base import RunnerEvent, RunnerEventType, TaskPayload
-from app.runners.cli_base import LocalCLIRunner, runner_runtime_paths
+from app.runners.cli_base import LocalCLIRunner, runner_runtime_paths, _terminate_local_cli_process_tree
 from app.runners.factory import RunnerFactory
 from app.runners.contracts import (
     Capability,
@@ -3244,8 +3244,25 @@ async def cancel_runner_session(
             "status": state.get("status") or "running",
         }
 
-    external_id = session.get("externalSessionId")
     runner_name = session.get("runner", "jules")
+    if runner_name in LOCAL_CLI_RUNNERS and root and root.exists():
+        runtime = runner_runtime_paths(str(root))
+        pid = None
+        if runtime["pid"].exists():
+            try:
+                pid = int(runtime["pid"].read_text(encoding="utf-8").strip() or "0")
+            except ValueError:
+                pid = None
+        workspace_path = None
+        try:
+            command_payload = json.loads(runtime["command"].read_text(encoding="utf-8"))
+            workspace_path = command_payload.get("cwd")
+        except Exception:
+            workspace_path = str((session.get("workspacePath") or root))
+        if pid and pid > 0:
+            _terminate_local_cli_process_tree(pid, workspace_path=workspace_path)
+
+    external_id = session.get("externalSessionId")
     if external_id:
         try:
             api_key = (

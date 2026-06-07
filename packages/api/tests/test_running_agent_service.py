@@ -359,6 +359,71 @@ def test_create_running_agent_falls_back_to_local_state_on_convex_timeout(monkey
     assert session["status"] == "queued"
 
 
+def test_local_project_create_running_agent_does_not_call_convex(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _mutation(path: str, payload: dict):
+        raise AssertionError("Convex mutation should not be called for local projects")
+
+    monkeypatch.setattr(running_agent_service.convex, "mutation", _mutation)
+    monkeypatch.setattr(running_agent_service, "_LOCAL_RUNNING_AGENTS", {})
+
+    session_id = asyncio.run(
+        running_agent_service.create_running_agent(
+            project_id="local:demo-project",
+            project_slug="demo-project",
+            task_id="task-1",
+            runtime_kind="codex_cli",
+            role="coding",
+            title="Run local coding task",
+            session_path="/tmp/session",
+        )
+    )
+
+    assert session_id.startswith("local_runner_")
+    session = asyncio.run(running_agent_service.get_running_agent(session_id))
+    assert session is not None
+    assert session["projectId"] == "local:demo-project"
+    assert session["sessionPath"] == "/tmp/session"
+
+
+def test_local_project_list_running_agents_does_not_call_convex(monkeypatch):
+    from app.services import running_agent_service
+
+    async def _query(path: str, payload: dict):
+        raise AssertionError("Convex query should not be called for local projects")
+
+    monkeypatch.setattr(running_agent_service.convex, "query", _query)
+    monkeypatch.setattr(
+        running_agent_service,
+        "_LOCAL_RUNNING_AGENTS",
+        {
+            "local_runner_demo": {
+                "_id": "local_runner_demo",
+                "projectId": "local:demo-project",
+                "projectSlug": "demo-project",
+                "taskId": "task-1",
+                "runner": "codex_cli",
+                "role": "coding",
+                "title": "Run local coding task",
+                "externalSessionId": "",
+                "sessionPath": "",
+                "status": "running",
+            }
+        },
+    )
+
+    sessions = asyncio.run(
+        running_agent_service.list_project_running_agents(
+            "local:demo-project",
+            active_only=True,
+        )
+    )
+
+    assert len(sessions) == 1
+    assert sessions[0]["_id"] == "local_runner_demo"
+
+
 def test_update_and_finalize_local_running_agent(monkeypatch):
     from app.services import running_agent_service
 

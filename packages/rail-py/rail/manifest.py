@@ -208,9 +208,10 @@ class ResearchSection(BaseModel):
 
     brief_path: str = "topics/brief.md"
     spec_path: str = "specs/research_question.yaml"
+    design_path: str = "specs/research_design.yaml"
     question_policy: ResearchQuestionPolicySection = Field(default_factory=ResearchQuestionPolicySection)
 
-    @field_validator("brief_path", "spec_path")
+    @field_validator("brief_path", "spec_path", "design_path")
     @classmethod
     def _validate_relative_paths(cls, value: str) -> str:
         return _validate_repo_relative_path(value)

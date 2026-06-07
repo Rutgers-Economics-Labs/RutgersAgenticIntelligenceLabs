@@ -247,9 +247,11 @@ def render_repo_files(
         "deliverables": graph.get("deliverables", []),
         "controls": graph.get("controls", []),
     }
+    design = _research_design_contract(graph)
     summary = summarize_readiness(sources)
     files = [
         {"path": "specs/research_question.yaml", "content": yaml.safe_dump(question, sort_keys=False, allow_unicode=False)},
+        {"path": "specs/research_design.yaml", "content": yaml.safe_dump(design, sort_keys=False, allow_unicode=False)},
         {"path": "research_plan/current_plan.md", "content": _current_plan_md(project, graph, sources)},
         {"path": "research_plan/task_board.md", "content": _task_board_md(sources)},
         {"path": "research_plan/graph/summary.yaml", "content": yaml.safe_dump(graph, sort_keys=False, allow_unicode=False)},
@@ -316,6 +318,59 @@ def _normalize_graph(graph: dict[str, Any]) -> dict[str, Any]:
     if not normalized["summary"]:
         normalized["summary"] = normalized["objective"] or "Research kickoff generated from a brief."
     return normalized
+
+
+def _research_design_contract(graph: dict[str, Any]) -> dict[str, Any]:
+    methods = [item.lower() for item in graph.get("methods", [])]
+    objective = str(graph.get("objective") or graph.get("summary") or "").lower()
+    causal_signals = {
+        "causal",
+        "effect",
+        "impact",
+        "difference-in-differences",
+        "diff-in-diff",
+        "event study",
+        "regression discontinuity",
+        "instrumental variable",
+        "synthetic control",
+    }
+    claims_causal_intent = any(signal in objective for signal in causal_signals) or any(
+        any(signal in method for signal in causal_signals) for method in methods
+    )
+    research_type = "causal" if claims_causal_intent else "descriptive"
+    return {
+        "schema_version": 1,
+        "research_type": research_type,
+        "causal_claim_allowed": research_type == "causal",
+        "claim_strength_policy": {
+            "allowed_claim_types": ["descriptive", "correlational"] if research_type != "causal" else ["descriptive", "correlational", "causal"],
+            "forbidden_without_identification": ["causal", "policy_effect", "treatment_effect"],
+        },
+        "causal_identification": {
+            "treatment": "",
+            "outcome": (graph.get("outcomes") or [""])[0] if graph.get("outcomes") else "",
+            "unit_of_analysis": (graph.get("units_of_analysis") or [""])[0] if graph.get("units_of_analysis") else "",
+            "comparison_group": "",
+            "timing": "",
+            "identifying_assumption": "",
+            "threats_to_identification": [],
+        },
+        "estimation": {
+            "primary_method": (graph.get("methods") or [""])[0] if graph.get("methods") else "",
+            "analysis_scripts": [],
+            "model_output_artifacts": [],
+            "requires_standard_errors": research_type == "causal",
+        },
+        "robustness": {
+            "required_checks": ["pre_trends", "placebo", "alternative_specification", "sample_sensitivity"] if research_type == "causal" else [],
+            "completed_checks": [],
+            "artifacts": [],
+        },
+        "review": {
+            "requires_reviewer_critique": True,
+            "reviewer_critique_path": "research_plan/reviewer_2_report.md",
+        },
+    }
 
 
 def _heuristic_graph(brief: str) -> dict[str, Any]:

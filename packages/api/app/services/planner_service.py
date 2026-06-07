@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -275,11 +276,147 @@ def get_project_by_slug_path(project_root: Path, slug: str) -> Path:
     return project_root / "research_plan" / "tasks" / f"{slug}.md"
 
 
+def _candidate_local_project_roots(slug: str) -> list[Path]:
+    repo_root = Path(__file__).resolve().parents[4]
+    configured_base = Path(os.environ.get("RAIL_PROJECTS_DIR", str(repo_root))).expanduser().resolve()
+    candidates = [
+        configured_base / slug,
+        configured_base / "generated_projects" / slug,
+        repo_root / slug,
+        repo_root / "generated_projects" / slug,
+    ]
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _candidate_local_project_bases() -> list[Path]:
+    repo_root = Path(__file__).resolve().parents[4]
+    configured_base = Path(os.environ.get("RAIL_PROJECTS_DIR", str(repo_root))).expanduser().resolve()
+    candidates = [
+        configured_base,
+        configured_base / "generated_projects",
+        repo_root,
+        repo_root / "generated_projects",
+    ]
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen or not resolved.exists() or not resolved.is_dir():
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _infer_github_repo(url: str | None) -> str | None:
+    value = str(url or "").strip()
+    if not value:
+        return None
+    if value.endswith(".git"):
+        value = value[:-4]
+    if "github.com/" in value:
+        return value.split("github.com/", 1)[1].strip("/")
+    return value or None
+
+
+def _local_project_record_from_repo(slug: str) -> dict[str, Any] | None:
+    for root in _candidate_local_project_roots(slug):
+        manifest_path = root / "rail.yaml"
+        if not manifest_path.exists():
+            continue
+        try:
+            raw = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            continue
+        project_meta = raw.get("project") if isinstance(raw.get("project"), dict) else {}
+        hydration_meta = raw.get("hydration") if isinstance(raw.get("hydration"), dict) else {}
+        autonomy_meta = raw.get("autonomy") if isinstance(raw.get("autonomy"), dict) else {}
+        git_repo_url = project_meta.get("git_repo_url") or project_meta.get("gitRepoUrl")
+        return {
+            "_id": f"local:{slug}",
+            "name": project_meta.get("name") or slug,
+            "slug": project_meta.get("slug") or slug,
+            "description": project_meta.get("description") or "",
+            "status": "ready",
+            "localRepoPath": str(root),
+            "manifestPath": "rail.yaml",
+            "defaultBranch": project_meta.get("default_branch") or project_meta.get("defaultBranch") or "main",
+            "gitRepoUrl": git_repo_url,
+            "github": _infer_github_repo(git_repo_url),
+            "agentModel": project_meta.get("agent_model") or project_meta.get("agentModel"),
+            "apiConfigSlugs": list(hydration_meta.get("linked_sources") or []),
+            "pipelineConfigSlug": hydration_meta.get("default_pipeline") or hydration_meta.get("pipeline"),
+            "ontologyConfigSlug": hydration_meta.get("ontology_file"),
+            "githubSyncMode": autonomy_meta.get("mode"),
+        }
+    return None
+
+
+def _iter_local_project_records() -> list[dict[str, Any]]:
+    projects: list[dict[str, Any]] = []
+    seen_slugs: set[str] = set()
+    for base in _candidate_local_project_bases():
+        for root in sorted(base.iterdir()):
+            if not root.is_dir():
+                continue
+            slug = root.name
+            if slug in seen_slugs:
+                continue
+            project = _local_project_record_from_repo(slug)
+            if not project:
+                continue
+            seen_slugs.add(slug)
+            projects.append(project)
+    return projects
+
+
+def _merge_repo_truth(project: dict[str, Any]) -> dict[str, Any]:
+    slug = str(project.get("slug") or "").strip()
+    if not slug:
+        return project
+    local_project = _local_project_record_from_repo(slug)
+    if not local_project:
+        return project
+    merged = dict(project)
+    merged.update(local_project)
+    if project.get("_id"):
+        merged["_id"] = project["_id"]
+    return merged
+
+
 async def get_project_by_slug(slug: str) -> dict:
-    project = await convex.query("projects:getBySlug", {"slug": slug})
-    if not project:
-        raise ValueError(f"Project '{slug}' not found")
-    return project
+    local_project = _local_project_record_from_repo(slug)
+    try:
+        project = await convex.query("projects:getBySlug", {"slug": slug})
+    except Exception:
+        project = None
+    if project:
+        return _merge_repo_truth(project)
+    if local_project:
+        return local_project
+    raise ValueError(f"Project '{slug}' not found")
+
+
+async def get_project_by_github_repo(repo: str) -> dict:
+    normalized_repo = str(repo or "").strip().lower()
+    try:
+        project = await convex.query("projects:getByGithubRepo", {"github": repo})
+    except Exception:
+        project = None
+    if project:
+        return _merge_repo_truth(project)
+    for project in _iter_local_project_records():
+        if str(project.get("github") or "").strip().lower() == normalized_repo:
+            return project
+    raise ValueError(f"Project linked to repo '{repo}' not found")
 
 
 async def resolve_project_reference(project_ref: str | None) -> dict[str, Any] | None:
@@ -599,7 +736,12 @@ def _terminal_task_patch_from_session_state(state: dict[str, Any], session_id: s
 def _task_explicitly_reopened(task: dict[str, Any]) -> bool:
     status = str(task.get("status") or "").strip().lower()
     summary = str(task.get("latestRunSummary") or "").strip()
-    return status in {"backlog", "ready", "awaiting_approval", "running"} and summary.startswith("Reopened by Autopilot")
+    return status in {"backlog", "ready", "awaiting_approval", "running"} and summary.startswith(
+        (
+            "Reopened by Autopilot",
+            "Hydration state is ",
+        )
+    )
 
 
 def _task_has_explicit_terminal_resolution(task: dict[str, Any], patch: dict[str, Any]) -> bool:
@@ -644,6 +786,9 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
         task = task_by_id.get(task_id)
         if task is None:
             continue
+        if str(task.get("status") or "").strip().lower() in {"done", "cancelled", "superseded"}:
+            continue
+        task_path = _task_root(root) / f"{task_id}.md"
         patch = _terminal_task_patch_from_session_state(state, str(state.get("session_id") or session_root.name))
         if patch is None:
             continue

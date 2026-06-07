@@ -22,6 +22,14 @@ LEGACY_SESSION_STATUS_ALIASES = {
 _LOCAL_RUNNING_AGENTS: dict[str, dict[str, Any]] = {}
 
 
+def _is_local_project_id(project_id: str | None) -> bool:
+    return str(project_id or "").startswith("local:")
+
+
+def _is_local_session_id(session_id: str | None) -> bool:
+    return str(session_id or "").startswith("local_runner_")
+
+
 def _normalize_role_alias(role: str | None) -> str | None:
     if role in {None, ""}:
         return None
@@ -135,9 +143,11 @@ def _merge_cached_session_record(session_id: str, session: dict[str, Any] | None
 
 
 async def _safe_list_sessions(project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    if _is_local_project_id(project_id):
+        return []
     try:
         return await convex.query("agent:listByProjectId", {"projectId": project_id, "limit": limit}) or []
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
+    except Exception as exc:
         logger.warning("running_agent_service: transient Convex failure listing sessions for %s: %s", project_id, exc)
         return []
 
@@ -259,6 +269,23 @@ async def create_running_agent(
     role = _normalize_role_alias(role) or "agent"
     status = _normalize_session_status(status, strict=True) or "queued"
     runtime_kind = _normalize_runner_name(runtime_kind, strict=True) or "codex_cli"
+    if _is_local_project_id(project_id):
+        local_session_id = f"local_runner_{uuid.uuid4().hex[:12]}"
+        return _store_local_running_agent(
+            _make_local_running_agent_record(
+                session_id=local_session_id,
+                project_id=project_id,
+                project_slug=project_slug,
+                task_id=task_id,
+                runtime_kind=runtime_kind,
+                role=role,
+                title=title,
+                external_session_id=external_session_id,
+                session_path=session_path,
+                status=status,
+            )
+        )
+
     # Convex agent:createSession validator (from schema inspection):
     #   required: title, model
     #   optional: externalSessionId, projectId, projectSlug, role, runner, status, taskId
@@ -295,7 +322,7 @@ async def create_running_agent(
             )
         )
         return session_id
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
+    except Exception as exc:
         logger.warning("running_agent_service: falling back to local running-agent state after Convex failure: %s", exc)
         local_session_id = f"local_runner_{uuid.uuid4().hex[:12]}"
         return _store_local_running_agent(
@@ -323,10 +350,14 @@ async def update_running_agent(session_id: str, **fields: Any) -> None:
             current["externalSessionId"] = fields["externalSessionId"]
         if fields.get("endedAt") is not None:
             current["endedAt"] = fields["endedAt"]
+        if fields.get("sessionPath") is not None:
+            current["sessionPath"] = fields["sessionPath"]
         current["lastHeartbeatAt"] = int(time.time() * 1000)
         _LOCAL_RUNNING_AGENTS[session_id] = current
-        if session_id.startswith("local_runner_"):
+        if _is_local_session_id(session_id):
             return
+    elif _is_local_session_id(session_id):
+        return
     # Convex updateSessionState accepts: status, externalSessionId, endedAt,
     # actualCostUsd, estimatedCostUsd. All other fields are silently dropped.
     _allowed = {"status", "externalSessionId", "endedAt", "actualCostUsd", "estimatedCostUsd"}
@@ -335,17 +366,19 @@ async def update_running_agent(session_id: str, **fields: Any) -> None:
         patch["status"] = _normalize_session_status(patch.get("status"), strict=True)
     try:
         await convex.mutation("agent:updateSessionState", {"sessionId": session_id, **patch})
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
+    except Exception as exc:
         logger.warning("running_agent_service: using cached running-agent state after Convex update failure for %s: %s", session_id, exc)
 
 
 async def get_running_agent(session_id: str) -> dict[str, Any] | None:
     if session_id in _LOCAL_RUNNING_AGENTS:
-        if session_id.startswith("local_runner_"):
+        if _is_local_session_id(session_id):
             return _normalize_session_record(dict(_LOCAL_RUNNING_AGENTS[session_id]))
+    if _is_local_session_id(session_id):
+        return None
     try:
         return _merge_cached_session_record(session_id, await convex.query("agent:getSession", {"sessionId": session_id}))
-    except (httpx.TimeoutException, httpx.TransportError) as exc:
+    except Exception as exc:
         logger.warning("running_agent_service: using cached running-agent state after Convex get failure for %s: %s", session_id, exc)
         return _normalize_session_record(dict(_LOCAL_RUNNING_AGENTS[session_id])) if session_id in _LOCAL_RUNNING_AGENTS else None
 
@@ -381,6 +414,8 @@ async def find_active_worker(project_id: str) -> dict[str, Any] | None:
 async def finalize_running_agent(session_id: str, *, status: str, ended_at: int | None = None) -> None:
     if session_id in _LOCAL_RUNNING_AGENTS:
         await update_running_agent(session_id, status=status, endedAt=ended_at or int(time.time() * 1000))
+        return
+    if _is_local_session_id(session_id):
         return
     await update_running_agent(session_id, status=status, endedAt=ended_at or int(time.time() * 1000))
     try:

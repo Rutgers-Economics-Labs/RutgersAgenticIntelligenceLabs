@@ -277,10 +277,22 @@ def _dependencies_satisfied(task: dict[str, Any], task_by_id: dict[str, dict[str
 
 def _is_ontology_project(project: dict[str, Any]) -> bool:
     root = project.get("localRepoPath")
-    if not root:
+    if root:
+        try:
+            mode = load_manifest(root).project.mode
+            if mode == "research_first":
+                return False
+            if mode == "ontology_first":
+                return True
+        except Exception:
+            pass
+    approach = str(project.get("approach") or "").strip().lower()
+    if approach in {"research-first", "research_first"}:
         return False
     if project.get("approach") == "ontology-first":
         return True
+    if not root:
+        return False
     return (Path(root).resolve() / ".ontology").exists()
 
 
@@ -1007,7 +1019,7 @@ async def _reconcile_ontology_lifecycle_state(project: dict[str, Any], tasks: li
                     ),
                 )
         elif _matches_task_identity(task, ("verify", "non-empty", "ontology")) or _matches_task_identity(task, ("verify", "ontology", "health")):
-            if task.get("status") in {"backlog", "blocked", "awaiting_approval", "cancelled"}:
+            if task.get("status") in {"backlog", "blocked", "awaiting_approval"}:
                 await _update(
                     task,
                     status="ready",
@@ -1044,6 +1056,78 @@ def _has_ready_task_title(tasks: list[dict[str, Any]], title: str) -> bool:
             continue
         return True
     return False
+
+
+def _current_goal_subgoal(project: dict[str, Any]) -> str:
+    try:
+        bundle = goal_service.load_goal_bundle(project)
+    except Exception:
+        return ""
+    return str(((bundle.get("state") or {}).get("currentSubgoal")) or "").strip().lower()
+
+
+def _goal_subgoal_needs_hydration_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("ontology", "hydrate", "hydration", "pipeline"))
+
+
+def _goal_subgoal_needs_source_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("source", "admissible", "dataset provenance", "freshness"))
+
+
+def _goal_subgoal_needs_integrity_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("verification", "integrity", "provenance", "claim", "evidence"))
+
+
+def _goal_subgoal_needs_closeout_work(current_subgoal: str) -> bool:
+    return any(token in current_subgoal for token in ("closeout", "final artifact", "report", "final artifacts"))
+
+
+def _has_ready_goal_matching_task(tasks: list[dict[str, Any]], current_subgoal: str) -> bool:
+    ready_tasks = [
+        task
+        for task in tasks
+        if str(task.get("status") or "") == "ready" and task.get("approvalState") != "pending"
+    ]
+    if _goal_subgoal_needs_hydration_work(current_subgoal):
+        return any(_task_matches_ontology_repair_work(task) or _task_matches_bootstrap_data_work(task) for task in ready_tasks)
+    if _goal_subgoal_needs_source_work(current_subgoal):
+        return any(
+            _task_matches_bootstrap_data_work(task)
+            or any(token in str(task.get("title") or "").lower() for token in ("source", "dataset", "provenance", "freshness"))
+            for task in ready_tasks
+        )
+    if _goal_subgoal_needs_integrity_work(current_subgoal):
+        return any(_task_matches_integrity_repair_work(task) for task in ready_tasks)
+    if _goal_subgoal_needs_closeout_work(current_subgoal):
+        return any(str(task.get("title") or "") == "Resolve closeout blockers" for task in ready_tasks)
+    return False
+
+
+async def _ensure_goal_subgoal_tasks(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> bool:
+    current_subgoal = _current_goal_subgoal(project)
+    if not current_subgoal or _has_ready_goal_matching_task(tasks, current_subgoal):
+        return False
+
+    changed = False
+    if _goal_subgoal_needs_hydration_work(current_subgoal) or _goal_subgoal_needs_source_work(current_subgoal):
+        if await _ensure_ontology_lifecycle_tasks(project, tasks):
+            changed = True
+        elif await _ensure_ontology_repair_task(project, tasks, auditors):
+            changed = True
+
+    if not changed and (_goal_subgoal_needs_integrity_work(current_subgoal) or _goal_subgoal_needs_source_work(current_subgoal)):
+        if await _ensure_integrity_repair_tasks(project, tasks):
+            changed = True
+
+    if not changed and _goal_subgoal_needs_closeout_work(current_subgoal):
+        if await _ensure_closeout_repair_task(project, tasks, auditors):
+            changed = True
+
+    return changed
 
 
 def _should_skip_planner_for_ready_repair(
@@ -1121,6 +1205,7 @@ def _apply_auditor_priority_boosts(
             boost = min(boost, -5)
         if boost:
             task["_autopilotPriorityBoost"] = boost
+    _apply_goal_subgoal_priority_boosts(project, boosted)
     if not project.get("localRepoPath"):
         return boosted
     ranked_hypotheses = command_center_service.rank_hypotheses(project)
@@ -1157,6 +1242,62 @@ def _apply_auditor_priority_boosts(
             continue
         task["_hypothesisPriorityBoost"] = int(round(float(best.get("computedScore") or 0) * 100))
     return boosted
+
+
+def _goal_subgoal_priority_boost(task: dict[str, Any], current_subgoal: str) -> int:
+    if not current_subgoal:
+        return 0
+    subgoal = current_subgoal.strip().lower()
+    if not subgoal:
+        return 0
+
+    title = str(task.get("title") or "").strip().lower()
+    role = str(task.get("agentRole") or task.get("agent_role") or "").strip().lower()
+
+    if title and title in subgoal:
+        return -40
+
+    if any(token in subgoal for token in ("ontology", "hydrate", "hydration", "pipeline")):
+        if _task_matches_ontology_repair_work(task):
+            return -35
+        if _task_matches_bootstrap_data_work(task):
+            return -30
+        if role == "data" and any(token in title for token in ("hydrate", "pipeline", "ontology", "source")):
+            return -20
+
+    if any(token in subgoal for token in ("source", "admissible", "dataset provenance", "freshness")):
+        if _task_matches_bootstrap_data_work(task):
+            return -30
+        if role in {"data", "health"} and any(token in title for token in ("source", "dataset", "provenance", "freshness")):
+            return -20
+
+    if any(token in subgoal for token in ("verification", "integrity", "closeout", "provenance", "claim")):
+        if _task_matches_integrity_repair_work(task):
+            return -30
+        if "closeout" in title or "verification" in title or "reproducibility" in title:
+            return -20
+        if role == "artifact" and any(token in subgoal for token in ("closeout", "final artifact", "report")):
+            return -15
+
+    return 0
+
+
+def _apply_goal_subgoal_priority_boosts(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> None:
+    try:
+        bundle = goal_service.load_goal_bundle(project)
+    except Exception:
+        return
+    if not bundle:
+        return
+    current_subgoal = str(((bundle.get("state") or {}).get("currentSubgoal")) or "").strip()
+    if not current_subgoal:
+        return
+    for task in ready_tasks:
+        goal_boost = _goal_subgoal_priority_boost(task, current_subgoal)
+        if not goal_boost:
+            continue
+        existing = int(task.get("_autopilotPriorityBoost") or 0)
+        task["_autopilotPriorityBoost"] = min(existing, goal_boost)
 
 
 def _task_matches_ontology_repair_work(task: dict[str, Any]) -> bool:
@@ -1215,6 +1356,30 @@ def _is_promotion_role(task: dict[str, Any]) -> bool:
     return role == "artifact"
 
 
+def _is_ontology_repair_task(task: dict[str, Any]) -> bool:
+    title = str(task.get("title") or "").strip().lower()
+    return "ontology" in title and any(token in title for token in ("repair", "hydrate", "health", "readiness"))
+
+
+def _is_integrity_repair_task(task: dict[str, Any]) -> bool:
+    if _task_matches_integrity_repair_work(task):
+        return True
+    title = str(task.get("title") or "").strip().lower()
+    return any(
+        token in title
+        for token in (
+            "integrity",
+            "lineage",
+            "verification",
+            "provenance",
+            "reproducibility",
+            "unsupported claim",
+            "evidence",
+            "artifact registry",
+        )
+    ) and any(token in title for token in ("repair", "resolve", "reconcile", "verify"))
+
+
 def _filter_ready_tasks_for_auditors(
     project: dict[str, Any],
     ready_tasks: list[dict[str, Any]],
@@ -1245,17 +1410,34 @@ def _filter_ready_tasks_for_auditors(
 
     ontology_auditor = (auditors or {}).get("ontology") or {}
     integrity_auditor = (auditors or {}).get("integrity") or {}
-    promotion_blocked = (
-        ontology_auditor.get("status") == "blocked"
-        or integrity_auditor.get("status") == "blocked"
-    )
-    if not promotion_blocked:
+    ontology_blocked = ontology_auditor.get("status") == "blocked"
+    integrity_blocked = integrity_auditor.get("status") == "blocked"
+
+    if not ontology_blocked:
+        filtered = [task for task in filtered if not _is_ontology_repair_task(task)]
+    if not integrity_blocked:
+        filtered = [task for task in filtered if not _is_integrity_repair_task(task)]
+    if not (ontology_blocked or integrity_blocked):
         return filtered
 
-    # Promotion-class tasks (final artifact synthesis, closeout) must wait for
-    # ontology + integrity to clear. Everything else — including draft
-    # research, data ingestion, and coding work — is allowed to keep running.
-    return [task for task in filtered if not _is_promotion_role(task)]
+    repair_tasks = [
+        task
+        for task in filtered
+        if (
+            (ontology_blocked and _is_ontology_repair_task(task))
+            or (integrity_blocked and _is_integrity_repair_task(task))
+        )
+    ]
+    if repair_tasks:
+        return repair_tasks
+
+    # Trust gates are red and no explicit repair task is ready. Avoid launching
+    # content-update work that can amplify stale or unsupported claims.
+    return [
+        task for task in filtered
+        if not _is_promotion_role(task)
+        and str(task.get("agentRole") or task.get("agent_role") or "").strip().lower() in {"coding", "health"}
+    ]
 
 
 def _task_allowed_for_auditors(
@@ -1277,6 +1459,60 @@ def _control_plane_auditor_gate(auditors: dict[str, Any] | None) -> dict[str, An
     if not blockers:
         return {"blocked": False, "blockers": []}
     return {"blocked": True, "blockers": list(dict.fromkeys(blockers))}
+
+
+def _trust_gates_ready_for_closeout(auditors: dict[str, Any] | None) -> bool:
+    auditors = auditors or {}
+    return all(
+        str((auditors.get(key) or {}).get("status") or "") == "ready"
+        for key in ("session", "planner", "ontology", "integrity", "critic")
+    )
+
+
+async def _defer_remaining_tasks_for_green_closeout(
+    project: dict[str, Any],
+    tasks: list[dict[str, Any]],
+    auditors: dict[str, Any] | None,
+) -> bool:
+    """Terminalize stale task debt once evidence/trust gates are already green.
+
+    A project can have older blocked/review/backlog tasks from abandoned repair
+    branches even after deterministic verification and trust auditors are green.
+    Closeout should preserve those as follow-up context, not require another
+    external worker loop just to cancel stale branches.
+    """
+    closeout = (auditors or {}).get("closeout") or {}
+    blockers = [str(item) for item in (closeout.get("blockers") or []) if item]
+    if closeout.get("status") != "blocked":
+        return False
+    if not _trust_gates_ready_for_closeout(auditors):
+        return False
+    if not any("non-terminal task" in blocker for blocker in blockers):
+        return False
+
+    remaining = [
+        task for task in tasks
+        if str(task.get("status") or "") not in {"done", "cancelled"}
+    ]
+    if not remaining:
+        return False
+
+    board = await planner_service.ensure_main_board(project)
+    for task in remaining:
+        await planner_service.update_task(
+            str(task["_id"]),
+            project=project,
+            status="cancelled",
+            blockerCategory=None,
+            approvalState=None,
+            latestRunSummary=(
+                "Deferred by Autopilot closeout because deterministic verification and trust auditors are green; "
+                "preserve this item as optional follow-up outside the completed scope."
+            ),
+        )
+    await planner_service.sync_planner_files(project, board)
+    logger.info("Autopilot: deferred %s remaining task(s) for green closeout on %s", len(remaining), project.get("slug"))
+    return True
 
 
 async def _ensure_control_plane_repair_tasks(
@@ -1301,6 +1537,18 @@ async def _ensure_control_plane_repair_tasks(
     )
     if existing_task is not None:
         existing_status = str(existing_task.get("status") or "")
+        if existing_status == "awaiting_approval" and _autopilot_configs.get(str(project.get("slug") or ""), {}).get("auto_approve"):
+            await planner_service.update_task(
+                str(existing_task["_id"]),
+                project=project,
+                status="ready",
+                blockerCategory=None,
+                approvalState="granted",
+                latestRunSummary="Auto-approved by Autopilot because this control-plane repair is required before safe progress.",
+            )
+            await planner_service.sync_planner_files(project, board)
+            logger.info("Autopilot: auto-approved control-plane repair task for %s", project.get("slug"))
+            return True
         if existing_status in {"ready", "running", "awaiting_approval"}:
             return False
         await planner_service.update_task(
@@ -1444,7 +1692,45 @@ async def _ensure_closeout_repair_task(
     return True
 
 
-def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
+def _goal_mode_planner_context(project: dict[str, Any]) -> str:
+    try:
+        bundle = goal_service.load_goal_bundle(project)
+    except Exception:
+        return ""
+    if not bundle:
+        return ""
+    state = bundle.get("state") or {}
+    contract = bundle.get("contract") or {}
+    success = state.get("success") or {}
+    criteria = success.get("criteria") or []
+    unmet = [item for item in criteria if not bool((item or {}).get("satisfied"))]
+    lines = ["[GOAL MODE CONTEXT]"]
+    objective = str(contract.get("objective") or "").strip()
+    phase = str(state.get("phase") or "").strip()
+    current_subgoal = str(state.get("currentSubgoal") or "").strip()
+    current_blocker = str(state.get("currentBlocker") or "").strip()
+    if objective:
+        lines.append(f"- objective: {objective}")
+    if phase:
+        lines.append(f"- phase: {phase}")
+    if current_subgoal:
+        lines.append(f"- current_subgoal: {current_subgoal}")
+    if current_blocker:
+        lines.append(f"- current_blocker: {current_blocker}")
+    if unmet:
+        lines.append("- unmet_success_criteria:")
+        for item in unmet[:4]:
+            criterion = str((item or {}).get("criterion") or "").strip()
+            reason = str((item or {}).get("reason") or "").strip()
+            if criterion and reason:
+                lines.append(f"  - {criterion} ({reason})")
+            elif criterion:
+                lines.append(f"  - {criterion}")
+    lines.append("- prefer planner work that directly advances the current_subgoal or the first unmet success criterion.")
+    return "\n".join(lines)
+
+
+def _planner_turn_message(project: dict[str, Any], auditors: dict[str, Any] | None) -> str:
     base = (
         "[AUTOPILOT MODE] Analyze the project state. If any tasks are 'ready', use launch_task_runner to start them. "
         "If tasks recently finished, analyze findings. If everything is done, synthesize the final report. "
@@ -1456,21 +1742,28 @@ def _planner_turn_message(auditors: dict[str, Any] | None) -> str:
     closeout = auditors.get("closeout") or {}
 
     if ontology.get("status") == "blocked":
-        return (
+        message = (
             "[AUTOPILOT MODE] Ontology readiness is blocked. Focus only on hydration, source attachment, pipeline repair, "
             "or ontology health verification tasks. Do not plan or synthesize downstream research until ontology blockers are cleared."
         )
+        context = _goal_mode_planner_context(project)
+        return f"{message}\n\n{context}" if context else message
     if integrity.get("status") == "blocked":
-        return (
+        message = (
             "[AUTOPILOT MODE] Integrity is blocked. Focus only on provenance repair, evidence collection, verification, "
             "claim cleanup, or other trust-repair tasks. Do not plan final synthesis or promote analytical outputs until integrity blockers are cleared."
         )
+        context = _goal_mode_planner_context(project)
+        return f"{message}\n\n{context}" if context else message
     if closeout.get("status") == "blocked":
-        return (
+        message = (
             "[AUTOPILOT MODE] Closeout is blocked. Focus only on clearing remaining closeout blockers such as unfinished tasks, "
             "active sessions, ontology issues, or integrity issues. Do not create new speculative research branches."
         )
-    return base
+        context = _goal_mode_planner_context(project)
+        return f"{message}\n\n{context}" if context else message
+    context = _goal_mode_planner_context(project)
+    return f"{base}\n\n{context}" if context else base
 
 
 async def _launch_ready_task(project: dict[str, Any], ready_tasks: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -1684,6 +1977,32 @@ async def _launch_ready_tasks_if_available(
     if not ready_tasks:
         return False
 
+    control_plane_task = next(
+        (
+            task
+            for task in ready_tasks
+            if str(task.get("title") or "") == "Reconcile control-plane drift and stale sessions"
+        ),
+        None,
+    )
+    if control_plane_task is not None:
+        if not _control_plane_auditor_gate(auditors).get("blocked"):
+            await planner_service.update_task(
+                str(control_plane_task["_id"]),
+                project=project,
+                status="cancelled",
+                blockerCategory=None,
+                approvalState=None,
+                latestRunSummary=(
+                    "Superseded: session and planner auditors are ready, so control-plane repair is no longer needed."
+                ),
+                audited_reality_bypass=True,
+            )
+            await planner_service.sync_planner_files(project, await planner_service.ensure_main_board(project))
+            return True
+        await _execute_control_plane_repair_task(project, control_plane_task, project_slug)
+        return True
+
     cancelled_task_ids = {str(t["_id"]) for t in tasks if t.get("status") == "cancelled"}
     for event in await list_decision_events(project, status="open"):
         referenced_cancelled = [
@@ -1710,6 +2029,70 @@ async def _launch_ready_tasks_if_available(
     if launch_result and launch_result.get("error"):
         logger.info("Autopilot: Ready task launch deferred for %s: %s", project_slug, launch_result.get("error"))
     return False
+
+
+async def _execute_control_plane_repair_task(
+    project: dict[str, Any],
+    task: dict[str, Any],
+    project_slug: str,
+) -> None:
+    """Run deterministic control-plane repair in-process instead of spawning an agent.
+
+    Control-plane drift is platform state, not domain research. Launching an
+    external worker to repair stale sessions or task/session metadata can get
+    stuck behind the very approval/lane gates it is meant to clear.
+    """
+    board = await planner_service.ensure_main_board(project)
+    result = await reconcile_project_reality(project)
+    tasks = await planner_service.list_tasks(board["_id"], project=project)
+    active_sessions = await running_agent_service.list_project_running_agents(
+        str(project.get("_id") or ""),
+        active_only=True,
+        limit=50,
+    )
+    auditors = await build_auditor_statuses(project, tasks=tasks, active_sessions=active_sessions)
+    gate = _control_plane_auditor_gate(auditors)
+    task_id = str(task.get("_id") or "")
+    if not task_id:
+        return
+    if gate.get("blocked"):
+        blockers = gate.get("blockers") or []
+        await planner_service.update_task(
+            task_id,
+            project=project,
+            status="blocked",
+            blockerCategory="control_plane_drift",
+            approvalState=None,
+            latestRunSummary=str(blockers[0] if blockers else "Control-plane repair ran but auditors remain blocked."),
+        )
+        _update_config(
+            project_slug,
+            last_action="Control-plane repair still blocked",
+            last_turn_result=str(blockers[0] if blockers else "Control-plane auditors remain blocked."),
+        )
+    else:
+        changed = []
+        for key in ("removedTaskFiles", "updatedTaskIds", "repairedSessionIds", "repairedAuditSessionIds"):
+            values = result.get(key) or []
+            if values:
+                changed.append(f"{key}={len(values)}")
+        await planner_service.update_task(
+            task_id,
+            project=project,
+            status="done",
+            blockerCategory=None,
+            approvalState=None,
+            latestRunSummary=(
+                "Control-plane repair completed from repo truth"
+                + (f" ({', '.join(changed)})." if changed else ".")
+            ),
+        )
+        _update_config(
+            project_slug,
+            last_action="Repaired control-plane drift",
+            last_turn_result="Control-plane auditors are ready.",
+        )
+    await planner_service.sync_planner_files(project, board)
 
 
 async def _reload_tasks_and_auditors(
@@ -1759,14 +2142,37 @@ async def _poll_active_worker_if_present(
         )
     _update_config(project_slug, last_action=f"Polling active worker session: {session_id}")
     logger.info("Autopilot: Waiting for worker %s (%s) to complete...", session_id, active_worker.get("role"))
+    poll_interval_seconds = 5
+    worker_timeout_seconds = _autopilot_configs.get(project_slug, {}).get("worker_timeout_seconds")
+    max_polls = 100
+    if isinstance(worker_timeout_seconds, (int, float)) and worker_timeout_seconds > 0:
+        max_polls = max(1, int((worker_timeout_seconds + poll_interval_seconds - 1) // poll_interval_seconds))
     try:
         await session_lifecycle.poll_session_until_done(
             session_id,
             project_id=project["_id"],
-            max_polls=100,
-            poll_interval_seconds=5,
+            max_polls=max_polls,
+            poll_interval_seconds=poll_interval_seconds,
         )
         logger.info("Worker %s finished.", active_worker["_id"])
+        return "polled"
+    except TimeoutError as exc:
+        logger.warning("Worker %s timed out in autopilot: %s", session_id, exc)
+        try:
+            await session_lifecycle.cancel_runner_session(session_id, project_id=project["_id"])
+        except Exception as cancel_exc:
+            logger.error("Error cancelling timed-out worker %s: %s", session_id, cancel_exc)
+            _update_config(
+                project_slug,
+                last_action=f"Worker session timed out: {session_id}",
+                last_turn_result=f"Worker timed out after {max_polls * poll_interval_seconds}s but cancellation failed: {cancel_exc}",
+            )
+            return "error"
+        _update_config(
+            project_slug,
+            last_action=f"Cancelled timed-out worker session: {session_id}",
+            last_turn_result=f"Worker timed out after {max_polls * poll_interval_seconds}s and was cancelled.",
+        )
         return "polled"
     except Exception as exc:
         logger.error("Error polling worker in autopilot: %s", exc)
@@ -1777,6 +2183,8 @@ async def _poll_active_worker_if_present(
 async def _mark_project_completed(project: dict[str, Any]) -> None:
     project_id = project.get("_id") or project.get("projectId")
     if not project_id:
+        return
+    if str(project_id).startswith("local:"):
         return
     local_repo_path = project.get("localRepoPath")
     repo_root = Path(local_repo_path).resolve() if local_repo_path else None
@@ -2034,6 +2442,24 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
 
         board = await planner_service.ensure_main_board(project)
         tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+        if not tasks and not active_worker and (auditors.get("closeout") or {}).get("status") == "ready":
+            logger.info("Autopilot: No planner tasks remain and closeout is ready. Project goal reached.")
+            _update_config(
+                project_slug,
+                last_action="Completed",
+                last_turn_result="No planner tasks remain and closeout gate passed.",
+            )
+            if goal_mode:
+                goal_service.mark_completed(
+                    project,
+                    summary="Closeout is green and no planner work remains.",
+                )
+            await _mark_project_completed(project)
+            await _disable_autopilot_desired_state(
+                project_slug,
+                auto_approve=bool(_autopilot_configs.get(project_slug, {}).get("auto_approve", False)),
+            )
+            break
         
         # Track B: Ensure research artifacts exist
         if project_root:
@@ -2049,6 +2475,18 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
                 active_sessions=[active_worker] if active_worker else [],
                 autopilot_enabled=bool(config.get("desired_enabled", True)),
             )
+        if await _ensure_goal_subgoal_tasks(project, tasks, auditors):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+            if goal_mode:
+                goal_service.sync_goal_runtime(
+                    project,
+                    tasks=tasks,
+                    auditors=auditors,
+                    reality=reconciliation,
+                    active_sessions=[active_worker] if active_worker else [],
+                    autopilot_enabled=bool(config.get("desired_enabled", True)),
+                )
+            consecutive_idle_turns = 0
         # Track B: Audit-only commit throttling — only meaningful when we have
         # a local project root to track commit cadence against.
         ledger: dict[str, Any] = {}
@@ -2133,6 +2571,11 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
                 except asyncio.TimeoutError:
                     pass
                 continue
+
+        if await _defer_remaining_tasks_for_green_closeout(project, tasks, auditors):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+            consecutive_idle_turns = 0
+            continue
 
         all_done = all(t["status"] in ["done", "cancelled"] for t in tasks)
         if all_done and tasks:
@@ -2221,7 +2664,7 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
             try:
                 await planner_runtime.run_planner_turn(
                     project=project,
-                    user_message=_planner_turn_message(auditors),
+                    user_message=_planner_turn_message(project, auditors),
                     persist=False # Do not spam the chat thread
                 )
                 tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
@@ -2303,6 +2746,11 @@ async def run_autopilot_loop(project_slug: str, *, max_iterations: int | None = 
                 except asyncio.TimeoutError:
                     pass
                 continue
+
+        if await _defer_remaining_tasks_for_green_closeout(project, tasks, auditors):
+            tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])
+            consecutive_idle_turns = 0
+            continue
 
         if await _ensure_integrity_repair_tasks(project, tasks):
             tasks, active_worker, auditors = await _reload_tasks_and_auditors(project, board["_id"])

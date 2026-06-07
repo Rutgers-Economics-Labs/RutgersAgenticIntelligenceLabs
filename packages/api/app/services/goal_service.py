@@ -10,6 +10,7 @@ from rail.manifest import load_manifest
 
 
 GOAL_DIR = Path(".rail") / "goal"
+GOAL_CONTRACT_JSON = Path("research_plan") / "goal.json"
 GOAL_MD = "goal.md"
 GOAL_STATE_JSON = "goal_state.json"
 GOAL_LESSONS_JSON = "goal_lessons.json"
@@ -143,6 +144,10 @@ def _goal_root(project: dict[str, Any]) -> Path:
     return _project_root(project) / GOAL_DIR
 
 
+def _goal_contract_path(project: dict[str, Any]) -> Path:
+    return _project_root(project) / GOAL_CONTRACT_JSON
+
+
 def _goal_path(project: dict[str, Any], filename: str) -> Path:
     return _goal_root(project) / filename
 
@@ -181,6 +186,7 @@ def _ensure_failure_class(value: str) -> str:
 def _default_goal_contract(project: dict[str, Any]) -> dict[str, Any]:
     objective = str(project.get("description") or "").strip() or f"Complete project: {project.get('name') or project.get('slug') or 'Untitled project'}"
     return {
+        "schemaVersion": 1,
         "goalId": f"goal-{uuid.uuid4().hex[:12]}",
         "objective": objective,
         "successCriteria": [
@@ -217,6 +223,28 @@ def _default_goal_contract(project: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _read_canonical_goal_contract(project: dict[str, Any]) -> dict[str, Any]:
+    payload = _read_json(_goal_contract_path(project), {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def _write_canonical_goal_contract(project: dict[str, Any], contract: dict[str, Any]) -> None:
+    payload = {
+        "schemaVersion": int(contract.get("schemaVersion") or 1),
+        "goalId": contract.get("goalId"),
+        "objective": contract.get("objective"),
+        "successCriteria": list(contract.get("successCriteria") or []),
+        "requiredEvidence": list(contract.get("requiredEvidence") or []),
+        "forbiddenShortcuts": list(contract.get("forbiddenShortcuts") or []),
+        "escalationPolicy": list(contract.get("escalationPolicy") or []),
+        "allowedSpend": dict(contract.get("allowedSpend") or {}),
+        "createdAt": contract.get("createdAt"),
+        "updatedAt": contract.get("updatedAt"),
+        "mode": contract.get("mode") or "goal",
+    }
+    _write_json(_goal_contract_path(project), payload)
+
+
 def _render_goal_md(contract: dict[str, Any], state: dict[str, Any]) -> str:
     lines = [
         "# Goal",
@@ -245,6 +273,7 @@ def _render_goal_md(contract: dict[str, Any], state: dict[str, Any]) -> str:
         lines.append(f"- {item}")
     lines.extend(["", "## Runtime", ""])
     lines.append(f"- current_blocker: {state.get('currentBlocker') or 'none'}")
+    lines.append(f"- current_subgoal: {state.get('currentSubgoal') or 'none'}")
     lines.append(f"- autonomy_confidence: `{state.get('autonomyConfidence')}`")
     return "\n".join(lines) + "\n"
 
@@ -259,6 +288,7 @@ def _initial_state(contract: dict[str, Any]) -> dict[str, Any]:
         "phaseHistory": [{"phase": phase, "at": _now(), "reason": "goal contract created"}],
         "status": "active",
         "currentBlocker": None,
+        "currentSubgoal": None,
         "activeFailure": None,
         "lastMeaningfulProgressAt": _now(),
         "autonomyConfidence": 0.55,
@@ -282,6 +312,7 @@ def _initial_state(contract: dict[str, Any]) -> dict[str, Any]:
         "dashboard": {
             "currentPhase": phase,
             "currentBlocker": None,
+            "currentSubgoal": None,
             "retryBudgetUsed": 0,
             "successfulRuns": 0,
             "failedRuns": 0,
@@ -354,6 +385,7 @@ def create_goal_contract(project: dict[str, Any], payload: dict[str, Any]) -> di
     state = _initial_state(contract)
     root = _goal_root(project)
     root.mkdir(parents=True, exist_ok=True)
+    _write_canonical_goal_contract(project, contract)
     _write_markdown(root / GOAL_MD, _render_goal_md(contract, state))
     _write_json(root / GOAL_STATE_JSON, state)
     _write_json(root / GOAL_LESSONS_JSON, _default_list_payload())
@@ -363,6 +395,8 @@ def create_goal_contract(project: dict[str, Any], payload: dict[str, Any]) -> di
 
 
 def ensure_goal_contract(project: dict[str, Any]) -> dict[str, Any]:
+    if _goal_contract_path(project).exists():
+        return load_goal_bundle(project)
     state_path = _goal_path(project, GOAL_STATE_JSON)
     if state_path.exists():
         return load_goal_bundle(project)
@@ -371,23 +405,37 @@ def ensure_goal_contract(project: dict[str, Any]) -> dict[str, Any]:
 
 def load_goal_bundle(project: dict[str, Any]) -> dict[str, Any]:
     root = _goal_root(project)
-    if not root.exists():
+    goal_contract_path = _goal_contract_path(project)
+    if not root.exists() and not goal_contract_path.exists():
         return {}
     default_contract = _default_goal_contract(project)
-    state = _initial_state(default_contract)
-    state = {**state, **_read_json(root / GOAL_STATE_JSON, state)}
+    canonical_contract = _read_canonical_goal_contract(project)
     contract = {
         **default_contract,
-        **dict(state.get("contract") or {}),
+        **canonical_contract,
     }
+    state_path = root / GOAL_STATE_JSON
+    state = _initial_state(contract)
+    state = {**state, **_read_json(state_path, state)}
+    contract = {
+        **contract,
+        **dict(state.get("contract") or {}),
+        **canonical_contract,
+    }
+    state["goalId"] = contract.get("goalId")
+    state["contract"] = contract
+    state = _apply_derived_runtime_fields(state)
     goal_md = (root / GOAL_MD).read_text(encoding="utf-8") if (root / GOAL_MD).exists() else _render_goal_md(contract, state)
     lessons = _read_json(root / GOAL_LESSONS_JSON, _default_list_payload())
     blockers = _read_json(root / GOAL_BLOCKERS_JSON, _default_list_payload())
     decisions = _read_json(root / GOAL_DECISIONS_JSON, _default_list_payload())
     contract_payload = dict(contract)
     contract_path = root / GOAL_MD
-    if contract_path.exists():
-        contract_payload["markdownPath"] = str(contract_path)
+    markdown_path = root / GOAL_MD
+    if markdown_path.exists():
+        contract_payload["markdownPath"] = str(markdown_path)
+    if goal_contract_path.exists():
+        contract_payload["goalJsonPath"] = str(goal_contract_path)
     return {
         "contract": contract_payload,
         "state": state,
@@ -396,6 +444,7 @@ def load_goal_bundle(project: dict[str, Any]) -> dict[str, Any]:
         "decisions": decisions if isinstance(decisions, list) else [],
         "goalMarkdown": goal_md,
         "files": {
+            "goalJson": str(_goal_contract_path(project)),
             "goalMd": str(root / GOAL_MD),
             "goalState": str(root / GOAL_STATE_JSON),
             "goalLessons": str(root / GOAL_LESSONS_JSON),
@@ -412,6 +461,7 @@ def _write_bundle(project: dict[str, Any], contract: dict[str, Any], state: dict
     contract["updatedAt"] = _now()
     state["contract"] = contract
     state["updatedAt"] = _now()
+    _write_canonical_goal_contract(project, contract)
     _write_markdown(root / GOAL_MD, _render_goal_md(contract, state))
     _write_json(root / GOAL_STATE_JSON, state)
     _write_json(root / GOAL_LESSONS_JSON, lessons)
@@ -647,6 +697,148 @@ def _confidence_for_state(phase: str, *, current_blocker: str | None, failed_run
     return max(0.0, min(1.0, round(base, 2)))
 
 
+def _derive_current_subgoal(
+    *,
+    preflight: dict[str, Any],
+    criteria: list[dict[str, Any]],
+    phase: str,
+    current_blocker: str | None,
+) -> str | None:
+    if phase == "completed":
+        return None
+    if not bool(preflight.get("passed")):
+        for check in preflight.get("checks") or []:
+            if not bool((check or {}).get("passed")):
+                detail = str((check or {}).get("detail") or "").strip()
+                name = str((check or {}).get("name") or "").strip()
+                return detail or name or "Repair preflight blockers."
+        return current_blocker or "Repair preflight blockers."
+    for item in criteria:
+        if not bool((item or {}).get("satisfied")):
+            criterion = str((item or {}).get("criterion") or "").strip()
+            reason = str((item or {}).get("reason") or "").strip()
+            return criterion or reason or current_blocker or "Advance the next unmet goal criterion."
+    return current_blocker or "Goal is active."
+
+
+def _recommended_task_templates(
+    *,
+    current_subgoal: str | None,
+    criteria: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    target = str(current_subgoal or "").strip().lower()
+    unmet = [item for item in criteria if not bool((item or {}).get("satisfied"))]
+    first_unmet = unmet[0] if unmet else {}
+    criterion = str((first_unmet or {}).get("criterion") or "").strip()
+    reason = str((first_unmet or {}).get("reason") or "").strip()
+    templates: list[dict[str, Any]] = []
+
+    def add_template(title: str, *, agent_role: str, runner: str, repo_paths: list[str], acceptance_criteria: list[str]) -> None:
+        templates.append(
+            {
+                "title": title,
+                "agentRole": agent_role,
+                "runner": runner,
+                "repoPaths": repo_paths,
+                "acceptanceCriteria": acceptance_criteria,
+                "goalCriterion": criterion or None,
+                "reason": reason or None,
+            }
+        )
+
+    if any(token in target for token in ("ontology", "hydrate", "hydration", "pipeline")):
+        add_template(
+            "Hydrate project ontology and register active artifacts",
+            agent_role="data",
+            runner="codex_cli",
+            repo_paths=[".ontology", "research_plan", "artifacts"],
+            acceptance_criteria=[
+                "hydration completes against project sources or pipeline configs",
+                "active ontology artifacts are populated and registered",
+                "ontology-backed work can proceed from durable project state",
+            ],
+        )
+        add_template(
+            "Populate ontology pipeline steps for project sources",
+            agent_role="data",
+            runner="codex_cli",
+            repo_paths=[".ontology/sources", ".ontology/pipelines", ".ontology/transforms"],
+            acceptance_criteria=[
+                "project sources map to executable ontology pipeline steps",
+                "pipeline configs are durable and project-scoped",
+                "hydration can run without placeholder steps",
+            ],
+        )
+    elif any(token in target for token in ("source", "admissible", "dataset provenance", "freshness")):
+        add_template(
+            "Repair dataset provenance and freshness metadata",
+            agent_role="data",
+            runner="codex_cli",
+            repo_paths=["research_plan/state", ".ontology/sources", "artifacts"],
+            acceptance_criteria=[
+                "datasets link to explicit source records",
+                "freshness state is recorded or explicitly blocked",
+                "trusted downstream work no longer depends on missing provenance metadata",
+            ],
+        )
+    elif any(token in target for token in ("verification", "integrity", "provenance", "claim", "evidence")):
+        add_template(
+            "Repair unsupported claims and verification evidence",
+            agent_role="health",
+            runner="codex_cli",
+            repo_paths=["research_plan/state", "artifacts", "topics"],
+            acceptance_criteria=[
+                "unsupported claims gain evidence or are downgraded",
+                "dependent artifacts no longer rely on unsupported claims",
+                "verification state is durable and auditable",
+            ],
+        )
+        add_template(
+            "Resolve failed verification runs before trusted promotion",
+            agent_role="health",
+            runner="codex_cli",
+            repo_paths=["research_plan/state", "artifacts", "topics"],
+            acceptance_criteria=[
+                "failed verification runs are repaired or superseded",
+                "underlying reproducibility issues are fixed",
+                "trusted artifacts no longer depend on failed verification runs",
+            ],
+        )
+    elif any(token in target for token in ("closeout", "final artifact", "report", "final artifacts")):
+        add_template(
+            "Resolve closeout blockers",
+            agent_role="health",
+            runner="codex_cli",
+            repo_paths=["research_plan", "research_plan/state", "artifacts", ".ontology"],
+            acceptance_criteria=[
+                "remaining closeout blockers are documented and cleared or rerouted",
+                "final artifacts satisfy ontology and integrity expectations",
+                "closeout auditor can pass from repo truth",
+            ],
+        )
+
+    return templates[:2]
+
+
+def _apply_derived_runtime_fields(state: dict[str, Any]) -> dict[str, Any]:
+    success = state.get("success") or {}
+    criteria = list(success.get("criteria") or [])
+    current_subgoal = state.get("currentSubgoal")
+    if not state.get("recommendedTaskTemplates"):
+        state["recommendedTaskTemplates"] = _recommended_task_templates(
+            current_subgoal=current_subgoal,
+            criteria=criteria,
+        )
+    return state
+
+
+def _first_auditor_blocker(auditor: dict[str, Any] | None) -> str:
+    blockers = (auditor or {}).get("blockers")
+    if not isinstance(blockers, list) or not blockers:
+        return ""
+    return str(blockers[0] or "")
+
+
 def sync_goal_runtime(
     project: dict[str, Any],
     *,
@@ -705,6 +897,12 @@ def sync_goal_runtime(
             current_blocker = str((auditors.get("closeout") or {}).get("blockers", [None])[0] or "")
         current_blocker = current_blocker or "Autonomy is blocked."
     state["currentBlocker"] = current_blocker
+    state["currentSubgoal"] = _derive_current_subgoal(
+        preflight=preflight,
+        criteria=criteria,
+        phase=phase,
+        current_blocker=current_blocker,
+    )
     state["tracks"] = {
         "research": {
             "status": "blocked" if phase in {"blocked", "needs_human"} or str((auditors.get("integrity") or {}).get("status") or "") == "blocked" else ("running" if active_sessions or any(task.get("status") == "running" for task in tasks) else "ready"),
@@ -727,6 +925,7 @@ def sync_goal_runtime(
         {
             "currentPhase": state["phase"],
             "currentBlocker": current_blocker,
+            "currentSubgoal": state.get("currentSubgoal"),
             "retryBudgetUsed": int((state.get("retryBudget") or {}).get("used") or 0),
             "successfulRuns": int((state.get("runCounts") or {}).get("successful") or 0),
             "failedRuns": int((state.get("runCounts") or {}).get("failed") or 0),
@@ -746,6 +945,11 @@ def sync_goal_runtime(
     state["autonomyConfidence"] = confidence
     dashboard["autonomyConfidence"] = confidence
     state["dashboard"] = dashboard
+    state["recommendedTaskTemplates"] = _recommended_task_templates(
+        current_subgoal=state.get("currentSubgoal"),
+        criteria=criteria,
+    )
+    state = _apply_derived_runtime_fields(state)
     open_blockers = []
     if current_blocker:
         open_blockers.append(
@@ -792,6 +996,7 @@ def record_failure(
         "retryBudgetRemaining": retry_remaining,
     }
     state["currentBlocker"] = summary
+    state["currentSubgoal"] = next_repair_action
     phase = phase_override or ("needs_human" if not retry_eligible and retry_remaining == 0 else "blocked")
     _set_phase(state, phase, summary)
     state["autonomyConfidence"] = _confidence_for_state(
@@ -805,6 +1010,7 @@ def record_failure(
     state["dashboard"]["failedRuns"] = int(state["runCounts"]["failed"])
     state["dashboard"]["retryBudgetUsed"] = retry_used
     state["dashboard"]["currentBlocker"] = summary
+    state["dashboard"]["currentSubgoal"] = next_repair_action
     state["dashboard"]["autonomyConfidence"] = state["autonomyConfidence"]
     lessons.append(
         {
@@ -856,6 +1062,7 @@ def record_human_decision(
         }
     )
     state["currentBlocker"] = blocked
+    state["currentSubgoal"] = next_step_after_decision
     _set_phase(state, "needs_human", blocked)
     blockers = [
         {
@@ -875,6 +1082,7 @@ def mark_completed(project: dict[str, Any], *, summary: str) -> dict[str, Any]:
     _set_phase(state, "completed", summary)
     state["status"] = "completed"
     state["currentBlocker"] = None
+    state["currentSubgoal"] = None
     state["activeFailure"] = None
     state["lastMeaningfulProgressAt"] = _now()
     state["runCounts"] = state.get("runCounts") or {"successful": 0, "failed": 0}
@@ -885,6 +1093,7 @@ def mark_completed(project: dict[str, Any], *, summary: str) -> dict[str, Any]:
         {
             "currentPhase": "completed",
             "currentBlocker": None,
+            "currentSubgoal": None,
             "successfulRuns": int(state["runCounts"]["successful"]),
             "failedRuns": int(state["runCounts"].get("failed") or 0),
             "autonomyConfidence": 1.0,

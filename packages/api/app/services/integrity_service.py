@@ -50,6 +50,7 @@ DEFAULT_FRESHNESS_POLICY_DAYS: dict[str, tuple[int, int]] = {
 INTERNAL_DATASET_WORKFLOW_EXCLUSIONS = {
     ".ontology/.rail_hydration.json",
 }
+IGNORED_FINAL_ARTIFACT_SUFFIXES = {".aux", ".fdb_latexmk", ".fls", ".log", ".out", ".toc"}
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -175,9 +176,14 @@ def _is_promotable_final_artifact_path(artifact: ArtifactLineageRecord, artifact
         return False
     if not (artifact.artifact_path == artifacts_root or artifact.artifact_path.startswith(f"{artifacts_root}/")):
         return False
+    path = artifact.artifact_path.strip()
+    if any(part.startswith(".") for part in Path(path).parts):
+        return False
+    if Path(path).suffix.lower() in IGNORED_FINAL_ARTIFACT_SUFFIXES:
+        return False
     if artifact.artifact_type == "report":
         return True
-    lowered = artifact.artifact_path.lower()
+    lowered = path.lower()
     return lowered.endswith(".html") or lowered.endswith(".pdf")
 
 
@@ -189,9 +195,13 @@ def _dataset_requires_promotion_provenance(artifact: ArtifactLineageRecord) -> b
         return False
     if path.startswith(".ontology/") or path.startswith(".rail/"):
         return False
+    if path.startswith(".cache/") or "/.cache/" in path:
+        return False
     if path in {".mcp.json"}:
         return False
     if path.startswith("research_plan/"):
+        return False
+    if path.startswith("research/"):
         return False
     return True
 
@@ -290,7 +300,7 @@ def audit_artifact_lineage(
         path = str(row.artifact_path)
         if row.artifact_type == "dataset":
             continue
-        if not (path == artifacts_root or path.startswith(f"{artifacts_root}/")):
+        if not _is_promotable_final_artifact_path(row, artifacts_root):
             continue
         if row.reproducibility_mode in {"manual", "non_reproducible"}:
             compliant_count += 1
@@ -501,6 +511,11 @@ def _source_has_freshness(source: SourceRecord | None) -> bool:
 def _source_admissibility_state(source: SourceRecord | None) -> str | None:
     if source is None:
         return None
+    provenance = source.provenance if isinstance(source.provenance, dict) else {}
+    if provenance.get("synthetic") is True:
+        return "synthetic"
+    if provenance.get("estimated") is True:
+        return "estimated"
     state = build_source_state(source)
     return str(state.get("admissibilityStatus") or "")
 
@@ -834,17 +849,31 @@ def evaluate_integrity_gate(
             and row.sources
             and any(not _source_has_provenance(source_index.get(_normalize_reference_key(reference))) for reference in row.sources)
         ]
+        inadmissible_source_datasets = [
+            row.artifact_path
+            for row in indexes.artifact_lineage
+            if _dataset_requires_promotion_provenance(row)
+            and row.sources
+            and any(
+                _source_admissibility_state(source_index.get(_normalize_reference_key(reference))) in {"estimated", "synthetic", "missing"}
+                for reference in row.sources
+            )
+        ]
         if unsourced_datasets:
             blocking_artifacts.extend(row.artifact_path for row in unsourced_datasets)
             reasons.append("Datasets must record source provenance before promotion.")
         if missing_provenance_datasets:
             blocking_artifacts.extend(missing_provenance_datasets)
             reasons.append("Referenced sources must record provenance before datasets can be promoted.")
+        if inadmissible_source_datasets:
+            blocking_artifacts.extend(inadmissible_source_datasets)
+            reasons.append("Datasets that depend on estimated, synthetic, or missing sources cannot be promoted.")
 
     if enforce_promotion_rules and integrity.require_lineage_for_final_artifacts:
         lineage_gaps = [
             row
             for row in promotable_artifacts
+            if row.reproducibility_mode not in {"manual", "non_reproducible"}
             if not (row.inputs or row.sources or row.assumptions or row.claims or row.scripts)
         ]
         final_artifact_provenance_gaps = [

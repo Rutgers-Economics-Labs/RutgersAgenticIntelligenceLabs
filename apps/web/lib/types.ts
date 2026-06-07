@@ -60,6 +60,7 @@ export type GoalSpend = {
 };
 
 export type GoalContract = {
+  schemaVersion?: number;
   goalId: string;
   objective: string;
   successCriteria: string[];
@@ -71,6 +72,7 @@ export type GoalContract = {
   updatedAt?: number;
   mode?: string;
   markdownPath?: string;
+  goalJsonPath?: string;
 };
 
 export type GoalCriterionStatus = {
@@ -90,6 +92,7 @@ export type GoalState = {
   }>;
   status: string;
   currentBlocker?: string | null;
+  currentSubgoal?: string | null;
   activeFailure?: {
     failureClass: string;
     summary: string;
@@ -132,6 +135,7 @@ export type GoalState = {
   dashboard?: {
     currentPhase?: string;
     currentBlocker?: string | null;
+    currentSubgoal?: string | null;
     retryBudgetUsed?: number;
     successfulRuns?: number;
     failedRuns?: number;
@@ -150,6 +154,7 @@ export type GoalBundle = {
   decisions: Array<Record<string, unknown>>;
   goalMarkdown?: string;
   files?: {
+    goalJson?: string;
     goalMd?: string;
     goalState?: string;
     goalLessons?: string;
@@ -441,6 +446,7 @@ export type CommandCenter = {
     objective?: string | null;
     phase?: string | null;
     currentBlocker?: string | null;
+    currentSubgoal?: string | null;
     retryBudget?: GoalState["retryBudget"];
     success?: GoalState["success"];
     dashboard?: GoalState["dashboard"];

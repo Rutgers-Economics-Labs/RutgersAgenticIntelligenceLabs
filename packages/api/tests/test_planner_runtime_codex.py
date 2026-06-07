@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from types import SimpleNamespace
 
@@ -207,6 +208,8 @@ def test_planner_system_prompt_includes_role_checklist_contracts():
 
     assert "checklist=agents/checklists/research.md" in prompt
     assert "completion=task_documented, evidence_recorded" in prompt
+    assert "## Goal Mode Rules" in prompt
+    assert "If Goal Mode context is present" in prompt
 
 
 def test_planner_system_prompt_includes_ontology_expansion_contract(tmp_path: Path):
@@ -234,3 +237,137 @@ def test_planner_system_prompt_skips_ontology_expansion_contract_for_non_ontolog
     prompt = planner_runtime._planner_system_prompt(project, [], [])
 
     assert "Ontology Expansion Contract" not in prompt
+
+
+def test_planner_system_prompt_includes_dynamic_goal_mode_context(tmp_path: Path):
+    project = {
+        "name": "Demo",
+        "slug": "demo",
+        "localRepoPath": str(tmp_path),
+        "description": "Demo goal mode project",
+    }
+    (tmp_path / "research_plan").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "research_plan" / "goal.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "goalId": "goal-demo",
+                "objective": "Hydrate the ontology and close out the project.",
+                "successCriteria": [
+                    "required data or ontology artifacts are hydrated and available",
+                    "verification and closeout gates pass",
+                ],
+                "requiredEvidence": ["hydration artifact", "closeout evidence"],
+                "forbiddenShortcuts": ["do not mark complete from activity alone"],
+                "escalationPolicy": ["pause only for scope decisions"],
+                "allowedSpend": {"retries": 2},
+                "createdAt": 1,
+                "updatedAt": 2,
+                "mode": "goal",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".rail" / "goal").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".rail" / "goal" / "goal_state.json").write_text(
+        json.dumps(
+            {
+                "goalId": "goal-demo",
+                "phase": "building_pipelines",
+                "currentSubgoal": "required data or ontology artifacts are hydrated and available",
+                "currentBlocker": None,
+                "success": {
+                    "criteria": [
+                        {
+                            "criterion": "required data or ontology artifacts are hydrated and available",
+                            "satisfied": False,
+                            "reason": "Ontology readiness has not passed yet.",
+                        },
+                        {
+                            "criterion": "verification and closeout gates pass",
+                            "satisfied": True,
+                            "reason": "Integrity gate is ready.",
+                        },
+                    ]
+                },
+                "recommendedTaskTemplates": [
+                    {
+                        "title": "Hydrate project ontology and register active artifacts",
+                        "agentRole": "data",
+                        "runner": "codex_cli",
+                        "repoPaths": [".ontology", "research_plan", "artifacts"],
+                        "acceptanceCriteria": [
+                            "hydration completes against project sources or pipeline configs",
+                            "active ontology artifacts are populated and registered",
+                        ],
+                    }
+                ],
+                "contract": {
+                    "objective": "Hydrate the ontology and close out the project."
+                },
+            },
+        indent=2,
+    ),
+    encoding="utf-8",
+)
+
+    prompt = planner_runtime._planner_system_prompt(project, [], [])
+
+    assert "## Goal Mode Context" in prompt
+    assert "objective: Hydrate the ontology and close out the project." in prompt
+    assert "phase: building_pipelines" in prompt
+    assert "current_subgoal: required data or ontology artifacts are hydrated and available" in prompt
+    assert "Ontology readiness has not passed yet." in prompt
+    assert "recommended_task_templates:" in prompt
+    assert "title=Hydrate project ontology and register active artifacts; role=data; runner=codex_cli" in prompt
+    assert "repo_paths=.ontology, research_plan, artifacts" in prompt
+    assert "acceptance_criteria:" in prompt
+    assert "hydration completes against project sources or pipeline configs" in prompt
+
+
+def test_planner_tools_include_goal_mode_context_tool():
+    names = [tool["function"]["name"] for tool in planner_runtime._planner_tools()]
+    assert "get_goal_mode_context" in names
+
+
+def test_execute_planner_tool_returns_structured_goal_mode_context(monkeypatch):
+    project = {"_id": "project-1", "slug": "demo", "name": "Demo"}
+
+    monkeypatch.setattr(
+        planner_runtime.goal_service,
+        "load_goal_bundle",
+        lambda project_arg: {
+            "contract": {"objective": "Hydrate the ontology and close out the project."},
+            "state": {
+                "phase": "building_pipelines",
+                "currentSubgoal": "required data or ontology artifacts are hydrated and available",
+                "currentBlocker": None,
+                "success": {
+                    "criteria": [
+                        {
+                            "criterion": "required data or ontology artifacts are hydrated and available",
+                            "satisfied": False,
+                            "reason": "Ontology readiness has not passed yet.",
+                        }
+                    ]
+                },
+                "recommendedTaskTemplates": [
+                    {
+                        "title": "Hydrate project ontology and register active artifacts",
+                        "agentRole": "data",
+                        "runner": "codex_cli",
+                    }
+                ],
+            },
+        },
+    )
+
+    payload = asyncio.run(planner_runtime._execute_planner_tool_inner(project, "get_goal_mode_context", {}))
+
+    assert payload["available"] is True
+    assert payload["objective"] == "Hydrate the ontology and close out the project."
+    assert payload["phase"] == "building_pipelines"
+    assert payload["currentSubgoal"] == "required data or ontology artifacts are hydrated and available"
+    assert payload["unmetSuccessCriteria"][0]["reason"] == "Ontology readiness has not passed yet."
+    assert payload["recommendedTaskTemplates"][0]["title"] == "Hydrate project ontology and register active artifacts"

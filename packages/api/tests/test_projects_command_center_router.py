@@ -152,6 +152,7 @@ def test_create_planner_task_rejects_unknown_status(monkeypatch):
 
     monkeypatch.setattr(projects_router.planner_service, "get_project_by_slug", _get_project_by_slug)
 
+
     response = client.post(
         "/api/v1/projects/demo-project/planner/tasks",
         json={

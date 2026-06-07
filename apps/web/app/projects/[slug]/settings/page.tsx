@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { PageIntro } from "@/components/page-intro";
 import { ProjectShell } from "@/components/project-shell";
 
 const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
@@ -61,7 +62,7 @@ function GeneralSection({ slug }: { slug: string }) {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    api(`/projects/${slug}/command-center`).then((data: any) => {
+    api(`/projects/${slug}/planner/home`).then((data: any) => {
       const p = data.project;
       setProject(p);
       setForm({
@@ -262,7 +263,7 @@ function GitSection({ slug }: { slug: string }) {
   const [info, setInfo] = useState<any>(null);
 
   useEffect(() => {
-    api(`/projects/${slug}/command-center`).then((data: any) => setInfo(data)).catch(() => {});
+    api(`/projects/${slug}/planner/home`).then((data: any) => setInfo(data)).catch(() => {});
   }, [slug]);
 
   if (!info) return <div style={SECTION}><span style={LABEL}>Loading…</span></div>;
@@ -473,6 +474,14 @@ export default function SettingsPage() {
   return (
     <ProjectShell slug={slug} title="Settings" section="settings">
       <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+        <PageIntro
+          title="Configure how this project runs."
+          detail="Settings is for repo-level defaults, secrets, runners, and safety controls. Most day-to-day research work should happen in Planner, Review, or the project overview."
+          actions={[
+            { label: "Back to Overview", href: `/projects/${slug}` },
+            { label: "Open Planner", href: `/projects/${slug}/planner` },
+          ]}
+        />
 
         {/* Tab bar */}
         <div style={{

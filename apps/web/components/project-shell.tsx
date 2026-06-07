@@ -4,8 +4,8 @@ import Link from "next/link";
 import { ReactNode, useEffect, useState } from "react";
 import { AgentMonitor } from "@/components/agent-monitor";
 import { CommandPalette } from "@/components/command-palette";
-import { FloatingPlannerChat } from "@/components/floating-planner-chat";
 import { LiveOutputPanel } from "@/components/live-output-panel";
+import { PlannerCommandBar } from "@/components/planner-command-bar";
 
 const NAV_GROUPS: Array<{ title: string; items: Array<{ label: string; suffix: string; key: string }> }> = [
   {
@@ -20,9 +20,8 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ label: string; suffix: s
     title: "Agents",
     items: [
       { label: "Planner", suffix: "/planner", key: "planner" },
-      { label: "Agent Chat", suffix: "/agent", key: "agent" },
       { label: "Launch", suffix: "/launch", key: "launch" },
-      { label: "Runs", suffix: "/runs", key: "sessions" },
+      { label: "Sessions", suffix: "/runs", key: "sessions" },
       { label: "Review", suffix: "/review", key: "review" },
     ],
   },
@@ -38,19 +37,10 @@ const NAV_GROUPS: Array<{ title: string; items: Array<{ label: string; suffix: s
   {
     title: "Project",
     items: [
-      { label: "Skills", suffix: "/skills", key: "skills" },
       { label: "Repo", suffix: "/repo", key: "repo" },
       { label: "Settings", suffix: "/settings", key: "settings" },
     ],
   },
-];
-
-const REPO_SHORTCUTS = [
-  { label: "current_plan.md",  path: "research_plan/current_plan.md" },
-  { label: "task_board.md",    path: "research_plan/task_board.md"   },
-  { label: "tasks/",           path: "research_plan/tasks"           },
-  { label: "agents/",          path: "agents"                        },
-  { label: ".ontology/",       path: ".ontology"                     },
 ];
 
 function ThemeToggle() {
@@ -75,6 +65,46 @@ function ThemeToggle() {
   );
 }
 
+function topbarActionForSection(slug: string, section: string): { label: string; href: string } {
+  if (section === "launch") {
+    return { label: "Open Planner", href: `/projects/${slug}/planner` };
+  }
+  if (section === "planner") {
+    return { label: "Open Review", href: `/projects/${slug}/review` };
+  }
+  if (section === "agent") {
+    return { label: "Open Planner", href: `/projects/${slug}/planner` };
+  }
+  if (section === "review") {
+    return { label: "Back to Overview", href: `/projects/${slug}` };
+  }
+  if (section === "dashboard") {
+    return { label: "Open Ontology", href: `/projects/${slug}/ontology` };
+  }
+  if (section === "sources") {
+    return { label: "Open Dashboard", href: `/projects/${slug}/dashboard` };
+  }
+  if (section === "ontology") {
+    return { label: "Open Dashboard", href: `/projects/${slug}/dashboard` };
+  }
+  if (section === "artifacts") {
+    return { label: "Check Integrity", href: `/projects/${slug}/integrity` };
+  }
+  if (section === "integrity") {
+    return { label: "Open Review", href: `/projects/${slug}/review` };
+  }
+  if (section === "sessions") {
+    return { label: "Open Review", href: `/projects/${slug}/review` };
+  }
+  if (section === "repo" || section === "settings") {
+    return { label: "Back to Overview", href: `/projects/${slug}` };
+  }
+  if (section === "zen") {
+    return { label: "Open Planner", href: `/projects/${slug}/planner` };
+  }
+  return { label: "Open Planner", href: `/projects/${slug}/planner` };
+}
+
 export function ProjectShell({
   slug,
   title,
@@ -88,194 +118,101 @@ export function ProjectShell({
   children: ReactNode;
   rightRail?: ReactNode;
 }) {
+  const topbarAction = topbarActionForSection(slug, section);
   return (
-    <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "var(--bg)" }}>
+    <div className="shell-root">
       <CommandPalette slug={slug} />
       <LiveOutputPanel slug={slug} />
 
-      {/* ── Left sidebar ─────────────────────────────────────────── */}
-      <aside style={{
-        width: 220,
-        flexShrink: 0,
-        display: "flex",
-        flexDirection: "column",
-        borderRight: "1px solid var(--border)",
-        background: "var(--panel)",
-        overflow: "hidden",
-      }}>
+      <aside className="shell-sidebar">
 
-        {/* Brand */}
-        <div style={{ padding: "12px 12px 10px", borderBottom: "1px solid var(--border)" }}>
-          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none" }}>
+        <div className="shell-sidebar-section shell-brand">
+          <Link href="/" className="shell-brand-link">
             <img
               src="/rel-logo.jpeg"
               alt="Rutgers Economics Labs"
-              style={{
-                width: 34,
-                height: 34,
-                objectFit: "contain",
-                background: "#fff",
-                border: "1px solid var(--border)",
-              }}
+              className="shell-brand-mark"
             />
             <div style={{ minWidth: 0 }}>
               <div className="rail-label" style={{ fontSize: 9 }}>Rutgers Economics Labs</div>
-              <div style={{
-                marginTop: 4,
-                fontFamily: "JetBrains Mono, monospace",
-                fontSize: 15,
-                fontWeight: 700,
-                letterSpacing: "-0.01em",
-                color: "var(--fg)",
-              }}>
-                RAIL
-              </div>
+              <div className="shell-brand-title">RAIL</div>
             </div>
           </Link>
         </div>
 
-        {/* Project */}
-        <div style={{ padding: "10px 12px 8px", borderBottom: "1px solid var(--border)" }}>
+        <div className="shell-sidebar-section shell-project-meta">
           <div className="rail-label">Project</div>
-          <div style={{
-            marginTop: 5,
-            fontFamily: "JetBrains Mono, monospace",
-            fontSize: 12,
-            fontWeight: 600,
-            color: "var(--fg)",
-            letterSpacing: "-0.01em",
-          }}>
-            {slug}
-          </div>
+          <div className="shell-project-slug">{slug}</div>
         </div>
 
-        {/* Nav */}
         <div>
           {NAV_GROUPS.map((group) => (
-            <div key={group.title} style={{ borderBottom: "1px solid var(--border)" }}>
-              <div style={{ padding: "8px 12px 4px" }}>
+            <div key={group.title} className="shell-sidebar-section">
+              <div className="shell-nav-group-title">
                 <span className="rail-label">{group.title}</span>
               </div>
               {group.items.map((tab) => {
-            const active = section === tab.key;
-            return (
-              <Link
-                key={tab.key}
-                href={`/projects/${slug}${tab.suffix}`}
-                className={`nav-link${active ? " active" : ""}`}
-              >
-                <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, letterSpacing: "0.06em" }}>
-                  {tab.label}
-                </span>
-                {active && (
-                  <span style={{ fontSize: 9, opacity: 0.6 }}>●</span>
-                )}
-              </Link>
-            );
+                const active = section === tab.key;
+                return (
+                  <Link
+                    key={tab.key}
+                    href={`/projects/${slug}${tab.suffix}`}
+                    className={`nav-link${active ? " active" : ""}`}
+                  >
+                    <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 11, letterSpacing: "0.06em" }}>
+                      {tab.label}
+                    </span>
+                    {active && (
+                      <span style={{ fontSize: 9, opacity: 0.6 }}>●</span>
+                    )}
+                  </Link>
+                );
               })}
             </div>
           ))}
         </div>
 
-        {/* Repo shortcuts */}
-        <div style={{ borderBottom: "1px solid var(--border)" }}>
-          <div style={{ padding: "8px 12px 4px" }}>
-            <span className="rail-label">Repo</span>
-          </div>
-          {REPO_SHORTCUTS.map((s) => (
-            <Link
-              key={s.path}
-              href={`/projects/${slug}/repo?path=${encodeURIComponent(s.path)}`}
-              className="nav-link"
-            >
-              <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)" }}>
-                {s.label}
-              </span>
-            </Link>
-          ))}
-        </div>
-
-        {/* Live agent monitor */}
-        <div style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="shell-sidebar-section">
           <AgentMonitor slug={slug} />
         </div>
 
-        {/* Bottom controls */}
         <div style={{ marginTop: "auto", borderTop: "1px solid var(--border)" }}>
           <ThemeToggle />
         </div>
       </aside>
 
-      {/* ── Main area ────────────────────────────────────────────── */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
+      <div className="shell-main">
 
-        {/* Top bar */}
-        <header style={{
-          height: 40,
-          flexShrink: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "0 16px",
-          borderBottom: "1px solid var(--border)",
-          background: "var(--panel)",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <header className="shell-topbar">
+          <div className="shell-topbar-title">
             <span className="rail-label">{section}</span>
             <span style={{ color: "var(--border)", fontSize: 12 }}>·</span>
-            <span style={{ fontSize: 12, color: "var(--fg)", fontWeight: 500 }}>{title}</span>
+            <span className="shell-section-title">{title}</span>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="shell-topbar-actions">
             <button
               onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }))}
-              style={{
-                background: "var(--bg)",
-                border: "1px solid var(--border)",
-                padding: "2px 8px",
-                fontFamily: "JetBrains Mono, monospace",
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                color: "var(--muted)",
-                cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 6,
-              }}
+              className="shell-search-button"
             >
               <span>⌘K</span>
               <span style={{ opacity: 0.6 }}>search</span>
             </button>
             <Link
-              href={`/projects/${slug}/launch`}
-              style={{
-                border: "1px solid var(--border-strong)",
-                padding: "3px 8px",
-                fontFamily: "JetBrains Mono, monospace",
-                fontSize: 10,
-                letterSpacing: "0.08em",
-                textTransform: "uppercase",
-                color: "var(--fg)",
-              }}
+              href={topbarAction.href as any}
+              className="shell-launch-link"
             >
-              Start Research
+              {topbarAction.label}
             </Link>
-            <span className="rail-label">{slug}</span>
           </div>
         </header>
+        <PlannerCommandBar slug={slug} section={section} />
 
-        <FloatingPlannerChat slug={slug} section={section} />
-
-        {/* Content + optional right rail */}
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <main style={{ flex: 1, overflow: "auto", minWidth: 0, paddingBottom: 30 }}>
+        <div className="shell-content">
+          <main className="shell-main-content">
             {children}
           </main>
           {rightRail && (
-            <aside style={{
-              width: 280,
-              flexShrink: 0,
-              borderLeft: "1px solid var(--border)",
-              overflow: "auto",
-              background: "var(--panel)",
-            }}>
+            <aside className="shell-right-rail">
               {rightRail}
             </aside>
           )}

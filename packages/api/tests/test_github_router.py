@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -112,3 +113,268 @@ async def test_sync_repo_changes_skips_binary_watched_paths():
     assert ".ontology/onto.duckdb" not in requested_paths
     assert ".ontology/sources/census_states.yaml" in requested_paths
     assert "rail.yaml" in requested_paths
+
+
+async def test_github_status_uses_repo_first_local_project(client, convex_mock, monkeypatch):
+    from app.routers import github as github_router
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in {"projects:getBySlug", "projects:get"}:
+            return httpx.Response(200, json={"value": None})
+        return httpx.Response(200, json={"value": None})
+
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref != "demo-project":
+            raise ValueError(project_ref)
+        return {
+            "_id": "local:demo-project",
+            "slug": "demo-project",
+            "github": "Rutgers-Economics-Labs/demo-project",
+            "defaultBranch": "main",
+            "githubSyncMode": "manual",
+            "localRepoPath": "/tmp/demo-project",
+        }
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", _resolve_project_reference)
+
+    resp = await client.get("/api/v1/github/status/demo-project")
+
+    assert resp.status_code == 200
+    assert resp.json()["github"] == "Rutgers-Economics-Labs/demo-project"
+    assert resp.json()["syncStatus"] == "unknown"
+    assert resp.json()["in_sync"] is None
+
+
+async def test_github_status_compares_last_publish_with_remote_head(client, monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "project-1",
+        "slug": "demo-project",
+        "github": "Rutgers-Economics-Labs/demo-project",
+        "defaultBranch": "main",
+        "githubSyncMode": "manual",
+        "lastPublishedCommitSha": "abc123",
+    }
+
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", AsyncMock(return_value=project))
+    monkeypatch.setattr(github_router.github_service, "get_branch_head", AsyncMock(return_value="abc123"))
+
+    resp = await client.get("/api/v1/github/status/demo-project")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["remoteHeadCommitSha"] == "abc123"
+    assert body["syncStatus"] == "in_sync"
+    assert body["in_sync"] is True
+
+
+async def test_github_status_reports_diverged_when_remote_head_differs(client, monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "project-1",
+        "slug": "demo-project",
+        "github": "Rutgers-Economics-Labs/demo-project",
+        "defaultBranch": "main",
+        "githubSyncMode": "manual",
+        "lastPublishedCommitSha": "abc123",
+    }
+
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", AsyncMock(return_value=project))
+    monkeypatch.setattr(github_router.github_service, "get_branch_head", AsyncMock(return_value="def456"))
+
+    resp = await client.get("/api/v1/github/status/demo-project")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["remoteHeadCommitSha"] == "def456"
+    assert body["syncStatus"] == "diverged"
+    assert body["in_sync"] is False
+
+
+async def test_link_github_persists_repo_only_manifest(client, convex_mock, monkeypatch, tmp_path):
+    from app.routers import github as github_router
+    from rail.bootstrap import bootstrap_future_project
+    from rail.manifest import load_manifest
+
+    root = bootstrap_future_project(tmp_path, name="Demo Project", slug="demo-project")
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "name": "Demo Project",
+        "localRepoPath": str(root),
+    }
+
+    def _query(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content.decode())
+        if payload.get("path") in {"projects:getBySlug", "projects:get"}:
+            return httpx.Response(200, json={"value": None})
+        return httpx.Response(200, json={"value": None})
+
+    async def _resolve_project_reference(project_ref: str | None):
+        if project_ref != "demo-project":
+            raise ValueError(project_ref)
+        return project
+
+    convex_mock.post("/api/query").mock(side_effect=_query)
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", _resolve_project_reference)
+    monkeypatch.setattr(github_router.planner_service, "project_root_from_record", lambda record: Path(record["localRepoPath"]))
+    monkeypatch.setattr(github_router.github_service, "get_installation_token", AsyncMock(return_value="token"))
+
+    resp = await client.post(
+        "/api/v1/github/link",
+        json={"project_slug": "demo-project", "github_repo": "Rutgers-Economics-Labs/demo-project"},
+    )
+
+    manifest = load_manifest(root)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"linked": True, "repo": "Rutgers-Economics-Labs/demo-project"}
+    assert manifest.project.git_repo_url == "https://github.com/Rutgers-Economics-Labs/demo-project"
+
+
+async def test_persist_github_project_patch_prefers_repo_first_refresh(monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "project-1",
+        "slug": "demo-project",
+        "github": "Rutgers-Economics-Labs/demo-project",
+    }
+
+    mutation = AsyncMock(return_value={"ok": True})
+    convex_query = AsyncMock(side_effect=AssertionError("convex refresh should not be needed"))
+    repo_first_refresh = AsyncMock(
+        return_value={
+            "_id": "project-1",
+            "slug": "demo-project",
+            "github": "Rutgers-Economics-Labs/demo-project",
+            "defaultBranch": "main",
+        }
+    )
+
+    monkeypatch.setattr(github_router.convex, "mutation", mutation)
+    monkeypatch.setattr(github_router.convex, "query", convex_query)
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", repo_first_refresh)
+
+    refreshed = await github_router._persist_github_project_patch(project, {"defaultBranch": "main"})
+
+    mutation.assert_awaited_once_with("projects:update", {"slug": "demo-project", "defaultBranch": "main"})
+    repo_first_refresh.assert_awaited_once_with("demo-project")
+    assert refreshed["defaultBranch"] == "main"
+
+
+async def test_github_sync_uses_repo_first_local_project_link(client, monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "pipelineConfigSlug": None,
+        "localRepoPath": "/tmp/demo-project",
+    }
+
+    monkeypatch.setattr(github_router.github_service, "verify_webhook", lambda body, signature: True)
+    monkeypatch.setattr(github_router.planner_service, "get_project_by_github_repo", AsyncMock(return_value=project))
+    monkeypatch.setattr(github_router, "_sync_repo_changes", AsyncMock())
+
+    resp = await client.post(
+        "/api/v1/github/sync",
+        headers={
+            "X-GitHub-Event": "push",
+            "X-Hub-Signature-256": "sha256=test",
+        },
+        content=json.dumps(
+            {
+                "repository": {"full_name": "Rutgers-Economics-Labs/demo-project"},
+                "before": "oldsha",
+                "after": "newsha",
+            }
+        ),
+    )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"synced": True, "project": "demo-project"}
+
+
+async def test_sync_repo_changes_persists_local_project_manifest(monkeypatch, tmp_path):
+    from app.routers import github as github_router
+    from rail.bootstrap import bootstrap_future_project
+    from rail.manifest import load_manifest
+
+    root = bootstrap_future_project(tmp_path, name="Demo Project", slug="demo-project")
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "name": "Demo Project",
+        "localRepoPath": str(root),
+        "pipelineConfigSlug": None,
+    }
+
+    async def get_file(_repo: str, path: str, ref: str = "after") -> str:
+        if path == "rail.yaml":
+            return (
+                "version: 1\n"
+                "project:\n"
+                "  name: Demo Project\n"
+                "  slug: demo-project\n"
+                "  description: Synced from GitHub\n"
+                "  default_branch: main\n"
+            )
+        raise AssertionError(path)
+
+    monkeypatch.setattr(
+        github_router.github_service,
+        "list_changed_files",
+        AsyncMock(return_value=["rail.yaml"]),
+    )
+    monkeypatch.setattr(github_router.github_service, "get_file", get_file)
+    monkeypatch.setattr(github_router.convex, "query", AsyncMock())
+    mutation = AsyncMock()
+    monkeypatch.setattr(github_router.convex, "mutation", mutation)
+    monkeypatch.setattr(github_router.planner_service, "project_root_from_record", lambda record: Path(record["localRepoPath"]))
+    monkeypatch.setattr(github_router.planner_service, "get_project_by_slug", AsyncMock(return_value={**project, "description": "Synced from GitHub"}))
+
+    await github_router._sync_repo_changes("Rutgers-Economics-Labs/demo-project", "before", "after", project)
+
+    manifest = load_manifest(root)
+    assert manifest.project.description == "Synced from GitHub"
+    mutation.assert_not_awaited()
+
+
+async def test_sync_repo_changes_triggers_pipeline_by_slug_for_repo_only_project(monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "local:demo-project",
+        "slug": "demo-project",
+        "pipelineConfigSlug": "demo-pipeline",
+        "localRepoPath": "/tmp/demo-project",
+    }
+
+    async def get_file(_repo: str, path: str, ref: str = "after") -> str:
+        assert path == ".ontology/pipelines/demo-pipeline.yaml"
+        return "ontology: .ontology/ontology.yaml\nsteps: []\n"
+
+    triggered: list[tuple[str, str | None]] = []
+
+    async def _trigger_job(pipeline_slug: str, project_id: str | None = None):
+        triggered.append((pipeline_slug, project_id))
+        return {"jobId": "job-123"}
+
+    monkeypatch.setattr(
+        github_router.github_service,
+        "list_changed_files",
+        AsyncMock(return_value=[".ontology/pipelines/demo-pipeline.yaml"]),
+    )
+    monkeypatch.setattr(github_router.github_service, "get_file", get_file)
+    monkeypatch.setattr(github_router.convex, "query", AsyncMock(return_value=None))
+    monkeypatch.setattr(github_router.convex, "mutation", AsyncMock(return_value={"ok": True}))
+    monkeypatch.setattr("app.routers.jobs._trigger_job", _trigger_job)
+
+    await github_router._sync_repo_changes("Rutgers-Economics-Labs/demo-project", "before", "after", project)
+
+    assert triggered == [("demo-pipeline", "demo-project")]
