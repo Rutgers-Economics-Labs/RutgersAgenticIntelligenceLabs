@@ -1,3 +1,0 @@
-# Approvals
-
-No approvals recorded.

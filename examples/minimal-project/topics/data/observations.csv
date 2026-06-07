@@ -1,0 +1,5 @@
+region,indicator,date,value
+North,employment_index,2024-01-01,101.2
+North,employment_index,2024-02-01,101.8
+South,employment_index,2024-01-01,98.5
+South,employment_index,2024-02-01,99.1

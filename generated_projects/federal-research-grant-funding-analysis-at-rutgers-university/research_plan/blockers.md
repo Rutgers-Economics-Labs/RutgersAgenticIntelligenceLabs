@@ -1,3 +1,0 @@
-# Blockers
-
-No active blockers.

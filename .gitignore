@@ -218,6 +218,41 @@ apps/web/tsconfig.tsbuildinfo
 apps/web/.screenshots/
 state/work-orders/.jules-runner-state.json
 .DS_Store
+
+# Local/private RAIL workspaces and validation exhaust.
+# Keep public, curated fixtures in examples/ instead.
+generated_projects/*
+!generated_projects/README.md
+docs/validation/*
+!docs/validation/README.md
+
+# Runtime state produced inside RAIL project workspaces.
+**/.ontology/
+**/research_plan/sessions/
+**/research_plan/audits/
+**/.runner/
+**/latest
+*.duckdb
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated reports and bulky local artifacts.
+*.pdf
+*.ndjson
+*.parquet
+*.feather
+*.arrow
+*.pkl
+*.pickle
+*.joblib
+
+# Local keys and service credentials.
+uploaded_key
+*.pem
+*.key
+*.p12
+*.pfx
 .rail/
 packages/api/.rail_state/
 *.pid
