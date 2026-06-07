@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { FetchDataHydrateButton } from "@/components/fetch-data-hydrate-button";
 import { GraphVisualizer, type GraphLink, type GraphNode } from "@/components/graph-visualizer";
 import { EntityExplorer } from "@/components/entity-explorer";
 
@@ -9,11 +10,14 @@ type OntologyClass = { name: string; count: number };
 type TabId = "schema" | "instances" | "database" | "browse";
 
 type OntologyExplorerProps = {
+  slug: string;
   projectId: string;
   classes: OntologyClass[];
   classGraph: { nodes: GraphNode[]; links: GraphLink[]; error?: string };
   instanceGraph: { nodes: GraphNode[]; links: GraphLink[]; error?: string };
   databaseGraph: { nodes: GraphNode[]; links: GraphLink[]; error?: string };
+  hydrationState?: string | null;
+  pipelineSlug?: string | null;
 };
 
 const TABS: { id: TabId; label: string; hint: string }[] = [
@@ -66,11 +70,14 @@ function mergeSchemaAndInstances(
 }
 
 export function OntologyExplorer({
+  slug,
   projectId,
   classes,
   classGraph,
   instanceGraph,
   databaseGraph,
+  hydrationState,
+  pipelineSlug,
 }: OntologyExplorerProps) {
   const [tab, setTab] = useState<TabId>("schema");
 
@@ -81,6 +88,7 @@ export function OntologyExplorer({
 
   const populatedCount = classes.filter((c) => c.count > 0).length;
   const totalInstances = classes.reduce((sum, c) => sum + (c.count ?? 0), 0);
+  const looksUnhydrated = classes.length === 0 || (populatedCount === 0 && totalInstances === 0);
 
   const active = TABS.find((t) => t.id === tab)!;
   const graphError =
@@ -121,6 +129,22 @@ export function OntologyExplorer({
           for tables of instances. Repo files live under Evidence → Artifacts.
         </p>
       </div>
+
+      {looksUnhydrated ? (
+        <div style={{ border: "1px solid var(--border)", background: "var(--panel)", padding: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--fg)" }}>Local ontology data is not ready on this device</div>
+          <p style={{ margin: "8px 0 12px", fontSize: 12, color: "var(--muted)", lineHeight: 1.6, maxWidth: 760 }}>
+            This usually means the local `onto.db` and `onto.duckdb` artifacts have not been hydrated yet, so the graphs and class counts stay empty.
+            Run a local fetch and hydrate to build the ontology mirror for this project.
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+            <FetchDataHydrateButton slug={slug} pipelineSlug={pipelineSlug} />
+            <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: 10, color: "var(--muted)" }}>
+              hydration {hydrationState ?? "unknown"}
+            </span>
+          </div>
+        </div>
+      ) : null}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", borderBottom: "1px solid var(--border)", paddingBottom: 8 }}>
         {TABS.map((t) => (

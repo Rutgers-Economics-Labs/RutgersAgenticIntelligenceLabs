@@ -728,7 +728,12 @@ def _terminal_task_patch_from_session_state(state: dict[str, Any], session_id: s
 def _task_explicitly_reopened(task: dict[str, Any]) -> bool:
     status = str(task.get("status") or "").strip().lower()
     summary = str(task.get("latestRunSummary") or "").strip()
-    return status in {"backlog", "ready", "awaiting_approval", "running"} and summary.startswith("Reopened by Autopilot")
+    return status in {"backlog", "ready", "awaiting_approval", "running"} and summary.startswith(
+        (
+            "Reopened by Autopilot",
+            "Hydration state is ",
+        )
+    )
 
 
 def _task_has_explicit_terminal_resolution(task: dict[str, Any], patch: dict[str, Any]) -> bool:
@@ -772,6 +777,8 @@ async def reconcile_task_session_states(project: dict) -> dict[str, Any]:
             continue
         task = task_by_id.get(task_id)
         if task is None:
+            continue
+        if str(task.get("status") or "").strip().lower() in {"done", "cancelled", "superseded"}:
             continue
         task_path = _task_root(root) / f"{task_id}.md"
         patch = _terminal_task_patch_from_session_state(state, str(state.get("session_id") or session_root.name))

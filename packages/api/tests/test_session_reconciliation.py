@@ -339,7 +339,11 @@ def test_artifact_registry_drift_ignores_latex_intermediates_and_bootstraps_line
     (artifacts_dir / "report.tex").write_text("tex", encoding="utf-8")
     (artifacts_dir / "report.aux").write_text("aux", encoding="utf-8")
     (artifacts_dir / "report.log").write_text("log", encoding="utf-8")
+    (artifacts_dir / "report.fdb_latexmk").write_text("latexmk", encoding="utf-8")
     (artifacts_dir / "build_report.py").write_text("print('ok')\n", encoding="utf-8")
+    (artifacts_dir / "autopilot_log.txt").write_text("log", encoding="utf-8")
+    (artifacts_dir / "__pycache__").mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "__pycache__" / "build_report.cpython-313.pyc").write_bytes(b"pyc")
     (project_root / "scripts").mkdir(parents=True, exist_ok=True)
     (project_root / "scripts" / "run-verification.sh").write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
 
@@ -348,6 +352,10 @@ def test_artifact_registry_drift_ignores_latex_intermediates_and_bootstraps_line
     before_snapshot = asyncio.run(project_reality_snapshot(project))
     assert "artifacts/report_build/report.aux" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
     assert "artifacts/report_build/report.log" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+    assert "artifacts/report_build/report.fdb_latexmk" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+    assert "artifacts/report_build/build_report.py" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+    assert "artifacts/report_build/autopilot_log.txt" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
+    assert "artifacts/report_build/__pycache__/build_report.cpython-313.pyc" not in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
     assert "artifacts/report_build/report.pdf" in before_snapshot["artifactRegistryDrift"]["untrackedArtifactPaths"]
 
     repair = asyncio.run(repair_artifact_registry_drift(project))

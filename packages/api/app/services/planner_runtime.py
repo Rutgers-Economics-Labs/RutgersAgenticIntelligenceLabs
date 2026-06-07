@@ -725,7 +725,7 @@ async def _execute_planner_tool_inner(project: dict[str, Any], name: str, args: 
             repo_paths=args.get("repo_paths") or [],
             acceptance_criteria=args.get("acceptance_criteria") or [],
             runner=role_config.policy.runner.default,
-            approval_state="pending" if decision.requires_human_approval else "not_required",
+            approval_state="pending" if decision.requires_human_approval else None,
         )
         await planner_service.sync_planner_files(project, board)
         return {"task": task, "role": summarize_role_config(role_config)}
@@ -834,7 +834,7 @@ async def _execute_planner_tool_inner(project: dict[str, Any], name: str, args: 
         granted = any(
             item.get("taskId") == task["_id"] and item.get("status") == "granted"
             for item in approvals
-        )
+        ) or str(task.get("approvalState") or "").strip().lower() == "granted"
         if decision.blocked:
             await planner_service.update_task(
                 str(task["_id"]),

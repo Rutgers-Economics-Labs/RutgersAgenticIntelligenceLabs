@@ -905,7 +905,7 @@ def test_evaluate_integrity_gate_blocks_inadmissible_dataset_sources(tmp_path):
     assert any("synthetic" in reason.lower() or "estimated" in reason.lower() for reason in gate["reasons"])
 
 
-def test_promote_artifact_blocks_dataset_without_provenance(tmp_path):
+def test_promote_artifact_allows_internal_ontology_dataset_without_source_provenance(tmp_path):
     root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
     _seed_workflow_scaffolding(root)
     repo = ResearchIntegrityRepo(root)
@@ -935,10 +935,8 @@ def test_promote_artifact_blocks_dataset_without_provenance(tmp_path):
 
     result = promote_artifact(root, load_manifest(root), ".ontology/onto.duckdb", target_state="verified")
 
-    assert result["status"] == "blocked"
-    assert result["artifact"]["promotion_state"] == "partially_verified"
-    assert ".ontology/onto.duckdb" in result["gate"]["blockingArtifacts"]
-    assert any("provenance" in reason.lower() for reason in result["gate"]["reasons"])
+    assert result["status"] == "promoted"
+    assert result["artifact"]["promotion_state"] == "verified"
 
 
 def test_get_claim_detail_returns_sources_artifacts_and_verification_runs(tmp_path):
@@ -1421,6 +1419,45 @@ def test_evaluate_integrity_gate_allows_explicit_manual_artifact_label(tmp_path)
 
     assert "artifacts/manual-report.md" not in gate["blockingArtifacts"]
     assert not any("explicitly labeled" in reason for reason in gate["reasons"])
+
+
+def test_evaluate_integrity_gate_ignores_internal_datasets_and_build_intermediates(tmp_path):
+    root = bootstrap_future_project(tmp_path, name="API Integrity Project", slug="api-integrity-project")
+    _seed_workflow_scaffolding(root)
+    repo = ResearchIntegrityRepo(root)
+    repo.write_artifact_lineage(
+        [
+            {
+                "artifact_path": "research/dashboard_panels.json",
+                "artifact_type": "dataset",
+                "title": "Dashboard Panels",
+                "promotion_state": "draft",
+            },
+            {
+                "artifact_path": ".cache/matplotlib/fontlist-v390.json",
+                "artifact_type": "dataset",
+                "title": "Font Cache",
+                "promotion_state": "draft",
+            },
+            {
+                "artifact_path": "artifacts/paper/paper.aux",
+                "artifact_type": "artifact",
+                "title": "paper.aux",
+                "promotion_state": "draft",
+            },
+            {
+                "artifact_path": "artifacts/paper/paper.fdb_latexmk",
+                "artifact_type": "artifact",
+                "title": "paper.fdb_latexmk",
+                "promotion_state": "draft",
+            },
+        ]
+    )
+
+    gate = evaluate_integrity_gate(root, load_manifest(root), action="artifact_generation")
+
+    assert gate["blocked"] is False
+    assert gate["blockingArtifacts"] == []
 
 
 def test_evaluate_integrity_gate_blocks_final_artifacts_with_unprovenanced_sources(tmp_path):

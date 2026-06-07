@@ -1,33 +1,64 @@
 # Platform State
 
-This folder tracks the current implementation state of the RAIL platform against its specifications. It is the canonical answer to "where are we?"
+This folder answers "where are we?" for RAIL. Treat this README as the current
+high-level status; the older layer and feature ledgers are useful historical
+snapshots, but they can lag the code during active platform work.
 
-## Legend
+## Current Verdict
 
-| Symbol | Meaning |
-|--------|---------|
-| ✅ | Done — fully implemented and matches spec |
-| 🟡 | Partial — exists but incomplete, diverges from spec, or needs changes |
-| ❌ | Not started — spec exists, nothing built |
-| 🔵 | Built but not yet specced — exists in the codebase, not in specs |
+RAIL is a working operator-assisted research platform. It is not yet complete as
+an unattended autonomous platform because the final claim still needs live,
+repeatable proof across multiple fresh project archetypes.
 
-## Files
+| Area | Current status | Notes |
+| --- | --- | --- |
+| Engine and hydration | Working | Core API/CSV/Excel fetch, ontology build, transforms, DuckDB export, and hydration jobs exist. |
+| Project UI | Working | The active app uses project-scoped pages under `apps/web/app/projects/[slug]/`. |
+| GitHub sync | Partial | Publish, webhook sync, link, and status routes exist. Status now reports `unknown`, `in_sync`, or `diverged` instead of assuming success. |
+| `rail-py` | Working | Local/cloud client, manifest validation, integrity, completion gate, and tests exist. |
+| Autopilot | Partial | Local `local:*` autopilot ticks can complete from repo truth without Convex. Live cloud-backed runs still need backend availability. |
+| Validation | Partial | `validate_local_project.py` and a fresh local autopilot tick pass for `docs/validation/fresh-goal-mode-completion`; the remaining bar is live multi-archetype validation. |
+| State docs | Simplifying | Prefer this README plus validation results over maintaining several overlapping progress ledgers. |
 
-- [`layers.md`](layers.md) — State of each architectural layer (Engine, API, Convex, Frontend)
-- [`features.md`](features.md) — State of each cross-cutting feature (GitHub sync, connectors, agents, etc.)
-- [`gap.md`](gap.md) — Ordered build queue: what to implement next and why
+## Completion Bar
 
-## Quick Summary
+Do not call the platform "complete" until a new project can move from brief to
+closeout through the live autopilot path with:
 
-The engine, core API, and basic frontend are production-ready for the original NJ economics use case. The new Data OS architecture (Projects, Connectors, GitHub sync, Ontology kernel, Scheduled pipelines, rail-py) is fully specced but not yet implemented. Several features exist in the codebase that are ahead of or different from the current spec.
+- no mocked Convex/session layer
+- no manual promotion of task, session, hydration, or integrity state
+- no post-hoc provenance backfill
+- GitHub status that can prove `in_sync` or honestly report `unknown`
+- closeout auditors green from repo truth
 
-| Layer | Spec coverage | Implementation |
-|-------|--------------|----------------|
-| Engine | ✅ Complete | ✅ Complete + extras |
-| API | ✅ Complete | 🟡 ~75% — missing GitHub, connectors, schedules |
-| Convex schema | ✅ Complete | 🟡 ~60% — missing connector/ontology templates, schedules |
-| Frontend | ✅ Complete | 🟡 ~50% — flat nav, missing project-scoped layout |
-| Ontology kernel | ✅ Complete | ❌ Not started |
-| GitHub sync | ✅ Complete | ❌ Not started |
-| rail-py | ✅ Complete | ❌ Not started |
-| Scheduled pipelines | ✅ Complete | ❌ Not started |
+## Next Build Queue
+
+1. Exercise local autopilot on a fresh project that still has unfinished work,
+   not only an already closeout-ready project.
+2. Rerun a fresh validation project through live `autopilot_service` once Convex
+   is available.
+3. Remove or archive obsolete state claims from `layers.md`, `features.md`, and
+   `gap.md` once the new validation result is captured.
+4. Keep reducing duplicated "truth" surfaces into one project reality snapshot.
+
+## Latest Fresh-Project Run
+
+`docs/validation/fresh-goal-mode-completion` was created as a new
+research-first project. Local validation passes with:
+
+```bash
+packages/api/.venv/bin/python packages/api/scripts/validate_local_project.py \
+  --root docs/validation/fresh-goal-mode-completion
+```
+
+The project reaches `LOCAL_VALIDATION_READY=True`, including closeout. A bounded
+local autopilot tick also completes without Convex:
+
+```bash
+RAIL_PROJECTS_DIR=docs/validation \
+  packages/api/.venv/bin/python packages/api/scripts/run_autopilot_tick.py \
+  --slug fresh-goal-mode-completion --iterations 1
+```
+
+The configured Convex deployment is still disabled by plan limits, so live
+cloud-backed validation remains blocked until that backend is available.

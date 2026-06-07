@@ -187,15 +187,33 @@ async def github_status(project_slug: str):
     project = await _resolve_project_by_slug(project_slug)
     if not project:
         raise HTTPException(404, "Project not found")
+
+    repo = project.get("github")
+    branch = project.get("defaultBranch", "main")
+    last_published_sha = project.get("lastPublishedCommitSha")
+    remote_head_sha = None
+    sync_status = "unlinked" if not repo else "unknown"
+    in_sync = None
+
+    if repo and last_published_sha:
+        try:
+            remote_head_sha = await github_service.get_branch_head(repo, branch)
+            in_sync = remote_head_sha == last_published_sha
+            sync_status = "in_sync" if in_sync else "diverged"
+        except Exception:
+            sync_status = "unknown"
+
     return {
-        "github": project.get("github"),
-        "defaultBranch": project.get("defaultBranch", "main"),
+        "github": repo,
+        "defaultBranch": branch,
         "githubSyncMode": project.get("githubSyncMode", "manual"),
-        "lastPublishedCommitSha": project.get("lastPublishedCommitSha"),
+        "lastPublishedCommitSha": last_published_sha,
         "lastPublishedAt": project.get("lastPublishedAt"),
         "lastPublishError": project.get("lastPublishError"),
         "lastHydratedAt": project.get("lastHydratedAt"),
-        "in_sync": True,  # placeholder — implement content hash comparison later
+        "remoteHeadCommitSha": remote_head_sha,
+        "syncStatus": sync_status,
+        "in_sync": in_sync,
     }
 
 class LinkRequest(BaseModel):

@@ -153,6 +153,56 @@ async def test_github_status_uses_repo_first_local_project(client, convex_mock, 
 
     assert resp.status_code == 200
     assert resp.json()["github"] == "Rutgers-Economics-Labs/demo-project"
+    assert resp.json()["syncStatus"] == "unknown"
+    assert resp.json()["in_sync"] is None
+
+
+async def test_github_status_compares_last_publish_with_remote_head(client, monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "project-1",
+        "slug": "demo-project",
+        "github": "Rutgers-Economics-Labs/demo-project",
+        "defaultBranch": "main",
+        "githubSyncMode": "manual",
+        "lastPublishedCommitSha": "abc123",
+    }
+
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", AsyncMock(return_value=project))
+    monkeypatch.setattr(github_router.github_service, "get_branch_head", AsyncMock(return_value="abc123"))
+
+    resp = await client.get("/api/v1/github/status/demo-project")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["remoteHeadCommitSha"] == "abc123"
+    assert body["syncStatus"] == "in_sync"
+    assert body["in_sync"] is True
+
+
+async def test_github_status_reports_diverged_when_remote_head_differs(client, monkeypatch):
+    from app.routers import github as github_router
+
+    project = {
+        "_id": "project-1",
+        "slug": "demo-project",
+        "github": "Rutgers-Economics-Labs/demo-project",
+        "defaultBranch": "main",
+        "githubSyncMode": "manual",
+        "lastPublishedCommitSha": "abc123",
+    }
+
+    monkeypatch.setattr(github_router.planner_service, "resolve_project_reference", AsyncMock(return_value=project))
+    monkeypatch.setattr(github_router.github_service, "get_branch_head", AsyncMock(return_value="def456"))
+
+    resp = await client.get("/api/v1/github/status/demo-project")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["remoteHeadCommitSha"] == "def456"
+    assert body["syncStatus"] == "diverged"
+    assert body["in_sync"] is False
 
 
 async def test_link_github_persists_repo_only_manifest(client, convex_mock, monkeypatch, tmp_path):

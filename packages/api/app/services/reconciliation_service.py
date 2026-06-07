@@ -16,12 +16,16 @@ from rail.manifest import RailManifest, load_manifest
 
 
 ORPHANED_QUEUE_GRACE_MS = 30_000
-IGNORED_ARTIFACT_DRIFT_SUFFIXES = {".aux", ".log", ".out", ".toc"}
+IGNORED_ARTIFACT_DRIFT_SUFFIXES = {".aux", ".fdb_latexmk", ".fls", ".log", ".out", ".toc"}
 TRACKED_ARTIFACT_DRIFT_SUFFIXES = (
     set(session_lifecycle.ARTIFACT_SUFFIXES)
     | set(session_lifecycle.DATASET_SUFFIXES)
     | {".tex"}
 )
+
+
+def _compact_text(value: Any) -> str:
+    return " ".join(str(value or "").split())
 
 
 def _artifact_path_should_ignore_drift(path: str) -> bool:
@@ -595,14 +599,29 @@ async def project_reality_snapshot(
                 ),
             }
         task = task_by_id[task_id]
+        task_path = root / "research_plan" / "tasks" / f"{task_id}.md"
+        if str(task.get("status") or "").strip().lower() in {"done", "cancelled", "superseded"}:
+            continue
         if planner_service._task_explicitly_reopened(task):
+            continue
+        if str(task.get("latestRunSummary") or "").startswith("Stuck loop detected:"):
+            continue
+        if planner_service._task_terminal_resolution_is_newer_than_session(task_path, session_root, task):
             continue
         if planner_service._task_has_explicit_terminal_resolution(task, patch):
             continue
+        task_status = str(task.get("status") or "")
+        task_blocker = task.get("blockerCategory")
+        patch_blocker = patch["blockerCategory"]
+        summary_matches = _compact_text(task.get("latestRunSummary")) == _compact_text(patch["latestRunSummary"])
+        blocker_matches = (
+            task_blocker == patch_blocker
+            or (task_status == "blocked" and task_blocker in {None, ""} and bool(patch_blocker) and summary_matches)
+        )
         if (
-            str(task.get("status") or "") != patch["status"]
-            or task.get("blockerCategory") != patch["blockerCategory"]
-            or str(task.get("latestRunSummary") or "") != patch["latestRunSummary"]
+            task_status != patch["status"]
+            or not blocker_matches
+            or not summary_matches
             or (task.get("approvalState") is not None and patch["status"] in {"done", "cancelled", "blocked"})
         ):
             mismatch_task_ids.append(task_id)
@@ -736,12 +755,13 @@ async def project_reality_snapshot(
             for path in artifacts_root.rglob("*")
             if path.is_file()
             and not any(part.startswith(".") for part in path.relative_to(root).parts)
-            and not _artifact_path_should_ignore_drift(str(path.relative_to(root)).replace("\\", "/"))
+            and _artifact_path_is_registry_candidate(str(path.relative_to(root)).replace("\\", "/"))
         ) if artifacts_root.exists() else []
         tracked_artifacts = sorted(
             str(item.artifact_path)
             for item in indexes.artifact_lineage
             if item.artifact_type != "dataset"
+            and _artifact_path_is_registry_candidate(str(item.artifact_path))
             and (
                 str(item.artifact_path) == manifest.paths.artifacts_root
                 or str(item.artifact_path).startswith(f"{manifest.paths.artifacts_root}/")

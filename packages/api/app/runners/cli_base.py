@@ -29,6 +29,75 @@ def runner_runtime_paths(session_root: str) -> dict[str, Path]:
     }
 
 
+def _local_process_table() -> list[tuple[int, int, str]]:
+    try:
+        result = subprocess.run(
+            ["ps", "-axo", "pid=,ppid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except Exception:
+        return []
+    rows: list[tuple[int, int, str]] = []
+    for line in result.stdout.splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) < 2:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        rows.append((pid, ppid, parts[2] if len(parts) > 2 else ""))
+    return rows
+
+
+def _descendant_pids(root_pid: int, process_rows: list[tuple[int, int, str]]) -> set[int]:
+    children_by_parent: dict[int, list[int]] = {}
+    for pid, ppid, _command in process_rows:
+        children_by_parent.setdefault(ppid, []).append(pid)
+    descendants: set[int] = set()
+    stack = list(children_by_parent.get(root_pid, []))
+    while stack:
+        pid = stack.pop()
+        if pid in descendants:
+            continue
+        descendants.add(pid)
+        stack.extend(children_by_parent.get(pid, []))
+    return descendants
+
+
+def _terminate_local_cli_process_tree(pid: int, workspace_path: str | None = None) -> None:
+    process_rows = _local_process_table()
+    targets = _descendant_pids(pid, process_rows)
+    if workspace_path:
+        targets.update(
+            row_pid
+            for row_pid, _ppid, command in process_rows
+            if row_pid != os.getpid() and workspace_path in command
+        )
+    for target_pid in sorted(targets, reverse=True):
+        try:
+            os.kill(target_pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except Exception:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
+
+
 @dataclass
 class LocalCliSession:
     session_id: str
@@ -581,12 +650,10 @@ class LocalCLIRunner(BaseRunner):
                 except ValueError:
                     pid = None
             if pid and pid > 0:
-                try:
-                    os.kill(pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                except PermissionError:
-                    pass
+                _terminate_local_cli_process_tree(
+                    pid,
+                    workspace_path=(detached.get("command") or {}).get("cwd"),
+                )
             try:
                 from app.services import session_files
 
@@ -601,7 +668,10 @@ class LocalCLIRunner(BaseRunner):
                 pass
             return
         if session.process and session.process.returncode is None:
-            session.process.terminate()
+            if session.process.pid:
+                _terminate_local_cli_process_tree(session.process.pid, workspace_path=session.cwd)
+            else:
+                session.process.terminate()
         session.status = "cancelled"
         session.events.append(
             RunnerEvent(

@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-
-const API_ROOT = process.env.NEXT_PUBLIC_RAIL_API_URL ?? "http://127.0.0.1:8000/api/v1";
+import { fetchPlannerHome } from "@/lib/api";
 
 type PaletteItem = {
   id: string;
@@ -68,11 +67,9 @@ export function CommandPalette({ slug }: { slug: string }) {
     setCursor(0);
     setTimeout(() => inputRef.current?.focus(), 30);
 
-    fetch(`${API_ROOT}/projects/${slug}/planner/board`, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
+    fetchPlannerHome(slug)
       .then((data) => {
-        if (!data?.tasks) return;
-        const items: PaletteItem[] = data.tasks.map((t: any) => ({
+        const items: PaletteItem[] = (data.planner.tasks ?? []).map((t: any) => ({
           id: t._id ?? t.title,
           category: "Task",
           label: t.title,

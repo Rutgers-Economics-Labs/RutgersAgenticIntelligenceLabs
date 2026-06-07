@@ -181,7 +181,10 @@ async def raise_decision_event(
             persist=True,
         )
         event.plannerRunAt = session_files.utc_now_iso()
-        event.plannerResponse = str(result.get("assistantMessage") or "Planner turn completed.")
+        if isinstance(result, dict):
+            event.plannerResponse = str(result.get("assistantMessage") or "Planner turn completed.")
+        else:
+            event.plannerResponse = "Planner turn completed."
         event.updatedAt = event.plannerRunAt
         path.write_text(_render_decision(event), encoding="utf-8")
 
