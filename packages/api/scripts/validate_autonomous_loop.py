@@ -34,7 +34,7 @@ for p in [str(API_ROOT), str(RAIL_PY_ROOT)]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-FRED_API_KEY = os.environ.get("FRED_API_KEY", "${FRED_API_KEY}")
+FRED_API_KEY = os.environ.get("FRED_API_KEY", "")
 OUTPUT_DIR = REPO_ROOT / "docs" / "validation"
 
 
@@ -48,6 +48,8 @@ def _utc_iso() -> str:
 
 def fetch_fred_series(series_id: str, observation_start: str = "2020-01-01") -> list[dict]:
     import urllib.request, urllib.parse
+    if not FRED_API_KEY:
+        raise RuntimeError("FRED_API_KEY must be set to run autonomous loop validation.")
     params = urllib.parse.urlencode({
         "series_id": series_id,
         "api_key": FRED_API_KEY,

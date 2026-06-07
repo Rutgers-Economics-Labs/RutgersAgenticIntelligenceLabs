@@ -211,6 +211,14 @@ __marimo__/
 # RAIL Specifics
 packages/engine/cache/
 cache/
+scratch/
+uploaded_key
+**/uploaded_key
+*.pem
+*.key
+*.p8
+*.p12
+*.crt
 packages/web/
 apps/web/.next/
 apps/web/node_modules/
