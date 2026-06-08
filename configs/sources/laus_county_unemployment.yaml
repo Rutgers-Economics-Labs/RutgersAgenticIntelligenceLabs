@@ -1,0 +1,28 @@
+source:
+  source_name: Local Area Unemployment Statistics
+  source_id: LAUS
+  source_type: csv
+  path: data/raw/laus_demo.csv
+  owl_class: LAUS
+
+entity:
+  geo_level: county
+  ontology_entity_key: entity.county
+
+time:
+  frequency: annual
+  column: year
+
+geography:
+  id_column: county_fips
+  name_column: county_name
+
+field_mappings:
+  unemployment_rate:
+    ontology_tag: labor.unemployment.rate
+    measure_class: LaborIndicator
+    units: Percent
+    price_basis: null
+
+metadata:
+  data_vintage: "2024-01-01"

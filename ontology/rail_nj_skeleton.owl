@@ -44,12 +44,21 @@
   <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
 </owl:DatatypeProperty>
 
+<owl:DatatypeProperty rdf:about="#dataVintage">
+  <rdfs:domain rdf:resource="#Measure"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#sourceID">
+  <rdfs:domain rdf:resource="#Source"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
 <owl:DatatypeProperty rdf:about="#geoID">
   <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
 </owl:DatatypeProperty>
 
-<owl:DatatypeProperty rdf:about="#dataVintage">
-  <rdfs:domain rdf:resource="#Measure"/>
+<owl:DatatypeProperty rdf:about="#geoLevel">
   <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
 </owl:DatatypeProperty>
 
@@ -58,44 +67,101 @@
   <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
 </owl:DatatypeProperty>
 
-<owl:Class rdf:about="#State">
+<owl:DatatypeProperty rdf:about="#timeFrequency">
+  <rdfs:domain rdf:resource="#TimePeriod"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#suppressed">
+  <rdfs:domain rdf:resource="#Measure"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#boolean"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#rawField">
+  <rdfs:domain rdf:resource="#Measure"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#baseYear">
+  <rdfs:domain rdf:resource="#Measure"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:DatatypeProperty rdf:about="#deflatorSource">
+  <rdfs:domain rdf:resource="#Measure"/>
+  <rdfs:range rdf:resource="http://www.w3.org/2001/XMLSchema#string"/>
+</owl:DatatypeProperty>
+
+<owl:Class rdf:about="#Geography">
   <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:Class rdf:about="#State">
+  <rdfs:subClassOf rdf:resource="#Geography"/>
 </owl:Class>
 
 <owl:Class rdf:about="#County">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:subClassOf rdf:resource="#Geography"/>
 </owl:Class>
 
 <owl:Class rdf:about="#Municipality">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:subClassOf rdf:resource="#Geography"/>
 </owl:Class>
 
 <owl:Class rdf:about="#CensusTract">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:subClassOf rdf:resource="#Geography"/>
 </owl:Class>
 
 <owl:Class rdf:about="#ZipCode">
+  <rdfs:subClassOf rdf:resource="#Geography"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Entity">
   <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
 </owl:Class>
 
 <owl:Class rdf:about="#Person">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:subClassOf rdf:resource="#Entity"/>
 </owl:Class>
 
 <owl:Class rdf:about="#Establishment">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:subClassOf rdf:resource="#Entity"/>
 </owl:Class>
 
 <owl:Class rdf:about="#Household">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:subClassOf rdf:resource="#Entity"/>
 </owl:Class>
 
 <owl:Class rdf:about="#Utility">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+  <rdfs:subClassOf rdf:resource="#Entity"/>
 </owl:Class>
 
 <owl:Class rdf:about="#Plant">
+  <rdfs:subClassOf rdf:resource="#Entity"/>
+</owl:Class>
+
+<owl:Class rdf:about="#TimePeriod">
   <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:Class rdf:about="#Source">
+  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
+</owl:Class>
+
+<owl:Class rdf:about="#ACS">
+  <rdfs:subClassOf rdf:resource="#Source"/>
+</owl:Class>
+
+<owl:Class rdf:about="#QCEW">
+  <rdfs:subClassOf rdf:resource="#Source"/>
+</owl:Class>
+
+<owl:Class rdf:about="#LAUS">
+  <rdfs:subClassOf rdf:resource="#Source"/>
+</owl:Class>
+
+<owl:Class rdf:about="#GenericSource">
+  <rdfs:subClassOf rdf:resource="#Source"/>
 </owl:Class>
 
 <owl:Class rdf:about="#Measure">
@@ -128,26 +194,6 @@
 
 <owl:Class rdf:about="#TransportationIndicator">
   <rdfs:subClassOf rdf:resource="#Measure"/>
-</owl:Class>
-
-<owl:Class rdf:about="#Source">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
-</owl:Class>
-
-<owl:Class rdf:about="#ACS">
-  <rdfs:subClassOf rdf:resource="#Source"/>
-</owl:Class>
-
-<owl:Class rdf:about="#QCEW">
-  <rdfs:subClassOf rdf:resource="#Source"/>
-</owl:Class>
-
-<owl:Class rdf:about="#LAUS">
-  <rdfs:subClassOf rdf:resource="#Source"/>
-</owl:Class>
-
-<owl:Class rdf:about="#TimePeriod">
-  <rdfs:subClassOf rdf:resource="http://www.w3.org/2002/07/owl#Thing"/>
 </owl:Class>
 
 
