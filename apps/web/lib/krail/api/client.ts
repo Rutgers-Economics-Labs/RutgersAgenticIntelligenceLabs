@@ -1,6 +1,8 @@
 import type {
-  ApiError, ApiErrorShape, FindResponse, Project, ProjectHealthResponse,
-  ProjectListResponse, ProjectManifestResponse, SourcesResponse,
+  ApiError, ApiErrorShape, ApprovalInventoryResponse, ApprovalResponse, FindRequest, FindResponse,
+  GraphResponse, IntegrityResponse, Project, ProjectHealthResponse, ProjectListResponse,
+  ProjectManifestResponse, SourceCheckResponse, SourceImpactResponse, SourcesResponse,
+  WorkflowInventoryResponse,
 } from "./types";
 
 export class KrailApiClientError extends Error implements ApiError {
@@ -48,15 +50,45 @@ export class KrailApiClient {
     return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/manifest`);
   }
 
-  // M3 contract: call sites use this method only after the API mounts the route.
   getSources(projectId: string): Promise<SourcesResponse> {
     return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/sources`);
   }
 
-  find(projectId: string, text: string): Promise<FindResponse> {
+  find(projectId: string, query: FindRequest): Promise<FindResponse> {
     return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/find`, {
-      method: "POST", body: JSON.stringify({ text }),
+      method: "POST", body: JSON.stringify(query),
     });
+  }
+
+  getGraph(projectId: string, query: { entityType?: string; entity?: string; relationType?: string; topic?: string; limit?: number } = {}): Promise<GraphResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/graph${queryString(query)}`);
+  }
+
+  checkSources(projectId: string): Promise<SourceCheckResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/check`, { method: "POST" });
+  }
+
+  getAffectedSources(projectId: string, sourceIds: string[] = []): Promise<SourceImpactResponse> {
+    const params = new URLSearchParams();
+    sourceIds.forEach((sourceId) => params.append("sourceId", sourceId));
+    const suffix = params.size ? `?${params.toString()}` : "";
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/affected${suffix}`);
+  }
+
+  getIntegrity(projectId: string): Promise<IntegrityResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/integrity`);
+  }
+
+  getWorkflows(projectId: string): Promise<WorkflowInventoryResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/workflows`);
+  }
+
+  getApprovals(projectId: string): Promise<ApprovalInventoryResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/approvals`);
+  }
+
+  getApproval(projectId: string, approvalId: string): Promise<ApprovalResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/approvals/${encodeURIComponent(approvalId)}`);
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -93,4 +125,10 @@ export class KrailApiClient {
     }
     return payload as T;
   }
+}
+
+function queryString(values: Record<string, string | number | undefined>): string {
+  const params = new URLSearchParams();
+  Object.entries(values).forEach(([key, value]) => { if (value !== undefined && value !== "") params.set(key, String(value)); });
+  return params.size ? `?${params.toString()}` : "";
 }
