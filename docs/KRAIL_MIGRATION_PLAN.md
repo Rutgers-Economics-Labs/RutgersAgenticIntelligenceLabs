@@ -1,6 +1,6 @@
 # KRAIL Runtime Migration Plan
 
-Status: approved architecture; ready for implementation slicing
+Status: Wave 2 foundation integrated; execution HTTP/SSE and feature workspaces remain
 Branch: `krail`
 Target: KRAIL is the project source of truth; RAIL is the visual and operational platform.
 
@@ -23,6 +23,29 @@ RAIL will own:
 The platform database must not become a second representation of KRAIL records. Durable project
 content is read from and written through KRAIL. Operational records may point to KRAIL identifiers
 and repo paths but may not redefine them.
+
+### Current implementation checkpoint
+
+Implemented and verified on `krail`:
+
+- published `krail==0.2.2` compatibility adapter with namespace-shadowing protection and contract
+  tests for health, manifest, find, graph, sources, integrity, workflows, approvals, and dry runs;
+- single-node managed/linked-local project registry with canonical path and Git baseline policy;
+- versioned project and read-only knowledge APIs for find, graph, sources, integrity, workflows,
+  and approvals;
+- `/krail-preview` design foundation and `/krail-live` server-rendered M2/M3 client path;
+- local execution-control foundation with durable run/event metadata, explicit permission snapshots,
+  restart reconciliation, cancellation, isolated Git worktrees, and atomic retained integration refs.
+
+The execution package is deliberately not mounted as an HTTP run service yet. Restricted command
+profiles require an injected sandbox that enforces filesystem and network policy at the OS boundary;
+the raw subprocess runner accepts only the explicit unrestricted `full-access` profile. Non-dry KRAIL
+workflow execution is likewise limited to `full-access` until KRAIL exposes an enforcing execution
+hook. This is a security invariant, not a temporary UI restriction.
+
+Known remaining foundation gaps are the run/SSE API, approval decisions, command-profile registry,
+an enforcing local sandbox, SQL/analysis fixture support, richer frontend workspaces, removal of the
+legacy runtime packages, and existing legacy frontend type/import failures.
 
 ## 2. Architectural invariants
 
@@ -149,7 +172,7 @@ packages/
     app/
       krail_runtime/         # the only KRAIL integration boundary
       projects/              # registry and workspace lifecycle
-      runs/                  # process lifecycle and live events
+      execution/             # permissions, process lifecycle, worktrees, and events
       auth/                  # platform authorization
       secrets/               # secret references and injection
       api/                   # versioned HTTP routes and DTOs
@@ -292,6 +315,8 @@ Acceptance: signed-off ownership table and cleanup manifest.
 
 Owner paths: `packages/api/app/krail_runtime/**`, `packages/api/tests/krail_runtime/**`, fixture only
 Dependencies: M0
+Implementation: complete for the currently used KRAIL 0.2.2 surface; capability gaps are documented
+in `packages/api/app/krail_runtime/CAPABILITY_GAPS.md`.
 
 - Pin KRAIL and remove the local `rail` package from Python resolution.
 - Build a deterministic KRAIL example fixture.
@@ -305,6 +330,7 @@ Acceptance: adapter contract suite passes without importing old engine/service m
 
 Owner paths: `packages/api/app/api/**`, `packages/api/app/projects/**`, API bootstrap/config tests
 Dependencies: M0; can run alongside M1 after DTO boundary agreement
+Implementation: complete for the local single-node registry and project/health/manifest routes.
 
 - Replace the router collection with a small versioned API.
 - Implement project registration by stable ID and canonical workspace path.
@@ -319,6 +345,8 @@ Acceptance: register/list/open/health works for the fixture; path traversal test
 
 Owner paths: KRAIL API routes and DTOs agreed with M1
 Dependencies: M1 and M2
+Implementation: complete for find, graph, sources, integrity, workflow inventory, and approvals.
+SQL/query, pagination, OpenAPI snapshots, and run history remain follow-up work.
 
 - Expose manifest, find/search, ontology graph, SQL query, sources, integrity, workflow inventory,
   approvals, and run history.
@@ -329,8 +357,11 @@ Acceptance: read API integration tests match the fixture's KRAIL state.
 
 ### M4 — Run service and event stream
 
-Owner paths: `packages/api/app/runs/**`, worker entrypoint, run tests
+Owner paths: `packages/api/app/execution/**`, run HTTP/SSE modules, worker entrypoint, run tests
 Dependencies: M1 and M2
+Implementation: execution-policy, durable-state, worktree, and atomic-combine foundation complete.
+HTTP/SSE mounting, a concrete restricted sandbox, worker process supervision, and approval resume
+remain follow-up work.
 
 - Define queued/running/awaiting_approval/succeeded/failed/cancelled states.
 - Execute KRAIL workflows concurrently in isolated processes, Git branches, and worktrees.
@@ -350,6 +381,9 @@ batch commit, overlapping-edit block, and failed-validation rollback scenarios p
 
 Owner paths: `apps/web/lib/**`, app shell, design primitives; no feature pages
 Dependencies: M3 contract
+Implementation: `/krail-live` project, health, manifest, source, error, and provenance foundation
+complete and smoke-tested against the real KRAIL fixture. Shared navigation and broader generated
+contracts remain follow-up work.
 
 - Replace legacy API contracts with generated/validated platform types.
 - Build project selector, navigation, query client, loading/error states, and provenance drawer.
