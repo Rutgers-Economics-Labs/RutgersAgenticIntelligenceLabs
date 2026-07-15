@@ -60,6 +60,9 @@ class MacOSSandboxExec:
 
     def run(self, argv: Sequence[str], *, cwd: Path, environment: dict[str, str], profile: PermissionProfile,
             shell: bool, cancel: Event | None) -> CommandResult:
+        # A pre-cancelled run must not even create the sandbox launcher process.
+        if cancel is not None and cancel.is_set():
+            return CommandResult(None, "", "", cancelled=True)
         if shell:
             # The command executor may authorize shells for full access, but this
             # backend intentionally preserves argv semantics for restricted runs.
