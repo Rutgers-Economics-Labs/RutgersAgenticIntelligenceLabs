@@ -1,6 +1,7 @@
 import "@/app/globals.css";
 import type { Metadata } from "next";
 import { ReactNode } from "react";
+import { PlatformNav } from "@/components/platform-nav/platform-nav";
 
 export const metadata: Metadata = {
   title: "RAIL · KRAIL platform",
@@ -30,6 +31,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             `
           }}
         />
+        <PlatformNav />
         {children}
       </body>
     </html>

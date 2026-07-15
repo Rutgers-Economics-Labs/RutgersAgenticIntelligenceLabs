@@ -1,0 +1,35 @@
+.shell {
+  position: sticky;
+  z-index: 100;
+  top: 0;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 28px;
+  align-items: center;
+  min-height: 64px;
+  padding: 0 clamp(18px, 4vw, 52px);
+  border-bottom: 1px solid #d8d0c5;
+  background: rgba(248, 245, 239, 0.94);
+  color: #211d19;
+  backdrop-filter: blur(18px);
+}
+
+.brand { display: flex; gap: 10px; align-items: center; }
+.brand > span:last-child { display: grid; line-height: 1.05; }
+.brand strong { font: 700 .83rem/1 "JetBrains Mono", monospace; letter-spacing: .08em; }
+.brand small { margin-top: 4px; color: #766e65; font-size: .68rem; }
+.mark { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 9px; background: #211d19; color: #fff; font: 600 1rem Georgia, serif; }
+
+.nav { display: flex; justify-content: center; gap: 6px; }
+.nav a { padding: 8px 11px; border-radius: 8px; color: #696158; font-size: .82rem; font-weight: 600; }
+.nav a:hover, .nav a:focus-visible { background: #ebe5dc; color: #211d19; outline: none; }
+.nav a[aria-current="page"] { background: #e5ddd1; color: #211d19; }
+.setup { padding: 9px 13px; border-radius: 9px; background: #211d19; color: #fff; font-size: .78rem; font-weight: 700; }
+
+@media (max-width: 760px) {
+  .shell { grid-template-columns: auto 1fr; min-height: 58px; padding-inline: 14px; }
+  .brand small, .setup { display: none; }
+  .nav { justify-content: flex-end; overflow-x: auto; }
+  .nav a { padding: 8px; white-space: nowrap; font-size: .75rem; }
+  .nav a:first-child { display: none; }
+}

@@ -26,6 +26,9 @@
 .inspector details, .timeline details, .approvals details { margin-top: 14px; }
 .inspector pre, .timeline pre, .approvals pre { overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--muted); font: 11px "JetBrains Mono", monospace; }
 .composer form { display: grid; gap: 14px; margin-top: 18px; }
+.runAdvanced { padding: 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-alt); }
+.runAdvanced summary { cursor: pointer; font-weight: 700; }
+.runAdvanced > div { display: grid; gap: 13px; margin-top: 13px; }
 .composer fieldset { display: grid; gap: 8px; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
 .composer fieldset label { display: block; color: var(--fg); }
 .composer small { display: block; margin-top: 4px; color: var(--muted); font-weight: 400; }

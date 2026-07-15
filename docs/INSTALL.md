@@ -10,14 +10,16 @@
 ## Install and run
 
 ```bash
-make install
-cp .env.example .env
-make run
+make setup
+make start
 ```
 
-`make run` starts `app.main_krail:app` on port 8000 and Next.js on port 3000. The web server uses
+`make setup` installs the locked dependencies and creates `.env` only when one does not already
+exist. `make start` starts `app.main_krail:app` on port 8000 and Next.js on port 3000. The web server uses
 `KRAIL_API_BASE_URL` for server-side API calls. Browser workflow and project mutations use
 `NEXT_PUBLIC_KRAIL_API_URL`; its web origin must be present in `RAIL_WEB_ORIGINS`.
+
+If setup or startup fails, run `make doctor` to check `uv`, Node.js, Git, and the pinned KRAIL CLI.
 
 ## Workspace configuration
 

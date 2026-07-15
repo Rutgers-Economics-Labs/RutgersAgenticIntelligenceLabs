@@ -4,89 +4,61 @@ import styles from "./page.module.css";
 
 export const dynamic = "force-dynamic";
 
-const workspaces = [
-  {
-    href: "/krail-explore" as const,
-    eyebrow: "Explore + Evidence",
-    title: "Inspect canonical knowledge",
-    description: "Search KRAIL records, traverse the graph, inspect sources, and trace provenance.",
-  },
-  {
-    href: "/krail-analyze" as const,
-    eyebrow: "Analyze",
-    title: "Query canonical data",
-    description: "Run bounded KRAIL queries and inspect tables, charts, reproducibility, and source context.",
-  },
-  {
-    href: "/krail-workflows" as const,
-    eyebrow: "Workflows",
-    title: "Run controlled workflows",
-    description: "Inspect workflow truth, choose server-owned permissions, and follow durable live execution.",
-  },
-  {
-    href: "/krail-control" as const,
-    eyebrow: "Control Plane",
-    title: "Operate the platform",
-    description: "Create or link projects and audit Git, sandbox, and execution capability boundaries.",
-  },
-  {
-    href: "/krail-live" as const,
-    eyebrow: "Runtime",
-    title: "Check project health",
-    description: "Open live manifest, health, and source data through the versioned platform API.",
-  },
-  {
-    href: "/krail-preview" as const,
-    eyebrow: "Platform map",
-    title: "Review the complete control surface",
-    description: "Preview the five-workspace product model and its resilient operational states.",
-  },
-];
+const actions = [
+  { href: "/krail-explore", number: "01", title: "Explore knowledge", description: "Search records, follow relationships, and open the sources behind an answer.", action: "Open knowledge" },
+  { href: "/krail-workflows", number: "02", title: "Run a workflow", description: "Choose a repeatable workflow, run it safely, and watch progress in real time.", action: "Open workflows" },
+  { href: "/krail-analyze", number: "03", title: "Analyze data", description: "Query hydrated project data and inspect results, charts, and provenance.", action: "Open analysis" },
+  { href: "/krail-control", number: "04", title: "Manage projects", description: "Add a workspace and review its access, Git state, and execution permissions.", action: "Open projects" },
+] as const;
 
 export default async function PlatformHome() {
   const api = createServerKrailApiClient();
   const projects = await asResource(() => api.listProjects());
-  const projectCount = projects.state === "ready" ? projects.data.length : null;
+  const ready = projects.state === "ready";
+  const project = ready ? projects.data[0] : undefined;
+  const projectCount = ready ? projects.data.length : null;
 
   return (
     <main className={styles.page}>
-      <header className={styles.hero}>
-        <div>
-          <span className={styles.eyebrow}>RAIL · powered by KRAIL</span>
-          <h1>The visual control plane for repo-native knowledge.</h1>
-          <p>
-            KRAIL owns the ontology, evidence, and workflow truth. RAIL makes it visible,
-            operable, and auditable without creating a second data model.
-          </p>
+      <section className={styles.hero}>
+        <div className={styles.heroCopy}>
+          <span className={styles.eyebrow}>Your local knowledge workspace</span>
+          <h1>Turn project knowledge into clear, repeatable work.</h1>
+          <p>RAIL gives you one place to explore information, analyze data, and run KRAIL workflows—with the original files and sources always visible.</p>
+          {!ready ? <div className={styles.apiWarning} role="status"><strong>RAIL is waiting for the local API.</strong><span>Start the stack with <code>make start</code>, then reload this page.</span></div> : projectCount === 0 ? (
+            <div className={styles.onboarding}>
+              <span className={styles.step}>First step</span>
+              <div><strong>Add your first project</strong><p>Create a new KRAIL workspace or connect an existing local directory.</p></div>
+              <Link href="/krail-control#add-project">Add a project →</Link>
+            </div>
+          ) : (
+            <div className={styles.currentProject}>
+              <span className={styles.liveDot} aria-hidden="true" />
+              <div><small>Ready to work</small><strong>{project?.displayName}</strong></div>
+              <Link href={project ? { pathname: "/krail-explore", query: { project: project.projectId } } : "/krail-explore"}>Continue →</Link>
+            </div>
+          )}
         </div>
-        <div className={styles.status}>
-          <span aria-hidden="true" />
-          {projectCount === null ? "Platform API unavailable" : `${projectCount} registered project${projectCount === 1 ? "" : "s"}`}
-        </div>
-      </header>
+        <aside className={styles.principle} aria-label="How RAIL works">
+          <span className={styles.eyebrow}>Simple by design</span>
+          <ol>
+            <li><span>1</span><div><strong>Your files stay canonical</strong><p>KRAIL project directories remain the source of truth.</p></div></li>
+            <li><span>2</span><div><strong>Every result keeps its sources</strong><p>Evidence and provenance stay one click away.</p></div></li>
+            <li><span>3</span><div><strong>Risky actions stay explicit</strong><p>Dry runs are the default; elevated access is opt-in.</p></div></li>
+          </ol>
+        </aside>
+      </section>
 
-      <section className={styles.workspaceSection} aria-labelledby="workspace-heading">
-        <div className={styles.sectionHeading}>
-          <span className={styles.eyebrow}>Local single-node platform</span>
-          <h2 id="workspace-heading">Choose a workspace</h2>
-        </div>
+      <section className={styles.actions} aria-labelledby="actions-title">
+        <div className={styles.sectionHeading}><div><span className={styles.eyebrow}>What do you want to do?</span><h2 id="actions-title">Choose an action</h2></div>{projectCount !== null && <span>{projectCount} project{projectCount === 1 ? "" : "s"}</span>}</div>
         <div className={styles.grid}>
-          {workspaces.map((workspace, index) => (
-            <Link className={styles.card} href={workspace.href} key={workspace.href}>
-              <span className={styles.number}>{String(index + 1).padStart(2, "0")}</span>
-              <span className={styles.eyebrow}>{workspace.eyebrow}</span>
-              <strong>{workspace.title}</strong>
-              <p>{workspace.description}</p>
-              <span className={styles.open}>Open workspace →</span>
-            </Link>
-          ))}
+          {actions.map((item) => <Link className={styles.card} href={project && item.href !== "/krail-control" ? { pathname: item.href, query: { project: project.projectId } } : item.href} key={item.href}>
+            <span className={styles.number}>{item.number}</span><div><h3>{item.title}</h3><p>{item.description}</p></div><span className={styles.open}>{item.action} →</span>
+          </Link>)}
         </div>
       </section>
 
-      <footer className={styles.footer}>
-        <span>KRAIL project directories remain canonical.</span>
-        <span>Git-backed · source-traceable · permission-aware</span>
-      </footer>
+      <footer className={styles.footer}><span>Local-first · Git-backed · source-traceable</span><Link href="/krail-live">System status</Link></footer>
     </main>
   );
 }

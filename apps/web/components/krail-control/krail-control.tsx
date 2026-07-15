@@ -7,88 +7,65 @@ import type { ExecutionCapabilities, ProjectMutation } from "@/lib/krail/control
 import styles from "./krail-control.module.css";
 
 const apiRoot = () => (process.env.NEXT_PUBLIC_KRAIL_API_URL || "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
+const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "new-project";
 
 async function mutate(path: string, body: Record<string, unknown>): Promise<Project> {
-  const response = await fetch(`${apiRoot()}${path}`, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const response = await fetch(`${apiRoot()}${path}`, { method: "POST", headers: { accept: "application/json", "content-type": "application/json" }, body: JSON.stringify(body) });
   const payload = await response.json().catch(() => ({})) as ProjectMutation;
   if (!response.ok) {
-    const request = payload.error?.requestId ? ` · request ${payload.error.requestId}` : "";
-    throw new Error(`${payload.error?.message || `Request failed (${response.status})`}${request}`);
+    const request = payload.error?.requestId ? ` Request ${payload.error.requestId}.` : "";
+    throw new Error(`${payload.error?.message || `Request failed (${response.status}).`}${request}`);
   }
   return payload as unknown as Project;
 }
 
 export function KrailControl({ projects: initial, execution }: { projects: Resource<Project[]>; execution: Resource<ExecutionCapabilities> }) {
   const [projects, setProjects] = useState(initial.state === "ready" ? initial.data : []);
+  const [mode, setMode] = useState<"managed" | "linked">("managed");
   const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
 
+  function remember(project: Project) { setProjects((items) => [...items.filter((item) => item.projectId !== project.projectId), project]); }
+
   async function submitManaged(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setNotice(undefined);
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget; const data = new FormData(form); const displayName = String(data.get("displayName") || "").trim(); const slug = slugify(displayName);
     try {
-      const project = await mutate("/projects/managed", Object.fromEntries(data.entries()));
-      setProjects((items) => [...items.filter((item) => item.projectId !== project.projectId), project]);
-      setNotice(`Created ${project.displayName} in the platform-managed workspace root.`);
-      event.currentTarget.reset();
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Project creation failed."); }
-    finally { setBusy(false); }
+      const project = await mutate("/projects/managed", { projectId: slug, displayName, name: displayName, slug, pack: data.get("pack"), mode: data.get("mode"), knowledgeMode: data.get("knowledgeMode") });
+      remember(project); setNotice(`${project.displayName} is ready. You can start exploring or run a workflow.`); form.reset();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Project creation failed."); } finally { setBusy(false); }
   }
 
   async function submitLinked(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setNotice(undefined);
-    const data = new FormData(event.currentTarget);
+    const form = event.currentTarget; const data = new FormData(form); const displayName = String(data.get("displayName") || "").trim(); const customId = String(data.get("projectId") || "").trim();
     try {
-      const project = await mutate("/projects", { projectId: data.get("projectId") || undefined, displayName: data.get("displayName"), path: data.get("path"), workspaceMode: "linked_local" });
-      setProjects((items) => [...items.filter((item) => item.projectId !== project.projectId), project]);
-      setNotice(`Linked ${project.displayName}; KRAIL remains canonical at its existing path.`);
-      event.currentTarget.reset();
-    } catch (error) { setNotice(error instanceof Error ? error.message : "Project registration failed."); }
-    finally { setBusy(false); }
+      const project = await mutate("/projects", { projectId: customId || slugify(displayName), displayName, path: data.get("path"), workspaceMode: "linked_local" });
+      remember(project); setNotice(`${project.displayName} is connected. Its existing files remain the source of truth.`); form.reset();
+    } catch (error) { setNotice(error instanceof Error ? error.message : "Project registration failed."); } finally { setBusy(false); }
   }
 
-  return (
-    <main className={styles.page}>
-      <header className={styles.header}>
-        <div><span className={styles.eyebrow}>Control Plane</span><h1>Operate the local KRAIL platform.</h1><p>Register canonical workspaces, inspect Git boundaries, and see exactly which execution permissions this node can enforce.</p></div>
-        <Link href="/" className={styles.back}>← Platform home</Link>
-      </header>
+  return <main className={styles.page}>
+    <header className={styles.header}><span className={styles.eyebrow}>Projects</span><h1>Set up your workspace.</h1><p>Create a new KRAIL project or connect one you already have. RAIL handles the setup and keeps the underlying files visible.</p></header>
 
-      {notice && <div className={styles.notice} role="status">{notice}</div>}
+    {notice && <div className={styles.notice} role="status">{notice}</div>}
 
-      <section className={styles.section} aria-labelledby="projects-title">
-        <div className={styles.sectionTitle}><div><span className={styles.eyebrow}>Source of truth</span><h2 id="projects-title">Registered projects</h2></div><strong>{projects.length}</strong></div>
-        {initial.state === "error" && <div className={styles.empty}>Platform API unavailable. Start the local API, then reload.</div>}
-        {projects.length === 0 && initial.state !== "error" ? <div className={styles.empty}>No KRAIL projects are registered yet.</div> : (
-          <div className={styles.projectGrid}>{projects.map((project) => <article className={styles.project} key={project.projectId}>
-            <div><span className={styles.mode}>{project.workspaceMode.replaceAll("_", " ")}</span><h3>{project.displayName}</h3><code>{project.canonicalPath}</code></div>
-            <dl><div><dt>Access</dt><dd>{project.access.replaceAll("_", " ")}</dd></div><div><dt>Git</dt><dd>{project.git.branch || "detached"} · {project.git.isDirty ? "dirty" : "clean"}</dd></div><div><dt>Baseline</dt><dd>{project.git.baselineCommit?.slice(0, 10) || "not recorded"}</dd></div></dl>
-            <nav><Link href={`/krail-explore?project=${encodeURIComponent(project.projectId)}`}>Explore</Link><Link href={`/krail-analyze?project=${encodeURIComponent(project.projectId)}`}>Analyze</Link><Link href={`/krail-workflows?project=${encodeURIComponent(project.projectId)}`}>Workflows</Link></nav>
-          </article>)}</div>
-        )}
-      </section>
+    <section className={styles.section} aria-labelledby="projects-title">
+      <div className={styles.sectionTitle}><div><span className={styles.eyebrow}>Your workspace</span><h2 id="projects-title">Projects</h2></div><strong>{projects.length}</strong></div>
+      {initial.state === "error" ? <div className={styles.empty}><strong>RAIL cannot reach the local API.</strong><span>Run <code>make start</code> in the repository, then reload.</span></div> : projects.length === 0 ? <div className={styles.empty}><strong>No projects yet.</strong><span>Use the simple setup below to add your first one.</span></div> : <div className={styles.projectGrid}>{projects.map((project) => <article className={styles.project} key={project.projectId}>
+        <div className={styles.projectTop}><div><span className={styles.mode}>{project.workspaceMode === "managed" ? "Managed by RAIL" : "Connected folder"}</span><h3>{project.displayName}</h3></div><span className={styles.access} data-write={project.access === "read_write"}>{project.access === "read_write" ? "Ready" : "Read only"}</span></div>
+        <p>{project.access === "read_write" ? "This project can run approved workflows." : "You can explore this project safely; writes are disabled."}</p>
+        <nav><Link className={styles.primary} href={`/krail-explore?project=${encodeURIComponent(project.projectId)}`}>Open knowledge</Link><Link href={`/krail-workflows?project=${encodeURIComponent(project.projectId)}`}>Workflows</Link><Link href={`/krail-analyze?project=${encodeURIComponent(project.projectId)}`}>Analyze</Link></nav>
+        <details><summary>Technical details</summary><code>{project.canonicalPath}</code><dl><div><dt>Git</dt><dd>{project.git.branch || "detached"} · {project.git.isDirty ? "uncommitted changes" : "clean"}</dd></div><div><dt>Baseline</dt><dd>{project.git.baselineCommit?.slice(0, 10) || "not recorded"}</dd></div></dl></details>
+      </article>)}</div>}
+    </section>
 
-      <section className={styles.forms} aria-label="Register KRAIL projects">
-        <form onSubmit={submitManaged} className={styles.form}><span className={styles.eyebrow}>Platform managed</span><h2>Create a KRAIL workspace</h2><p>The server derives the destination below its configured managed root. The browser never chooses that path.</p>
-          <label>Project ID<input required name="projectId" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" /></label><label>Display name<input required name="displayName" /></label><label>KRAIL name<input required name="name" /></label><label>Slug<input required name="slug" pattern="[a-z0-9][a-z0-9-]*" /></label>
-          <div className={styles.row}><label>Pack<select name="pack" defaultValue="research-intelligence"><option>research-intelligence</option><option>company-brain</option><option>software-architecture</option><option>policy-compiler</option></select></label><label>Mode<select name="mode" defaultValue="ontology_first"><option>ontology_first</option><option>markdown_graph</option></select></label></div>
-          <label>Knowledge mode<select name="knowledgeMode" defaultValue="research"><option>research</option><option>company</option><option>personal</option><option>project</option><option>software</option></select></label><button disabled={busy}>Create managed project</button>
-        </form>
-        <form onSubmit={submitLinked} className={styles.form}><span className={styles.eyebrow}>Operator selected</span><h2>Link an existing directory</h2><p>The path must be inside an operator-configured linked root. Registration validates KRAIL and records Git metadata without copying its truth.</p>
-          <label>Project ID <small>optional</small><input name="projectId" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" /></label><label>Display name<input required name="displayName" /></label><label>Absolute local path<input required name="path" type="text" placeholder="/Users/you/knowledge-project" /></label><button disabled={busy}>Register linked project</button>
-        </form>
-      </section>
+    <section className={styles.add} id="add-project" aria-labelledby="add-title">
+      <div className={styles.addIntro}><span className={styles.eyebrow}>Add a project</span><h2 id="add-title">How do you want to start?</h2><p>Most people should create a new project. Connect a folder when it already contains a KRAIL workspace.</p></div>
+      <div className={styles.tabs} role="tablist" aria-label="Project setup type"><button type="button" role="tab" aria-selected={mode === "managed"} onClick={() => setMode("managed")}><strong>Create new</strong><span>Recommended</span></button><button type="button" role="tab" aria-selected={mode === "linked"} onClick={() => setMode("linked")}><strong>Connect folder</strong><span>Existing KRAIL project</span></button></div>
+      {mode === "managed" ? <form onSubmit={submitManaged} className={styles.form}><div className={styles.formLead}><h3>Create a new project</h3><p>Give it a name. RAIL creates the folder, initializes KRAIL, and records the first Git version automatically.</p></div><label>Project name<input autoFocus required name="displayName" placeholder="Customer research" autoComplete="off" /></label><details className={styles.advanced}><summary>Advanced setup</summary><div className={styles.advancedFields}><label>Template<select name="pack" defaultValue="research-intelligence"><option value="research-intelligence">Research intelligence</option><option value="company-brain">Company knowledge</option><option value="software-architecture">Software architecture</option><option value="policy-compiler">Policy compiler</option></select></label><label>Structure<select name="mode" defaultValue="ontology_first"><option value="ontology_first">Ontology first</option><option value="markdown_graph">Markdown graph</option></select></label><label>Knowledge type<select name="knowledgeMode" defaultValue="research"><option value="research">Research</option><option value="company">Company</option><option value="personal">Personal</option><option value="project">Project</option><option value="software">Software</option></select></label></div></details><button className={styles.submit} disabled={busy}>{busy ? "Creating…" : "Create project"}</button></form> : <form onSubmit={submitLinked} className={styles.form}><div className={styles.formLead}><h3>Connect an existing folder</h3><p>The folder stays where it is. RAIL validates it and records operational metadata only.</p></div><label>Project name<input autoFocus required name="displayName" placeholder="Policy library" autoComplete="off" /></label><label>Folder path<input required name="path" placeholder="/Users/you/projects/policy-library" autoComplete="off" /><small>The folder must be inside a location allowed by the operator.</small></label><details className={styles.advanced}><summary>Advanced setup</summary><div className={styles.advancedFields}><label>Custom project ID <small>Optional</small><input name="projectId" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" /></label></div></details><button className={styles.submit} disabled={busy}>{busy ? "Connecting…" : "Connect folder"}</button></form>}
+    </section>
 
-      <section className={styles.section} aria-labelledby="execution-title"><div className={styles.sectionTitle}><div><span className={styles.eyebrow}>Permission boundary</span><h2 id="execution-title">Execution capabilities</h2></div></div>
-        {execution.state !== "ready" ? <div className={styles.empty}>Execution capability inventory is unavailable.</div> : <>
-          <article className={styles.sandbox}><div><span className={styles.mode}>Sandbox</span><h3>{execution.data.sandbox.provider}</h3></div><strong data-ok={execution.data.sandbox.available}>{execution.data.sandbox.available ? "available" : "unavailable"}</strong><p>{execution.data.sandbox.reason || execution.data.sandbox.portabilityNote || "Local enforcement provider is ready."}</p></article>
-          <div className={styles.profileGrid}>{execution.data.profiles.map((profile) => <article className={styles.profile} key={profile.name}><div><h3>{profile.name}</h3><span data-ok={profile.enabled}>{profile.enabled ? "enabled" : "disabled"}</span></div><ul><li>{profile.filesystemMode.replaceAll("_", " ")} filesystem</li><li>{profile.networkEnabled ? "network allowed" : "network denied"}</li><li>{profile.shellEnabled ? "shell allowed" : "shell denied"}</li><li>{profile.maxConcurrency} concurrent · {profile.timeoutSeconds}s</li></ul>{profile.dryRunOnly && <p>Dry-run only</p>}</article>)}</div>
-        </>}
-      </section>
-    </main>
-  );
+    <details className={styles.security}><summary><span><strong>Security and execution permissions</strong><small>Sandbox and profile status for this computer</small></span><span>View details</span></summary>{execution.state !== "ready" ? <div className={styles.empty}>Execution capability information is unavailable.</div> : <div className={styles.securityBody}><article className={styles.sandbox}><div><span className={styles.mode}>Local sandbox</span><h3>{execution.data.sandbox.provider}</h3><p>{execution.data.sandbox.reason || execution.data.sandbox.portabilityNote || "Local enforcement is ready."}</p></div><strong data-ok={execution.data.sandbox.available}>{execution.data.sandbox.available ? "Available" : "Unavailable"}</strong></article><div className={styles.profileGrid}>{execution.data.profiles.map((profile) => <article className={styles.profile} key={profile.name}><div><h3>{profile.name}</h3><span data-ok={profile.enabled}>{profile.enabled ? "Enabled" : "Disabled"}</span></div><p>{profile.dryRunOnly ? "Safe dry runs only" : "Full execution"} · {profile.filesystemMode.replaceAll("_", " ")} files · {profile.networkEnabled ? "network on" : "network off"}</p></article>)}</div></div>}</details>
+  </main>;
 }

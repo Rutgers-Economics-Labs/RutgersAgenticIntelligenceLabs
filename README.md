@@ -27,15 +27,15 @@ typed capability state until that project has a hydrated ontology artifact.
 Requirements: Python 3.11+, Node.js 20+, `uv`, and Git.
 
 ```bash
-make install
-cp .env.example .env
-make run
+make setup
+make start
 ```
 
-Open:
+That is the complete local setup. RAIL opens at <http://127.0.0.1:3000>; use **Add project** to
+create a managed KRAIL workspace or connect an existing directory. Run `make doctor` if startup
+does not work.
 
-- web platform: <http://127.0.0.1:3000>
-- API documentation: <http://127.0.0.1:8000/docs>
+Advanced users can inspect the API at <http://127.0.0.1:8000/docs>.
 
 To register the included fixture, configure the repository's `examples` directory as an approved
 linked root, then call the project API:
