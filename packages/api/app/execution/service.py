@@ -68,7 +68,7 @@ class ExecutionService:
                 name = record.permission_profile.name
                 self._running_by_profile[name] = max(0, self._running_by_profile.get(name, 1) - 1)
             updated = record.model_copy(update={"status": status, "updated_at": datetime.now(timezone.utc),
-                                                "result": result if result is not None else record.result})
+                                                "result": {**record.result, **result} if result is not None else record.result})
             self.store.replace(updated)
             self.append_event(run_id, status.value, f"Run {status.value}", result or {})
             return updated
@@ -100,7 +100,7 @@ class ExecutionService:
         if not request.dry_run and record.permission_profile.name != "full-access":
             raise PermissionDeniedError("Non-dry-run KRAIL execution requires explicit full-access")
         record = self.transition(run_id, RunStatus.RUNNING)
-        if record.project_read_only:
+        if record.project_read_only and not request.dry_run:
             return self.transition(run_id, RunStatus.FAILED, result={"error": "Registered project is read-only"})
         try:
             handle = self.runtime.execute_workflow(ProjectRef(project_id=record.project_id, path=record.project_path, read_only=record.project_read_only), request)
@@ -112,7 +112,8 @@ class ExecutionService:
             if handle.status in {"failed", "error"}:
                 return self.transition(run_id, RunStatus.FAILED, result=handle.model_dump())
             return self.transition(run_id, RunStatus.SUCCEEDED, result=handle.model_dump())
-        except Exception as exc:
+        except Exception:
             if self.store.get(run_id).status is RunStatus.CANCELLED:
                 return self.store.get(run_id)
-            return self.transition(run_id, RunStatus.FAILED, result={"error": str(exc)})
+            # Runtime output and local filesystem details are deliberately not an HTTP contract.
+            return self.transition(run_id, RunStatus.FAILED, result={"error": "Workflow execution failed"})

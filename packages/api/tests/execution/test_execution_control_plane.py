@@ -93,7 +93,8 @@ def test_conflicting_named_profile_and_read_only_workflow_are_rejected(tmp_path:
     with pytest.raises(ValueError, match="Conflicting"):
         service.create_run(project_id="p", project_path=tmp_path, kind="command", profile=profile(tmp_path, max_concurrency=2))
     readonly = service.create_run(project_id="p2", project_path=tmp_path, kind="workflow", profile=profile(tmp_path), project_read_only=True, workflow_id="w")
-    assert service.execute_krail_workflow(readonly.run_id, RunRequest(workflow_id="w")).status is RunStatus.FAILED
+    # Read-only projects may use KRAIL's non-mutating dry-run path.
+    assert service.execute_krail_workflow(readonly.run_id, RunRequest(workflow_id="w")).status is RunStatus.SUCCEEDED
 
 
 class FakeRuntime:
