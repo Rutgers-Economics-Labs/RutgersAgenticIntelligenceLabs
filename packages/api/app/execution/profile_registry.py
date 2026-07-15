@@ -4,8 +4,6 @@ Request payloads select a profile name only; they can never supply capability fi
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 from .models import FilesystemMode, PermissionProfile
 
 
@@ -17,7 +15,7 @@ class PermissionProfileRegistry:
             process_enabled=False, shell_enabled=False, network_enabled=False,
         )
         full = PermissionProfile.full_access()
-        selected = profiles or (default, full)
+        selected = (default, full) if profiles is None else profiles
         self._profiles = {profile.name: profile for profile in selected}
         if len(self._profiles) != len(selected):
             raise ValueError("Permission profile names must be unique")
@@ -29,6 +27,8 @@ class PermissionProfileRegistry:
             profile = self._profiles[selected]
         except KeyError as exc:
             raise PermissionError("Requested permission profile is not registered") from exc
+        if profile.name == "full-access" and not self.full_access_enabled:
+            raise PermissionError("Full-access execution is not operator-enabled")
         if not dry_run and (profile.name != "full-access" or not self.full_access_enabled):
             raise PermissionError("Non-dry-run execution requires operator-enabled full-access")
         return profile

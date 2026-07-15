@@ -14,7 +14,7 @@ from .store import InMemoryRunStore
 
 class ExecutionService:
     _allowed = {
-        RunStatus.QUEUED: {RunStatus.RUNNING, RunStatus.CANCELLED},
+        RunStatus.QUEUED: {RunStatus.RUNNING, RunStatus.FAILED, RunStatus.CANCELLED},
         RunStatus.RUNNING: {RunStatus.WAITING_APPROVAL, RunStatus.SUCCEEDED, RunStatus.FAILED, RunStatus.CANCELLED},
         RunStatus.WAITING_APPROVAL: {RunStatus.RUNNING, RunStatus.CANCELLED},
     }
@@ -100,7 +100,7 @@ class ExecutionService:
         if not request.dry_run and record.permission_profile.name != "full-access":
             raise PermissionDeniedError("Non-dry-run KRAIL execution requires explicit full-access")
         record = self.transition(run_id, RunStatus.RUNNING)
-        if record.project_read_only and not request.dry_run:
+        if record.project_read_only:
             return self.transition(run_id, RunStatus.FAILED, result={"error": "Registered project is read-only"})
         try:
             handle = self.runtime.execute_workflow(ProjectRef(project_id=record.project_id, path=record.project_path, read_only=record.project_read_only), request)
