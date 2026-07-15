@@ -384,9 +384,10 @@ Acceptance: read API integration tests match the fixture's KRAIL state.
 
 Owner paths: `packages/api/app/execution/**`, run HTTP/SSE modules, worker entrypoint, run tests
 Dependencies: M1 and M2
-Implementation: execution-policy, durable-state, worktree, and atomic-combine foundation complete.
-HTTP/SSE mounting, a concrete restricted sandbox, worker process supervision, and approval resume
-remain follow-up work.
+Implementation: local single-node execution policy, durable state, mounted HTTP/SSE routes, bounded
+worker supervision, cancellation, restart reconciliation, worktree/atomic-combine foundation, and a
+concrete macOS restricted sandbox are complete. Isolated child-process KRAIL execution, approval
+resume, Linux sandboxing, and end-to-end batch integration remain follow-up work.
 
 - Define queued/running/awaiting_approval/succeeded/failed/cancelled states.
 - Execute KRAIL workflows concurrently in isolated processes, Git branches, and worktrees.
@@ -420,6 +421,8 @@ Acceptance: fixture project loads through the new API with no legacy service cal
 
 Owner paths: Explore/Evidence routes and their feature components
 Dependencies: M3 and M5
+Implementation: first live read-only vertical slice complete at `/krail-explore`; richer claims,
+lineage, freshness, and verification detail remain follow-up work.
 
 - Build ontology graph and entity/document inspectors.
 - Build unified search/find results.
