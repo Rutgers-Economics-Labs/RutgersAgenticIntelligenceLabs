@@ -19,6 +19,12 @@ class ProjectRef(RuntimeDTO):
 
     path: Path
     project_id: str | None = None
+    read_only: bool = False
+
+    @property
+    def canonical_path(self) -> str:
+        """Compatibility view for control-plane records and audit events."""
+        return str(self.path)
 
 
 class ProjectHealthCheck(RuntimeDTO):
@@ -214,4 +220,11 @@ class KrailRuntime(Protocol):
     def integrity(self, project: ProjectRef) -> IntegritySummary: ...
     def workflows(self, project: ProjectRef) -> WorkflowInventory: ...
     def approvals(self, project: ProjectRef) -> ApprovalInventory: ...
+    def approval(self, project: ProjectRef, approval_id: str) -> Approval: ...
+    def decide_approval(
+        self,
+        project: ProjectRef,
+        approval_id: str,
+        decision: ApprovalDecision,
+    ) -> Approval: ...
     def execute_workflow(self, project: ProjectRef, request: RunRequest) -> RunHandle: ...

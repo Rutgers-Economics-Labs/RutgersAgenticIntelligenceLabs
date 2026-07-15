@@ -111,6 +111,14 @@ class LocalKrailRuntime:
             raise self._translate(exc, operation="open") from exc
 
     @staticmethod
+    def _require_write(project: ProjectRef, *, operation: str) -> None:
+        if project.read_only:
+            raise KrailPermissionError(
+                "The registered project is read-only.",
+                operation=operation,
+            )
+
+    @staticmethod
     def _translate(exc: Exception, *, operation: str) -> KrailRuntimeError:
         name = type(exc).__name__
         if isinstance(exc, FileNotFoundError):
@@ -141,8 +149,20 @@ class LocalKrailRuntime:
         return ProjectHealth(ok=bool(result.get("ok")), checks=checks, warnings=warnings, krail_version=self.supported_version)
 
     def manifest(self, project: ProjectRef) -> ProjectManifest:
-        opened = self._open(project)
-        manifest = self._call("manifest", lambda: opened._backend.read_rail_yaml())
+        rail = self._rail()
+        try:
+            manifest = rail.load_manifest(self._path(project))
+        except KrailRuntimeError:
+            raise
+        except Exception as exc:
+            # ``load_manifest`` currently exposes plain ValueError instances for
+            # schema failures. Keep that upstream detail behind our stable
+            # validation contract.
+            raise KrailValidationError(
+                str(exc) or "Invalid KRAIL project manifest.",
+                operation="manifest",
+                cause=exc,
+            ) from exc
         return ProjectManifest(
             version=manifest.version,
             slug=manifest.project.slug,
@@ -310,6 +330,7 @@ class LocalKrailRuntime:
         return self._approval(result.get("approval") if isinstance(result, dict) else {})
 
     def decide_approval(self, project: ProjectRef, approval_id: str, decision: ApprovalDecision) -> Approval:
+        self._require_write(project, operation="approval_decide")
         result = self._call(
             "approval_decide",
             lambda: self._open(project).approval_decide(approval_id, decision=decision.decision, comment=decision.comment, resume=decision.resume),
@@ -326,6 +347,7 @@ class LocalKrailRuntime:
         )
 
     def execute_workflow(self, project: ProjectRef, request: RunRequest) -> RunHandle:
+        self._require_write(project, operation="execute_workflow")
         result = self._call(
             "execute_workflow",
             lambda: self._open(project).execute_workflow(

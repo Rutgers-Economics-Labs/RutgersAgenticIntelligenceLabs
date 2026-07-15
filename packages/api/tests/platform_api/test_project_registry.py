@@ -5,15 +5,17 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.krail_runtime.contracts import ProjectHealth, ProjectHealthCheck, ProjectManifest, ProjectRef
 from app.main_krail import create_app
 from app.projects.registry import RegistryConfig
-from app.projects.runtime import HealthCheck, ProjectHealth, ProjectManifest, ProjectRef
 
 
 class FakeRuntime:
     def __init__(self, health: ProjectHealth | None = None) -> None:
         self.health = health or ProjectHealth(
-            status="healthy", checks=[HealthCheck(name="manifest", status="ok")]
+            ok=True,
+            checks=[ProjectHealthCheck(name="manifest", ok=True, detail="valid")],
+            krail_version="0.2.2",
         )
         self.doctor_calls: list[ProjectRef] = []
 
@@ -23,10 +25,12 @@ class FakeRuntime:
 
     def manifest(self, project: ProjectRef) -> ProjectManifest:
         return ProjectManifest(
-            project_name="Fixture project",
-            schema_version="1",
-            description="A fixture",
-            capabilities=["manifest", "doctor"],
+            version=1,
+            slug="fixture-project",
+            name="Fixture project",
+            default_branch="main",
+            knowledge_mode="markdown_graph",
+            paths={"topics_root": "topics"},
         )
 
 
@@ -81,12 +85,14 @@ def test_register_list_get_health_and_manifest_for_linked_git_project(tmp_path: 
 
     assert client.get("/api/v1/projects").json()["projects"][0]["projectId"] == "fixture-id"
     assert client.get("/api/v1/projects/fixture-id").status_code == 200
-    assert client.get("/api/v1/projects/fixture-id/health").json()["health"]["status"] == "healthy"
+    assert client.get("/api/v1/projects/fixture-id/health").json()["health"]["ok"] is True
     assert client.get("/api/v1/projects/fixture-id/manifest").json()["manifest"] == {
-        "projectName": "Fixture project",
-        "schemaVersion": "1",
-        "description": "A fixture",
-        "capabilities": ["manifest", "doctor"],
+        "version": 1,
+        "slug": "fixture-project",
+        "name": "Fixture project",
+        "defaultBranch": "main",
+        "knowledgeMode": "markdown_graph",
+        "paths": {"topics_root": "topics"},
     }
 
 
@@ -167,7 +173,16 @@ def test_unhealthy_krail_project_is_not_registered(tmp_path: Path):
     linked_root = tmp_path / "linked"
     linked_root.mkdir()
     project = _git_project(linked_root / "broken")
-    client = _client(tmp_path, FakeRuntime(ProjectHealth(status="unhealthy", summary="bad manifest")))
+    client = _client(
+        tmp_path,
+        FakeRuntime(
+            ProjectHealth(
+                ok=False,
+                checks=[ProjectHealthCheck(name="manifest", ok=False, detail="bad manifest")],
+                krail_version="0.2.2",
+            )
+        ),
+    )
 
     response = client.post(
         "/api/v1/projects",

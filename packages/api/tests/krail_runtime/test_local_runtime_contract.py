@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.krail_runtime import ApprovalDecision, FindQuery, GraphQuery, ProjectRef, RunRequest
-from app.krail_runtime.errors import KrailProjectNotFoundError, KrailValidationError
+from app.krail_runtime.errors import KrailPermissionError, KrailProjectNotFoundError, KrailValidationError
 
 
 def test_uses_the_published_krail_distribution(runtime) -> None:
@@ -92,3 +92,17 @@ def test_missing_or_invalid_projects_have_typed_errors(runtime, tmp_path) -> Non
     invalid_ref = ProjectRef(path=invalid)
     with pytest.raises(KrailValidationError):
         runtime.manifest(invalid_ref)
+
+
+def test_read_only_projects_reject_mutations(runtime, fixture_project) -> None:
+    read_only = fixture_project.model_copy(update={"read_only": True})
+
+    with pytest.raises(KrailPermissionError):
+        runtime.execute_workflow(read_only, RunRequest(workflow_id="fixture-review", dry_run=True))
+
+    with pytest.raises(KrailPermissionError):
+        runtime.decide_approval(
+            read_only,
+            "fixture-approval",
+            ApprovalDecision(decision="approved"),
+        )

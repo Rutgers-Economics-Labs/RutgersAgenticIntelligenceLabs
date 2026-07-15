@@ -7,11 +7,19 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.krail_runtime import LocalKrailRuntime
+from app.krail_runtime.errors import (
+    KrailPermissionError,
+    KrailProjectNotFoundError,
+    KrailRuntimeError,
+    KrailUnavailableError,
+    KrailValidationError,
+)
 from app.api.v1.dtos import ErrorDTO, ErrorEnvelope
 from app.api.v1.router import router as projects_router
 from app.projects.errors import PlatformError
 from app.projects.registry import ProjectRegistry, RegistryConfig
-from app.projects.runtime import KrailRuntime, UnavailableKrailRuntime
+from app.projects.runtime import KrailRuntime
 
 
 def _error_response(request: Request, *, status_code: int, code: str, message: str, details: dict | None = None) -> JSONResponse:
@@ -35,7 +43,7 @@ def create_app(
 
     app = FastAPI(title="RAIL Platform API", version="1.0.0")
     app.state.project_registry = ProjectRegistry(registry_config or RegistryConfig.from_environment())
-    app.state.krail_runtime = runtime or UnavailableKrailRuntime()
+    app.state.krail_runtime = runtime or LocalKrailRuntime()
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
@@ -62,6 +70,26 @@ def create_app(
             code="request_validation_error",
             message="Request validation failed",
             details={"errors": exc.errors()},
+        )
+
+    @app.exception_handler(KrailRuntimeError)
+    async def krail_error_handler(request: Request, exc: KrailRuntimeError):
+        if isinstance(exc, KrailUnavailableError):
+            status_code = 503
+        elif isinstance(exc, KrailProjectNotFoundError):
+            status_code = 404
+        elif isinstance(exc, KrailValidationError):
+            status_code = 422
+        elif isinstance(exc, KrailPermissionError):
+            status_code = 403
+        else:
+            status_code = 502
+        return _error_response(
+            request,
+            status_code=status_code,
+            code=exc.code,
+            message=str(exc),
+            details={"operation": exc.operation},
         )
 
     @app.exception_handler(Exception)

@@ -14,7 +14,13 @@ class DTO(BaseModel):
 
 
 class RegisterProjectRequest(DTO):
-    project_id: str | None = Field(default=None, alias="projectId", min_length=1, max_length=128)
+    project_id: str | None = Field(
+        default=None,
+        alias="projectId",
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$",
+    )
     display_name: str = Field(alias="displayName", min_length=1, max_length=256)
     path: str = Field(min_length=1)
     workspace_mode: WorkspaceMode = Field(alias="workspaceMode")
@@ -57,14 +63,15 @@ class ProjectListResponse(DTO):
 
 class HealthCheckResponse(DTO):
     name: str
-    status: str
-    message: str | None = None
+    ok: bool
+    detail: str
 
 
 class ProjectHealthDTO(DTO):
-    status: str
-    summary: str | None = None
+    ok: bool
     checks: list[HealthCheckResponse]
+    warnings: list[str]
+    krail_version: str = Field(alias="krailVersion")
 
     @classmethod
     def from_runtime(cls, health: ProjectHealth) -> "ProjectHealthDTO":
@@ -77,10 +84,12 @@ class ProjectHealthResponse(DTO):
 
 
 class ProjectManifestDTO(DTO):
-    project_name: str = Field(alias="projectName")
-    schema_version: str | None = Field(default=None, alias="schemaVersion")
-    description: str | None = None
-    capabilities: list[str]
+    version: int
+    slug: str
+    name: str
+    default_branch: str = Field(alias="defaultBranch")
+    knowledge_mode: str = Field(alias="knowledgeMode")
+    paths: dict[str, str]
 
     @classmethod
     def from_runtime(cls, manifest: ProjectManifest) -> "ProjectManifestDTO":

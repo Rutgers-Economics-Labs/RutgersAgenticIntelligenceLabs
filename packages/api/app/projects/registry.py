@@ -123,15 +123,18 @@ class ProjectRegistry:
         access = self._access_for(workspace_mode, git)
         stable_id = project_id or str(uuid.uuid4())
         ref = ProjectRef(
+            path=canonical_path,
             project_id=stable_id,
-            canonical_path=str(canonical_path),
             read_only=access is WorkspaceAccess.READ_ONLY,
         )
         health = runtime.doctor(ref)
-        if not health.is_healthy:
+        if not health.ok:
             raise WorkspaceValidationError(
                 "KRAIL project health check failed during registration",
-                details={"status": health.status, "summary": health.summary},
+                details={
+                    "warnings": health.warnings,
+                    "failedChecks": [check.name for check in health.checks if not check.ok],
+                },
             )
 
         with self._lock:
@@ -155,8 +158,8 @@ class ProjectRegistry:
     @staticmethod
     def project_ref(record: ProjectRecord) -> ProjectRef:
         return ProjectRef(
+            path=Path(record.canonical_path),
             project_id=record.project_id,
-            canonical_path=record.canonical_path,
             read_only=record.access is WorkspaceAccess.READ_ONLY,
         )
 

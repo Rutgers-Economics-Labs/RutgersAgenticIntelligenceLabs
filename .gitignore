@@ -224,6 +224,7 @@ apps/web/.next/
 apps/web/node_modules/
 apps/web/tsconfig.tsbuildinfo
 apps/web/.screenshots/
+out/screenshots/
 state/work-orders/.jules-runner-state.json
 .DS_Store
 
@@ -236,6 +237,8 @@ docs/validation/*
 
 # Runtime state produced inside RAIL project workspaces.
 **/.ontology/
+!examples/krail-project/.ontology/
+!examples/krail-project/.ontology/**
 **/research_plan/sessions/
 **/research_plan/audits/
 **/.runner/
