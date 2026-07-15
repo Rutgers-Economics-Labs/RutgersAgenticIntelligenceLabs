@@ -1,8 +1,0 @@
-name: municipality_map
-type: csv
-path: sources/municipality_county_map.csv
-fields:
-  - source: municipality
-    alias: municipality
-  - source: county_fips
-    alias: county_fips
