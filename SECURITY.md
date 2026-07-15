@@ -1,61 +1,31 @@
 # Security Policy
 
-## Supported versions
+Report sandbox escapes, path-policy bypasses, unauthorized execution, secret exposure, or
+cross-project access privately through GitHub Security Advisories.
 
-RAIL is pre-1.0. Security fixes are applied to the default branch first. Tagged releases may receive follow-up fixes when a release asset is affected.
+## Trust model
 
-## Reporting a vulnerability
+A registered KRAIL project may contain untrusted workflows and files. RAIL therefore:
 
-Please do not open a public issue for secrets, credential exposure, sandbox escapes, auth bypasses, or remote execution risks.
+- canonicalizes managed and linked workspace paths;
+- permits linked paths only below configured `RAIL_LINKED_PROJECT_ROOTS`;
+- keeps dirty, unborn, and non-Git linked projects read-only;
+- selects immutable server-owned permission profiles by name;
+- disables full access unless `RAIL_FULL_ACCESS_ENABLED=true`;
+- uses exact argv execution and requires an enforcing sandbox for restricted commands;
+- filters environments and does not expose secret values through platform DTOs;
+- isolates concurrent mutations in Git worktrees and validates before integration.
 
-Report privately to the maintainers through the repository owner's preferred security contact. If GitHub private vulnerability reporting is enabled for this repository, use that channel.
+The local macOS restricted backend uses Apple-deprecated `sandbox-exec`. It is a compatibility
+backend, not a hosted Linux security boundary. Linux hosting requires a bwrap/container provider.
 
-Include:
+## Operator guidance
 
-- affected commit, tag, or release
-- reproduction steps
-- impact and affected component
-- whether credentials, private data, or remote execution are involved
+- Review projects before registration and grant the smallest linked root possible.
+- Do not enable full access for untrusted workflows.
+- Bind the local API to loopback unless a real authentication/reverse-proxy layer is configured.
+- Protect `.rail/platform-projects.json` and `.rail/platform-runs.json` as operational metadata.
+- Keep API/provider keys outside Git and inject only names required by an approved profile.
 
-## Secret handling
-
-RAIL should never require committing secrets. Use `.env` locally and project secret storage in cloud mode.
-
-Never commit:
-
-- `.env`
-- Convex deploy keys
-- GitHub App private keys
-- OpenAI, Anthropic, Google, FRED, or other provider API keys
-- private key files such as `*.pem`, `*.key`, `*.p12`, or `*.pfx`
-
-If a secret may have been committed or shared:
-
-1. Revoke or rotate it at the provider.
-2. Remove it from the current tree.
-3. Inspect Git history before publishing.
-4. Use history rewriting only on branches where every collaborator agrees.
-
-## Local execution risks
-
-RAIL includes tools for running project code and agent workflows. Treat untrusted project workspaces as code:
-
-- review `rail.yaml`, scripts, and agent prompts before running
-- keep `RAIL_EXECUTE_ENABLED=false` unless code execution is needed
-- prefer sandboxed execution for untrusted projects
-- do not inject broad secret sets into agent sessions
-
-## Public release checklist
-
-Before making a repository public or cutting a release:
-
-```bash
-git status --short
-git grep -n -I -E 'AKIA[0-9A-Z]{16}|sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9_]{20,}|PRIVATE KEY' -- ':!apps/web/package-lock.json'
-```
-
-Also check that large local workspaces remain ignored:
-
-```bash
-git ls-files docs/validation generated_projects
-```
+RAIL does not currently claim multi-user or internet-facing authorization. The supported release is
+local single-node operation.
