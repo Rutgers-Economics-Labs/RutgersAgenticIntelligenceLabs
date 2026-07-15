@@ -7,7 +7,7 @@ from threading import Event, RLock
 
 from app.krail_runtime.contracts import KrailRuntime, ProjectRef, RunRequest
 
-from .errors import InvalidTransitionError
+from .errors import InvalidTransitionError, PermissionDeniedError
 from .models import PermissionProfile, RunEvent, RunRecord, RunStatus, TERMINAL_STATUSES
 from .store import InMemoryRunStore
 
@@ -25,20 +25,34 @@ class ExecutionService:
         self._profile_limits: dict[str, PermissionProfile] = {}
         self._running_by_profile: dict[str, int] = {}
         self._lock = RLock()
+        # Process handles cannot survive a restart. Preserve the audit trail but
+        # make the interrupted outcome explicit and safely hydrate all hooks.
+        for record in self.store.records():
+            prior = self._profile_limits.get(record.permission_profile.name)
+            if prior is not None and prior != record.permission_profile:
+                raise ValueError(f"Conflicting persisted profile snapshot for {record.permission_profile.name}")
+            self._profile_limits[record.permission_profile.name] = record.permission_profile
+            self._cancellations[record.run_id] = Event()
+            if record.status is RunStatus.RUNNING:
+                interrupted = record.model_copy(update={"status": RunStatus.FAILED, "updated_at": datetime.now(timezone.utc),
+                    "result": {**record.result, "error": "Execution interrupted by service restart"}})
+                self.store.replace(interrupted)
+                self.append_event(record.run_id, "failed", "Run interrupted by service restart", interrupted.result)
 
     def create_run(self, *, project_id: str, project_path: Path, kind: str, profile: PermissionProfile,
                    baseline_commit: str | None = None, workflow_id: str | None = None,
                    project_read_only: bool = False) -> RunRecord:
-        existing = self._profile_limits.get(profile.name)
-        if existing is not None and existing != profile:
-            raise ValueError(f"Conflicting permission profile snapshot for {profile.name}")
-        record = self.store.create(RunRecord(project_id=project_id, project_path=project_path.resolve(), kind=kind,
-            permission_profile=profile, baseline_commit=baseline_commit, workflow_id=workflow_id,
-            project_read_only=project_read_only))
-        self._profile_limits.setdefault(profile.name, profile)
-        self._cancellations[record.run_id] = Event()
-        self.append_event(record.run_id, "queued", "Run queued")
-        return record
+        with self._lock:
+            existing = self._profile_limits.get(profile.name)
+            if existing is not None and existing != profile:
+                raise ValueError(f"Conflicting permission profile snapshot for {profile.name}")
+            record = self.store.create(RunRecord(project_id=project_id, project_path=project_path.resolve(), kind=kind,
+                permission_profile=profile, baseline_commit=baseline_commit, workflow_id=workflow_id,
+                project_read_only=project_read_only))
+            self._profile_limits.setdefault(profile.name, profile)
+            self._cancellations[record.run_id] = Event()
+            self.append_event(record.run_id, "queued", "Run queued")
+            return record
 
     def transition(self, run_id: str, status: RunStatus, *, result: dict | None = None) -> RunRecord:
         with self._lock:
@@ -78,6 +92,13 @@ class ExecutionService:
     def execute_krail_workflow(self, run_id: str, request: RunRequest) -> RunRecord:
         if self.runtime is None:
             raise RuntimeError("KrailRuntime is required for workflow execution")
+        record = self.store.get(run_id)
+        if record.kind != "workflow":
+            raise ValueError("Run is not a KRAIL workflow")
+        if record.workflow_id != request.workflow_id:
+            raise ValueError("Workflow request does not match recorded workflow id")
+        if not request.dry_run and record.permission_profile.name != "full-access":
+            raise PermissionDeniedError("Non-dry-run KRAIL execution requires explicit full-access")
         record = self.transition(run_id, RunStatus.RUNNING)
         if record.project_read_only:
             return self.transition(run_id, RunStatus.FAILED, result={"error": "Registered project is read-only"})

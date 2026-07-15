@@ -44,6 +44,12 @@ def test_path_traversal_symlink_timeout_and_cancellation_are_bounded(tmp_path: P
     assert executor.run([sys.executable, "-c", "print(1)"], cwd=tmp_path, profile=PermissionProfile.full_access(timeout_seconds=0.2), cancel=cancelled).cancelled
 
 
+def test_raw_output_is_returned_with_a_real_memory_cap(tmp_path: Path) -> None:
+    result = CommandExecutor().run([sys.executable, "-c", "import sys; sys.stdout.write('x' * 1200000)"], cwd=tmp_path,
+        profile=PermissionProfile.full_access(timeout_seconds=2))
+    assert result.stdout.endswith("[output truncated]") and len(result.stdout) < 1_000_100
+
+
 def test_restricted_execution_requires_sandbox_and_environment_fails_closed(tmp_path: Path) -> None:
     p = profile(tmp_path)
     with pytest.raises(SandboxRequiredError):
@@ -51,6 +57,13 @@ def test_restricted_execution_requires_sandbox_and_environment_fails_closed(tmp_
     sandbox = Sandbox()
     CommandExecutor(sandbox).run([sys.executable, "-c", "print(1)"], cwd=tmp_path, profile=p, env={"SAFE": "yes", "SECRET": "x"})
     assert sandbox.environment == {"SAFE": "yes"}
+
+
+def test_deny_rules_override_exact_allow_for_raw_resolved_and_basename(tmp_path: Path) -> None:
+    executable = str(Path(sys.executable).resolve())
+    p = profile(tmp_path, denied_commands=frozenset({executable, Path(executable).name}))
+    with pytest.raises(PermissionDeniedError, match="denied"):
+        CommandExecutor(Sandbox()).run([executable, "-c", "print(1)"], cwd=tmp_path, profile=p)
 
 
 def test_lifecycle_events_are_durable_and_transitions_checked(tmp_path: Path) -> None:
@@ -79,7 +92,7 @@ def test_conflicting_named_profile_and_read_only_workflow_are_rejected(tmp_path:
     service.create_run(project_id="p", project_path=tmp_path, kind="command", profile=profile(tmp_path, max_concurrency=1))
     with pytest.raises(ValueError, match="Conflicting"):
         service.create_run(project_id="p", project_path=tmp_path, kind="command", profile=profile(tmp_path, max_concurrency=2))
-    readonly = service.create_run(project_id="p2", project_path=tmp_path, kind="workflow", profile=profile(tmp_path), project_read_only=True)
+    readonly = service.create_run(project_id="p2", project_path=tmp_path, kind="workflow", profile=profile(tmp_path), project_read_only=True, workflow_id="w")
     assert service.execute_krail_workflow(readonly.run_id, RunRequest(workflow_id="w")).status is RunStatus.FAILED
 
 
@@ -96,6 +109,18 @@ def test_workflow_delegates_to_canonical_runtime(tmp_path: Path) -> None:
     assert outcome.status is RunStatus.SUCCEEDED and outcome.result["run_id"] == "krail-1"
 
 
+def test_krail_workflow_kind_identity_and_non_dry_run_are_fail_closed(tmp_path: Path) -> None:
+    service = ExecutionService(InMemoryRunStore(), FakeRuntime())
+    command = service.create_run(project_id="p", project_path=tmp_path, kind="command", profile=profile(tmp_path))
+    with pytest.raises(ValueError, match="not a KRAIL"):
+        service.execute_krail_workflow(command.run_id, RunRequest(workflow_id="w"))
+    workflow = service.create_run(project_id="p", project_path=tmp_path, kind="workflow", profile=profile(tmp_path), workflow_id="recorded")
+    with pytest.raises(ValueError, match="does not match"):
+        service.execute_krail_workflow(workflow.run_id, RunRequest(workflow_id="other"))
+    with pytest.raises(PermissionDeniedError, match="full-access"):
+        service.execute_krail_workflow(workflow.run_id, RunRequest(workflow_id="recorded", dry_run=False))
+
+
 def test_workflow_result_cannot_overwrite_concurrent_cancellation(tmp_path: Path) -> None:
     class CancellingRuntime:
         def __init__(self): self.service = None; self.run_id = None
@@ -103,8 +128,19 @@ def test_workflow_result_cannot_overwrite_concurrent_cancellation(tmp_path: Path
             self.service.cancel(self.run_id)
             return RunHandle(run_id="krail-1", workflow_id=request.workflow_id, status="succeeded")
     runtime = CancellingRuntime(); service = ExecutionService(InMemoryRunStore(), runtime); runtime.service = service
-    run = service.create_run(project_id="p", project_path=tmp_path, kind="workflow", profile=profile(tmp_path)); runtime.run_id = run.run_id
+    run = service.create_run(project_id="p", project_path=tmp_path, kind="workflow", profile=profile(tmp_path), workflow_id="w"); runtime.run_id = run.run_id
     assert service.execute_krail_workflow(run.run_id, RunRequest(workflow_id="w")).status is RunStatus.CANCELLED
+
+
+def test_restart_hydrates_profiles_hooks_and_marks_running_interrupted(tmp_path: Path) -> None:
+    path = tmp_path / "runs.json"; first = ExecutionService(JsonRunStore(path)); p = profile(tmp_path)
+    running = first.create_run(project_id="p", project_path=tmp_path, kind="command", profile=p)
+    queued = first.create_run(project_id="p", project_path=tmp_path, kind="command", profile=p)
+    first.transition(running.run_id, RunStatus.RUNNING)
+    restarted = ExecutionService(JsonRunStore(path))
+    assert restarted.store.get(running.run_id).status is RunStatus.FAILED
+    assert restarted.cancel(queued.run_id).status is RunStatus.CANCELLED
+    assert any("restart" in event.message for event in restarted.events(running.run_id))
 
 
 def git(repo: Path, *args: str) -> str:

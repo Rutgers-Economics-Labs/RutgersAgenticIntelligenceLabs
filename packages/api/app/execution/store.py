@@ -29,6 +29,11 @@ class InMemoryRunStore:
         with self._lock:
             return self._records[run_id]
 
+    def records(self) -> list[RunRecord]:
+        """Return operational records for service restart recovery."""
+        with self._lock:
+            return list(self._records.values())
+
     def replace(self, record: RunRecord) -> RunRecord:
         with self._lock:
             if record.run_id not in self._records:
