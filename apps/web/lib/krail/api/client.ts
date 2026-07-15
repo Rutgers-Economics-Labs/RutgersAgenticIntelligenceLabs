@@ -70,7 +70,7 @@ export class KrailApiClient {
 
   getAffectedSources(projectId: string, sourceIds: string[] = []): Promise<SourceImpactResponse> {
     const params = new URLSearchParams();
-    sourceIds.forEach((sourceId) => params.append("sourceId", sourceId));
+    sourceIds.slice(0, 50).forEach((sourceId) => params.append("sourceId", sourceId));
     const suffix = params.size ? `?${params.toString()}` : "";
     return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/sources/affected${suffix}`);
   }
