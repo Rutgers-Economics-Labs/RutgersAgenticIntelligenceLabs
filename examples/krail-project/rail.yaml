@@ -1,0 +1,24 @@
+version: 1
+
+project:
+  name: "KRAIL Adapter Fixture"
+  slug: "krail-adapter-fixture"
+  default_branch: "main"
+  description: "Small deterministic project for RAIL's KRAIL adapter contract suite."
+  mode: "research_first"
+  knowledge_mode: "research"
+
+paths: {}
+
+hydration:
+  ontology_file: ".ontology/ontology.yaml"
+  sources_dir: ".ontology/sources"
+  pipelines_dir: ".ontology/pipelines"
+
+agents: {}
+
+graph:
+  mode: "markdown_frontmatter"
+  include:
+    - "topics/**/*.md"
+    - "research_plan/**/*.md"

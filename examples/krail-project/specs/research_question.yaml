@@ -1,0 +1,4 @@
+question: Which KRAIL contracts are available to the RAIL adapter?
+required_sources:
+  - local:fixture-evidence
+output: research_plan/current_plan.md

@@ -1,0 +1,7 @@
+id: fixture-pack
+name: Adapter Fixture Pack
+entities:
+  - Policy
+  - Dataset
+workflows:
+  - fixture-review

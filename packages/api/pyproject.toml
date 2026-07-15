@@ -5,6 +5,7 @@ description = "FastAPI service wrapping the RAIL ontology engine"
 requires-python = ">=3.11"
 
 dependencies = [
+    "krail[analysis,embeddings,local]>=0.2.2,<0.3",
     "fastapi>=0.115.0",
     "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.30.0",

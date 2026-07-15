@@ -1,0 +1,8 @@
+documents:
+  - path: topics/evidence.md
+    depends_on:
+      - id: local:fixture-evidence
+        type: local_file
+        path: topics/evidence.md
+        role: fixture_evidence
+        refresh: manual

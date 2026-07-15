@@ -1,0 +1,11 @@
+id: fixture-review
+description: Deterministic dry-run workflow used by the adapter contract suite.
+schedule: ""
+steps:
+  - id: inspect
+    kind: command
+    run: "krail --local doctor"
+  - id: approval
+    kind: approval
+    title: Review fixture evidence
+    minimum_approvals: 1
