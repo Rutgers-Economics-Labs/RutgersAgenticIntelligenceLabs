@@ -1,0 +1,58 @@
+.page { min-height: 100vh; padding: clamp(20px, 4vw, 56px); background: var(--bg); color: var(--fg); }
+.header, .layout { max-width: 1440px; margin: 0 auto; }
+.header { display: flex; gap: 28px; justify-content: space-between; align-items: end; padding-bottom: 30px; border-bottom: 1px solid var(--border); }
+.header h1, .layout h2 { margin: 4px 0; font-family: Fraunces, Georgia, serif; font-weight: 600; line-height: 1.1; }
+.header h1 { font-size: clamp(34px, 5vw, 58px); }
+.header p, .composer > div > p, .inspector > p, .approvalNote { color: var(--muted); margin: 8px 0 0; }
+.eyebrow { color: var(--muted); font: 600 10px "JetBrains Mono", monospace; letter-spacing: .14em; text-transform: uppercase; }
+.projectPicker { width: min(100%, 280px); }
+.projectPicker label, .composer label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.projectPicker select, .composer select, .composer textarea { width: 100%; box-sizing: border-box; padding: 10px; color: var(--fg); background: var(--panel); border: 1px solid var(--border-strong); border-radius: 8px; font: inherit; }
+.layout { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(420px, 1.8fr) minmax(220px, .8fr); gap: 18px; padding-top: 28px; align-items: start; }
+.inventory, .inspector, .composer, .runList, .timeline, .approvals, .notice { border: 1px solid var(--border); border-radius: var(--radius-card); background: var(--panel); box-shadow: var(--shadow-soft); }
+.inventory, .approvals, .runList, .timeline, .inspector, .composer { padding: 20px; }
+.content { display: grid; gap: 18px; }
+.sectionTop { display: flex; gap: 12px; justify-content: space-between; align-items: start; }
+.sectionTop > span { color: var(--muted); font: 600 12px "JetBrains Mono", monospace; }
+.inventory ul, .approvals ul, .runList ul, .events { list-style: none; padding: 0; margin: 16px 0 0; }
+.inventory li, .runList li { border-top: 1px solid var(--border); }
+.inventory button, .runList button { width: 100%; display: grid; gap: 5px; padding: 12px 4px; border: 0; background: transparent; color: var(--fg); text-align: left; cursor: pointer; }
+.inventory button:hover, .runList button:hover, .selected { background: var(--accent-soft) !important; }
+.inventory button span, .inventory button small, .runList small { color: var(--muted); overflow-wrap: anywhere; }
+.selected { outline: 1px solid var(--border-strong); }
+.details { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.details dt { color: var(--muted); font-size: 12px; }
+.details dd { margin: 3px 0 0; overflow-wrap: anywhere; font-weight: 600; }
+.inspector details, .timeline details, .approvals details { margin-top: 14px; }
+.inspector pre, .timeline pre, .approvals pre { overflow: auto; white-space: pre-wrap; word-break: break-word; color: var(--muted); font: 11px "JetBrains Mono", monospace; }
+.composer form { display: grid; gap: 14px; margin-top: 18px; }
+.composer fieldset { display: grid; gap: 8px; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.composer fieldset label { display: block; color: var(--fg); }
+.composer small { display: block; margin-top: 4px; color: var(--muted); font-weight: 400; }
+.composer input { accent-color: var(--accent); }
+.checkbox { display: flex !important; align-items: center; gap: 8px; color: var(--fg) !important; }
+.composer button, .cancel { justify-self: start; padding: 10px 14px; border: 0; border-radius: 8px; background: var(--accent); color: white; cursor: pointer; font: inherit; font-weight: 700; }
+.composer button:disabled { opacity: .55; cursor: not-allowed; }
+.cancel { margin-top: 14px; background: var(--s-failed); }
+.status { display: inline-flex; width: fit-content; border-radius: 99px; padding: 3px 8px; font: 600 10px "JetBrains Mono", monospace; text-transform: uppercase; background: var(--border); }
+.statusSucceeded { background: var(--success-soft); color: #35673e; }
+.statusFailed, .statusCancelled, .statusInvalid { background: var(--danger-soft); color: #8a3030; }
+.statusRunning { background: var(--accent-soft); color: var(--accent); }
+.statusWaitingapproval { background: var(--warning-soft); color: #855f14; }
+.statusQueued, .statusReady, .statusPending, .statusDefault { background: var(--border); color: var(--muted); }
+.streamState { margin-top: 14px; padding: 9px 11px; border-left: 3px solid var(--accent); color: var(--muted); background: var(--accent-soft); font-size: 13px; }
+.events li { display: grid; grid-template-columns: 150px 1fr; gap: 14px; padding: 14px 0; border-top: 1px solid var(--border); }
+.events time { color: var(--muted); font: 11px "JetBrains Mono", monospace; }
+.events p { margin: 4px 0 0; }
+.noEvents { padding: 14px 0; color: var(--muted); }
+.approvals li { display: grid; gap: 7px; padding: 13px 0; border-top: 1px solid var(--border); }
+.approvals p { margin: 0; color: var(--muted); }
+.approvals small { overflow-wrap: anywhere; color: var(--muted); }
+.approvalNote { padding-top: 14px; border-top: 1px solid var(--border); font-size: 12px; }
+.notice { display: grid; gap: 5px; padding: 14px; margin-top: 14px; }
+.error { background: var(--danger-soft); }
+.notice small { color: var(--muted); }
+.skip { position: absolute; left: -10000px; }
+.skip:focus { left: 12px; top: 12px; z-index: 3; padding: 8px; background: var(--panel); border: 1px solid var(--border-strong); }
+@media (max-width: 1080px) { .layout { grid-template-columns: minmax(210px, .8fr) minmax(0, 1.8fr); }.approvals { grid-column: 1 / -1; }.approvals ul { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }.approvals li { border-top: 0; } }
+@media (max-width: 720px) { .page { padding: 20px; }.header { align-items: stretch; flex-direction: column; }.projectPicker { width: 100%; }.layout { grid-template-columns: 1fr; }.inventory, .approvals { grid-column: auto; }.details { grid-template-columns: 1fr; }.approvals ul { grid-template-columns: 1fr; }.events li { grid-template-columns: 1fr; gap: 6px; }.composer button { width: 100%; justify-self: stretch; } }
