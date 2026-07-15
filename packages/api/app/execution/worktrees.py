@@ -3,11 +3,19 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+import re
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
 from .errors import BaselineMismatchError, IntegrationError
+
+_SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _identifier(value: str, label: str) -> None:
+    if not _SAFE_IDENTIFIER.fullmatch(value):
+        raise IntegrationError(f"Invalid {label}")
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -19,6 +27,7 @@ class WorktreeManager:
 
     def prepare(self, repo: Path, *, baseline: str, run_id: str, root: Path) -> Path:
         repo, root = repo.resolve(), root.resolve()
+        _identifier(run_id, "run id")
         resolved_baseline = _git(repo, "rev-parse", "--verify", f"{baseline}^{{commit}}", check=False)
         if resolved_baseline.returncode:
             raise BaselineMismatchError(f"Unknown baseline commit: {baseline}")
@@ -42,6 +51,7 @@ class AtomicCombiner:
     def combine(self, repo: Path, *, baseline: str, candidate_commits: list[str], batch_id: str,
                 validate: Callable[[Path], None] | None = None) -> str:
         repo = repo.resolve()
+        _identifier(batch_id, "batch id")
         resolved = _git(repo, "rev-parse", "--verify", f"{baseline}^{{commit}}", check=False)
         if resolved.returncode:
             raise BaselineMismatchError(f"Unknown baseline commit: {baseline}")
@@ -52,8 +62,12 @@ class AtomicCombiner:
             raise IntegrationError("Candidate commits must be unique and ordered")
         for candidate in candidate_commits:
             verified = _git(repo, "rev-parse", "--verify", f"{candidate}^{{commit}}", check=False)
-            if verified.returncode or _git(repo, "merge-base", "--is-ancestor", baseline, candidate, check=False).returncode:
-                raise BaselineMismatchError(f"Candidate {candidate} does not descend from baseline {baseline}")
+            parent = _git(repo, "rev-parse", "--verify", f"{candidate}^", check=False)
+            if verified.returncode or parent.returncode or parent.stdout.strip() != baseline:
+                raise BaselineMismatchError(f"Candidate {candidate} is not a single direct delta from baseline {baseline}")
+        final_ref = f"refs/rail/integrations/{batch_id}"
+        if _git(repo, "show-ref", "--verify", "--quiet", final_ref, check=False).returncode == 0:
+            raise IntegrationError(f"Integration batch already exists: {batch_id}")
         with tempfile.TemporaryDirectory(prefix="rail-integrate-") as directory:
             worktree = Path(directory) / "integration"
             branch = f"rail/integration/{batch_id}-{uuid4().hex[:8]}"
@@ -72,7 +86,8 @@ class AtomicCombiner:
                     raise IntegrationError(f"Combined commit failed: {committed.stderr.strip()}")
                 combined = _git(worktree, "rev-parse", "HEAD").stdout.strip()
                 # Keep an auditable, durable ref before removing the temporary branch.
-                _git(repo, "update-ref", f"refs/rail/integrations/{batch_id}", combined)
+                # Ref update itself refuses overwrite, preserving a batch's audit record.
+                _git(repo, "update-ref", final_ref, combined, "0" * 40)
                 return combined
             except Exception:
                 _git(worktree, "reset", "--hard", baseline, check=False)

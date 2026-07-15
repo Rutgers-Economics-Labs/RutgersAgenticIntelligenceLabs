@@ -6,6 +6,10 @@ class PermissionDeniedError(ExecutionError):
     pass
 
 
+class SandboxRequiredError(PermissionDeniedError):
+    pass
+
+
 class InvalidTransitionError(ExecutionError):
     pass
 

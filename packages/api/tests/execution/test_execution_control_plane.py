@@ -7,24 +7,31 @@ from threading import Event
 
 import pytest
 
-from app.execution import AtomicCombiner, BaselineMismatchError, CommandExecutor, ExecutionService, FilesystemMode, InMemoryRunStore, IntegrationError, JsonRunStore, PermissionDeniedError, PermissionProfile, RunStatus, WorktreeManager
+from app.execution import AtomicCombiner, BaselineMismatchError, CommandExecutor, CommandResult, ExecutionService, FilesystemMode, InMemoryRunStore, IntegrationError, JsonRunStore, PermissionDeniedError, PermissionProfile, RunStatus, SandboxRequiredError, WorktreeManager
 from app.krail_runtime.contracts import RunHandle, RunRequest
 
 
 def profile(root: Path, **changes) -> PermissionProfile:
-    values = dict(name="test", allowed_commands=frozenset({Path(sys.executable).name, "git"}), filesystem_roots=(root,), filesystem_mode=FilesystemMode.READ_WRITE, environment_allowlist=frozenset({"SAFE"}), process_enabled=True, timeout_seconds=0.2)
+    values = dict(name="test", allowed_commands=frozenset({str(Path(sys.executable).resolve()), str(Path("/usr/bin/git"))}), filesystem_roots=(root,), filesystem_mode=FilesystemMode.READ_WRITE, environment_allowlist=frozenset({"SAFE"}), process_enabled=True, timeout_seconds=0.2)
     values.update(changes)
     return PermissionProfile(**values)
 
 
+class Sandbox:
+    def __init__(self): self.environment = None
+    def run(self, argv, *, cwd, environment, profile, shell, cancel):
+        self.environment = environment
+        return CommandResult(0, "sandbox", "")
+
+
 def test_command_is_argv_only_and_profiles_gate_commands_and_shell(tmp_path: Path) -> None:
-    executor = CommandExecutor(); p = profile(tmp_path)
+    executor = CommandExecutor(); p = PermissionProfile.full_access(timeout_seconds=0.2)
     result = executor.run([sys.executable, "-c", "print('ok')", "; echo injected"], cwd=tmp_path, profile=p)
     assert result.stdout.strip() == "ok"
-    with pytest.raises(PermissionDeniedError, match="not allowed"):
-        executor.run(["echo", "no"], cwd=tmp_path, profile=p)
+    with pytest.raises(PermissionDeniedError, match="exact allowed"):
+        executor.run(["/tmp/attacker/git", "no"], cwd=tmp_path, profile=profile(tmp_path))
     with pytest.raises(PermissionDeniedError, match="Shell"):
-        executor.run(["echo", "no"], cwd=tmp_path, profile=p, shell=True)
+        executor.run([sys.executable, "-c", "print(1)"], cwd=tmp_path, profile=profile(tmp_path), shell=True)
 
 
 def test_path_traversal_symlink_timeout_and_cancellation_are_bounded(tmp_path: Path) -> None:
@@ -32,9 +39,18 @@ def test_path_traversal_symlink_timeout_and_cancellation_are_bounded(tmp_path: P
     link = tmp_path / "escape"; link.symlink_to(outside, target_is_directory=True); p = profile(tmp_path)
     with pytest.raises(PermissionDeniedError, match="outside"):
         executor.run([sys.executable, "-c", "print(1)"], cwd=link, profile=p)
-    assert executor.run([sys.executable, "-c", "import time; time.sleep(1)"], cwd=tmp_path, profile=p).timed_out
+    assert executor.run([sys.executable, "-c", "import time; time.sleep(1)"], cwd=tmp_path, profile=PermissionProfile.full_access(timeout_seconds=0.2)).timed_out
     cancelled = Event(); cancelled.set()
-    assert executor.run([sys.executable, "-c", "print(1)"], cwd=tmp_path, profile=p, cancel=cancelled).cancelled
+    assert executor.run([sys.executable, "-c", "print(1)"], cwd=tmp_path, profile=PermissionProfile.full_access(timeout_seconds=0.2), cancel=cancelled).cancelled
+
+
+def test_restricted_execution_requires_sandbox_and_environment_fails_closed(tmp_path: Path) -> None:
+    p = profile(tmp_path)
+    with pytest.raises(SandboxRequiredError):
+        CommandExecutor().run([sys.executable, "-c", "print(1)"], cwd=tmp_path, profile=p, env={"SECRET": "x"})
+    sandbox = Sandbox()
+    CommandExecutor(sandbox).run([sys.executable, "-c", "print(1)"], cwd=tmp_path, profile=p, env={"SAFE": "yes", "SECRET": "x"})
+    assert sandbox.environment == {"SAFE": "yes"}
 
 
 def test_lifecycle_events_are_durable_and_transitions_checked(tmp_path: Path) -> None:
@@ -58,6 +74,15 @@ def test_profile_concurrency_limit_is_enforced(tmp_path: Path) -> None:
     assert service.transition(second.run_id, RunStatus.RUNNING).status is RunStatus.RUNNING
 
 
+def test_conflicting_named_profile_and_read_only_workflow_are_rejected(tmp_path: Path) -> None:
+    service = ExecutionService(InMemoryRunStore(), FakeRuntime())
+    service.create_run(project_id="p", project_path=tmp_path, kind="command", profile=profile(tmp_path, max_concurrency=1))
+    with pytest.raises(ValueError, match="Conflicting"):
+        service.create_run(project_id="p", project_path=tmp_path, kind="command", profile=profile(tmp_path, max_concurrency=2))
+    readonly = service.create_run(project_id="p2", project_path=tmp_path, kind="workflow", profile=profile(tmp_path), project_read_only=True)
+    assert service.execute_krail_workflow(readonly.run_id, RunRequest(workflow_id="w")).status is RunStatus.FAILED
+
+
 class FakeRuntime:
     def execute_workflow(self, project, request):
         assert request.dry_run is True
@@ -69,6 +94,17 @@ def test_workflow_delegates_to_canonical_runtime(tmp_path: Path) -> None:
     run = service.create_run(project_id="p", project_path=tmp_path, kind="workflow", profile=profile(tmp_path), workflow_id="w")
     outcome = service.execute_krail_workflow(run.run_id, RunRequest(workflow_id="w", dry_run=True))
     assert outcome.status is RunStatus.SUCCEEDED and outcome.result["run_id"] == "krail-1"
+
+
+def test_workflow_result_cannot_overwrite_concurrent_cancellation(tmp_path: Path) -> None:
+    class CancellingRuntime:
+        def __init__(self): self.service = None; self.run_id = None
+        def execute_workflow(self, project, request):
+            self.service.cancel(self.run_id)
+            return RunHandle(run_id="krail-1", workflow_id=request.workflow_id, status="succeeded")
+    runtime = CancellingRuntime(); service = ExecutionService(InMemoryRunStore(), runtime); runtime.service = service
+    run = service.create_run(project_id="p", project_path=tmp_path, kind="workflow", profile=profile(tmp_path)); runtime.run_id = run.run_id
+    assert service.execute_krail_workflow(run.run_id, RunRequest(workflow_id="w")).status is RunStatus.CANCELLED
 
 
 def git(repo: Path, *args: str) -> str:
@@ -100,6 +136,8 @@ def test_isolated_worktrees_and_atomic_combine_retains_result(repository: Path, 
     combined = AtomicCombiner().combine(repository, baseline=baseline, candidate_commits=[a_commit, b_commit], batch_id="batch-1", validate=lambda wt: assert_files(wt, "a.txt", "b.txt"))
     assert git(repository, "rev-parse", "refs/rail/integrations/batch-1") == combined
     assert git(repository, "rev-parse", "main") == baseline
+    with pytest.raises(IntegrationError, match="already exists"):
+        AtomicCombiner().combine(repository, baseline=baseline, candidate_commits=[a_commit], batch_id="batch-1")
     manager.remove(repository, a); manager.remove(repository, b)
 
 
@@ -111,3 +149,11 @@ def test_baseline_mismatch_and_failed_validation_do_not_publish(repository: Path
         combiner.combine(repository, baseline=baseline, candidate_commits=[candidate], batch_id="rollback", validate=lambda _: (_ for _ in ()).throw(RuntimeError("validation failed")))
     assert subprocess.run(["git", "-C", str(repository), "rev-parse", "--verify", "refs/rail/integrations/rollback"], capture_output=True).returncode != 0
     assert git(repository, "rev-parse", "main") == candidate
+
+
+def test_worktree_and_batch_identifiers_and_multi_commit_candidate_are_rejected(repository: Path, tmp_path: Path) -> None:
+    baseline = git(repository, "rev-parse", "HEAD")
+    with pytest.raises(IntegrationError): WorktreeManager().prepare(repository, baseline=baseline, run_id="../escape", root=tmp_path)
+    first = commit_change(repository, "one.txt"); second = commit_change(repository, "two.txt")
+    with pytest.raises(BaselineMismatchError): AtomicCombiner().combine(repository, baseline=baseline, candidate_commits=[second], batch_id="valid")
+    with pytest.raises(IntegrationError): AtomicCombiner().combine(repository, baseline=baseline, candidate_commits=[first], batch_id="../bad")

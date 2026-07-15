@@ -49,6 +49,12 @@ class PermissionProfile(BaseModel):
 
     @model_validator(mode="after")
     def explicit_full_access_only(self) -> "PermissionProfile":
+        if self.name == "full-access" and not (
+            self.allowed_commands == frozenset({"*"}) and self.filesystem_roots == (Path("/"),)
+            and self.filesystem_mode is FilesystemMode.READ_WRITE and self.environment_allowlist == frozenset({"*"})
+            and self.network_enabled and self.process_enabled and self.shell_enabled
+        ):
+            raise ValueError("full-access must be the explicit unrestricted profile")
         if self.name != "full-access" and not self.filesystem_roots and self.filesystem_mode == FilesystemMode.READ_WRITE:
             raise ValueError("read-write access requires explicit filesystem roots")
         return self
@@ -81,7 +87,8 @@ class RunRecord(BaseModel):
     project_path: Path
     kind: str
     status: RunStatus = RunStatus.QUEUED
-    permission_profile: str
+    permission_profile: PermissionProfile
+    project_read_only: bool = False
     baseline_commit: str | None = None
     worktree_path: Path | None = None
     workflow_id: str | None = None
