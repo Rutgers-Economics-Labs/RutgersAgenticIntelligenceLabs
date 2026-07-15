@@ -4,7 +4,6 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app.api.v1.knowledge_router import router as knowledge_router
 from app.krail_runtime.contracts import (
     Approval,
     ApprovalInventory,
@@ -115,8 +114,6 @@ def _client(tmp_path: Path) -> tuple[TestClient, FakeCanonicalRuntime, Path]:
         ),
         runtime=runtime,
     )
-    # M3 is deliberately isolated: M3's parent bootstrap wiring adds this router.
-    app.include_router(knowledge_router, prefix="/api/v1")
     client = TestClient(app)
     registered = client.post(
         "/api/v1/projects",

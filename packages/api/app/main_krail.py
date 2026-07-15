@@ -16,6 +16,7 @@ from app.krail_runtime.errors import (
     KrailValidationError,
 )
 from app.api.v1.dtos import ErrorDTO, ErrorEnvelope
+from app.api.v1.knowledge_router import router as knowledge_router
 from app.api.v1.router import router as projects_router
 from app.projects.errors import PlatformError
 from app.projects.registry import ProjectRegistry, RegistryConfig
@@ -108,6 +109,7 @@ def create_app(
         return {"status": "ok"}
 
     app.include_router(projects_router, prefix="/api/v1")
+    app.include_router(knowledge_router, prefix="/api/v1")
     return app
 
 
