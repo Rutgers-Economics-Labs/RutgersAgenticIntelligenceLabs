@@ -133,8 +133,14 @@ export interface IntegrityResponse { projectId: string; integrity: IntegritySumm
 export interface Workflow { id: string; path?: string | null; valid?: boolean | null; steps?: number | null; status?: string | null; metadata: Record<string, unknown> }
 export interface WorkflowInventory { workflows: Workflow[]; pack?: string | null; mode?: string | null }
 export interface WorkflowInventoryResponse { projectId: string; inventory: WorkflowInventory }
+export interface WorkflowResponse { projectId: string; workflow: Workflow }
+export interface WorkflowValidation { workflow_id: string; valid: boolean; errors: string[]; warnings: string[]; details: Record<string, unknown> }
+export interface WorkflowValidationResponse { projectId: string; validation: WorkflowValidation }
 
 export interface Approval { id: string; status?: string | null; description?: string | null; workflow_run_id?: string | null; workflow_step_id?: string | null; metadata: Record<string, unknown> }
 export interface ApprovalInventory { approvals: Approval[] }
 export interface ApprovalInventoryResponse { projectId: string; inventory: ApprovalInventory }
 export interface ApprovalResponse { projectId: string; approval: Approval }
+
+export interface ExecutionProfileCapability { name: string; enabled: boolean; dryRunOnly: boolean; filesystemMode: string; networkEnabled: boolean; processEnabled: boolean; shellEnabled: boolean; timeoutSeconds: number; maxConcurrency: number }
+export interface ExecutionCapabilityInventory { profiles: ExecutionProfileCapability[]; sandbox: { provider: string; available: boolean; reason?: string | null; filesystemEnforcement: boolean; networkEnforcement: boolean; portabilityNote?: string | null } }

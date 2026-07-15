@@ -1,35 +1,13 @@
-# RAIL Command Center
+# RAIL web platform
 
-Initial scaffold for the React + Tailwind frontend that replaces the legacy
-Streamlit explorer.
-
-## Purpose
-
-This app is the command-center frontend described in:
-
-- [`specs/frontend-command-center.md`](../../specs/frontend-command-center.md)
-
-It is wired to the Python backend and focuses on the first four routes:
-
-- `/projects/:slug`
-- `/projects/:slug/planner`
-- `/projects/:slug/runs`
-- `/projects/:slug/runs/:sessionId`
-
-## Development
+Next.js visual control plane for registered KRAIL projects.
 
 ```bash
-cd apps/web
-npm install
-npm run dev
+npm ci
+KRAIL_API_BASE_URL=http://127.0.0.1:8000 npm run dev
 ```
 
-By default it reads from:
-
-- `http://127.0.0.1:8000/api/v1`
-
-Override with:
-
-```bash
-NEXT_PUBLIC_RAIL_API_URL=http://127.0.0.1:8000/api/v1
-```
+`KRAIL_API_BASE_URL` supplies server-rendered reads. Interactive workflow/project controls use
+`NEXT_PUBLIC_KRAIL_API_URL` (default `http://127.0.0.1:8000/api/v1`) and the API's explicit
+`RAIL_WEB_ORIGINS` allowlist. Product routes live under `/krail-*`; browser code never reads local
+workspaces or calls removed legacy endpoints.

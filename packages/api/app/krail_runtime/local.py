@@ -56,9 +56,9 @@ class LocalKrailRuntime:
     def capability_gaps(self) -> list[CapabilityGap]:
         return [
             CapabilityGap(
-                operation="sql_query",
+                operation="sql_hydration_requirement",
                 reason="KRAIL's SQL helper depends on a hydrated ontology artifact; the small markdown fixture has none.",
-                workaround="Expose it only after an artifact-backed contract fixture is added.",
+                workaround="Hydrate an ontology pipeline before querying; the adapter uses KRAIL's public Project.query method.",
             ),
             CapabilityGap(
                 operation="workflow_process_control",
@@ -328,30 +328,27 @@ class LocalKrailRuntime:
                 "Only a single read-only SELECT or WITH query is permitted.", operation="query"
             )
         opened = self._open(project)
-        query_sql = getattr(opened, "query_sql", None)
-        if not callable(query_sql):
+        query = getattr(opened, "query", None)
+        if not callable(query):
             raise KrailCapabilityGapError(
                 "This KRAIL runtime does not expose local SQL querying.", operation="query"
             )
-        # KRAIL owns the DuckDB connection and opens it read-only.  The wrapper
-        # enforces an HTTP response bound without parsing or reimplementing SQL.
+        # KRAIL owns the DuckDB connection and returns a DataFrame. The wrapper
+        # adds only an HTTP response bound without owning or reimplementing SQL.
         bounded_sql = f"SELECT * FROM ({sql}) AS rail_platform_query LIMIT {request.limit + 1}"
         try:
-            raw = self._call("query", lambda: query_sql(bounded_sql))
+            frame = self._call("query", lambda: query(bounded_sql))
         except KrailRuntimeError as exc:
-            artifact = getattr(opened, "artifact_duckdb_path", None)
+            artifact = getattr(getattr(opened, "_backend", None), "artifact_duckdb_path", None)
             if artifact is not None and not Path(artifact).exists():
                 raise KrailCapabilityGapError(
                     "SQL query is unavailable until KRAIL has a hydrated ontology artifact.", operation="query", cause=exc
                 ) from exc
             raise
-        if not isinstance(raw, dict):
-            raise KrailRuntimeError("KRAIL returned an invalid SQL query response.", operation="query")
-        columns = [str(value) for value in raw.get("columns", [])]
-        raw_rows = raw.get("rows", [])
-        if not isinstance(raw_rows, list):
-            raise KrailRuntimeError("KRAIL returned invalid SQL rows.", operation="query")
-        rows = [list(row) if isinstance(row, (list, tuple)) else [row] for row in raw_rows]
+        if not hasattr(frame, "columns") or not callable(getattr(frame, "itertuples", None)):
+            raise KrailRuntimeError("KRAIL returned an invalid SQL query result.", operation="query")
+        columns = [str(value) for value in frame.columns]
+        rows = [list(row) for row in frame.itertuples(index=False, name=None)]
         return QueryResult(columns=columns, rows=rows[:request.limit], limit=request.limit, truncated=len(rows) > request.limit)
 
     def workflows(self, project: ProjectRef) -> WorkflowInventory:

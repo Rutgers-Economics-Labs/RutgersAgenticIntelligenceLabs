@@ -16,7 +16,8 @@ make run
 ```
 
 `make run` starts `app.main_krail:app` on port 8000 and Next.js on port 3000. The web server uses
-`KRAIL_API_BASE_URL` for server-side API calls.
+`KRAIL_API_BASE_URL` for server-side API calls. Browser workflow and project mutations use
+`NEXT_PUBLIC_KRAIL_API_URL`; its web origin must be present in `RAIL_WEB_ORIGINS`.
 
 ## Workspace configuration
 
@@ -29,6 +30,10 @@ RAIL_LINKED_PROJECT_ROOTS=/Users/me/research:/Volumes/team/projects
 
 Operational JSON stores default to `.rail/platform-projects.json` and
 `.rail/platform-runs.json`. They never replace KRAIL project truth.
+
+The Control Plane's managed-project form accepts identifiers and KRAIL init options, never a path.
+The API derives `<RAIL_MANAGED_WORKSPACE_ROOT>/<slug>`, invokes the pinned KRAIL CLI without a shell,
+creates a Git baseline, validates the canonical project, and rolls back its new directory on failure.
 
 ## Execution configuration
 

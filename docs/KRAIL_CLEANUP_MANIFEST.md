@@ -1,6 +1,6 @@
 # KRAIL Migration Cleanup Manifest
 
-Status: approved for staged removal
+Status: removal gates passed; legacy runtime removed on `krail`
 Branch: `krail`
 Architecture: `docs/KRAIL_MIGRATION_PLAN.md`
 
@@ -29,17 +29,17 @@ adapter or visual platform.
 | --- | --- | --- |
 | `apps/web` | Keep and redesign | Becomes the RAIL visual platform |
 | `packages/api` | Keep package boundary; replace internals | Becomes the thin control-plane and KRAIL adapter API |
-| `examples/minimal-project` | Migrate | Seed for the deterministic KRAIL contract fixture |
+| `examples/krail-project` | Keep | Deterministic published-KRAIL contract fixture |
 | `SECURITY.md` | Rewrite | Must describe linked paths, permission profiles, isolated workers, and secrets |
 | `.github/workflows` | Rewrite | Must test the new two-package system and pinned KRAIL contract |
 | `README.md`, `AGENTS.md`, `CONTRIBUTING.md` | Rewrite | Must describe RAIL-as-platform and KRAIL-as-runtime |
 | `LICENSE` | Keep | Project license |
 
-## Remove after replacement gates pass
+## Removed after replacement gates passed
 
-| Path or subsystem | Removal gate |
+| Removed path or subsystem | Verified replacement |
 | --- | --- |
-| `packages/engine` | KRAIL adapter contract covers required ontology, query, hydration, and analysis reads |
+| `packages/engine` | Published KRAIL adapter and explicit capability states |
 | `packages/rail-py` | Published KRAIL resolves as the sole `rail` import and M1 contract tests pass |
 | `packages/mcp-server` | Documentation points agent clients to KRAIL's MCP server |
 | Legacy API ontology/integrity/workflow services | Corresponding M3/M4 routes pass integration tests through `KrailRuntime` |
@@ -48,7 +48,12 @@ adapter or visual platform.
 | Legacy runner adapters | Isolated KRAIL worker and permission profiles pass lifecycle/security tests |
 | One-off repair/seed/monitor scripts | No supported install, fixture, or migration flow references them |
 | Old specs, goals, state notes, and historical planning docs | Final architecture/API/UI docs contain any still-relevant contract |
-| Windows/release convenience scripts | Replacement installation and release flow is verified |
+| Windows/release convenience scripts | `uv`, npm, Make, Docker, and CI local-platform flow |
+
+The legacy web `/projects/**` command center, its API/type client, old component closure, historical
+specifications, goals/state notes, and stale release scripts were removed at the same gate. The
+supported tree now builds successfully with `make build`, and its focused backend suite passes with
+`make test`.
 
 ## Removed in the baseline cleanup
 

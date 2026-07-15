@@ -1,43 +1,22 @@
 [project]
 name = "rail-api"
 version = "0.1.0"
-description = "FastAPI service wrapping the RAIL ontology engine"
+description = "Thin local control plane for published KRAIL runtimes"
 requires-python = ">=3.11"
 
 dependencies = [
     "krail[analysis,embeddings,local]>=0.2.2,<0.3",
     "fastapi>=0.115.0",
-    "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.30.0",
-    "httpx>=0.27.0",
     "pydantic>=2.7.0",
-    "pydantic-settings>=2.3.0",
     "pyyaml>=6.0.1",
-    "owlready2>=0.46",
-    "pandas>=2.2.0",
-    "requests>=2.32.0",
-    "beautifulsoup4>=4.12.0",
-    "openpyxl>=3.1.0",
-    "pdfplumber>=0.11.0",
-    "python-docx>=1.2.0",
-    # AI / LLM — provider-agnostic via LiteLLM
-    "litellm>=1.40.0",
-    # SQL analytics
-    "duckdb>=0.10.0",
-    # Code execution sandbox — data science stack
-    "statsmodels>=0.14.0",
-    "scikit-learn>=1.4.0",
-    "matplotlib>=3.8.0",
-    "folium>=0.15.0",
-    # Gemini research subagents
-    "google-genai>=1.0.0",
-    # SSE streaming
-    "sse-starlette>=2.0.0",
-    "pytest-asyncio (>=1.3.0,<2.0.0)",
-    "respx (>=0.22.0,<0.23.0)",
-    "pyjwt (>=2.8.0)",
-    "croniter (>=6.2.2,<7.0.0)",
-    "playwright>=1.58.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=1.3.0,<2.0.0",
 ]
 
 [build-system]

@@ -1,11 +1,10 @@
 import "@/app/globals.css";
-import "katex/dist/katex.min.css";
 import type { Metadata } from "next";
 import { ReactNode } from "react";
 
 export const metadata: Metadata = {
-  title: "RAIL Command Center",
-  description: "Planner-first command center for RAIL projects",
+  title: "RAIL · KRAIL platform",
+  description: "Visual control plane for KRAIL knowledge and workflows",
   icons: {
     icon: "/favicon.svg",
     shortcut: "/favicon.svg",

@@ -16,9 +16,10 @@ export default async function KrailWorkflowsPage({ searchParams }: { searchParam
   const projects = await asResource(() => api.listProjects());
   const project = selectProject(projects, search.project);
   if (!project) return <KrailWorkflows projects={projects} search={search} />;
-  const [workflows, approvals] = await Promise.all([
+  const [workflows, approvals, capabilities] = await Promise.all([
     asResource(() => api.getWorkflows(project.projectId)),
     asResource(() => api.getApprovals(project.projectId)),
+    asResource(() => api.getExecutionCapabilities()),
   ]);
-  return <KrailWorkflows projects={projects} selectedProjectId={project.projectId} workflows={workflows} approvals={approvals} search={search} />;
+  return <KrailWorkflows projects={projects} selectedProjectId={project.projectId} workflows={workflows} approvals={approvals} capabilities={capabilities} search={search} />;
 }

@@ -2,7 +2,7 @@ import type {
   ApiError, ApiErrorShape, ApprovalInventoryResponse, ApprovalResponse, FindRequest, FindResponse,
   GraphResponse, IntegrityResponse, Project, ProjectHealthResponse, ProjectListResponse,
   ProjectManifestResponse, SourceCheckResponse, SourceImpactResponse, SourcesResponse,
-  WorkflowInventoryResponse,
+  ExecutionCapabilityInventory, WorkflowInventoryResponse, WorkflowResponse, WorkflowValidationResponse,
 } from "./types";
 
 export class KrailApiClientError extends Error implements ApiError {
@@ -83,12 +83,28 @@ export class KrailApiClient {
     return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/workflows`);
   }
 
+  getWorkflow(projectId: string, workflowId: string): Promise<WorkflowResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(workflowId)}`);
+  }
+
+  validateWorkflow(projectId: string, workflowId: string): Promise<WorkflowValidationResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/workflows/${encodeURIComponent(workflowId)}/validate`, { method: "POST" });
+  }
+
   getApprovals(projectId: string): Promise<ApprovalInventoryResponse> {
     return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/approvals`);
   }
 
   getApproval(projectId: string, approvalId: string): Promise<ApprovalResponse> {
     return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/approvals/${encodeURIComponent(approvalId)}`);
+  }
+
+  decideApproval(projectId: string, approvalId: string, decision: "approved" | "rejected" | "changes_requested", comment = "", resume = false): Promise<ApprovalResponse> {
+    return this.request(`/api/v1/projects/${encodeURIComponent(projectId)}/approvals/${encodeURIComponent(approvalId)}/decision`, { method: "POST", body: JSON.stringify({ decision, comment, resume }) });
+  }
+
+  getExecutionCapabilities(): Promise<ExecutionCapabilityInventory> {
+    return this.request("/api/v1/operator/execution-capabilities");
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

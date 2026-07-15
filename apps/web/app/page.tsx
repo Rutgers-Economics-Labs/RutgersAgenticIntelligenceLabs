@@ -12,6 +12,24 @@ const workspaces = [
     description: "Search KRAIL records, traverse the graph, inspect sources, and trace provenance.",
   },
   {
+    href: "/krail-analyze" as const,
+    eyebrow: "Analyze",
+    title: "Query canonical data",
+    description: "Run bounded KRAIL queries and inspect tables, charts, reproducibility, and source context.",
+  },
+  {
+    href: "/krail-workflows" as const,
+    eyebrow: "Workflows",
+    title: "Run controlled workflows",
+    description: "Inspect workflow truth, choose server-owned permissions, and follow durable live execution.",
+  },
+  {
+    href: "/krail-control" as const,
+    eyebrow: "Control Plane",
+    title: "Operate the platform",
+    description: "Create or link projects and audit Git, sandbox, and execution capability boundaries.",
+  },
+  {
     href: "/krail-live" as const,
     eyebrow: "Runtime",
     title: "Check project health",
@@ -55,7 +73,7 @@ export default async function PlatformHome() {
         <div className={styles.grid}>
           {workspaces.map((workspace, index) => (
             <Link className={styles.card} href={workspace.href} key={workspace.href}>
-              <span className={styles.number}>0{index + 1}</span>
+              <span className={styles.number}>{String(index + 1).padStart(2, "0")}</span>
               <span className={styles.eyebrow}>{workspace.eyebrow}</span>
               <strong>{workspace.title}</strong>
               <p>{workspace.description}</p>

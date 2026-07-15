@@ -78,6 +78,12 @@ export async function cancelRun(projectId: string, runId: string) {
   return (await request<{ run: WorkflowRun }>(runPath(projectId, `/${encodeURIComponent(runId)}/cancel`), { method: "POST" })).run;
 }
 
+export async function decideApproval(projectId: string, approvalId: string, decision: "approved" | "rejected" | "changes_requested", comment = "") {
+  return request<{ projectId: string; approval: import("@/lib/krail/api").Approval }>(`${apiRoot()}/projects/${encodeURIComponent(projectId)}/approvals/${encodeURIComponent(approvalId)}/decision`, {
+    method: "POST", body: JSON.stringify({ decision, comment, resume: decision === "approved" }),
+  });
+}
+
 export async function snapshotEvents(projectId: string, runId: string) {
   return (await request<{ events: RunEvent[] }>(runPath(projectId, `/${encodeURIComponent(runId)}/events`))).events;
 }

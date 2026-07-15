@@ -113,9 +113,14 @@ def test_read_only_projects_reject_mutations(runtime, fixture_project) -> None:
 
 def test_query_workflow_detail_and_validation_map_the_canonical_runtime(runtime, fixture_project, monkeypatch) -> None:
     class CanonicalProject:
-        def query_sql(self, sql: str):
+        def query(self, sql: str):
             assert sql == "SELECT * FROM (SELECT 7 AS answer) AS rail_platform_query LIMIT 3"
-            return {"columns": ["answer"], "rows": [[7]]}
+            class Frame:
+                columns = ["answer"]
+                def itertuples(self, *, index: bool, name):
+                    assert index is False and name is None
+                    return iter([(7,)])
+            return Frame()
 
         def workflow_show(self, workflow_id: str):
             assert workflow_id == "fixture-review"
@@ -133,6 +138,11 @@ def test_query_workflow_detail_and_validation_map_the_canonical_runtime(runtime,
     assert result.columns == ["answer"] and result.rows == [[7]] and result.truncated is False
     assert workflow.id == "fixture-review" and workflow.steps == 2
     assert validation.valid is False and validation.errors == ["missing input"]
+
+
+def test_query_requires_a_krail_hydrated_artifact(runtime, fixture_project) -> None:
+    with pytest.raises(KrailCapabilityGapError, match="hydrated ontology artifact"):
+        runtime.query(fixture_project, QueryRequest(sql="SELECT 1"))
 
 
 def test_missing_canonical_capabilities_are_typed_unavailable(runtime, fixture_project, monkeypatch) -> None:

@@ -86,7 +86,8 @@
   transition: background 160ms ease, transform 160ms ease;
 }
 
-.card:last-child { border-right: 0; }
+.card:nth-child(3n) { border-right: 0; }
+.card:nth-child(n + 4) { border-top: 1px solid #cfc5b8; }
 .card:hover, .card:focus-visible { background: rgba(255, 255, 255, 0.62); transform: translateY(-4px); outline: none; }
 .number { display: block; margin-bottom: 82px; color: #8b8278; }
 .card strong { display: block; margin: 14px 0; font: 500 1.8rem/1.1 Georgia, serif; }
@@ -107,6 +108,7 @@
   .status { width: fit-content; }
   .grid { grid-template-columns: 1fr; }
   .card { min-height: auto; border-right: 0; border-bottom: 1px solid #cfc5b8; }
+  .card:nth-child(n + 4) { border-top: 0; }
   .card:last-child { border-bottom: 0; }
   .number { margin-bottom: 36px; }
   .footer { align-items: flex-start; flex-direction: column; }

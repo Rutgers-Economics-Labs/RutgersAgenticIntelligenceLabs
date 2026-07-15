@@ -8,6 +8,7 @@ import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.krail_runtime import LocalKrailRuntime
@@ -69,6 +70,14 @@ def _run_workers() -> int:
     return workers
 
 
+def _web_origins() -> list[str]:
+    raw = os.environ.get("RAIL_WEB_ORIGINS", "http://127.0.0.1:3000,http://localhost:3000")
+    origins = [origin.strip().rstrip("/") for origin in raw.split(",") if origin.strip()]
+    if any(not origin.startswith(("http://", "https://")) for origin in origins):
+        raise ValueError("RAIL_WEB_ORIGINS entries must be absolute http(s) origins")
+    return origins
+
+
 def create_app(
     *,
     registry_config: RegistryConfig | None = None,
@@ -103,6 +112,14 @@ def create_app(
             supervisor.shutdown(wait=True, cancel_futures=False)
 
     app = FastAPI(title="RAIL Platform API", version="1.0.0", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_web_origins(),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Accept", "Content-Type", "Last-Event-ID", "X-Request-ID"],
+        expose_headers=["X-Request-ID"],
+    )
     app.state.project_registry = ProjectRegistry(registry_config or RegistryConfig.from_environment())
     app.state.krail_runtime = configured_runtime
     app.state.execution_service = execution_service
