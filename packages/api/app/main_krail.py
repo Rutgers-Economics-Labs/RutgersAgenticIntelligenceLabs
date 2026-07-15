@@ -1,6 +1,9 @@
 """KRAIL-first RAIL platform API bootstrap (M2)."""
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+import os
+from pathlib import Path
 import uuid
 
 from fastapi import FastAPI, Request
@@ -18,6 +21,16 @@ from app.krail_runtime.errors import (
 from app.api.v1.dtos import ErrorDTO, ErrorEnvelope
 from app.api.v1.knowledge_router import router as knowledge_router
 from app.api.v1.router import router as projects_router
+from app.api.v1.run_router import router as runs_router
+from app.execution import (
+    CommandExecutor,
+    ExecutionService,
+    InMemoryRunStore,
+    JsonRunStore,
+    LocalRunSupervisor,
+    PermissionProfileRegistry,
+)
+from app.execution.sandbox import SandboxUnavailableError, detect_capability, select_sandbox
 from app.projects.errors import PlatformError
 from app.projects.registry import ProjectRegistry, RegistryConfig
 from app.projects.runtime import KrailRuntime
@@ -35,16 +48,72 @@ def _error_response(request: Request, *, status_code: int, code: str, message: s
     )
 
 
+def _operator_flag(name: str, *, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _run_workers() -> int:
+    raw = os.environ.get("RAIL_RUN_MAX_WORKERS", "4")
+    try:
+        workers = int(raw)
+    except ValueError as exc:
+        raise ValueError("RAIL_RUN_MAX_WORKERS must be an integer") from exc
+    if not 1 <= workers <= 32:
+        raise ValueError("RAIL_RUN_MAX_WORKERS must be between 1 and 32")
+    return workers
+
+
 def create_app(
     *,
     registry_config: RegistryConfig | None = None,
     runtime: KrailRuntime | None = None,
+    run_store: InMemoryRunStore | None = None,
+    permission_profiles: PermissionProfileRegistry | None = None,
+    max_run_workers: int | None = None,
 ) -> FastAPI:
     """Build an injectable API app without importing legacy routers or KRAIL directly."""
 
-    app = FastAPI(title="RAIL Platform API", version="1.0.0")
+    configured_runtime = runtime or LocalKrailRuntime()
+    configured_store = run_store or JsonRunStore(
+        Path(os.environ.get("RAIL_RUN_STORE_PATH", ".rail/platform-runs.json"))
+    )
+    execution_service = ExecutionService(configured_store, configured_runtime)
+    profiles = permission_profiles or PermissionProfileRegistry(
+        full_access_enabled=_operator_flag("RAIL_FULL_ACCESS_ENABLED")
+    )
+    supervisor = LocalRunSupervisor(
+        execution_service,
+        max_workers=max_run_workers if max_run_workers is not None else _run_workers(),
+    )
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        try:
+            yield
+        finally:
+            # Let accepted local work reach a durable terminal state before the
+            # process exits. Restart recovery still fail-closes interrupted runs.
+            supervisor.shutdown(wait=True, cancel_futures=False)
+
+    app = FastAPI(title="RAIL Platform API", version="1.0.0", lifespan=lifespan)
     app.state.project_registry = ProjectRegistry(registry_config or RegistryConfig.from_environment())
-    app.state.krail_runtime = runtime or LocalKrailRuntime()
+    app.state.krail_runtime = configured_runtime
+    app.state.execution_service = execution_service
+    app.state.permission_profiles = profiles
+    app.state.run_supervisor = supervisor
+
+    # Restricted commands always flow through an enforcing provider when one is
+    # available. CommandExecutor itself rejects restricted execution if local OS
+    # enforcement is unavailable; full access remains separately operator-gated.
+    app.state.sandbox_capability = detect_capability()
+    try:
+        sandbox = select_sandbox()
+    except SandboxUnavailableError:
+        sandbox = None
+    app.state.command_executor = CommandExecutor(sandbox)
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
@@ -110,6 +179,7 @@ def create_app(
 
     app.include_router(projects_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
+    app.include_router(runs_router, prefix="/api/v1")
     return app
 
 

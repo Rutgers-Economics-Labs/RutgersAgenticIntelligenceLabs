@@ -1,6 +1,6 @@
 # KRAIL Runtime Migration Plan
 
-Status: Wave 2 foundation integrated; execution HTTP/SSE and feature workspaces remain
+Status: Wave 3 local single-node control plane and Explore/Evidence workspace integrated
 Branch: `krail`
 Target: KRAIL is the project source of truth; RAIL is the visual and operational platform.
 
@@ -36,16 +36,40 @@ Implemented and verified on `krail`:
 - `/krail-preview` design foundation and `/krail-live` server-rendered M2/M3 client path;
 - local execution-control foundation with durable run/event metadata, explicit permission snapshots,
   restart reconciliation, cancellation, isolated Git worktrees, and atomic retained integration refs.
+- mounted project-scoped workflow run API with bounded local supervision, durable event snapshots,
+  reconnectable SSE, cancellation, read-only enforcement, and server-owned permission profiles;
+- fail-closed macOS `sandbox-exec` provider for restricted commands, including filesystem and network
+  enforcement, environment filtering, timeout/cancellation, and explicit portability metadata;
+- `/krail-explore` live Explore/Evidence workspace with URL-stable find filters, an accessible graph
+  and relationship list, source impact, integrity/workflow/approval capability states, and provenance.
 
-The execution package is deliberately not mounted as an HTTP run service yet. Restricted command
-profiles require an injected sandbox that enforces filesystem and network policy at the OS boundary;
-the raw subprocess runner accepts only the explicit unrestricted `full-access` profile. Non-dry KRAIL
-workflow execution is likewise limited to `full-access` until KRAIL exposes an enforcing execution
-hook. This is a security invariant, not a temporary UI restriction.
+Restricted command profiles require an injected sandbox that enforces filesystem and network policy
+at the OS boundary; the raw subprocess runner accepts only the explicit unrestricted `full-access`
+profile. Non-dry KRAIL workflow execution is likewise limited to operator-enabled `full-access` until
+KRAIL exposes an enforcing execution hook. This is a security invariant, not a temporary UI
+restriction. The current macOS provider uses Apple-deprecated `sandbox-exec`; Linux bwrap/container
+providers remain required before hosted Linux execution.
 
-Known remaining foundation gaps are the run/SSE API, approval decisions, command-profile registry,
-an enforcing local sandbox, SQL/analysis fixture support, richer frontend workspaces, removal of the
-legacy runtime packages, and existing legacy frontend type/import failures.
+Known remaining foundation gaps are workflow run/SSE UI, approval decisions, operator-defined
+fine-grained profile configuration, Linux sandboxing, SQL/analysis fixture support, Analyze,
+Workflows, and Control Plane workspaces, removal of legacy runtime packages, and existing legacy
+frontend imports for removed planner/work-order API functions.
+
+### Local control-plane configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RAIL_PROJECT_REGISTRY_PATH` | `.rail/platform-projects.json` | RAIL-owned project registry metadata |
+| `RAIL_MANAGED_WORKSPACE_ROOT` | `.rail/projects` | Platform-managed Git workspace root |
+| `RAIL_LINKED_PROJECT_ROOTS` | empty | Path-separated operator-approved linked-directory roots |
+| `RAIL_RUN_STORE_PATH` | `.rail/platform-runs.json` | Durable local run and event snapshots |
+| `RAIL_RUN_MAX_WORKERS` | `4` | Local workflow supervisor size, constrained to 1–32 |
+| `RAIL_FULL_ACCESS_ENABLED` | false | Explicit operator gate for unrestricted and non-dry execution |
+
+Unknown or false-like `RAIL_FULL_ACCESS_ENABLED` values fail closed. If no enforcing restricted
+sandbox is available, restricted command execution is rejected rather than falling back to a raw
+subprocess. Application shutdown waits for accepted local jobs; interrupted persisted jobs are
+marked failed during restart reconciliation.
 
 ## 2. Architectural invariants
 
@@ -261,11 +285,12 @@ GET    /api/v1/projects/{project_id}/integrity
 GET    /api/v1/projects/{project_id}/workflows
 GET    /api/v1/projects/{project_id}/workflows/{workflow_id}
 POST   /api/v1/projects/{project_id}/workflows/{workflow_id}/validate
-POST   /api/v1/projects/{project_id}/workflows/{workflow_id}/runs
+POST   /api/v1/projects/{project_id}/runs
 GET    /api/v1/projects/{project_id}/runs
 GET    /api/v1/projects/{project_id}/runs/{run_id}
 POST   /api/v1/projects/{project_id}/runs/{run_id}/cancel
 GET    /api/v1/projects/{project_id}/runs/{run_id}/events
+GET    /api/v1/projects/{project_id}/runs/{run_id}/events/stream
 
 GET    /api/v1/projects/{project_id}/approvals
 POST   /api/v1/projects/{project_id}/approvals/{approval_id}/decision

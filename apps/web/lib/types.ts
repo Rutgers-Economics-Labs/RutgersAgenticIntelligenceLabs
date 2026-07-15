@@ -334,6 +334,10 @@ export type ProjectCatalogItem = {
     localRepoPath?: string | null;
     status?: string | null;
   } | null;
+  progress?: {
+    closed: number;
+    total: number;
+  };
   error?: string;
 };
 

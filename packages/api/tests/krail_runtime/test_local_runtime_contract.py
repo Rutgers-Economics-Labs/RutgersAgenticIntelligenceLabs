@@ -50,11 +50,13 @@ def test_sources_contract_is_read_only(runtime, fixture_project) -> None:
 
 
 def test_integrity_contract_does_not_load_legacy_rail_services(runtime, fixture_project) -> None:
+    legacy_before = {name for name in sys.modules if name.startswith("app.services")}
     summary = runtime.integrity(fixture_project)
 
     assert summary.status == "available"
     assert summary.sources == summary.claims == summary.assumptions == 0
-    assert not any(name.startswith("app.services") for name in sys.modules)
+    legacy_after = {name for name in sys.modules if name.startswith("app.services")}
+    assert legacy_after == legacy_before
 
 
 def test_workflow_contract_and_dry_run(runtime, fixture_project) -> None:

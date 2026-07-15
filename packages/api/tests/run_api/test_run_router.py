@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.v1.run_router import router as runs_router
 from app.execution import CommandExecutor, ExecutionService, InMemoryRunStore, LocalRunSupervisor, PermissionProfile, PermissionProfileRegistry, RunStatus, WorktreeManager
 from app.krail_runtime.contracts import ProjectHealth, ProjectHealthCheck, RunHandle
 from app.main_krail import create_app
@@ -30,7 +29,7 @@ class Runtime:
         return RunHandle(run_id="runtime-run", workflow_id=request.workflow_id, status="succeeded")
 
 
-def client(tmp_path: Path):
+def client(tmp_path: Path, *, full_access_enabled: bool = False):
     root = tmp_path / "linked"; root.mkdir()
     project = root / "project"; project.mkdir()
     subprocess.run(["git", "init", "-b", "main", str(project)], check=True, capture_output=True)
@@ -40,11 +39,13 @@ def client(tmp_path: Path):
     subprocess.run(["git", "-C", str(project), "add", "."], check=True)
     subprocess.run(["git", "-C", str(project), "commit", "-m", "base"], check=True, capture_output=True)
     runtime = Runtime()
-    app = create_app(registry_config=RegistryConfig(tmp_path / "registry.json", tmp_path / "managed", (root,)), runtime=runtime)
-    app.state.execution_service = ExecutionService(InMemoryRunStore(), runtime)
-    app.state.permission_profiles = PermissionProfileRegistry(full_access_enabled=False)
-    app.state.run_supervisor = LocalRunSupervisor(app.state.execution_service, max_workers=1)
-    app.include_router(runs_router, prefix="/api/v1")
+    app = create_app(
+        registry_config=RegistryConfig(tmp_path / "registry.json", tmp_path / "managed", (root,)),
+        runtime=runtime,
+        run_store=InMemoryRunStore(),
+        permission_profiles=PermissionProfileRegistry(full_access_enabled=full_access_enabled),
+        max_run_workers=1,
+    )
     http = TestClient(app)
     assert http.post("/api/v1/projects", json={"projectId": "p", "displayName": "P", "path": str(project), "workspaceMode": "linked_local"}).status_code == 201
     return http, runtime
@@ -76,6 +77,18 @@ def test_authorization_async_lifecycle_and_project_isolation(tmp_path: Path):
     assert runtime.calls[0][0].path.name == "project"
     assert http.get(f"/api/v1/projects/other/runs/{run_id}").status_code == 404
     assert http.get("/api/v1/projects/p/runs/bad!").status_code == 422
+
+
+def test_operator_enabled_full_access_can_run_non_dry_workflow(tmp_path: Path):
+    http, runtime = client(tmp_path, full_access_enabled=True)
+    response = http.post(
+        "/api/v1/projects/p/runs",
+        json={"workflowId": "w", "dryRun": False, "permissionProfile": "full-access"},
+    )
+    assert response.status_code == 202
+    done = wait_for(http, response.json()["run"]["runId"])
+    assert done.json()["run"]["status"] == "succeeded"
+    assert runtime.calls[0][1].dry_run is False
 
 
 def test_events_order_reconnect_terminal_and_structured_runtime_failure(tmp_path: Path):
