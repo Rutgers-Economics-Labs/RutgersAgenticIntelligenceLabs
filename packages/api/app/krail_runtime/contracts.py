@@ -169,6 +169,28 @@ class WorkflowInventory(RuntimeDTO):
     mode: str | None = None
 
 
+class WorkflowValidation(RuntimeDTO):
+    workflow_id: str
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class QueryRequest(RuntimeDTO):
+    """A bounded, read-only SQL request for a hydrated KRAIL artifact."""
+
+    sql: str = Field(min_length=1, max_length=10_000)
+    limit: int = Field(default=100, ge=1, le=1_000)
+
+
+class QueryResult(RuntimeDTO):
+    columns: list[str]
+    rows: list[list[Any]]
+    limit: int
+    truncated: bool = False
+
+
 class Approval(RuntimeDTO):
     id: str
     status: str | None = None
@@ -218,7 +240,10 @@ class KrailRuntime(Protocol):
     def check_sources(self, project: ProjectRef) -> SourceCheck: ...
     def affected_sources(self, project: ProjectRef, source_ids: list[str] | None = None) -> SourceImpact: ...
     def integrity(self, project: ProjectRef) -> IntegritySummary: ...
+    def query(self, project: ProjectRef, request: QueryRequest) -> QueryResult: ...
     def workflows(self, project: ProjectRef) -> WorkflowInventory: ...
+    def workflow(self, project: ProjectRef, workflow_id: str) -> Workflow: ...
+    def validate_workflow(self, project: ProjectRef, workflow_id: str) -> WorkflowValidation: ...
     def approvals(self, project: ProjectRef) -> ApprovalInventory: ...
     def approval(self, project: ProjectRef, approval_id: str) -> Approval: ...
     def decide_approval(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 from fastapi.testclient import TestClient
 
@@ -20,12 +21,15 @@ from app.krail_runtime.contracts import (
     ProjectHealthCheck,
     ProjectManifest,
     ProjectRef,
+    QueryRequest,
+    QueryResult,
     SourceCheck,
     SourceImpact,
     SourceInventory,
     SourceRecord,
     Workflow,
     WorkflowInventory,
+    WorkflowValidation,
 )
 from app.main_krail import create_app
 from app.projects.registry import RegistryConfig
@@ -87,9 +91,21 @@ class FakeCanonicalRuntime:
         self._record("integrity", project)
         return IntegritySummary(status="available", sources=1, claims=2)
 
+    def query(self, project: ProjectRef, request: QueryRequest) -> QueryResult:
+        self._record("query", project, request)
+        return QueryResult(columns=["answer"], rows=[[42]], limit=request.limit)
+
     def workflows(self, project: ProjectRef) -> WorkflowInventory:
         self._record("workflows", project)
         return WorkflowInventory(workflows=[Workflow(id="research", path="workflows/research.yaml", valid=True, steps=2)])
+
+    def workflow(self, project: ProjectRef, workflow_id: str) -> Workflow:
+        self._record("workflow", project, workflow_id)
+        return Workflow(id=workflow_id, path=f"workflows/{workflow_id}.yaml", valid=True, steps=2, metadata={"retries": 1})
+
+    def validate_workflow(self, project: ProjectRef, workflow_id: str) -> WorkflowValidation:
+        self._record("validate_workflow", project, workflow_id)
+        return WorkflowValidation(workflow_id=workflow_id, valid=True, warnings=["uses fixture runner"])
 
     def approvals(self, project: ProjectRef) -> ApprovalInventory:
         self._record("approvals", project)
@@ -98,6 +114,10 @@ class FakeCanonicalRuntime:
     def approval(self, project: ProjectRef, approval_id: str) -> Approval:
         self._record("approval", project, approval_id)
         return Approval(id=approval_id, status="pending", description="Review this")
+
+    def decide_approval(self, project: ProjectRef, approval_id: str, decision) -> Approval:
+        self._record("decide_approval", project, decision)
+        return Approval(id=approval_id, status=decision.decision, description=decision.comment)
 
 
 def _client(tmp_path: Path) -> tuple[TestClient, FakeCanonicalRuntime, Path]:
@@ -123,6 +143,30 @@ def _client(tmp_path: Path) -> tuple[TestClient, FakeCanonicalRuntime, Path]:
     return client, runtime, project.resolve()
 
 
+def _writable_client(tmp_path: Path) -> tuple[TestClient, FakeCanonicalRuntime]:
+    linked_root = tmp_path / "linked"
+    linked_root.mkdir()
+    project = linked_root / "write-project"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q", str(project)], check=True)
+    subprocess.run(["git", "-C", str(project), "config", "user.email", "test@example.invalid"], check=True)
+    subprocess.run(["git", "-C", str(project), "config", "user.name", "Test"], check=True)
+    (project / "README.md").write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(project), "commit", "-qm", "fixture"], check=True)
+    runtime = FakeCanonicalRuntime()
+    app = create_app(
+        registry_config=RegistryConfig(tmp_path / "registry.json", tmp_path / "managed", (linked_root,)),
+        runtime=runtime,
+    )
+    client = TestClient(app)
+    assert client.post(
+        "/api/v1/projects",
+        json={"projectId": "write-id", "displayName": "Write", "path": str(project), "workspaceMode": "linked_local"},
+    ).status_code == 201
+    return client, runtime
+
+
 def test_read_only_knowledge_routes_use_canonical_runtime_and_registry_ref(tmp_path: Path):
     client, runtime, canonical_path = _client(tmp_path)
     headers = {"X-Request-ID": "knowledge-request"}
@@ -140,6 +184,9 @@ def test_read_only_knowledge_routes_use_canonical_runtime_and_registry_ref(tmp_p
         "score": 0.9, "snippet": None, "metadata": {},
     }
 
+    query = client.post("/api/v1/projects/fixture-id/query", json={"sql": "SELECT 42", "limit": 10})
+    assert query.json()["result"] == {"columns": ["answer"], "rows": [[42]], "limit": 10, "truncated": False}
+
     assert client.get("/api/v1/projects/fixture-id/graph?entityType=person&limit=2").status_code == 200
     assert client.get("/api/v1/projects/fixture-id/sources").status_code == 200
     assert client.post("/api/v1/projects/fixture-id/sources/check").json()["check"]["status"] == "current"
@@ -147,21 +194,24 @@ def test_read_only_knowledge_routes_use_canonical_runtime_and_registry_ref(tmp_p
     assert affected.json()["impact"] == {"source_ids": ["src:one", "src:two"], "documents": ["docs/one.md"]}
     assert client.get("/api/v1/projects/fixture-id/integrity").json()["integrity"]["claims"] == 2
     assert client.get("/api/v1/projects/fixture-id/workflows").json()["inventory"]["workflows"][0]["id"] == "research"
+    assert client.get("/api/v1/projects/fixture-id/workflows/research").json()["workflow"]["metadata"] == {"retries": 1}
+    assert client.post("/api/v1/projects/fixture-id/workflows/research/validate").json()["validation"]["warnings"] == ["uses fixture runner"]
     assert client.get("/api/v1/projects/fixture-id/approvals").status_code == 200
     assert client.get("/api/v1/projects/fixture-id/approvals/approval:one").json()["approval"]["id"] == "approval:one"
 
     operations = [operation for operation, _, _ in runtime.calls]
     assert operations == [
-        "doctor", "find", "graph", "sources", "check_sources", "affected_sources",
-        "integrity", "workflows", "approvals", "approval",
+        "doctor", "find", "query", "graph", "sources", "check_sources", "affected_sources",
+        "integrity", "workflows", "workflow", "validate_workflow", "approvals", "approval",
     ]
     for operation, project, _ in runtime.calls:
         assert project.project_id == "fixture-id", operation
         assert project.path == canonical_path, operation
         assert project.read_only is True, operation
     assert runtime.calls[1][2] == FindQuery(text="rail", types=["document"], topic="platform", explain=True)
-    assert runtime.calls[2][2] == GraphQuery(entity_type="person", limit=2)
-    assert runtime.calls[5][2] == ["src:one", "src:two"]
+    assert runtime.calls[2][2] == QueryRequest(sql="SELECT 42", limit=10)
+    assert runtime.calls[3][2] == GraphQuery(entity_type="person", limit=2)
+    assert runtime.calls[6][2] == ["src:one", "src:two"]
 
 
 def test_knowledge_request_and_path_validation_remain_structured(tmp_path: Path):
@@ -179,3 +229,32 @@ def test_knowledge_request_and_path_validation_remain_structured(tmp_path: Path)
     assert invalid_approval.status_code == 422
     assert invalid_approval.json()["error"]["code"] == "request_validation_error"
     assert [call[0] for call in runtime.calls] == ["doctor"]
+
+
+def test_approval_decision_fails_closed_for_read_only_projects(tmp_path: Path):
+    client, runtime, _ = _client(tmp_path)
+    response = client.post(
+        "/api/v1/projects/fixture-id/approvals/approval:one/decision",
+        json={"decision": "approved", "resume": True},
+        headers={"X-Request-ID": "approval-denied"},
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "project_read_only"
+    assert response.headers["X-Request-ID"] == "approval-denied"
+    assert [call[0] for call in runtime.calls] == ["doctor"]
+
+
+def test_approval_decision_uses_the_canonical_runtime_for_writable_projects(tmp_path: Path):
+    client, runtime = _writable_client(tmp_path)
+    response = client.post(
+        "/api/v1/projects/write-id/approvals/approval:one/decision",
+        json={"decision": "changes_requested", "comment": "add evidence", "resume": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["approval"] == {
+        "id": "approval:one", "status": "changes_requested", "description": "add evidence",
+        "workflow_run_id": None, "workflow_step_id": None, "metadata": {},
+    }
+    assert runtime.calls[-1][0] == "decide_approval"
+    assert runtime.calls[-1][2].decision == "changes_requested"
+    assert runtime.calls[-1][2].resume is True

@@ -26,6 +26,18 @@ class RegisterProjectRequest(DTO):
     workspace_mode: WorkspaceMode = Field(alias="workspaceMode")
 
 
+class CreateManagedProjectRequest(DTO):
+    """Identifiers and KRAIL init options only; the server derives the path."""
+
+    project_id: str = Field(alias="projectId", min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    display_name: str = Field(alias="displayName", min_length=1, max_length=256)
+    name: str = Field(min_length=1, max_length=256)
+    slug: str = Field(min_length=1, max_length=80, pattern=r"^[a-z0-9][a-z0-9-]*$")
+    pack: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    mode: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    knowledge_mode: str = Field(alias="knowledgeMode", min_length=1, max_length=80, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
 class GitResponse(DTO):
     is_repository: bool = Field(alias="isRepository")
     repository_root: str | None = Field(default=None, alias="repositoryRoot")

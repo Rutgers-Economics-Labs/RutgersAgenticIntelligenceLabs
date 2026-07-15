@@ -24,6 +24,8 @@ from .contracts import (
     ProjectHealthCheck,
     ProjectManifest,
     ProjectRef,
+    QueryRequest,
+    QueryResult,
     RunHandle,
     RunRequest,
     SourceInventory,
@@ -32,8 +34,10 @@ from .contracts import (
     SourceRecord,
     Workflow,
     WorkflowInventory,
+    WorkflowValidation,
 )
 from .errors import (
+    KrailCapabilityGapError,
     KrailPermissionError,
     KrailProjectNotFoundError,
     KrailRecordNotFoundError,
@@ -65,6 +69,11 @@ class LocalKrailRuntime:
                 operation="integrity_status",
                 reason="KRAIL 0.2.2 routes Project.integrity_status through retired RAIL service modules in local mode.",
                 workaround="This adapter uses KRAIL's public ResearchIntegrityRepo record API until upstream provides a local summary method.",
+            ),
+            CapabilityGap(
+                operation="project_initialization",
+                reason="KRAIL 0.2.2 has no Python project-initialization API.",
+                workaround="Managed workspaces use the published `krail init` CLI through the server-owned, no-shell compatibility boundary.",
             ),
         ]
 
@@ -310,8 +319,49 @@ class LocalKrailRuntime:
             artifacts=len(artifacts), verification_runs=len(verification_runs), details=details,
         )
 
+    def query(self, project: ProjectRef, request: QueryRequest) -> QueryResult:
+        """Query KRAIL's hydrated read-only artifact without owning a SQL engine."""
+        sql = request.sql.strip()
+        normalized = sql.lower()
+        if ";" in sql or not (normalized.startswith("select") or normalized.startswith("with")):
+            raise KrailValidationError(
+                "Only a single read-only SELECT or WITH query is permitted.", operation="query"
+            )
+        opened = self._open(project)
+        query_sql = getattr(opened, "query_sql", None)
+        if not callable(query_sql):
+            raise KrailCapabilityGapError(
+                "This KRAIL runtime does not expose local SQL querying.", operation="query"
+            )
+        # KRAIL owns the DuckDB connection and opens it read-only.  The wrapper
+        # enforces an HTTP response bound without parsing or reimplementing SQL.
+        bounded_sql = f"SELECT * FROM ({sql}) AS rail_platform_query LIMIT {request.limit + 1}"
+        try:
+            raw = self._call("query", lambda: query_sql(bounded_sql))
+        except KrailRuntimeError as exc:
+            artifact = getattr(opened, "artifact_duckdb_path", None)
+            if artifact is not None and not Path(artifact).exists():
+                raise KrailCapabilityGapError(
+                    "SQL query is unavailable until KRAIL has a hydrated ontology artifact.", operation="query", cause=exc
+                ) from exc
+            raise
+        if not isinstance(raw, dict):
+            raise KrailRuntimeError("KRAIL returned an invalid SQL query response.", operation="query")
+        columns = [str(value) for value in raw.get("columns", [])]
+        raw_rows = raw.get("rows", [])
+        if not isinstance(raw_rows, list):
+            raise KrailRuntimeError("KRAIL returned invalid SQL rows.", operation="query")
+        rows = [list(row) if isinstance(row, (list, tuple)) else [row] for row in raw_rows]
+        return QueryResult(columns=columns, rows=rows[:request.limit], limit=request.limit, truncated=len(rows) > request.limit)
+
     def workflows(self, project: ProjectRef) -> WorkflowInventory:
-        result = self._call("workflows", lambda: self._open(project).list_workflows())
+        opened = self._open(project)
+        list_workflows = getattr(opened, "list_workflows", None)
+        if not callable(list_workflows):
+            raise KrailCapabilityGapError(
+                "This KRAIL runtime does not expose workflow inventory.", operation="workflows"
+            )
+        result = self._call("workflows", list_workflows)
         workflows = []
         for item in result.get("specs", []):
             if isinstance(item, dict):
@@ -320,6 +370,48 @@ class LocalKrailRuntime:
                     metadata={key: value for key, value in item.items() if key not in {"id", "path", "valid", "steps"}},
                 ))
         return WorkflowInventory(workflows=workflows, pack=result.get("pack"), mode=result.get("mode"))
+
+    def workflow(self, project: ProjectRef, workflow_id: str) -> Workflow:
+        opened = self._open(project)
+        show = getattr(opened, "workflow_show", None)
+        if not callable(show):
+            raise KrailCapabilityGapError(
+                "This KRAIL runtime does not expose workflow detail.", operation="workflow_show"
+            )
+        result = self._call("workflow_show", lambda: show(workflow_id))
+        item = result.get("workflow") if isinstance(result, dict) and isinstance(result.get("workflow"), dict) else result
+        if not isinstance(item, dict):
+            raise KrailRuntimeError("KRAIL returned an invalid workflow detail response.", operation="workflow_show")
+        return self._workflow(item)
+
+    def validate_workflow(self, project: ProjectRef, workflow_id: str) -> WorkflowValidation:
+        opened = self._open(project)
+        validate = getattr(opened, "workflow_validate", None)
+        if not callable(validate):
+            raise KrailCapabilityGapError(
+                "This KRAIL runtime does not expose workflow validation.", operation="workflow_validate"
+            )
+        result = self._call("workflow_validate", lambda: validate(workflow_id))
+        if not isinstance(result, dict):
+            raise KrailRuntimeError("KRAIL returned an invalid workflow validation response.", operation="workflow_validate")
+        errors = result.get("errors", [])
+        warnings = result.get("warnings", [])
+        return WorkflowValidation(
+            workflow_id=str(result.get("workflow_id") or result.get("workflow") or workflow_id),
+            valid=bool(result.get("valid")),
+            errors=[str(item.get("message", item)) if isinstance(item, dict) else str(item) for item in errors],
+            warnings=[str(item.get("message", item)) if isinstance(item, dict) else str(item) for item in warnings],
+            details={key: value for key, value in result.items() if key not in {"workflow_id", "workflow", "valid", "errors", "warnings"}},
+        )
+
+    @staticmethod
+    def _workflow(item: dict[str, Any]) -> Workflow:
+        known = {"id", "workflow_id", "path", "valid", "steps", "status"}
+        return Workflow(
+            id=str(item.get("id") or item.get("workflow_id")), path=item.get("path"), valid=item.get("valid"),
+            steps=item.get("steps"), status=item.get("status"),
+            metadata={key: value for key, value in item.items() if key not in known},
+        )
 
     def approvals(self, project: ProjectRef) -> ApprovalInventory:
         result = self._call("approvals", lambda: self._open(project).approval_list())
@@ -331,9 +423,15 @@ class LocalKrailRuntime:
 
     def decide_approval(self, project: ProjectRef, approval_id: str, decision: ApprovalDecision) -> Approval:
         self._require_write(project, operation="approval_decide")
+        opened = self._open(project)
+        decide = getattr(opened, "approval_decide", None)
+        if not callable(decide):
+            raise KrailCapabilityGapError(
+                "This KRAIL runtime does not expose approval decisions.", operation="approval_decide"
+            )
         result = self._call(
             "approval_decide",
-            lambda: self._open(project).approval_decide(approval_id, decision=decision.decision, comment=decision.comment, resume=decision.resume),
+            lambda: decide(approval_id, decision=decision.decision, comment=decision.comment, resume=decision.resume),
         )
         return self._approval(result.get("approval") if isinstance(result, dict) else result)
 

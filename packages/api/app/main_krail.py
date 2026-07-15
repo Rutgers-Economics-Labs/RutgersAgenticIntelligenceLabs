@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from app.krail_runtime import LocalKrailRuntime
 from app.krail_runtime.errors import (
+    KrailCapabilityGapError,
     KrailPermissionError,
     KrailProjectNotFoundError,
     KrailRuntimeError,
@@ -20,6 +21,7 @@ from app.krail_runtime.errors import (
 )
 from app.api.v1.dtos import ErrorDTO, ErrorEnvelope
 from app.api.v1.knowledge_router import router as knowledge_router
+from app.api.v1.capabilities_router import router as capabilities_router
 from app.api.v1.router import router as projects_router
 from app.api.v1.run_router import router as runs_router
 from app.execution import (
@@ -32,6 +34,7 @@ from app.execution import (
 )
 from app.execution.sandbox import SandboxUnavailableError, detect_capability, select_sandbox
 from app.projects.errors import PlatformError
+from app.projects.creation import ManagedProjectCreator
 from app.projects.registry import ProjectRegistry, RegistryConfig
 from app.projects.runtime import KrailRuntime
 
@@ -72,6 +75,7 @@ def create_app(
     runtime: KrailRuntime | None = None,
     run_store: InMemoryRunStore | None = None,
     permission_profiles: PermissionProfileRegistry | None = None,
+    managed_project_creator: ManagedProjectCreator | None = None,
     max_run_workers: int | None = None,
 ) -> FastAPI:
     """Build an injectable API app without importing legacy routers or KRAIL directly."""
@@ -104,6 +108,7 @@ def create_app(
     app.state.execution_service = execution_service
     app.state.permission_profiles = profiles
     app.state.run_supervisor = supervisor
+    app.state.managed_project_creator = managed_project_creator or ManagedProjectCreator()
 
     # Restricted commands always flow through an enforcing provider when one is
     # available. CommandExecutor itself rejects restricted execution if local OS
@@ -144,7 +149,9 @@ def create_app(
 
     @app.exception_handler(KrailRuntimeError)
     async def krail_error_handler(request: Request, exc: KrailRuntimeError):
-        if isinstance(exc, KrailUnavailableError):
+        if isinstance(exc, KrailCapabilityGapError):
+            status_code = 501
+        elif isinstance(exc, KrailUnavailableError):
             status_code = 503
         elif isinstance(exc, KrailProjectNotFoundError):
             status_code = 404
@@ -180,6 +187,7 @@ def create_app(
     app.include_router(projects_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(runs_router, prefix="/api/v1")
+    app.include_router(capabilities_router, prefix="/api/v1")
     return app
 
 

@@ -7,20 +7,26 @@ from fastapi import APIRouter, Depends, Path, Query
 from pydantic import StringConstraints
 
 from app.krail_runtime.contracts import KrailRuntime
+from app.projects.errors import PlatformError
 from app.projects.registry import ProjectRegistry
 
 from .knowledge_dtos import (
     ApprovalInventoryResponse,
     ApprovalResponse,
+    ApprovalDecisionRequest,
     FindRequest,
     FindResponse,
     GraphRequest,
     GraphResponse,
     IntegrityResponse,
+    QueryRequestDTO,
+    QueryResponse,
     SourceCheckResponse,
     SourceImpactResponse,
     SourceInventoryResponse,
     WorkflowInventoryResponse,
+    WorkflowResponse,
+    WorkflowValidationResponse,
 )
 from .router import get_registry, get_runtime
 
@@ -30,6 +36,11 @@ router = APIRouter(prefix="/projects/{project_id}", tags=["knowledge"])
 ProjectId = Annotated[str, Path(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
 RecordId = Annotated[str, Path(min_length=1, max_length=200)]
 SourceId = Annotated[str, StringConstraints(min_length=1, max_length=200)]
+
+
+class ProjectReadOnlyError(PlatformError):
+    status_code = 403
+    code = "project_read_only"
 
 
 def _project(project_id: str, registry: ProjectRegistry):
@@ -46,6 +57,17 @@ def find_knowledge(
 ) -> FindResponse:
     record, project = _project(project_id, registry)
     return FindResponse.from_runtime(record.project_id, runtime.find(project, payload.to_runtime()))
+
+
+@router.post("/query", response_model=QueryResponse)
+def query_knowledge(
+    project_id: ProjectId,
+    payload: QueryRequestDTO,
+    registry: ProjectRegistry = Depends(get_registry),
+    runtime: KrailRuntime = Depends(get_runtime),
+) -> QueryResponse:
+    record, project = _project(project_id, registry)
+    return QueryResponse.from_runtime(record.project_id, runtime.query(project, payload.to_runtime()))
 
 
 @router.get("/graph", response_model=GraphResponse)
@@ -110,6 +132,28 @@ def workflow_inventory(
     return WorkflowInventoryResponse.from_runtime(record.project_id, runtime.workflows(project))
 
 
+@router.get("/workflows/{workflow_id}", response_model=WorkflowResponse)
+def workflow_detail(
+    project_id: ProjectId,
+    workflow_id: RecordId,
+    registry: ProjectRegistry = Depends(get_registry),
+    runtime: KrailRuntime = Depends(get_runtime),
+) -> WorkflowResponse:
+    record, project = _project(project_id, registry)
+    return WorkflowResponse.from_runtime(record.project_id, runtime.workflow(project, workflow_id))
+
+
+@router.post("/workflows/{workflow_id}/validate", response_model=WorkflowValidationResponse)
+def validate_workflow(
+    project_id: ProjectId,
+    workflow_id: RecordId,
+    registry: ProjectRegistry = Depends(get_registry),
+    runtime: KrailRuntime = Depends(get_runtime),
+) -> WorkflowValidationResponse:
+    record, project = _project(project_id, registry)
+    return WorkflowValidationResponse.from_runtime(record.project_id, runtime.validate_workflow(project, workflow_id))
+
+
 @router.get("/approvals", response_model=ApprovalInventoryResponse)
 def approval_inventory(
     project_id: ProjectId,
@@ -129,3 +173,19 @@ def approval_detail(
 ) -> ApprovalResponse:
     record, project = _project(project_id, registry)
     return ApprovalResponse.from_runtime(record.project_id, runtime.approval(project, approval_id))
+
+
+@router.post("/approvals/{approval_id}/decision", response_model=ApprovalResponse)
+def decide_approval(
+    project_id: ProjectId,
+    approval_id: RecordId,
+    payload: ApprovalDecisionRequest,
+    registry: ProjectRegistry = Depends(get_registry),
+    runtime: KrailRuntime = Depends(get_runtime),
+) -> ApprovalResponse:
+    record, project = _project(project_id, registry)
+    if project.read_only:
+        raise ProjectReadOnlyError("Registered project is read-only")
+    return ApprovalResponse.from_runtime(
+        record.project_id, runtime.decide_approval(project, approval_id, payload.to_runtime())
+    )

@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.krail_runtime.contracts import ProjectHealth, ProjectHealthCheck, ProjectManifest, ProjectRef
 from app.main_krail import create_app
+from app.projects.creation import ManagedProjectCreator
 from app.projects.registry import RegistryConfig
 
 
@@ -45,7 +46,7 @@ def _git_project(path: Path) -> Path:
     return path
 
 
-def _client(tmp_path: Path, runtime: FakeRuntime | None = None) -> TestClient:
+def _client(tmp_path: Path, runtime: FakeRuntime | None = None, creator: ManagedProjectCreator | None = None) -> TestClient:
     managed = tmp_path / "managed"
     managed.mkdir(exist_ok=True)
     config = RegistryConfig(
@@ -53,7 +54,26 @@ def _client(tmp_path: Path, runtime: FakeRuntime | None = None) -> TestClient:
         managed_workspace_root=managed,
         linked_workspace_roots=(tmp_path / "linked",),
     )
-    return TestClient(create_app(registry_config=config, runtime=runtime or FakeRuntime()))
+    return TestClient(create_app(
+        registry_config=config, runtime=runtime or FakeRuntime(), managed_project_creator=creator,
+    ))
+
+
+def _managed_creator(*, fail_init: bool = False, invalid_project: bool = False) -> tuple[ManagedProjectCreator, list[list[str]]]:
+    calls: list[list[str]] = []
+
+    def runner(arguments: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+        calls.append(arguments)
+        if arguments[:2] == ["krail", "init"]:
+            destination = Path(arguments[2])
+            destination.mkdir(parents=True)
+            (destination / "rail.yaml").write_text("fixture: true\n", encoding="utf-8")
+            if invalid_project:
+                (destination / "invalid-marker").write_text("1", encoding="utf-8")
+            return subprocess.CompletedProcess(arguments, 1 if fail_init else 0, "", "")
+        return subprocess.run(arguments, cwd=cwd, check=False, capture_output=True, text=True)
+
+    return ManagedProjectCreator(runner), calls
 
 
 def test_register_list_get_health_and_manifest_for_linked_git_project(tmp_path: Path):
@@ -167,6 +187,80 @@ def test_non_git_linked_workspace_is_persisted_read_only(tmp_path: Path):
     persisted = restarted.get("/api/v1/projects/read-only")
     assert persisted.status_code == 200
     assert persisted.json()["canonicalPath"] == str(project.resolve())
+
+
+def test_managed_creation_derives_destination_and_records_cli_fallback(tmp_path: Path):
+    creator, calls = _managed_creator()
+    client = _client(tmp_path, creator=creator)
+    payload = {
+        "projectId": "new-project", "displayName": "New Project", "name": "New Project",
+        "slug": "new-project", "pack": "research", "mode": "assisted", "knowledgeMode": "research",
+    }
+
+    response = client.post("/api/v1/projects/managed", json=payload, headers={"X-Request-ID": "create-1"})
+
+    assert response.status_code == 201
+    assert response.headers["X-Request-ID"] == "create-1"
+    destination = tmp_path / "managed" / "new-project"
+    assert response.json()["canonicalPath"] == str(destination.resolve())
+    assert response.json()["workspaceMode"] == "managed"
+    assert response.json()["access"] == "read_write"
+    assert calls[0] == [
+        "krail", "init", str(destination), "--name", "New Project", "--slug", "new-project",
+        "--pack", "research", "--mode", "assisted", "--knowledge-mode", "research",
+    ]
+    assert (destination / ".git").is_dir()
+    assert subprocess.run(["git", "-C", str(destination), "rev-parse", "HEAD"], check=False, capture_output=True).returncode == 0
+
+
+def test_managed_creation_rejects_collisions_and_path_like_identifiers(tmp_path: Path):
+    creator, calls = _managed_creator()
+    client = _client(tmp_path, creator=creator)
+    payload = {
+        "projectId": "already", "displayName": "Already", "name": "Already", "slug": "already",
+        "pack": "research", "mode": "assisted", "knowledgeMode": "research",
+    }
+    destination = tmp_path / "managed" / "already"
+    destination.mkdir()
+    conflict = client.post("/api/v1/projects/managed", json=payload)
+    assert conflict.status_code == 409
+    assert calls == []
+    invalid = client.post("/api/v1/projects/managed", json={**payload, "slug": "../escape"})
+    assert invalid.status_code == 422
+    assert calls == []
+
+
+def test_managed_creation_rolls_back_only_its_partial_directory(tmp_path: Path):
+    creator, _ = _managed_creator(fail_init=True)
+    client = _client(tmp_path, creator=creator)
+    root = tmp_path / "managed"
+    survivor = root / "unrelated"
+    survivor.mkdir()
+    response = client.post("/api/v1/projects/managed", json={
+        "projectId": "partial", "displayName": "Partial", "name": "Partial", "slug": "partial",
+        "pack": "research", "mode": "assisted", "knowledgeMode": "research",
+    })
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "workspace_invalid"
+    assert not (root / "partial").exists()
+    assert survivor.is_dir()
+
+
+def test_managed_creation_rolls_back_when_canonical_validation_fails(tmp_path: Path):
+    creator, _ = _managed_creator()
+    runtime = FakeRuntime(ProjectHealth(
+        ok=False,
+        checks=[ProjectHealthCheck(name="manifest", ok=False, detail="invalid")],
+        krail_version="test",
+    ))
+    client = _client(tmp_path, runtime=runtime, creator=creator)
+    response = client.post("/api/v1/projects/managed", json={
+        "projectId": "invalid", "displayName": "Invalid", "name": "Invalid", "slug": "invalid",
+        "pack": "research", "mode": "assisted", "knowledgeMode": "research",
+    })
+    assert response.status_code == 422
+    assert not (tmp_path / "managed" / "invalid").exists()
+    assert client.get("/api/v1/projects").json() == {"projects": []}
 
 
 def test_unhealthy_krail_project_is_not_registered(tmp_path: Path):

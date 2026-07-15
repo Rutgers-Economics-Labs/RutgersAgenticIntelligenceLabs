@@ -32,3 +32,7 @@ class PermissionProfileRegistry:
         if not dry_run and (profile.name != "full-access" or not self.full_access_enabled):
             raise PermissionError("Non-dry-run execution requires operator-enabled full-access")
         return profile
+
+    def profiles(self) -> tuple[PermissionProfile, ...]:
+        """Return server-owned profiles for an operator capability inventory."""
+        return tuple(sorted(self._profiles.values(), key=lambda profile: profile.name))

@@ -5,20 +5,27 @@ versioned browser contract, including camel-case JSON field names.
 """
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from app.krail_runtime.contracts import (
     Approval,
+    ApprovalDecision,
     ApprovalInventory,
     FindQuery,
     FindResult,
     GraphQuery,
     GraphResult,
     IntegritySummary,
+    QueryRequest,
+    QueryResult,
     SourceCheck,
     SourceImpact,
     SourceInventory,
     WorkflowInventory,
+    Workflow,
+    WorkflowValidation,
 )
 
 from .dtos import DTO
@@ -50,6 +57,23 @@ class GraphRequest(DTO):
         return GraphQuery.model_validate(self.model_dump(by_alias=False))
 
 
+class QueryRequestDTO(DTO):
+    sql: str = Field(min_length=1, max_length=10_000)
+    limit: int = Field(default=100, ge=1, le=1_000)
+
+    def to_runtime(self) -> QueryRequest:
+        return QueryRequest.model_validate(self.model_dump(by_alias=False))
+
+
+class ApprovalDecisionRequest(DTO):
+    decision: Literal["approved", "rejected", "changes_requested"]
+    comment: str = Field(default="", max_length=4_000)
+    resume: bool = False
+
+    def to_runtime(self) -> ApprovalDecision:
+        return ApprovalDecision.model_validate(self.model_dump(by_alias=False))
+
+
 class FindResponse(DTO):
     project_id: str = Field(alias="projectId")
     result: FindResult
@@ -66,6 +90,15 @@ class GraphResponse(DTO):
     @classmethod
     def from_runtime(cls, project_id: str, graph: GraphResult) -> "GraphResponse":
         return cls(project_id=project_id, graph=graph)
+
+
+class QueryResponse(DTO):
+    project_id: str = Field(alias="projectId")
+    result: QueryResult
+
+    @classmethod
+    def from_runtime(cls, project_id: str, result: QueryResult) -> "QueryResponse":
+        return cls(project_id=project_id, result=result)
 
 
 class SourceInventoryResponse(DTO):
@@ -111,6 +144,24 @@ class WorkflowInventoryResponse(DTO):
     @classmethod
     def from_runtime(cls, project_id: str, inventory: WorkflowInventory) -> "WorkflowInventoryResponse":
         return cls(project_id=project_id, inventory=inventory)
+
+
+class WorkflowResponse(DTO):
+    project_id: str = Field(alias="projectId")
+    workflow: Workflow
+
+    @classmethod
+    def from_runtime(cls, project_id: str, workflow: Workflow) -> "WorkflowResponse":
+        return cls(project_id=project_id, workflow=workflow)
+
+
+class WorkflowValidationResponse(DTO):
+    project_id: str = Field(alias="projectId")
+    validation: WorkflowValidation
+
+    @classmethod
+    def from_runtime(cls, project_id: str, validation: WorkflowValidation) -> "WorkflowValidationResponse":
+        return cls(project_id=project_id, validation=validation)
 
 
 class ApprovalInventoryResponse(DTO):

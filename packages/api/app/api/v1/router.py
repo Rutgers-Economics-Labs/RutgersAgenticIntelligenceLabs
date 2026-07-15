@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request, status
 
+from app.projects.creation import ManagedProjectCreator
 from app.projects.registry import ProjectRegistry
 from app.projects.runtime import KrailRuntime
 
@@ -13,6 +14,7 @@ from .dtos import (
     ProjectManifestDTO,
     ProjectManifestResponse,
     ProjectResponse,
+    CreateManagedProjectRequest,
     RegisterProjectRequest,
 )
 
@@ -27,6 +29,10 @@ def get_runtime(request: Request) -> KrailRuntime:
     return request.app.state.krail_runtime
 
 
+def get_managed_project_creator(request: Request) -> ManagedProjectCreator:
+    return request.app.state.managed_project_creator
+
+
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 def register_project(
     payload: RegisterProjectRequest,
@@ -39,6 +45,27 @@ def register_project(
         path=payload.path,
         workspace_mode=payload.workspace_mode,
         runtime=runtime,
+    )
+    return ProjectResponse.from_record(record)
+
+
+@router.post("/managed", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+def create_managed_project(
+    payload: CreateManagedProjectRequest,
+    registry: ProjectRegistry = Depends(get_registry),
+    runtime: KrailRuntime = Depends(get_runtime),
+    creator: ManagedProjectCreator = Depends(get_managed_project_creator),
+) -> ProjectResponse:
+    record = creator.create(
+        registry=registry,
+        runtime=runtime,
+        project_id=payload.project_id,
+        display_name=payload.display_name,
+        name=payload.name,
+        slug=payload.slug,
+        pack=payload.pack,
+        mode=payload.mode,
+        knowledge_mode=payload.knowledge_mode,
     )
     return ProjectResponse.from_record(record)
 

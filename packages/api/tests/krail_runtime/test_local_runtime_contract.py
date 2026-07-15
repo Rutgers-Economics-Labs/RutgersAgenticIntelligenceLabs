@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from app.krail_runtime import ApprovalDecision, FindQuery, GraphQuery, ProjectRef, RunRequest
-from app.krail_runtime.errors import KrailPermissionError, KrailProjectNotFoundError, KrailValidationError
+from app.krail_runtime.contracts import QueryRequest
+from app.krail_runtime.errors import KrailCapabilityGapError, KrailPermissionError, KrailProjectNotFoundError, KrailValidationError
 
 
 def test_uses_the_published_krail_distribution(runtime) -> None:
@@ -108,3 +109,40 @@ def test_read_only_projects_reject_mutations(runtime, fixture_project) -> None:
             "fixture-approval",
             ApprovalDecision(decision="approved"),
         )
+
+
+def test_query_workflow_detail_and_validation_map_the_canonical_runtime(runtime, fixture_project, monkeypatch) -> None:
+    class CanonicalProject:
+        def query_sql(self, sql: str):
+            assert sql == "SELECT * FROM (SELECT 7 AS answer) AS rail_platform_query LIMIT 3"
+            return {"columns": ["answer"], "rows": [[7]]}
+
+        def workflow_show(self, workflow_id: str):
+            assert workflow_id == "fixture-review"
+            return {"workflow": {"id": workflow_id, "path": "workflows/review.yaml", "valid": True, "steps": 2}}
+
+        def workflow_validate(self, workflow_id: str):
+            assert workflow_id == "fixture-review"
+            return {"workflow_id": workflow_id, "valid": False, "errors": [{"message": "missing input"}]}
+
+    monkeypatch.setattr(runtime, "_open", lambda project: CanonicalProject())
+    result = runtime.query(fixture_project, QueryRequest(sql="SELECT 7 AS answer", limit=2))
+    workflow = runtime.workflow(fixture_project, "fixture-review")
+    validation = runtime.validate_workflow(fixture_project, "fixture-review")
+
+    assert result.columns == ["answer"] and result.rows == [[7]] and result.truncated is False
+    assert workflow.id == "fixture-review" and workflow.steps == 2
+    assert validation.valid is False and validation.errors == ["missing input"]
+
+
+def test_missing_canonical_capabilities_are_typed_unavailable(runtime, fixture_project, monkeypatch) -> None:
+    class MissingCapabilities:
+        pass
+
+    monkeypatch.setattr(runtime, "_open", lambda project: MissingCapabilities())
+    with pytest.raises(KrailCapabilityGapError):
+        runtime.query(fixture_project, QueryRequest(sql="SELECT 1"))
+    with pytest.raises(KrailCapabilityGapError):
+        runtime.workflow(fixture_project, "missing")
+    with pytest.raises(KrailCapabilityGapError):
+        runtime.validate_workflow(fixture_project, "missing")
